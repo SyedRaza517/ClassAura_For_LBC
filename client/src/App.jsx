@@ -289,21 +289,20 @@ export default function App() {
   );
 
   if (!user) {
-    // The packaged mobile app (Android/iOS) opens straight on the sign-in screen —
-    // no Staff-App/Admin chooser. Admins sign in here too (2FA included) and are
-    // routed to their dashboard by role after login, then can switch to the staff
-    // view. The web build keeps the Landing chooser so a browser visitor can pick.
-    const native = isNativeApp();
+    // Both the web build AND the packaged app open on the Landing chooser, so a member of
+    // the public can reach the Student Portal (register + apply to the College) WITHOUT a
+    // College account. That public entry point is what makes the app a general-audience app
+    // for App Store distribution — otherwise it's a staff/student login wall. Staff/students
+    // pick "Staff App" to sign in; admins use the Admin tile (2FA included).
     if (entry === "admin") return (<><style>{GLOBAL_STYLE}</style><Login onBack={() => setEntry(null)} /></>);
-    // The Student Portal — a prospective student registers / signs in to track their
-    // application. A separate front door from the staff app and admin dashboard.
+    // The Student Portal — a prospective student (general public) registers / signs in to
+    // apply to the College and track their application. The public front door.
     if (entry === "applicant") return (<><style>{GLOBAL_STYLE}</style><ApplicantAuth onBack={() => setEntry(null)} /></>);
-    if (entry === "app" || native) return (
+    if (entry === "app") return (
       // 100dvh (not vh) so collapsing mobile browser chrome can't clip the page.
       <div className="w-full" style={{ minHeight: "100dvh", height: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: "radial-gradient(1200px 600px at 50% -10%, #e7ecf6 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
         <style>{GLOBAL_STYLE}</style>
-        {/* No back button in the native app — there's no Landing to go back to. */}
-        <MobileAuth onExit={native ? undefined : () => setEntry(null)} />
+        <MobileAuth onExit={() => setEntry(null)} />
       </div>
     );
     return (<><style>{GLOBAL_STYLE}</style><Landing onStaffApp={() => setEntry("app")} onAdmin={() => setEntry("admin")} onStudent={() => setEntry("applicant")} /></>);
