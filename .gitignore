@@ -32,3 +32,6 @@ Thumbs.db
 .idea/
 **/.idea/
 client.zip
+
+# Agent worktrees — scratch clones, never part of the repo
+.claude/worktrees/
