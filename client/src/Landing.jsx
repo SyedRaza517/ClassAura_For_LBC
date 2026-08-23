@@ -6,7 +6,7 @@ import React from "react";
 import { GraduationCap, Smartphone, Monitor, ArrowRight, ShieldCheck, UserPlus, Building2, Layers } from "lucide-react";
 import { BrandLockup } from "./Brand";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 
 function Choice({ Icon, title, subtitle, points, onClick, accent, delay }) {
   return (

@@ -22,7 +22,7 @@ import { useBackHandler } from "./backButton";
 import { StaffApp, AdminDashboard } from "./StaffHub";
 import { LogOut, CheckCircle2, XCircle, Sparkles, Loader2, GraduationCap, Clock, KeyRound, Lock, ShieldCheck, X, WifiOff } from "lucide-react";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 const initialsOf = (name) => String(name || "").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
 // Small live clock for the top bar (ticks every 30s).
@@ -181,7 +181,7 @@ const GLOBAL_STYLE = `
 
 /* ---- animated gradients & text (slow drift) ---- */
 .animated-gradient{background-size:180% 180%;animation:gradientShift 16s ease infinite}
-.gradient-text{background:linear-gradient(90deg,#1a3a8f,#6d28d9,#9e1b32,#1a3a8f);background-size:300% auto;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;animation:gradientShift 12s ease infinite}
+.gradient-text{background:linear-gradient(90deg,var(--brand-primary),#6d28d9,var(--brand-accent),var(--brand-primary));background-size:300% auto;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;animation:gradientShift 12s ease infinite}
 
 /* ---- shine sweep (buttons/cards) ---- */
 .shine{position:relative;overflow:hidden}
@@ -268,7 +268,7 @@ export default function App() {
   if (resetToken) return (<><style>{GLOBAL_STYLE}</style><ResetPasswordPage token={resetToken} onDone={clearTokenFromUrl} /></>);
 
   if (loading) return (
-    <div className="animated-gradient flex min-h-screen flex-col items-center justify-center gap-3 text-white" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, #14306f 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
+    <div className="animated-gradient flex min-h-screen flex-col items-center justify-center gap-3 text-white" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
       <div className="relative flex h-16 w-16 items-center justify-center">
         <span className="absolute inset-0 rounded-2xl bg-white/15 glow-pulse" />
         <Loader2 className="animate-spin" size={30} />
@@ -453,7 +453,7 @@ function Shell({ user, logout, entry }) {
           the phone keeps a clean, native header. Shown on the web and on the admin
           dashboard (where the view toggle is needed). */}
       {!(handset && view === "app") && (
-      <div className={`animated-gradient slide-down z-50 flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-white shadow-lg ${handset ? "" : "sticky top-0"}`} style={{ background: "linear-gradient(90deg, #0f172a 0%, #14306f 50%, #0f172a 100%)", backgroundSize: "220% 220%", ...(handset ? { paddingTop: "max(env(safe-area-inset-top), 8px)" } : {}) }}>
+      <div className={`animated-gradient slide-down z-50 flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-white shadow-lg ${handset ? "" : "sticky top-0"}`} style={{ background: `linear-gradient(90deg, #0f172a 0%, ${NAVY_DARK} 50%, #0f172a 100%)`, backgroundSize: "220% 220%", ...(handset ? { paddingTop: "max(env(safe-area-inset-top), 8px)" } : {}) }}>
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-8 items-center justify-center rounded-lg bg-white/95 ring-1 ring-white/15"><BrandMark size={20} /></div>
           <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>EdTech</span>

@@ -15,9 +15,7 @@ import {
   Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin,
 } from "lucide-react";
 
-const NAVY = "#1a3a8f";
-const NAVY_DARK = "#14306f";
-const MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 // Section accents. Checked as an adjacent colour-blind-safe set (worst pair ΔE 16.4),
 // so the four areas stay tellable apart for every reader — and each still carries its
 // own icon and label, so colour is never the only signal.

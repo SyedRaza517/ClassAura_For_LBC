@@ -20,6 +20,9 @@ function resolveBase() {
   return `http://localhost:${API_PORT}/api`;
 }
 const BASE = resolveBase();
+// Exported so brand.js can fetch /branding from the same server, without a second
+// copy of the host-resolution logic that would drift from this one.
+export const API_BASE = BASE;
 
 // Which institution this browser is acting for.
 //
@@ -178,6 +181,11 @@ export const api = {
   saveIntegration: (provider, body) => request(`/integrations/${provider}`, { method: "PUT", body }),
   removeIntegration: (provider) => request(`/integrations/${provider}`, { method: "DELETE" }),
   testIntegration: (provider) => request(`/integrations/${provider}/test`, { method: "POST" }),
+  // The institution's own name, colours and logo. getBranding (public) is fetched by
+  // branding.js at boot; these are the administrator's read/write views.
+  getBrandingAll: () => request("/branding/all"),
+  saveBranding: (body) => request("/branding", { method: "PUT", body }),
+  resetBranding: () => request("/branding", { method: "DELETE" }),
   changePassword: (currentPassword, newPassword) => request("/auth/change-password", { method: "PUT", body: { currentPassword, newPassword } }),
 
   // The audit trail. Read-only by design — the API has no write endpoint, because a

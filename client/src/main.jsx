@@ -2,7 +2,16 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import { AuthProvider } from "./auth";
+import { loadBranding } from "./branding";
+import { API_BASE } from "./api";
 import App from "./App";
+
+// Ask the server which institution this is and what it looks like. Started here
+// rather than in a component so it is in flight before React mounts, and deliberately
+// not awaited — the app renders in the neutral palette and repaints when the answer
+// arrives. Blocking first paint on a decorative fetch would trade a colour for a
+// blank screen on a slow connection.
+loadBranding(API_BASE);
 
 // Catches any render/runtime error in the tree so a single crashing component
 // shows a friendly, recoverable screen instead of a blank white page.
@@ -22,7 +31,7 @@ class ErrorBoundary extends React.Component {
           <div style={{ width: 56, height: 56, margin: "0 auto 14px", borderRadius: "50%", background: "#fee2e2", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>⚠️</div>
           <h1 style={{ margin: "0 0 6px", fontSize: 19, fontWeight: 800 }}>Something went wrong</h1>
           <p style={{ margin: "0 0 20px", fontSize: 14, color: "#64748b", lineHeight: 1.5 }}>The app hit an unexpected error on this screen. Reloading usually fixes it.</p>
-          <button onClick={() => window.location.reload()} style={{ background: "#1a3a8f", color: "#fff", border: 0, borderRadius: 12, padding: "12px 22px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%" }}>Reload the app</button>
+          <button onClick={() => window.location.reload()} style={{ background: "var(--brand-primary, #334155)", color: "#fff", border: 0, borderRadius: 12, padding: "12px 22px", fontSize: 14, fontWeight: 700, cursor: "pointer", width: "100%" }}>Reload the app</button>
           {/* The message itself, collapsed. Without it a crash report is just "something
               went wrong", which is impossible to act on — this makes it reportable. */}
           <details style={{ marginTop: 14, textAlign: "left" }}>

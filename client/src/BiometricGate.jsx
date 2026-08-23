@@ -10,7 +10,7 @@ import { isBiometricEnabled, isBiometricArmed, verifyBiometric, biometricStatus,
 import { Fingerprint, Loader2, LogOut, ShieldCheck, XCircle } from "lucide-react";
 import { useBackHandler } from "./backButton";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f";
+import { NAVY, NAVY_DARK } from "./branding";
 
 // Remembers that the user has already been offered the one-time "turn on Face ID"
 // prompt and said no — so it isn't shoved in their face on every sign-in.

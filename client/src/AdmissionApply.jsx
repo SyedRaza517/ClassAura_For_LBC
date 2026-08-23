@@ -12,7 +12,7 @@ import { BrandLockup } from "./Brand";
 import { Send, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 
 // The app's palette. Not exported from elsewhere, so declared locally.
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 
 // Every field key, flattened from the sections — used to build a blank form.
 const FIELD_KEYS = ADMISSION_SECTIONS.flatMap((s) => s.fields.map((f) => f.key));

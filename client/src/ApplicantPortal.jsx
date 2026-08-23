@@ -18,7 +18,10 @@ import { api } from "./api";
 import { BrandLockup } from "./Brand";
 import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./StaffHub";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32", TEAL = "#0f766e", TEAL_LT = "#14b8a6";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
+// TEAL is the student/applicant portal's own accent, not the institution's brand —
+// it distinguishes the public applicant surface from the staff app and stays fixed.
+const TEAL = "#0f766e", TEAL_LT = "#14b8a6";
 const FONT = "'Plus Jakarta Sans', system-ui, sans-serif";
 
 const inputCls = "w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20";

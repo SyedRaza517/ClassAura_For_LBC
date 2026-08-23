@@ -28,17 +28,19 @@ import { biometricStatus, biometryLabel, isBiometricEnabled, enableBiometric, di
 import { api } from "./api";
 import useReveal from "./RevealButton";
 import IntegrationSettings from "./IntegrationSettings";
+import BrandingSettings from "./BrandingSettings";
 
 /* ============================================================
    EDTECH — STAFF HUB
    Connected system: Staff Mobile App  <->  Admin Dashboard
    Every app tab has a matching dashboard page that handles its data.
-   Brand: navy #1a3a8f / accent maroon #9e1b32
+   Brand: the institution's own, via CSS variables - see src/branding.js.
+   The palettes below are CATEGORICAL (charts, course colours, document types) and stay
+   fixed: they must stay distinguishable from each other, which a college's chosen
+   colour cannot guarantee, and they carry no brand meaning.
    ============================================================ */
 
-const NAVY = "#1a3a8f";
-const NAVY_DARK = "#14306f";
-const MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 // The brand royal blue (matches the new fanlight logo). Used for vibrant gradients
 // across the admin dashboard.
 const BLUE = "#1e40af";
@@ -544,7 +546,7 @@ function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, sho
           className={`press relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 ${unread ? "glow-pulse" : ""}`}
         >
           {unread ? <BellRing size={20} /> : <Bell size={20} />}
-          {unread > 0 && <span className="pop absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900 ring-2 ring-[#14306f]">{unread}</span>}
+          {unread > 0 && <span className="pop absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900 ring-2" style={{ "--tw-ring-color": "var(--brand-primary-dark)" }}>{unread}</span>}
         </button>
       </div>
       {screen === "home" && (
@@ -2856,7 +2858,7 @@ function AdminTimesheets({ store }) {
         {/* No `animate` on these — the count-up animation does Number(value), which
             is NaN for a string like "9.1h". animate stays only on numeric cards. */}
         <StatCard label="Total hours" value={`${fmtHours(totalMin)}h`} sub={`${monthLabel(month)}`} Icon={Clock3} tone={NAVY} delay={0} />
-        <StatCard label="On campus" value={`${fmtHours(campusMin)}h`} sub="in person" Icon={Building2} tone="#1a3a8f" delay={60} />
+        <StatCard label="On campus" value={`${fmtHours(campusMin)}h`} sub="in person" Icon={Building2} tone="var(--brand-primary)" delay={60} />
         <StatCard label="Online" value={`${fmtHours(onlineMin)}h`} sub="remote" Icon={Wifi} tone="#0d7a5f" delay={120} />
         <StatCard label="Awaiting review" value={pendingCount} sub={`of ${people.length} sent`} Icon={Inbox} tone="#b45309" delay={180} animate />
       </div>
@@ -6056,13 +6058,13 @@ function srExportPdf(review, form) {
   @page { margin: 18mm 16mm; }
   * { box-sizing: border-box; }
   body { font: 11pt/1.5 "Segoe UI", system-ui, sans-serif; color: #1e293b; margin: 0; }
-  header { border-bottom: 3px solid #1a3a8f; padding-bottom: 10px; margin-bottom: 18px; }
-  h1 { font-size: 17pt; color: #1a3a8f; margin: 0 0 4px; }
+  header { border-bottom: 3px solid var(--brand-primary); padding-bottom: 10px; margin-bottom: 18px; }
+  h1 { font-size: 17pt; color: var(--brand-primary); margin: 0 0 4px; }
   .meta { font-size: 9.5pt; color: #64748b; }
   .meta b { color: #1e293b; }
   /* Keep a section together where it fits, so a heading never ends a page alone. */
   section { break-inside: avoid; margin-bottom: 14px; }
-  h2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .08em; color: #1a3a8f;
+  h2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .08em; color: var(--brand-primary);
        border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin: 0 0 8px; }
   .q { break-inside: avoid; margin-bottom: 9px; }
   .l { font-size: 9pt; color: #64748b; margin: 0 0 2px; }
@@ -12267,6 +12269,12 @@ function AdminSettings({ store }) {
   return (
     <>
       <AdminHeader title="Settings" subtitle="Manage staff members and departments" Icon={Settings} action={<div className="flex flex-wrap items-center gap-2"><ExportBtn onClick={exportStaff} label="Export staff" /><PrimaryBtn onClick={openAdd}><UserPlus size={16} /> Add staff</PrimaryBtn></div>} />
+      <div className="mb-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Your institution</p>
+        {/* Name, colours and logo — this college's own, used across the app, its
+            emails and its letters. Nothing here is shared with any other institution. */}
+        <BrandingSettings />
+      </div>
       <div className="mb-4">
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
         {/* This institution's OWN Moodle / SharePoint credentials — encrypted, and not

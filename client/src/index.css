@@ -1,3 +1,16 @@
+/* The institution's colours. Written here as neutral fallbacks and overwritten at
+   runtime by src/brand.js once GET /api/branding answers. Every brand-coloured
+   element in the app reads these, so one write on :root restyles the whole product.
+   These defaults are nobody's brand on purpose — see the comment in brand.js. */
+:root{
+  --brand-primary:#334155;
+  --brand-primary-dark:#1e293b;
+  --brand-accent:#475569;
+  --brand-accent-dark:#334155;
+  --brand-on-primary:#ffffff;
+  --brand-on-accent:#ffffff;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

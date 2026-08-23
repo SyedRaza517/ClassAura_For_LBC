@@ -15,7 +15,7 @@ import {
   GraduationCap, MailCheck, Smartphone,
 } from "lucide-react";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 outline-none transition focus:border-transparent focus:ring-2 disabled:opacity-60";

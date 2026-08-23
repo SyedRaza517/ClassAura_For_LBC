@@ -14,7 +14,7 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = "Co
         {message && <p className="mt-1 text-sm leading-relaxed text-slate-500">{message}</p>}
         <div className="mt-5 flex gap-2">
           <button onClick={onCancel} className="press flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">{cancelLabel}</button>
-          <button onClick={onConfirm} className="press flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md" style={{ background: danger ? "#9e1b32" : "#1a3a8f" }}>{confirmLabel}</button>
+          <button onClick={onConfirm} className="press flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md" style={{ background: danger ? "#9e1b32" : "var(--brand-primary)" }}>{confirmLabel}</button>
         </div>
       </div>
     </div>

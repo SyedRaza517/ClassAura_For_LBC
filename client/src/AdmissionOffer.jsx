@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 // The app's palette. Not exported from elsewhere, so declared locally.
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 
 // Unit scope, NOT inside the component — a component declared inside another's body
 // is a new type on every render, so React would unmount and remount its whole subtree.

@@ -11,7 +11,7 @@ import { useAuth } from "./auth";
 import { CodeInput } from "./TwoFactor";
 import { Trash2, Loader2, XCircle, AlertTriangle, Lock, Smartphone, CheckCircle2 } from "lucide-react";
 
-const MAROON = "#9e1b32";
+import { MAROON } from "./branding";
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 outline-none transition focus:border-transparent focus:ring-2 disabled:opacity-60";

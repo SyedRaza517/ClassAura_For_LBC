@@ -8,7 +8,7 @@ import { BrandLockup } from "./Brand";
 import { rememberedEmail, rememberedPassword, setRememberedLogin, forgetRememberedLogin, passwordMatchesEmail } from "./rememberEmail";
 import BiometricSignIn from "./BiometricSignIn";
 
-const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
+import { NAVY, NAVY_DARK, MAROON } from "./branding";
 
 export default function Login({ onBack }) {
   const { login, applySession, error } = useAuth();
@@ -142,7 +142,7 @@ export default function Login({ onBack }) {
           <div className="space-y-1.5">
             <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-500">
               <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} disabled={busy}
-                className="h-4 w-4 rounded border-slate-300 accent-[#1a3a8f]" />
+                className="h-4 w-4 rounded border-slate-300" style={{ accentColor: "var(--brand-primary)" }} />
               Remember my email and password
             </label>
             {/* Said plainly at the moment of choosing, not buried in a policy — the

@@ -7,7 +7,7 @@ import QRCode from "qrcode";
 import { api } from "./api";
 import { ShieldCheck, Loader2, XCircle, Copy, Check, KeyRound, Smartphone, Download } from "lucide-react";
 
-const NAVY = "#1a3a8f", MAROON = "#9e1b32";
+import { NAVY, MAROON } from "./branding";
 
 // Six single-character boxes that behave like one field: typing advances,
 // backspace retreats, and pasting a whole code fills every box at once.

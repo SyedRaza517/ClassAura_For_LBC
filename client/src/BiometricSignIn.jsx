@@ -13,7 +13,7 @@ import { useAuth } from "./auth";
 import { api, setToken } from "./api";
 import { biometricSignInStatus, biometricSignIn, forgetSession, BIOMETRICS_ENABLED } from "./biometric";
 
-const NAVY = "#1a3a8f";
+import { NAVY } from "./branding";
 
 export default function BiometricSignIn({ className = "", email = "" }) {
   // Feature parked — see BIOMETRICS_ENABLED in biometric.js. The sign-in screens keep
