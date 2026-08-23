@@ -417,6 +417,173 @@ function UsagePanel() {
 }
 
 
+/* ------------------------------------------------------- platform operators --- */
+
+// Who can sign in to THIS screen. Until now the tier had a create endpoint and a list
+// endpoint and no way to take access away again: an operator who left the company kept
+// a working password against every customer's data, and the only remedy was a psql
+// session on production.
+//
+// Deactivating is reversible and keeps the account's history — see the route in
+// server/src/routes/platform.js for why it is not a delete. Creating operators stays a
+// command-line job on purpose (the sign-in screen says so), so there is no "add"
+// button here; this panel exists to REMOVE access, which is the half that was missing.
+function OperatorsPanel({ me, onError, onNotice }) {
+  const [rows, setRows] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+  const [confirming, setConfirming] = useState(null); // the operator awaiting confirmation
+
+  const load = useCallback(async () => {
+    setError("");
+    try { setRows(await platformApi.listAdmins()); }
+    catch (e) { setError(e.message || "Could not load operators."); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const apply = async (op, active) => {
+    setBusyId(op.id);
+    try {
+      await platformApi.setAdminActive(op.id, active);
+      setConfirming(null);
+      onNotice(`${op.email} ${active ? "restored" : "deactivated"}.`);
+      await load();
+    } catch (e) {
+      // The server's two guards (never yourself, never the last one) come back as 400s
+      // with a sentence saying what to do instead. Show it where the operator is
+      // looking — inside the dialog when one is open, otherwise on the panel.
+      if (confirming) setError(e.message || "Could not update that operator.");
+      else onError(e.message || "Could not update that operator.");
+    } finally { setBusyId(null); }
+  };
+
+  const activeCount = (rows || []).filter((r) => r.active !== false).length;
+  const fmt = (d) => (d ? new Date(d).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "never");
+
+  return (
+    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-500"><ShieldCheck size={17} /></div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-slate-800">Platform operators</p>
+          <p className="mt-0.5 text-[12px] text-slate-500">
+            {rows ? <>{activeCount} active of {rows.length} · everyone who can reach this screen</> : "Everyone who can reach this screen."}
+          </p>
+        </div>
+        <Btn tone="ghost" onClick={load}><RefreshCw size={15} /> Refresh</Btn>
+      </div>
+
+      <div className="p-4">
+        {error && !confirming && <div className="mb-3"><Banner onClose={() => setError("")}>{error}</Banner></div>}
+        {!rows ? (
+          <div className="flex justify-center py-6 text-slate-400"><Loader2 className="animate-spin" /></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-3">Operator</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Last sign-in</th>
+                  <th className="py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const isMe = r.id === me?.id;
+                  const isActive = r.active !== false;
+                  // Mirrors the server's guards so a button that cannot work is not
+                  // offered. The server still enforces both — this is a courtesy, not
+                  // the control: nothing stops a caller going straight to the API.
+                  const lastOne = isActive && activeCount <= 1;
+                  const blocked = isActive && (isMe || lastOne);
+                  return (
+                    <tr key={r.id} className="border-b border-slate-100 last:border-0">
+                      <td className="py-2.5 pr-3">
+                        <p className="font-semibold text-slate-800">{r.name || "Operator"}{isMe && <span className="ml-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">you</span>}</p>
+                        <p className="font-mono text-[11px] text-slate-400">{r.email}</p>
+                      </td>
+                      <td className="py-2.5 pr-3">
+                        <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isActive ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                          {isActive ? "Active" : "Deactivated"}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-3 tabular-nums text-slate-500">{fmt(r.lastLoginAt)}</td>
+                      <td className="py-2.5">
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => (isActive ? setConfirming(r) : apply(r, true))}
+                            disabled={busyId === r.id || blocked}
+                            title={
+                              isMe ? "You cannot deactivate your own operator account"
+                                : lastOne ? "The last active operator cannot be deactivated"
+                                  : isActive ? "Deactivate — ends their sessions immediately"
+                                    : "Restore access"
+                            }
+                            className={`rounded-lg p-1.5 ring-1 transition disabled:cursor-not-allowed disabled:opacity-40 ${isActive ? "text-rose-500 ring-rose-200 hover:bg-rose-50" : "text-slate-500 ring-slate-200 hover:bg-slate-50"}`}
+                          >
+                            {busyId === r.id ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+          Deactivating ends that operator&rsquo;s open sessions straight away and keeps their account
+          and its history, so past platform log entries still name a person. You cannot deactivate
+          yourself, and the last active operator cannot be deactivated &mdash; there is no tier above
+          this one to let anybody back in. New operators are created from the server command line.
+        </p>
+      </div>
+
+      <Modal open={!!confirming} title={`Deactivate ${confirming?.email || ""}`} onClose={() => { setConfirming(null); setError(""); }} width={460}>
+        {confirming && (
+          <ConfirmDeactivateOperator
+            operator={confirming}
+            busy={busyId === confirming.id}
+            error={error}
+            onCancel={() => { setConfirming(null); setError(""); }}
+            onConfirm={() => apply(confirming, false)}
+          />
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+// Same shape as ConfirmDelete above — warning banner, what happens, a red confirm and a
+// Cancel — deliberately, so the two consequential actions on this screen look alike.
+// It asks for no typed confirmation, which ConfirmDelete does require, because they are
+// different kinds of action: deleting an institution destroys records and cannot be
+// undone, while this one is a switch the next operator can flip back.
+function ConfirmDeactivateOperator({ operator, busy, error, onConfirm, onCancel }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <Banner kind="warn">
+        <strong>{operator.email}</strong> loses access to platform operations immediately &mdash; any
+        session they already have open stops working on its next request, not when it expires.
+      </Banner>
+      <p className="text-sm text-slate-600">
+        The account is kept, not deleted, so the platform log still shows what they did. Another
+        operator can restore it from this panel.
+      </p>
+      {error && <Banner>{error}</Banner>}
+      <div className="flex gap-2">
+        <Btn tone="danger" onClick={onConfirm} disabled={busy} className="flex-1">
+          {busy ? <><Loader2 size={16} className="animate-spin" /> Deactivating&hellip;</> : <><Power size={16} /> Deactivate</>}
+        </Btn>
+        <Btn tone="ghost" onClick={onCancel} disabled={busy}>Cancel</Btn>
+      </div>
+    </div>
+  );
+}
+
+
 /* --------------------------------------------------------- server health ----- */
 
 // Whether the SERVER itself is set up — the things an operator configures on the host
@@ -680,6 +847,8 @@ export default function PlatformDashboard({ onBack }) {
         <ServerHealth />
 
         <UsagePanel />
+
+        <OperatorsPanel me={admin} onError={setError} onNotice={setNotice} />
 
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-extrabold uppercase tracking-wide text-slate-500">Institutions</h2>
