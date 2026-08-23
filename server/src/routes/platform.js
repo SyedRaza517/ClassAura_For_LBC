@@ -330,4 +330,48 @@ router.get("/usage", requirePlatformAdmin, async (_req, res) => {
   });
 });
 
+
+/* ------------------------------------------------------------ server health -- */
+
+// GET /api/platform/health — is this SERVER configured correctly?
+//
+// A platform operator sets CREDENTIALS_KEY, SMTP and the rest, and until now was the
+// one tier that could not see whether any of it had taken effect: the only report of
+// credential storage being configured lives on GET /api/integrations, which requires a
+// COLLEGE admin session. So the person responsible for the setting had to borrow a
+// customer's login to check their own work.
+//
+// Reports only whether something is configured, never the value. A key that is set is
+// a fact an operator needs; the key itself is not something any endpoint should return.
+router.get("/health", requirePlatformAdmin, async (_req, res) => {
+  const secrets = require("./../secrets");
+
+  // A round trip proves the key actually WORKS rather than merely being present —
+  // a truncated paste is the likely mistake, and it parses as "set" right up until
+  // the first college tries to save a credential.
+  let credentials = { configured: false, working: false, note: "CREDENTIALS_KEY is not set — colleges cannot save Moodle or SharePoint credentials." };
+  if (secrets.isConfigured()) {
+    try {
+      const probe = "platform-health-probe";
+      const ok = secrets.decrypt(secrets.encrypt(probe)) === probe;
+      credentials = ok
+        ? { configured: true, working: true, note: "Credential storage is configured and working." }
+        : { configured: true, working: false, note: "CREDENTIALS_KEY is set but did not round-trip. Colleges cannot save credentials." };
+    } catch (e) {
+      credentials = { configured: true, working: false, note: "CREDENTIALS_KEY is set but unusable: " + e.message };
+    }
+  }
+
+  res.json({
+    credentials,
+    email: { configured: require("./../email").describeEmail() },
+    files: { configured: require("./../storage").describeStorage() },
+    sharePoint: { configured: require("./../sharepoint").describe() },
+    tenantResolution: {
+      defaultSlug: process.env.DEFAULT_TENANT_SLUG || "default",
+      baseDomain: process.env.TENANT_BASE_DOMAIN || null,
+    },
+  });
+});
+
 module.exports = router;

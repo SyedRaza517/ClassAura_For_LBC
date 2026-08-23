@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
-  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText,
+  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog,
 } from "lucide-react";
 
 const INK = "#0f172a";
@@ -356,6 +356,69 @@ function UsagePanel() {
   );
 }
 
+
+/* --------------------------------------------------------- server health ----- */
+
+// Whether the SERVER itself is set up — the things an operator configures on the host
+// and then has no way to confirm. Credential storage is first because it is the one
+// that silently blocks a customer: without it a college's Settings screen refuses to
+// save its Moodle token, and the only previous way to discover that was to sign in as
+// that college.
+function ServerHealth() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try { setData(await platformApi.health()); }
+    catch (e) { setError(e.message || "Could not read server health."); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <div className="mb-6"><Banner>{error}</Banner></div>;
+  if (!data) return null;
+
+  const c = data.credentials;
+  const rows = [
+    { label: "Credential storage", ok: c.working, note: c.note },
+    { label: "Email", ok: !/not configured|console/i.test(data.email.configured), note: data.email.configured },
+    { label: "File storage", ok: !/not configured/i.test(data.files.configured), note: data.files.configured },
+    { label: "SharePoint", ok: !/not configured/i.test(data.sharePoint.configured), note: data.sharePoint.configured },
+  ];
+
+  return (
+    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-500"><ServerCog size={17} /></div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-slate-800">Server configuration</p>
+          <p className="mt-0.5 text-[12px] text-slate-500">What this host is set up to do. Values are never shown, only whether they work.</p>
+        </div>
+        <Btn tone="ghost" onClick={load}><RefreshCw size={15} /> Recheck</Btn>
+      </div>
+      <div className="p-4">
+        {rows.map((r) => (
+          <div key={r.label} className="flex items-start gap-2 border-b border-slate-100 py-2 last:border-0">
+            {r.ok
+              ? <CheckCircle2 size={15} className="mt-0.5 flex-none text-emerald-600" />
+              : <AlertTriangle size={15} className="mt-0.5 flex-none text-amber-600" />}
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-800">{r.label}</p>
+              <p className="text-[12px] text-slate-500">{r.note}</p>
+            </div>
+          </div>
+        ))}
+        <p className="mt-2 text-[11px] text-slate-400">
+          Requests with no institution named resolve to <span className="font-mono">{data.tenantResolution.defaultSlug}</span>
+          {data.tenantResolution.baseDomain
+            ? <> · subdomains under <span className="font-mono">{data.tenantResolution.baseDomain}</span> resolve to that college</>
+            : <> · subdomain resolution is off</>}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function PlatformDashboard({ onBack }) {
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -440,6 +503,8 @@ export default function PlatformDashboard({ onBack }) {
             <Stat label="Students" value={totals.students} Icon={GraduationCap} />
           </div>
         )}
+
+        <ServerHealth />
 
         <UsagePanel />
 
