@@ -141,7 +141,17 @@ router.post("/", requireAuth, async (req, res) => {
       });
       return { status: 201, body: sLeave(rec), created: true };
     });
-    if (outcome.created) notifyAdmins({ type: "info", message: `New ${type} leave request from ${exists.name}`, link: "approvals" });
+    if (outcome.created) {
+      notifyAdmins({ type: "info", message: `New ${type} leave request from ${exists.name}`, link: "approvals" });
+      // The request, so the decision recorded later has something to be a decision
+      // ABOUT. Without this the trail shows leave being approved with no sign of who
+      // asked for it, when, or whether an admin booked it on someone else's behalf.
+      audit.record(req, {
+        action: "leave.requested", entity: "Leave", entityId: outcome.body.id,
+        summary: `${type} leave for ${exists.name}, ${start} to ${end} (${chargeable} day(s)) requested` + (targetStaff !== req.user.id ? ` on their behalf by ${req.user.name}` : ""),
+        after: { staffId: targetStaff, type, start, end, days: chargeable, status: "pending", onBehalf: targetStaff !== req.user.id },
+      });
+    }
     res.status(outcome.status).json(outcome.body);
   } catch (e) {
     res.status(400).json({ error: "Could not create leave request" });
@@ -194,6 +204,17 @@ router.delete("/:id", requireAuth, async (req, res) => {
   });
 
   const c = outcome.cancelled;
+  // Cancelling gives days back to the allowance, so it moves a balance exactly as a
+  // decision does — and an approved booking cancelled by an admin is the version of
+  // this that gets queried later.
+  if (c) {
+    audit.record(req, {
+      action: "leave.cancelled", entity: "Leave", entityId: c.id,
+      summary: `${c.type} leave ${c.start} to ${c.end} (${c.days} day(s), ${c.status}) cancelled` + (c.staffId !== req.user.id ? ` by ${req.user.name}` : " by the person who booked it"),
+      before: { staffId: c.staffId, type: c.type, start: c.start, end: c.end, days: c.days, status: c.status },
+      after: null,
+    });
+  }
   if (c && c.staffId !== req.user.id) {
     notifyStaff(c.staffId, {
       type: "info",

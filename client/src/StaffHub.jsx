@@ -2576,10 +2576,20 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "timetable", label: "Timetable", I: CalendarClock },
     { key: "passwords", label: "Reset Passwords", I: KeyRound },
     { key: "settings", label: "Settings", I: Settings },
+    { key: "audit", label: "Audit Trail", I: History },
     { key: "access", label: "Access", I: ShieldCheck },
   ];
   // Only the pages this admin may see. Super Admin sees all + the Access tab.
-  const nav = allNav.filter(n => canAccessPage(me, n.key));
+  //
+  // "audit" is not a grantable page and so is not in ADMIN_PAGES: it is derived from
+  // the pages someone already holds, exactly as the API derives it (routes/audit.js
+  // gates on the same three). Giving it its own key would let a Super Admin grant
+  // somebody the trail WITHOUT the administrative authority the trail describes, and
+  // withhold it from the administrators it is a record of — neither of which is a
+  // sensible thing to be able to configure.
+  const nav = allNav.filter(n => n.key === "audit"
+    ? AUDIT_READER_PAGES.some(p => canAccessPage(me, p))
+    : canAccessPage(me, n.key));
   const [tab, setTab] = useState(() => nav[0]?.key || "overview");
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
   // fall back to the first one they can see, so no forbidden page ever renders.
@@ -2666,6 +2676,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "ism" && <AdminIsm store={store} />}
         {activeKey === "slc" && <AdminSlc store={store} />}
         {activeKey === "settings" && <AdminSettings store={store} />}
+        {activeKey === "audit" && <AuditTrail />}
         {activeKey === "access" && <AdminAccess store={store} />}
       </main>
     </div>
@@ -11982,6 +11993,220 @@ function AdminTimetable({ store }) {
           <PrimaryBtn onClick={saveSlot} disabled={busy || !form.title.trim()} className="w-full">{busy ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : <><Check size={16} /> Save row</>}</PrimaryBtn>
         </div>
       </Modal>
+    </>
+  );
+}
+
+/* ============================== Audit trail ==============================
+ *
+ * Reading what the server recorded. There is no form on this page and no way to
+ * edit or delete a row, matching the API: a log the people it records can change
+ * is not evidence, and the reason a college asks for an audit trail is to be able
+ * to answer "who changed this" to somebody who does not take the answer on trust.
+ *
+ * Who sees it: whoever holds Settings, Access or Staff — the pages that already
+ * carry administrative authority. That list is the server's, in routes/audit.js;
+ * AUDIT_READER_PAGES below mirrors it, and the two have to agree or the tab appears
+ * for someone the API then refuses.
+ */
+const AUDIT_READER_PAGES = ["settings", "access", "staff"];
+
+// Who acted, in a word. A platform operator is not a member of staff, and a failed
+// sign-in has no account behind it at all — so the tier is shown, not inferred from
+// the address.
+const ACTOR_TONE = {
+  platform: { label: "Platform", cls: "bg-purple-100 text-purple-700" },
+  staff: { label: "Staff", cls: "bg-blue-100 text-blue-700" },
+  student: { label: "Student", cls: "bg-emerald-100 text-emerald-700" },
+  applicant: { label: "Applicant", cls: "bg-amber-100 text-amber-700" },
+  anonymous: { label: "Not signed in", cls: "bg-rose-100 text-rose-700" },
+  system: { label: "System", cls: "bg-slate-100 text-slate-600" },
+};
+
+const auditWhen = (iso) => {
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso || "");
+  return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
+// One changed field, rendered as "was -> now". A null on either side is spelled out
+// rather than left blank: "(none)" says a value was added or cleared, where an empty
+// cell just looks like the page failed to render something.
+function AuditDiff({ before, after }) {
+  const keys = Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after || {})]));
+  if (!keys.length) return null;
+  const show = (v) => {
+    if (v === null || v === undefined) return <span className="text-slate-400">(none)</span>;
+    if (typeof v === "object") return <code className="text-[11px]">{JSON.stringify(v)}</code>;
+    if (v === "") return <span className="text-slate-400">(empty)</span>;
+    return String(v);
+  };
+  return (
+    <table className="w-full text-[12px]">
+      <tbody>
+        {keys.map(k => (
+          <tr key={k} className="align-top">
+            <td className="w-44 py-1 pr-3 font-semibold text-slate-500">{k}</td>
+            <td className="py-1 pr-2 text-slate-500 line-through decoration-slate-300">{show(before ? before[k] : null)}</td>
+            <td className="w-4 py-1 text-slate-400">&rarr;</td>
+            <td className="py-1 font-medium text-slate-700">{show(after ? after[k] : null)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function AuditTrail() {
+  const [rows, setRows] = useState([]);
+  const [cursor, setCursor] = useState(null);
+  const [actions, setActions] = useState([]);
+  const [filters, setFilters] = useState({ action: "", from: "", to: "" });
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState(null);
+  const [open, setOpen] = useState(null);
+
+  // The distinct verbs, once. Read from the data rather than a list held here, so a
+  // newly recorded action appears in the filter without a client release.
+  useEffect(() => {
+    let dead = false;
+    api.auditActions().then(a => { if (!dead) setActions(a || []); }).catch(() => { /* the filter degrades to "all", which is fine */ });
+    return () => { dead = true; };
+  }, []);
+
+  // Re-fetch from the top whenever a server-side filter changes. `query` is NOT in
+  // here on purpose: it filters what is already loaded, so typing does not fire a
+  // request per keystroke.
+  useEffect(() => {
+    let dead = false;
+    setLoading(true); setError(null);
+    api.audit({ ...filters, take: 50 })
+      .then(r => { if (dead) return; setRows(r.entries || []); setCursor(r.nextCursor || null); })
+      .catch(e => { if (!dead) setError(e.message || "Could not load the audit trail"); })
+      .finally(() => { if (!dead) setLoading(false); });
+    return () => { dead = true; };
+  }, [filters]);
+
+  const loadMore = async () => {
+    if (!cursor || more) return;
+    setMore(true);
+    try {
+      const r = await api.audit({ ...filters, take: 50, cursor });
+      setRows(prev => [...prev, ...(r.entries || [])]);
+      setCursor(r.nextCursor || null);
+    } catch (e) { setError(e.message || "Could not load any more"); }
+    finally { setMore(false); }
+  };
+
+  const ql = query.trim().toLowerCase();
+  const shown = ql
+    ? rows.filter(r => [r.summary, r.actorEmail, r.action, r.entity, r.entityId].some(v => String(v || "").toLowerCase().includes(ql)))
+    : rows;
+
+  // Exports what is on screen, not the whole table — the filters above say what the
+  // person actually asked for, and silently handing back everything instead would be
+  // the wrong file to give to whoever requested it.
+  const exportRows = () => {
+    downloadCSV("audit-trail.csv", [
+      { key: "at", label: "When" }, { key: "actorType", label: "Actor type" }, { key: "actorEmail", label: "Actor" },
+      { key: "action", label: "Action" }, { key: "summary", label: "Summary" },
+      { key: "entity", label: "Record" }, { key: "entityId", label: "Record id" }, { key: "ip", label: "IP" },
+    ], shown.map(r => ({ ...r, at: auditWhen(r.at) })));
+  };
+
+  return (
+    <>
+      <AdminHeader
+        title="Audit trail"
+        subtitle="Who changed what, and when — recorded automatically and read-only"
+        Icon={History}
+        action={<ExportBtn onClick={exportRows} label="Export shown" />}
+      />
+
+      <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
+          <Search size={15} className="text-slate-400" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search this page…" className="w-full bg-transparent text-sm outline-none" />
+        </div>
+        <select value={filters.action} onChange={e => setFilters(f => ({ ...f, action: e.target.value }))} className="rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200 outline-none">
+          <option value="">All actions</option>
+          {actions.map(a => <option key={a.action} value={a.action}>{a.action} ({a.count})</option>)}
+        </select>
+        <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">From</span>
+          <input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} className="w-full bg-transparent outline-none" />
+        </label>
+        <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">To</span>
+          <input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} className="w-full bg-transparent outline-none" />
+        </label>
+      </div>
+
+      {error && <div className="mb-3 flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-200"><AlertCircle size={16} /> {error}</div>}
+
+      <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch]">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <tr><th className="px-5 py-3">When</th><th className="px-5 py-3">Who</th><th className="px-5 py-3">What happened</th><th className="px-5 py-3">Action</th><th className="px-5 py-3"></th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={5} className="px-5 py-10 text-center text-slate-400"><Loader2 size={18} className="mx-auto animate-spin" /></td></tr>}
+            {!loading && !shown.length && (
+              <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">
+                {rows.length ? "Nothing on this page matches that search." : "No entries for these filters yet."}
+              </td></tr>
+            )}
+            {!loading && shown.map(r => {
+              const tone = ACTOR_TONE[r.actorType] || ACTOR_TONE.system;
+              const hasDetail = (r.before && Object.keys(r.before).length) || (r.after && Object.keys(r.after).length);
+              const isOpen = open === r.id;
+              return (
+                <React.Fragment key={r.id}>
+                  <tr className="border-t border-slate-100 transition-colors duration-150 hover:bg-blue-50/40">
+                    <td className="whitespace-nowrap px-5 py-3 text-[12px] text-slate-500">{auditWhen(r.at)}</td>
+                    <td className="px-5 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.cls}`}>{tone.label}</span>
+                      <p className="mt-1 text-[12px] text-slate-600">{r.actorEmail || <span className="text-slate-400">&mdash;</span>}</p>
+                    </td>
+                    <td className="px-5 py-3 text-slate-700">{r.summary}</td>
+                    <td className="px-5 py-3"><code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">{r.action}</code></td>
+                    <td className="px-5 py-3 text-right">
+                      {hasDetail ? (
+                        <button onClick={() => setOpen(isOpen ? null : r.id)} className="text-[12px] font-semibold text-blue-600 hover:underline">
+                          {isOpen ? "Hide" : "Details"}
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="border-t border-slate-100 bg-slate-50/60">
+                      <td colSpan={5} className="px-5 py-3">
+                        <AuditDiff before={r.before} after={r.after} />
+                        <p className="mt-2 text-[11px] text-slate-400">
+                          {r.entity ? `${r.entity} ${r.entityId || ""} · ` : ""}{r.ip ? `from ${r.ip}` : "no address recorded"}
+                        </p>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {cursor && !loading && (
+        <div className="mt-3 text-center">
+          <button onClick={loadMore} disabled={more} className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">
+            {more ? "Loading…" : "Load older entries"}
+          </button>
+        </div>
+      )}
+      <p className="mt-3 text-center text-[11px] text-slate-400">
+        Entries are written automatically and cannot be edited or deleted from here.
+      </p>
     </>
   );
 }

@@ -4,6 +4,7 @@ const { sAdj } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isInt32, MAX_ADJUSTMENT_DAYS, isRealDate } = require("../validate");
 const { localDate } = require("../clock");
+const audit = require("../audit");
 
 const today = () => localDate();
 
@@ -48,6 +49,14 @@ router.post("/", requireAuth, requirePage("balances"), async (req, res) => {
   const adj = await prisma.adjustment.create({
     data: { staffId, days: nDays, note: note || "Manual adjustment", date },
   });
+  // One administrator moving another person's holiday entitlement by hand, with no
+  // request behind it. It is the leave figure most likely to be queried a year later,
+  // and the note explaining it is the only context the number carries.
+  audit.record(req, {
+    action: "adjustment.created", entity: "Adjustment", entityId: adj.id,
+    summary: `${nDays > 0 ? "+" : ""}${nDays} day(s) adjustment for ${staffExists.name} dated ${date} — "${adj.note}"`,
+    after: { staffId, staffName: staffExists.name, days: nDays, date, note: adj.note },
+  });
   res.status(201).json(sAdj(adj));
 });
 
@@ -61,6 +70,14 @@ router.delete("/:id", requireAuth, requirePage("balances"), async (req, res) => 
   const existing = await prisma.adjustment.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Adjustment not found" });
   await prisma.adjustment.delete({ where: { id: existing.id } });
+  // Removing an adjustment silently changes a balance back. Without this row the
+  // figure moves and nothing in the database says it ever held another value.
+  audit.record(req, {
+    action: "adjustment.deleted", entity: "Adjustment", entityId: existing.id,
+    summary: `${existing.days > 0 ? "+" : ""}${existing.days} day(s) adjustment dated ${existing.date} removed — "${existing.note}"`,
+    before: { staffId: existing.staffId, days: existing.days, date: existing.date, note: existing.note },
+    after: null,
+  });
   res.json({ ok: true });
 });
 

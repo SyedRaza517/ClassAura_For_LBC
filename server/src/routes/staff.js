@@ -96,6 +96,14 @@ router.post("/", requireAuth, requireAnyPage(["staff", "settings"]), async (req,
       },
     });
     if (invited) await sendInvite(staff, { invitedBy: req.user.name });
+    // A new person with a login to the college's systems. Recorded with the details
+    // that decide what they can see — never the password hash, which the redactor
+    // would strip anyway but which is not passed here in the first place.
+    audit.record(req, {
+      action: "staff.created", entity: "Staff", entityId: staff.id,
+      summary: `Staff account created for ${staff.name} (${staff.email})` + (invited ? " — invitation sent, awaiting activation" : " — password set by the administrator"),
+      after: { name: staff.name, email: staff.email, jobTitle: staff.jobTitle, dept: staff.dept, site: staff.site, allowance: staff.allowance, accountRole: staff.accountRole, pendingActivation: staff.pendingActivation },
+    });
     res.status(201).json({ ...sStaff(staff), invited });
   } catch (e) {
     if (e.code === "P2002") return res.status(400).json({ error: "Email already in use" });
@@ -166,6 +174,19 @@ router.put("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async (re
         `Hello ${target.name},\n\n${req.user.name} changed the email address on your EdTech Staff Hub account to ${staff.email}.\n\nIf you did not expect this, contact the college office immediately — whoever holds the new address can now request a password reset for your account.`
       ).catch(() => {});
     }
+    // Employment details and holiday allowance are disputed months later, and the
+    // email change above is an account transfer, not an edit. The diff carries only
+    // the fields that actually moved, so a routine job-title correction does not read
+    // like a rewrite of the whole record.
+    audit.record(req, {
+      action: emailChanging ? "staff.email.changed" : "staff.updated",
+      entity: "Staff", entityId: staff.id,
+      summary: emailChanging
+        ? `Email on ${staff.name}'s account changed from ${target.email} to ${staff.email} — their sessions were ended and any reset link in flight was retired`
+        : `${staff.name} (${staff.email}) updated`,
+      before: { name: target.name, email: target.email, jobTitle: target.jobTitle, dept: target.dept, site: target.site, allowance: target.allowance, dob: target.dob },
+      after: { name: staff.name, email: staff.email, jobTitle: staff.jobTitle, dept: staff.dept, site: staff.site, allowance: staff.allowance, dob: staff.dob },
+    });
     res.json(sStaff(staff));
   } catch (e) {
     if (e.code === "P2002") return res.status(400).json({ error: "Email already in use" });
@@ -222,6 +243,12 @@ router.post("/:id/invite", requireAuth, requireAnyPage(["staff", "settings"]), a
   if (blockedInvite) return res.status(403).json({ error: blockedInvite });
   if (!staff.pendingActivation) return res.status(400).json({ error: "This account is already active" });
   await sendInvite(staff, { invitedBy: req.user.name });
+  // Issuing a link that sets a password on somebody else's account. Pairs with the
+  // staff.invite.accepted row written when the link is used.
+  audit.record(req, {
+    action: "staff.invited", entity: "Staff", entityId: staff.id,
+    summary: `Invitation re-sent to ${staff.name} (${staff.email})`,
+  });
   res.json({ ok: true, message: `Invitation re-sent to ${staff.email}` });
 });
 
@@ -255,6 +282,15 @@ router.delete("/:id/totp", requireAuth, requireAnyPage(["staff", "settings"]), a
     link: "more",
   });
 
+  // One colleague removing another's second factor. The notification tells the
+  // account holder; this tells whoever asks later why the protection came off.
+  audit.record(req, {
+    action: "staff.totp.reset", entity: "Staff", entityId: updated.id,
+    summary: `Two-step verification reset for ${staff.name} (${staff.email})` + (staff.mustSetupTotp ? " — they must enrol again at next sign-in" : " — the account now signs in with a password alone"),
+    before: { totpEnabled: staff.totpEnabled, hadSecret: !!staff.totpSecret },
+    after: { totpEnabled: false, hadSecret: false, mustSetupTotp: staff.mustSetupTotp },
+  });
+
   res.json(sStaff(updated));
 });
 
@@ -284,6 +320,15 @@ router.delete("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async 
       prisma.document.deleteMany({ where: { scope: "personal", assignedToId: existing.id } }),
       prisma.staff.delete({ where: { id: existing.id } }),
     ]);
+    // The most destructive thing one colleague can do to another's record, and it
+    // takes their check-ins, leave and timesheets with it. Written after the
+    // transaction commits, so a row that rolled back leaves no row claiming it did not.
+    audit.record(req, {
+      action: "staff.deleted", entity: "Staff", entityId: existing.id,
+      summary: `${existing.name} (${existing.email}) deleted — check-ins, leave, adjustments and timesheets removed with the account, ${docs.count} personal document(s) destroyed`,
+      before: { name: existing.name, email: existing.email, jobTitle: existing.jobTitle, dept: existing.dept, accountRole: existing.accountRole, site: existing.site },
+      after: null,
+    });
     res.json({ ok: true, documentsRemoved: docs.count });
   } catch (e) {
     res.status(400).json({ error: "Could not delete this staff member" });

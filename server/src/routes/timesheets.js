@@ -12,6 +12,7 @@ const { sTimesheet } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { notifyAdmins, notifyStaff } = require("../notify");
 const { localDate } = require("../clock");
+const audit = require("../audit");
 
 const VALID_MODES = ["campus", "online"];
 const isTime = (v) => typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -189,6 +190,16 @@ router.post("/review", requireAuth, requirePage("timesheets"), async (req, res) 
   notifyStaff(staffId, decision === "approved"
     ? { type: "success", message: `Your ${monthName} timesheet was approved.`, link: "timesheet" }
     : { type: "error", message: `Your ${monthName} timesheet needs changes: "${note.trim()}"`, link: "timesheet" });
+
+  // Signing off someone's hours is a payroll decision. It is stamped reviewedBy on
+  // the entries themselves, but those get re-submitted and overwritten; this row does
+  // not, which is what makes it the record that a later payroll query can rely on.
+  audit.record(req, {
+    action: "timesheet.reviewed", entity: "TimesheetEntry", entityId: `${staffId}:${month}`,
+    summary: `${monthName} timesheet for ${staff.name} ${decision === "approved" ? "approved" : "sent back for changes"} by ${req.user.name} — ${pending} entr${pending === 1 ? "y" : "ies"}` + (note ? ` — "${note.trim()}"` : ""),
+    before: { status: "submitted", entries: pending },
+    after: { staffId, staffName: staff.name, month, status: newStatus, entries: pending, note: note ? note.trim() : null },
+  });
 
   res.json({ ok: true, staffId, month, decision, reviewed: pending });
 });

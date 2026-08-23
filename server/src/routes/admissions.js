@@ -14,6 +14,12 @@ const storage = require("../storage");
 const { ADMISSION_DOC_TYPES, admissionFolderSegments } = require("../admissionDocs");
 const { FIELDS, pick, str } = require("../admissionFields");
 const mailAssets = require("../mailAssets");
+const audit = require("../audit");
+
+// An applicant's name, for a log line a person can read. Never more than the name:
+// see the note on audit.changedKeys for why the rest of this record stays out of the
+// audit trail.
+const applicantName = (a) => [a.firstName, a.surname].filter(Boolean).join(" ") || "Applicant";
 
 // Where the applicant's upload page lives (the SPA reads ?upload=<token>).
 const CLIENT_URL = (process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
@@ -105,6 +111,13 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "An applicant needs at least a first name or surname." });
   }
   const row = await prisma.admission.create({ data, ...withDocs });
+  // The arrival of a new personal record. Only the identifiers go in the log — the
+  // application itself holds special-category data (see audit.changedKeys).
+  audit.record(req, {
+    action: "admission.created", entity: "Admission", entityId: row.id,
+    summary: `Application created for ${applicantName(row)}` + (row.course ? ` — ${row.course}` : ""),
+    after: { course: row.course, intake: row.intake, intakeYear: row.intakeYear },
+  });
   res.status(201).json(sAdmission(row));
 });
 
@@ -119,6 +132,13 @@ router.put("/documents/:docId/confirm", async (req, res) => {
   const updated = await prisma.admissionDocument.update({
     where: { id: doc.id },
     data: { confirmed, confirmedAt: confirmed ? new Date() : null, confirmedBy: confirmed ? (req.user?.name || req.user?.email || null) : null },
+  });
+  audit.record(req, {
+    action: confirmed ? "admission.document.verified" : "admission.document.unverified",
+    entity: "AdmissionDocument", entityId: doc.id,
+    summary: `${doc.docType || "Document"} "${doc.fileName || ""}" ${confirmed ? "verified" : "un-verified"}`,
+    before: { confirmed: doc.confirmed },
+    after: { confirmed, admissionId: doc.admissionId },
   });
   res.json(sAdmission(updated));
 });
@@ -144,6 +164,14 @@ router.delete("/documents/:docId", async (req, res) => {
   if (doc.spItemId) await sharepoint.deleteItem(doc.spItemId);
   else if (doc.storagePath) await storage.removeObject(doc.storagePath);
   await prisma.admissionDocument.delete({ where: { id: doc.id } });
+  // Destroying an applicant's identity document. The file is gone from SharePoint or
+  // Supabase too, so this row is the only remaining evidence it ever existed.
+  audit.record(req, {
+    action: "admission.document.deleted", entity: "AdmissionDocument", entityId: doc.id,
+    summary: `${doc.docType || "Document"} "${doc.fileName || ""}" deleted, and its stored file with it`,
+    before: { docType: doc.docType, fileName: doc.fileName, confirmed: doc.confirmed, admissionId: doc.admissionId },
+    after: null,
+  });
   res.json({ ok: true });
 });
 
@@ -232,6 +260,15 @@ router.post("/:id/request-documents", async (req, res) => {
     if (!sent.sent && !sent.stubbed) warning = (warning ? warning + " " : "") + `Email could not be sent: ${sent.error || "unknown error"}`;
   } catch (e) { warning = (warning ? warning + " " : "") + `Email could not be sent: ${e.message}`; }
 
+  // Minting a token that lets whoever holds the emailed link upload documents onto
+  // this applicant's record for the next 30 days. The token itself is never written —
+  // only its hash is stored, and neither reaches the log.
+  audit.record(req, {
+    action: "admission.documents.requested", entity: "Admission", entityId: a.id,
+    summary: `Document upload link sent to ${applicantName(a)} at ${a.email} — valid for 30 days`,
+    after: { emailed, expiresAt: patch.uploadTokenExpires, sharePointFolderCreated: !!patch.spFolderId },
+  });
+
   const updated = await prisma.admission.findUnique({ where: { id: a.id }, ...withDocs });
   // Return the link too, so the admin can copy it if email isn't configured on the server.
   res.json({ admission: sAdmission(updated), emailed, link, warning });
@@ -303,6 +340,20 @@ router.put("/:id/status", async (req, res) => {
       } catch (e) { warning = (warning ? warning + " " : "") + `Enrolled, but the confirmation email could not be sent: ${e.message}`; }
     }
   }
+
+  // The decision on someone's application: interviewed, offered a place, enrolled,
+  // rejected or withdrawn. Unlike the personal details on the same row, these values
+  // ARE the thing worth recording, and none of them is special-category data.
+  audit.record(req, {
+    action: "admission.status.changed", entity: "Admission", entityId: row.id,
+    summary: `${applicantName(row)}: ` + [
+      "interviewStatus" in data && `interview ${row.interviewStatus || "cleared"}`,
+      "enrollStatus" in data && `enrolment ${row.enrollStatus || "cleared"}`,
+      "studentId" in data && `student ID ${row.studentId || "cleared"}`,
+    ].filter(Boolean).join(", ") || "status updated",
+    before: { interviewStatus: existing.interviewStatus, enrollStatus: existing.enrollStatus, studentId: existing.studentId },
+    after: { interviewStatus: row.interviewStatus, enrollStatus: row.enrollStatus, studentId: row.studentId, inductionDate: row.enrolInductionDate, confirmationEmailed: emailed },
+  });
 
   const full = await prisma.admission.findUnique({ where: { id: row.id }, ...withDocs });
   const out = sAdmission(full);
@@ -400,6 +451,16 @@ router.post("/:id/send-offer", async (req, res) => {
     if (!sent.sent && !sent.stubbed) warning = `The offer was recorded but the email could not be sent: ${sent.error || "unknown error"}`;
   } catch (e) { warning = `The offer was recorded but the email could not be sent: ${e.message}`; }
 
+  // A formal offer of a place, sent under a named signatory. The single most
+  // consequential thing the admissions team does, and the one an applicant is most
+  // likely to query later.
+  audit.record(req, {
+    action: "admission.offer.sent", entity: "Admission", entityId: a.id,
+    summary: `Offer for ${a.course || "a course"} sent to ${applicantName(a)} at ${a.email}, signed by ${senderName}` + (a.offerStatus === "accepted" ? " (re-sent — the existing acceptance was kept)" : ""),
+    before: { offerStatus: a.offerStatus },
+    after: { offerStatus: a.offerStatus === "accepted" ? "accepted" : "sent", course: a.course, inductionDate: inductionDate || null, signatory: senderName, emailed },
+  });
+
   const updated = await prisma.admission.findUnique({ where: { id: a.id }, ...withDocs });
   res.json({ admission: sAdmission(updated), emailed, link: acceptLink, warning });
 });
@@ -480,6 +541,12 @@ router.post("/:id/send-interview-invite", async (req, res) => {
     if (!sent.sent && !sent.stubbed) warning = `The interview was saved but the email could not be sent: ${sent.error || "unknown error"}`;
   } catch (e) { warning = `The interview was saved but the email could not be sent: ${e.message}`; }
 
+  audit.record(req, {
+    action: "admission.interview.invited", entity: "Admission", entityId: a.id,
+    summary: `Interview invitation sent to ${applicantName(a)} at ${a.email}` + (a.course ? ` for ${a.course}` : ""),
+    after: { course: a.course, emailed },
+  });
+
   const updated = await prisma.admission.findUnique({ where: { id: a.id }, ...withDocs });
   res.json({ admission: sAdmission(updated), emailed, warning });
 });
@@ -507,6 +574,20 @@ router.put("/:id", async (req, res) => {
     } catch (e) { warning = `Saved, but the SharePoint folder couldn't be moved: ${e.message}`; }
   }
 
+  // Field NAMES only. This form holds an NI number, ID document numbers,
+  // criminal-record answers, medical conditions, ethnicity and religion — writing the
+  // values here would copy special-category data into a table that is read by more
+  // people, kept longer and exported more often than the application itself. Who
+  // edited which fields, and when, is what the trail is for.
+  const touched = audit.changedKeys(pick(existing), pick(row));
+  if (touched.length) {
+    audit.record(req, {
+      action: "admission.updated", entity: "Admission", entityId: row.id,
+      summary: `${applicantName(row)}: ${touched.length} field(s) edited — ${touched.join(", ")}`,
+      after: { fieldsChanged: touched, course: row.course, intake: row.intake, intakeYear: row.intakeYear },
+    });
+  }
+
   const full = await prisma.admission.findUnique({ where: { id: row.id }, ...withDocs });
   const out = sAdmission(full);
   if (warning) out.warning = warning;
@@ -523,6 +604,15 @@ router.delete("/:id", async (req, res) => {
     else if (d.storagePath) await storage.removeObject(d.storagePath);
   }
   await prisma.admission.delete({ where: { id: req.params.id } });
+  // An applicant's whole record and every file with it. Under a retention schedule
+  // this is the erasure a college has to be able to evidence, so the row says what
+  // went and how much of it — but still not what was in it.
+  audit.record(req, {
+    action: "admission.deleted", entity: "Admission", entityId: existing.id,
+    summary: `Application for ${applicantName(existing)} deleted, with ${existing.documents.length} uploaded document(s)`,
+    before: { course: existing.course, intake: existing.intake, intakeYear: existing.intakeYear, enrollStatus: existing.enrollStatus, studentId: existing.studentId, documents: existing.documents.length },
+    after: null,
+  });
   res.json({ ok: true });
 });
 

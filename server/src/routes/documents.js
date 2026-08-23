@@ -6,8 +6,19 @@ const { sDoc } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isString, isNonEmptyString, MAX_TEXT } = require("../validate");
 const { localDate } = require("../clock");
+const audit = require("../audit");
 
 const today = () => localDate();
+
+// How a document is named in the audit trail.
+//
+// The NAME of a personal document is the sensitive part — "Disciplinary outcome —
+// T Ward" tells you the whole story without opening anything, which is why GET /
+// redacts it for admins who lack the Documents page. The audit trail is read on the
+// Settings, Access and Staff pages, so writing that name here would hand it to
+// exactly the admins that redaction was protecting it from. A shared policy carries
+// no such problem, so it keeps its name.
+const docLabel = (d) => (d.scope === "personal" ? `a personal ${String(d.type || "document").toLowerCase()}` : `"${d.name}"`);
 
 // GET /api/documents — admin: all; staff: shared + personal templates + own private docs
 router.get("/", requireAuth, async (req, res) => {
@@ -60,6 +71,11 @@ router.post("/", requireAuth, requirePage("documents"), async (req, res) => {
       assignedToId: scope === "personal" && assignedTo ? assignedTo : null,
     },
   });
+  audit.record(req, {
+    action: "document.created", entity: "Document", entityId: doc.id,
+    summary: `${doc.scope === "personal" ? "Personal" : "Shared"} document ${docLabel(doc)} created` + (doc.assignedToId ? " and assigned" : ""),
+    after: { type: doc.type, scope: doc.scope, assignedToId: doc.assignedToId, date: doc.date },
+  });
   res.status(201).json(sDoc(doc));
 });
 
@@ -107,6 +123,13 @@ router.post(
         where: { id: doc.id },
         data: { filePath: path, fileName, mimeType, sizeBytes: size, uploadedAt: new Date() },
       });
+      audit.record(req, {
+        action: doc.filePath ? "document.file.replaced" : "document.file.uploaded",
+        entity: "Document", entityId: doc.id,
+        summary: `File ${doc.filePath ? "replaced" : "uploaded"} for ${docLabel(doc)} — ${size} bytes` + (doc.filePath ? ", the previous file is gone" : ""),
+        before: doc.filePath ? { sizeBytes: doc.sizeBytes, mimeType: doc.mimeType, uploadedAt: doc.uploadedAt } : null,
+        after: { sizeBytes: size, mimeType, scope: doc.scope, assignedToId: doc.assignedToId },
+      });
       res.json(sDoc(updated));
     } catch (e) {
       // These messages are written for an administrator to act on (missing bucket,
@@ -129,7 +152,20 @@ router.get("/:id/download", requireAuth, async (req, res) => {
   if (!mayRead(doc, req.user)) return res.status(404).json({ error: "Document not found" });
   if (!doc.filePath) return res.status(404).json({ error: "No file has been uploaded for this document yet." });
   try {
-    res.json({ url: await storage.signedUrl(doc.filePath), fileName: doc.fileName || doc.name, mimeType: doc.mimeType });
+    const url = await storage.signedUrl(doc.filePath);
+    // Reads are not normally audited — the trail records changes, not browsing. This
+    // one is the exception: an administrator opening a personal file that belongs to
+    // somebody else is a privileged action on that person's HR record, and it is the
+    // access a subject-access request or a grievance actually asks about. The owner
+    // reading their own file is not recorded; there is nothing to answer for.
+    if (doc.scope === "personal" && doc.assignedToId && doc.assignedToId !== req.user.id) {
+      audit.record(req, {
+        action: "document.personal.opened", entity: "Document", entityId: doc.id,
+        summary: `${req.user.name} opened ${docLabel(doc)} belonging to another member of staff`,
+        after: { type: doc.type, assignedToId: doc.assignedToId },
+      });
+    }
+    res.json({ url, fileName: doc.fileName || doc.name, mimeType: doc.mimeType });
   } catch (e) {
     res.status(502).json({ error: e.message || "Could not create a download link" });
   }
@@ -144,6 +180,12 @@ router.delete("/:id", requireAuth, requirePage("documents"), async (req, res) =>
     // After the row, and best-effort: an orphaned object wastes a little space, but a
     // deleted file with a surviving row would be a document that opens to nothing.
     await storage.removeObject(existing.filePath);
+    audit.record(req, {
+      action: "document.deleted", entity: "Document", entityId: existing.id,
+      summary: `${existing.scope === "personal" ? "Personal" : "Shared"} document ${docLabel(existing)} deleted` + (existing.filePath ? ", and its stored file with it" : ""),
+      before: { type: existing.type, scope: existing.scope, assignedToId: existing.assignedToId, date: existing.date, hadFile: !!existing.filePath },
+      after: null,
+    });
     res.json({ ok: true });
   } catch (e) { res.status(404).json({ error: "Document not found" }); }
 });

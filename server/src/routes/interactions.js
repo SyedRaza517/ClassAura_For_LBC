@@ -11,6 +11,15 @@ const { isRealDate } = require("../validate");
 const email = require("../email");
 const mailFrom = require("../mailFrom");
 const mailAssets = require("../mailAssets");
+const audit = require("../audit");
+
+// An interaction in the audit trail: WHO it concerns and WHAT kind of contact it
+// was, never what was said. A pastoral note reads "safeguarding concern raised by
+// the student's mother"; the audit trail is read on the Settings, Access and Staff
+// pages, by admins who were never granted the PAT log, so the substance stays in the
+// record it belongs to and only the fact of the change is written here.
+const interactionLabel = (row) =>
+  `${row.queryType || "Interaction"} with ${row.student ? `${row.student.firstName} ${row.student.lastName} (${row.student.studentRef})` : "a student"}`;
 
 // DEF-01: PAT interactions contain sensitive wellbeing/absence notes and are an
 // admin-only feature. Guard every route, reads included, against non-admin tokens.
@@ -169,6 +178,12 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
     data: { ...v.data, loggedBy: req.user?.name || null },
     include: { student: true },
   });
+  audit.record(req, {
+    action: "interaction.created", entity: "Interaction", entityId: row.id,
+    summary: `${interactionLabel(row)} logged by ${row.loggedBy || "an administrator"}`,
+    after: { studentId: row.studentId, queryType: row.queryType, date: row.date, followUpDate: row.followUpDate, loggedBy: row.loggedBy },
+  });
+
   res.status(201).json(sInteraction(row));
 
   // Fire-and-forget: email the student a branded record of the interaction. This
@@ -190,11 +205,29 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
   const v = await validate(req.body, true);
   if (v.error) return res.status(400).json({ error: v.error });
   const row = await prisma.interaction.update({ where: { id: existing.id }, data: v.data, include: { student: true } });
+  audit.record(req, {
+    action: "interaction.updated", entity: "Interaction", entityId: row.id,
+    summary: `${interactionLabel(row)} edited — ${audit.changedKeys(existing, { ...existing, ...v.data }).join(", ") || "no fields changed"}`,
+    after: { studentId: row.studentId, queryType: row.queryType, date: row.date, followUpDate: row.followUpDate, fieldsChanged: audit.changedKeys(existing, { ...existing, ...v.data }) },
+  });
   res.json(sInteraction(row));
 });
 
 router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
-  try { await prisma.interaction.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  const existing = await prisma.interaction.findUnique({ where: { id: req.params.id }, include: { student: true } });
+  if (!existing) return res.status(404).json({ error: "Interaction not found" });
+  try {
+    await prisma.interaction.delete({ where: { id: existing.id } });
+    // Removing a pastoral record — including, potentially, a safeguarding one — so
+    // that it leaves no trace is exactly what an audit trail is for.
+    audit.record(req, {
+      action: "interaction.deleted", entity: "Interaction", entityId: existing.id,
+      summary: `${interactionLabel(existing)} deleted, originally logged by ${existing.loggedBy || "an administrator"} on ${existing.date}`,
+      before: { studentId: existing.studentId, queryType: existing.queryType, date: existing.date, followUpDate: existing.followUpDate, loggedBy: existing.loggedBy },
+      after: null,
+    });
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Interaction not found" }); }
 });
 

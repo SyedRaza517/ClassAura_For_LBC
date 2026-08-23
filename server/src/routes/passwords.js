@@ -20,6 +20,7 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requirePage, hashPassword, blockedByRank } = require("../auth");
 const { notifyStaff } = require("../notify");
+const audit = require("../audit");
 
 const MIN_LENGTH = 8;
 const str = (v) => (typeof v === "string" ? v : "");
@@ -100,6 +101,15 @@ router.put("/:kind/:id", async (req, res) => {
       type: "warning",
       message: `Your password was reset by ${req.user?.name || "an administrator"}. If this wasn't expected, tell the college office straight away.`,
     }).catch(() => {});
+    // Setting someone else's password IS taking over their account, however
+    // legitimate the reason. The notification tells the account holder; this is the
+    // record that survives them leaving, and the one an investigation starts from.
+    // The password itself is never passed here — only the fact that it changed.
+    audit.record(req, {
+      action: "staff.password.reset.byAdmin", entity: "Staff", entityId: target.id,
+      summary: `Password for ${target.name} (${target.email}) set by an administrator — all their sessions ended and any outstanding invitation or reset link retired`,
+      after: { sessionsEnded: true, pendingActivation: false, outstandingLinksRetired: true },
+    });
     return res.json({ ok: true, name: target.name, kind });
   }
 
@@ -108,6 +118,11 @@ router.put("/:kind/:id", async (req, res) => {
   await prisma.student.update({
     where: { id: target.id },
     data: { passwordHash, tokenVersion: { increment: 1 }, active: true },
+  });
+  audit.record(req, {
+    action: "student.password.reset.byAdmin", entity: "Student", entityId: target.id,
+    summary: `Password for student ${target.firstName} ${target.lastName} set by an administrator — all their sessions ended and the account re-activated`,
+    after: { sessionsEnded: true, active: true },
   });
   res.json({ ok: true, name: `${target.firstName} ${target.lastName}`.trim(), kind });
 });

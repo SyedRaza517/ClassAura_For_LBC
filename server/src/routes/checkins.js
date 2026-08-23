@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const prisma = require("../db");
+const audit = require("../audit");
 const { sCheckin } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isString, isRealDate, MAX_TEXT, isSite } = require("../validate");
@@ -158,10 +159,23 @@ router.put("/", requireAuth, requirePage("checkin"), async (req, res) => {
   if (!isRealDate(date)) return res.status(400).json({ error: "date must be a valid calendar date in YYYY-MM-DD format" });
   const staffExists = await prisma.staff.findUnique({ where: { id: staffId } });
   if (!staffExists) return res.status(400).json({ error: "Unknown staff member" });
+  // Read first, so the log can say what the record said before an administrator
+  // changed it. This route writes a check-in for ANYONE on ANY date — it is how a
+  // missed clock-in gets fixed, and equally how somebody's hours could be rewritten
+  // after the fact. The staff member's own POST /check-in is not audited: it records
+  // the present, in their own name, and cannot alter history.
+  const prior = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId, date } } });
   const rec = await prisma.checkIn.upsert({
     where: { staffId_date: { staffId, date } },
     update: { timeIn: tIn, timeOut: out || null, ...(site !== undefined ? { site: site || null } : {}) },
     create: { staffId, date, timeIn: tIn, timeOut: out || null, site: site || null },
+  });
+  audit.record(req, {
+    action: prior ? "checkin.amended" : "checkin.created",
+    entity: "CheckIn", entityId: rec.id,
+    summary: `Check-in for ${staffExists.name} on ${date} ${prior ? "amended" : "entered"} by ${req.user.name} — ${rec.timeIn}${rec.timeOut ? " to " + rec.timeOut : " (no check-out)"}`,
+    before: prior ? { timeIn: prior.timeIn, timeOut: prior.timeOut, site: prior.site } : null,
+    after: { staffId, staffName: staffExists.name, date, timeIn: rec.timeIn, timeOut: rec.timeOut, site: rec.site },
   });
   res.json(sCheckin(rec));
 });

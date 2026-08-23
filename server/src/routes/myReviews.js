@@ -12,6 +12,7 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth } = require("../auth");
 const { FORMS, byType, validateAnswers } = require("../reviewForms");
+const audit = require("../audit");
 
 // Signed-in staff only. Students have their own router; a student token is already
 // blocked from everything outside /api/student by requireAuth.
@@ -95,6 +96,17 @@ router.post("/", async (req, res) => {
       origin: "self",
     },
   });
+  // Only the submission. A draft is the author's working copy — they save it
+  // repeatedly while writing, and logging every keystroke-sized save would bury the
+  // one event that matters: the moment the reflection became a record their reviewer
+  // can read and they can no longer change.
+  if (row.status !== "draft") {
+    audit.record(req, {
+      action: "staffReview.submitted", entity: "StaffReview", entityId: row.id,
+      summary: `${row.type} self-reflection submitted by ${row.completedBy || "a lecturer"} — it is now locked to them`,
+      after: { type: row.type, staffId: row.staffId, status: row.status, origin: "self" },
+    });
+  }
   res.status(201).json(sMine(row));
 });
 
@@ -122,6 +134,14 @@ router.put("/:id", async (req, res) => {
     where: { id: existing.id },
     data: { status, ...denormalise(a.answers), answers: JSON.stringify(a.answers) },
   });
+  if (existing.status === "draft" && row.status !== "draft") {
+    audit.record(req, {
+      action: "staffReview.submitted", entity: "StaffReview", entityId: row.id,
+      summary: `${row.type} self-reflection submitted by ${row.completedBy || "a lecturer"} — it is now locked to them`,
+      before: { status: "draft" },
+      after: { type: row.type, staffId: row.staffId, status: row.status, origin: "self" },
+    });
+  }
   res.json(sMine(row));
 });
 

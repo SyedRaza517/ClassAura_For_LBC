@@ -91,8 +91,11 @@ model AuditLog {
   id        String   @id @default(cuid())
   at        DateTime @default(now())
 
-  /// staff | platform | system — which tier acted. A platform operator is not a
-  /// Staff row, so actorId alone would be ambiguous.
+  /// staff | student | applicant | platform | system | anonymous — which tier acted.
+  /// A platform operator is not a Staff row, and a Student id is drawn from a different
+  /// table, so actorId alone would be ambiguous. "anonymous" is a failed sign-in or a
+  /// reset asked for on an address that may not have an account: there is no id, but
+  /// the attempt still has to be counted.
   actorType String
   actorId   String?
   /// Denormalised on purpose: an account can be deleted, and the log still has to

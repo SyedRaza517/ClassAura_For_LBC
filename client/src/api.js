@@ -178,6 +178,20 @@ export const api = {
   saveIntegration: (provider, body) => request(`/integrations/${provider}`, { method: "PUT", body }),
   removeIntegration: (provider) => request(`/integrations/${provider}`, { method: "DELETE" }),
   changePassword: (currentPassword, newPassword) => request("/auth/change-password", { method: "PUT", body: { currentPassword, newPassword } }),
+
+  // The audit trail. Read-only by design — the API has no write endpoint, because a
+  // log the people it records can edit is not evidence. Cursor-paged rather than
+  // offset-paged: rows keep arriving while somebody is reading, and an offset would
+  // quietly repeat or skip entries as the list shifts under them.
+  audit: (params = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== "" && v != null) q.set(k, v);
+    const s = q.toString();
+    return request(`/audit${s ? "?" + s : ""}`);
+  },
+  // The verbs actually present, for the filter — built from the data rather than a
+  // hardcoded list that would drift from what is really being recorded.
+  auditActions: () => request("/audit/actions"),
   // forgotten password
   forgotPassword: (email) => request("/auth/forgot-password", { method: "POST", body: { email } }),
   verifyResetToken: (token) => request("/auth/reset-password/verify", { method: "POST", body: { token } }),

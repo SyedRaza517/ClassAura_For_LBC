@@ -3,6 +3,7 @@
 // pages that already let someone manage those.
 const router = require("express").Router();
 const prisma = require("../db");
+const audit = require("../audit");
 const { requireAuth, requireAnyPage } = require("../auth");
 const moodle = require("../moodle");
 
@@ -79,6 +80,18 @@ router.post("/sync", requireAnyPage(SYNC_PAGES), async (req, res) => {
 
   // runSync already records the failure against the run row; catching here stops it
   // surfacing as an unhandled rejection now that nobody awaits this promise.
+  // A sync creates students, units and grades from an external system, so starting
+  // one by hand is a privileged action even though the caller writes nothing directly.
+  // Recorded at the point it is STARTED, because that is the decision a person made —
+  // the outcome lands in MoodleSync, which the status endpoint reads. Nothing about
+  // the connection itself is written: the token lives in the tenant's integration
+  // record and has no business in a log an administrator can export.
+  audit.record(req, {
+    action: "moodle.sync.started", entity: "MoodleSync",
+    summary: `Moodle sync started manually by ${req.user?.name || req.user?.email || "an administrator"} — it may create or update students, units and grades`,
+    after: { mode: "manual" },
+  });
+
   moodle
     .runSync({ startedBy: req.user?.name || req.user?.email || null, mode: "manual" })
     .catch((e) => console.error("[moodle] sync failed:", e.message));

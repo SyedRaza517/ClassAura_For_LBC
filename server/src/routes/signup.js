@@ -13,6 +13,7 @@ const { notifyStaff, notifyAdmins } = require("../notify");
 const { isInt32, MAX_ALLOWANCE_DAYS, isHomeSite } = require("../validate");
 const { notifyExistingAccount } = require("../invite");
 const { localDate } = require("../clock");
+const audit = require("../audit");
 
 const PALETTE = ["#1a3a8f", "#9e1b32", "#0d7a5f", "#b45309", "#6d28d9", "#0e7490", "#be123c"];
 const initialsOf = (name) => name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -260,6 +261,12 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
 
   if (status === "rejected") {
     const updated = await prisma.signupRequest.update({ where: { id: reqRow.id }, data: decided });
+    audit.record(req, {
+      action: "signup.rejected", entity: "SignupRequest", entityId: updated.id,
+      summary: `Sign-up request from ${reqRow.name} (${reqRow.email}) rejected by ${req.user.name}` + (updated.note ? ` — "${updated.note}"` : ""),
+      before: { status: "pending" },
+      after: { status: "rejected", kind: reqRow.kind, note: updated.note },
+    });
     return res.json({ request: sSignup(updated), staff: null });
   }
 
@@ -304,6 +311,12 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
             prisma.student.create({ data: { firstName: parts[0] || reqRow.name, lastName: parts.slice(1).join(" ") || "", studentRef: reqRow.collegeId || ("S" + Date.now()), email: reqRow.email, initials: initialsOf(reqRow.name), colour: colourFor(reqRow.email), active: true, passwordHash: reqRow.passwordHash } }),
             prisma.signupRequest.update({ where: { id: reqRow.id }, data: decided })]; })();
       const [savedStudent, updatedReq] = await prisma.$transaction(ops);
+      audit.record(req, {
+        action: "signup.approved", entity: "Student", entityId: savedStudent.id,
+        summary: `Student sign-up from ${reqRow.name} (${reqRow.email}) approved by ${req.user.name} — ` + (student ? "existing record claimed" : "a new student record was created"),
+        before: { status: "pending", existingRecord: !!student },
+        after: { status: "approved", studentRef: savedStudent.studentRef, email: savedStudent.email, active: true, allSessionsEnded: !!student },
+      });
       return res.status(201).json({ request: sSignup(updatedReq), student: sStudent(savedStudent) });
     } catch (e) {
       // P2002 can fire on either unique key, so name both rather than guessing email.
@@ -350,6 +363,16 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
       type: "success",
       message: `Your Staff Hub account has been approved. You can now sign in with your email and password.`,
       link: "home",
+    });
+
+    // An outsider becoming a member of staff with a working login. The approval is
+    // the decision that matters, so it is recorded against the account it created
+    // rather than against the request that asked for it.
+    audit.record(req, {
+      action: "signup.approved", entity: "Staff", entityId: staff.id,
+      summary: `Staff sign-up from ${staff.name} (${staff.email}) approved by ${req.user.name} — account created with ${days} days' allowance`,
+      before: { status: "pending" },
+      after: { status: "approved", name: staff.name, email: staff.email, jobTitle: staff.jobTitle, dept: staff.dept, site: staff.site, allowance: days, accountRole: staff.accountRole },
     });
 
     res.status(201).json({ request: sSignup(updated), staff: sStaff(staff) });

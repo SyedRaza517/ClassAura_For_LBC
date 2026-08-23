@@ -9,6 +9,7 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requirePage } = require("../auth");
+const audit = require("../audit");
 
 router.use(requireAuth, requirePage("ism"));
 
@@ -84,6 +85,13 @@ router.post("/", async (req, res) => {
   data.interviewerName = req.user?.name || req.user?.email || null;
   const row = await prisma.ism.create({ data });
   await mirrorOutcome(row.admissionId);
+  // The interview decision, not the interview notes. "Admitted?" is mirrored onto the
+  // linked application, so this row is a decision about whether someone gets a place.
+  audit.record(req, {
+    action: "ism.created", entity: "Ism", entityId: row.id,
+    summary: `ISM recorded for ${row.name || "a linked applicant"} by ${row.interviewerName || "an interviewer"}` + (row.admitted ? ` — admitted: ${row.admitted}` : ""),
+    after: { name: row.name, admissionId: row.admissionId, admitted: row.admitted, interviewDate: row.interviewDate, interviewerName: row.interviewerName },
+  });
   res.status(201).json(row);
 });
 
@@ -100,6 +108,17 @@ router.put("/:id", async (req, res) => {
   // The link may have moved, so refresh the outcome on BOTH the old and new applicant.
   await mirrorOutcome(existing.admissionId);
   await mirrorOutcome(row.admissionId);
+  // Field names for the free-text answers (see audit.changedKeys), but the outcome
+  // and the applicant link in full: changing either moves a decision on somebody's
+  // application, and re-linking moves it onto a different applicant entirely.
+  audit.record(req, {
+    action: "ism.updated", entity: "Ism", entityId: row.id,
+    summary: `ISM for ${row.name || "a linked applicant"} edited — ${audit.changedKeys(pick(existing), pick(row)).join(", ") || "no answers changed"}` +
+      (existing.admitted !== row.admitted ? ` — outcome changed from ${existing.admitted || "none"} to ${row.admitted || "none"}` : "") +
+      (existing.admissionId !== row.admissionId ? " — relinked to a different applicant" : ""),
+    before: { admitted: existing.admitted, admissionId: existing.admissionId },
+    after: { admitted: row.admitted, admissionId: row.admissionId, fieldsChanged: audit.changedKeys(pick(existing), pick(row)) },
+  });
   res.json(row);
 });
 
@@ -110,6 +129,12 @@ router.delete("/:id", async (req, res) => {
   await prisma.ism.delete({ where: { id: req.params.id } });
   // Their outcome may now come from an earlier ISM, or none — recompute it.
   await mirrorOutcome(admissionId);
+  audit.record(req, {
+    action: "ism.deleted", entity: "Ism", entityId: existing.id,
+    summary: `ISM for ${existing.name || "a linked applicant"} deleted` + (existing.admitted ? ` — its outcome (${existing.admitted}) no longer counts towards the applicant's` : ""),
+    before: { name: existing.name, admissionId, admitted: existing.admitted, interviewDate: existing.interviewDate, interviewerName: existing.interviewerName },
+    after: null,
+  });
   res.json({ ok: true });
 });
 

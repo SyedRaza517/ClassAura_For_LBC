@@ -21,6 +21,28 @@ const RESERVED_SLUGS = new Set(["www", "api", "app", "admin", "staging", "platfo
 
 const clean = (v) => (typeof v === "string" ? v.trim() : "");
 
+/* ------------------------------------------------------ platform-tier audit --- */
+//
+// Some events on this router have no institution to belong to: an operator signing
+// in, an operator account being created, an institution being deleted. AuditLog rows
+// are tenant-scoped and cascade-delete with their tenant, so those three cannot live
+// there — the first two have no tenantId at all, and the third would be destroyed by
+// the very action it records.
+//
+// They go to the process log instead, in one greppable shape, so a deployment that
+// ships logs somewhere central (which the readiness plan requires) captures them.
+// Anything that DOES concern one institution still uses audit.record with an explicit
+// tenantId — see tenant.created and tenant.suspended below.
+function platformEvent(req, action, detail) {
+  console.warn(
+    "[platform-audit] " + action +
+    " by=" + ((req.platformAdmin && req.platformAdmin.email) || detail.actorEmail || "anonymous") +
+    " ip=" + (req.ip || "?") +
+    " at=" + new Date().toISOString() +
+    " " + Object.entries(detail).filter(([k]) => k !== "actorEmail").map(([k, v]) => k + "=" + v).join(" ")
+  );
+}
+
 /* ---------------------------------------------------------- rate limiting ----- */
 //
 // This is the highest-privilege login in the product: a platform operator can read,
@@ -90,12 +112,16 @@ router.post("/login", async (req, res) => {
   if (!ok) {
     const left = plRecordFailure(k, PL_MAX);
     plRecordFailure(ak, PL_MAX * 3);
+    // Failed attempts against the account that owns every customer's data are the
+    // single most important thing on this router to be able to count afterwards.
+    platformEvent(req, "platform.signin.failed", { actorEmail: email, attemptsLeft: left });
     // The count is returned but the reason is not — still one message for unknown
     // address and wrong password alike.
     return res.status(401).json({ error: "Invalid email or password" + (left > 0 && left <= 2 ? ` (${left} attempt${left === 1 ? "" : "s"} left)` : "") });
   }
   plClear(req, email);
 
+  platformEvent(req, "platform.signin", { actorEmail: admin.email, adminId: admin.id });
   await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } }));
   res.json({ token: signPlatformToken(admin), admin: { id: admin.id, email: admin.email, name: admin.name } });
 });
@@ -215,12 +241,11 @@ router.delete("/tenants/:id", requirePlatformAdmin, async (req, res) => {
   if (clean(req.body?.confirm) !== tenant.slug) {
     return res.status(400).json({ error: `Type the institution's slug (${tenant.slug}) to confirm deletion` });
   }
-  // Recorded against the platform's own record-keeping BEFORE the delete: the
-  // cascade removes this institution's audit rows along with everything else, so a
-  // row written here would be destroyed by the very action it describes. Deliberately
-  // console — this is the one event the database cannot keep for us.
-  console.warn("[audit] tenant.deleted slug=" + tenant.slug + " id=" + tenant.id +
-    " by=" + (req.platformAdmin && req.platformAdmin.email) + " at=" + new Date().toISOString());
+  // Recorded BEFORE the delete: the cascade removes this institution's audit rows
+  // along with everything else, so a row written to AuditLog here would be destroyed
+  // by the very action it describes. This is the one event the database cannot keep
+  // for us, which is what platformEvent is for.
+  platformEvent(req, "tenant.deleted", { slug: tenant.slug, tenantId: tenant.id });
   await crossTenant(() => prisma.tenant.delete({ where: { id: tenant.id } }));
   forget(tenant.slug);
   res.json({ deleted: true, slug: tenant.slug });
@@ -247,6 +272,9 @@ router.post("/admins", requirePlatformAdmin, async (req, res) => {
   const created = await crossTenant(() => prisma.platformAdmin.create({
     data: { email, name, passwordHash: bcrypt.hashSync(password, 10) },
   }));
+  // The most privileged account the product can issue: it reads, suspends and
+  // deletes every customer. No tenant owns it, so it cannot be an AuditLog row.
+  platformEvent(req, "platform.operator.created", { newOperator: created.email, newOperatorId: created.id });
   res.status(201).json({ id: created.id, email: created.email, name: created.name });
 });
 

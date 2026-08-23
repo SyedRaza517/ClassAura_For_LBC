@@ -10,6 +10,7 @@ const DUMMY_HASH = hashPassword("timing-equalizer-not-a-real-password");
 const { sendEmail } = require("../email");
 const { notifyStaff, notifyAdmins } = require("../notify");
 const totp = require("../totp");
+const audit = require("../audit");
 
 // --- Two-factor challenge tokens ---
 // Between "password accepted" and "second factor accepted" the caller holds a
@@ -222,6 +223,15 @@ router.post("/login", async (req, res) => {
     // if (TOTP_ENFORCED && staff.mustSetupTotp) {
     //   return res.json({ totpSetupRequired: true, challengeToken: signChallenge(staff, "setup"), email: staff.email, name: staff.name });
     // }
+    // Recorded at the point a SESSION is issued, not at the point the password was
+    // accepted — on a 2FA account those are different moments, and only the second
+    // one means somebody got in.
+    audit.record(req, {
+      actor: audit.asActor(staff, "staff"),
+      action: "auth.signin", entity: "Staff", entityId: staff.id,
+      summary: `${staff.name} (${staff.email}) signed in`,
+      after: { method: "password" },
+    });
     return res.json({ token: signToken(staff), user: sStaff(staff) });
   }
 
@@ -231,6 +241,12 @@ router.post("/login", async (req, res) => {
   const student = await prisma.student.findFirst({ where: { email: emailLc } });
   if (student && student.passwordHash && student.active !== false && verifyPassword(password, student.passwordHash)) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
+    audit.record(req, {
+      actor: audit.asActor(student, "student"),
+      action: "auth.signin", entity: "Student", entityId: student.id,
+      summary: `Student ${student.firstName} ${student.lastName} (${student.studentRef}) signed in`,
+      after: { method: "password" },
+    });
     return res.json({ token: signStudentToken(student), user: { ...sStudent(student), kind: "student" } });
   }
 
@@ -242,6 +258,12 @@ router.post("/login", async (req, res) => {
   });
   if (applicant && applicant.active !== false && verifyPassword(password, applicant.passwordHash)) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
+    audit.record(req, {
+      actor: audit.asActor(applicant, "applicant"),
+      action: "auth.signin", entity: "Admission", entityId: applicant.id,
+      summary: `Applicant ${applicant.email} signed in to the applicant portal`,
+      after: { method: "password" },
+    });
     return res.json({ token: signApplicantToken(applicant), user: { ...sApplicant(applicant), kind: "applicant" } });
   }
 
@@ -258,6 +280,16 @@ router.post("/login", async (req, res) => {
   if (s.count >= MAX_ATTEMPTS) s.lockedUntil = now + LOCK_MS;
   acct.count += 1;
   if (acct.count >= MAX_ACCOUNT_ATTEMPTS) acct.lockedUntil = now + LOCK_MS;
+  // The failures are the half of the sign-in record that matters to a security
+  // reviewer, and the address is written down even when no account holds it — an
+  // attempt against an address that does not exist is itself the finding. Volume is
+  // bounded by the two counters above, which lock the pair out after a handful.
+  audit.record(req, {
+    actor: audit.anonymous(emailLc),
+    action: "auth.signin.failed",
+    summary: `Failed sign-in for ${emailLc}` + (s.lockedUntil ? " — address now locked out for 15 minutes" : ` (attempt ${s.count})`),
+    after: { attemptsFromAddress: s.count, attemptsAgainstAccount: acct.count, lockedOut: !!s.lockedUntil },
+  });
   const left = Math.max(0, MAX_ATTEMPTS - s.count);
   return res.status(401).json({ error: s.lockedUntil ? "Too many failed attempts. Account locked for 15 minutes." : `Invalid email or password${left <= 3 ? ` (${left} attempt${left === 1 ? "" : "s"} left)` : ""}` });
 });
@@ -335,6 +367,12 @@ router.post("/totp/enable", async (req, res) => {
   // account", not "enrolment is outstanding". Clearing it here would let an
   // app-signup account drop its second factor again via DELETE /totp.
   const updated = await prisma.staff.update({ where: { id: staff.id }, data: { totpEnabled: true } });
+  audit.record(req, {
+    actor: audit.asActor(updated, "staff"),
+    action: "auth.totp.enabled", entity: "Staff", entityId: updated.id,
+    summary: `${updated.name} (${updated.email}) turned two-step verification on`,
+    before: { totpEnabled: false }, after: { totpEnabled: true },
+  });
   res.json({ token: signToken(updated), user: sStaff(updated) });
 });
 
@@ -352,6 +390,12 @@ router.post("/totp/verify", async (req, res) => {
     return res.status(400).json({ error: "That code isn't right. Check your authenticator app and try again." });
   }
   clearCodeAttempts(staff.id);
+  audit.record(req, {
+    actor: audit.asActor(staff, "staff"),
+    action: "auth.signin", entity: "Staff", entityId: staff.id,
+    summary: `${staff.name} (${staff.email}) signed in`,
+    after: { method: "password + authenticator code" },
+  });
   res.json({ token: signToken(staff), user: sStaff(staff) });
 });
 
@@ -366,6 +410,14 @@ router.delete("/totp", requireAuth, async (req, res) => {
   // must not hard-block an account from removing an authenticator it can't use.
   if (TOTP_ENFORCED && staff.mustSetupTotp) return res.status(400).json({ error: "Two-factor authentication is required for this account" });
   const updated = await prisma.staff.update({ where: { id: staff.id }, data: { totpEnabled: false, totpSecret: null } });
+  // A privileged action even though it only affects the caller's own account: it
+  // lowers the bar for getting into that account, and if it was not the account
+  // holder who did it, this row is how anyone finds out.
+  audit.record(req, {
+    action: "auth.totp.disabled", entity: "Staff", entityId: updated.id,
+    summary: `${updated.name} (${updated.email}) turned two-step verification off`,
+    before: { totpEnabled: true }, after: { totpEnabled: false },
+  });
   res.json({ ok: true, user: sStaff(updated) });
 });
 
@@ -382,6 +434,11 @@ router.put("/change-password", requireAuth, async (req, res) => {
     if (!student || !student.passwordHash || !verifyPassword(currentPassword, student.passwordHash)) return res.status(400).json({ error: "Current password is incorrect" });
     if (verifyPassword(newPassword, student.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
     const updated = await prisma.student.update({ where: { id: student.id }, data: { passwordHash: hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    audit.record(req, {
+      action: "auth.password.changed", entity: "Student", entityId: updated.id,
+      summary: `Student ${updated.firstName} ${updated.lastName} (${updated.studentRef}) changed their own password`,
+      after: { otherSessionsEnded: true },
+    });
     return res.json({ ok: true, user: { ...sStudent(updated), kind: "student" }, token: signStudentToken(updated) });
   }
 
@@ -391,6 +448,11 @@ router.put("/change-password", requireAuth, async (req, res) => {
     if (!applicant || !applicant.passwordHash || !verifyPassword(currentPassword, applicant.passwordHash)) return res.status(400).json({ error: "Current password is incorrect" });
     if (verifyPassword(newPassword, applicant.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
     const updated = await prisma.admission.update({ where: { id: applicant.id }, data: { passwordHash: hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    audit.record(req, {
+      action: "auth.password.changed", entity: "Admission", entityId: updated.id,
+      summary: `Applicant ${updated.email} changed their own password`,
+      after: { otherSessionsEnded: true },
+    });
     return res.json({ ok: true, user: { ...sApplicant(updated), kind: "applicant" }, token: signApplicantToken(updated) });
   }
 
@@ -405,6 +467,11 @@ router.put("/change-password", requireAuth, async (req, res) => {
   });
   // Any outstanding "forgot password" link is now meaningless — retire it.
   await prisma.passwordReset.updateMany({ where: { staffId: updated.id, usedAt: null }, data: { usedAt: new Date() } });
+  audit.record(req, {
+    action: "auth.password.changed", entity: "Staff", entityId: updated.id,
+    summary: `${updated.name} (${updated.email}) changed their own password`,
+    after: { otherSessionsEnded: true, outstandingResetLinksRetired: true },
+  });
   res.json({ ok: true, user: sStaff(updated), token: signToken(updated) });
 });
 
@@ -465,6 +532,17 @@ router.post("/invite/accept", async (req, res) => {
     prisma.passwordReset.updateMany({ where: { staffId: row.staffId, purpose: "invite", usedAt: null }, data: { usedAt: new Date() } }),
   ]);
 
+  // The moment a colleague's account becomes usable. Pairs with the staff.invited
+  // row an administrator generated days earlier, so the gap between "an account was
+  // created for this person" and "this person took it up" is visible.
+  audit.record(req, {
+    actor: audit.asActor(row.staff, "staff"),
+    action: "staff.invite.accepted", entity: "Staff", entityId: row.staffId,
+    summary: `${row.staff.name} (${row.staff.email}) accepted their invitation and activated their account`,
+    before: { pendingActivation: true },
+    after: { pendingActivation: false },
+  });
+
   // No session is returned — they sign in fresh, exactly like a password reset.
   res.json({ ok: true, email: row.staff.email, message: "Your account is active. You can now sign in." });
 });
@@ -492,6 +570,11 @@ router.delete("/account", requireAuth, async (req, res) => {
     if (String(confirm || "").trim().toUpperCase() !== "DELETE") return res.status(400).json({ error: 'Type DELETE to confirm' });
     if (!password || !student.passwordHash || !verifyPassword(password, student.passwordHash)) return res.status(400).json({ error: "Password is incorrect" });
     await prisma.student.update({ where: { id: student.id }, data: { passwordHash: null, tokenVersion: { increment: 1 } } });
+    audit.record(req, {
+      action: "student.account.removed", entity: "Student", entityId: student.id,
+      summary: `Student ${student.firstName} ${student.lastName} (${student.studentRef}) removed their own app sign-in — college records kept`,
+      after: { canSignIn: false, academicRecordRetained: true },
+    });
     notifyAdmins({ type: "info", message: `Student ${student.firstName} ${student.lastName} (${student.studentRef}) removed their app account.` }).catch(() => {});
     return res.json({ ok: true, message: "Your app account has been removed. Your college records are unaffected." });
   }
@@ -533,6 +616,17 @@ router.delete("/account", requireAuth, async (req, res) => {
   // and password-reset tokens; assigned documents are detached, not destroyed.
   // The sign-up request holds the same email and a password hash, so it goes too —
   // otherwise "delete my account" would leave personal data behind.
+  // Recorded BEFORE the delete, while the row still exists to describe — and the
+  // audit row survives it, which is the point: a staff record disappearing with no
+  // trace of who removed it is the gap an audit trail exists to close. actorEmail is
+  // denormalised on the log for exactly this case.
+  audit.record(req, {
+    action: "staff.account.deleted", entity: "Staff", entityId: staff.id,
+    summary: `${name} (${email}) deleted their own account — check-ins, leave, adjustments and notifications went with it`,
+    before: { name, email, jobTitle: staff.jobTitle, dept: staff.dept, accountRole: staff.accountRole },
+    after: null,
+  });
+
   await prisma.$transaction([
     prisma.signupRequest.deleteMany({ where: { email } }),
     prisma.staff.delete({ where: { id: staff.id } }),
@@ -632,6 +726,18 @@ router.post("/forgot-password", async (req, res) => {
     // Fire-and-forget: the reset token is already saved, and the reply is the same
     // generic message regardless. Never make the user wait on (or be affected by) mail.
     sendEmail(staff.email, "Reset your Staff Hub password", text, { html }).catch(() => {});
+
+    // Only on the branch where an account exists. The endpoint's whole design is to
+    // give the same answer either way, and writing a row for an address that has no
+    // account would turn the audit trail into the enumeration oracle the generic
+    // reply is there to prevent — a failed sign-in is already recorded above, which
+    // is where attempts against unknown addresses belong.
+    audit.record(req, {
+      actor: audit.asActor(staff, "staff"),
+      action: "auth.password.reset.requested", entity: "Staff", entityId: staff.id,
+      summary: `Password reset link sent to ${staff.email} — valid for 30 minutes, single use`,
+      after: { requiresAuthenticatorCode: needsCode },
+    });
   }
 
   res.json({ ok: true, message: RESET_SENT_MESSAGE });
@@ -715,6 +821,13 @@ router.post("/reset-password", async (req, res) => {
   // that leaves the lockout in place looks to the user like it silently failed.
   clearLockoutsFor(staff.email);
   clearCodeAttempts(staff.id);
+
+  audit.record(req, {
+    actor: audit.asActor(staff, "staff"),
+    action: "auth.password.reset", entity: "Staff", entityId: staff.id,
+    summary: `Password for ${staff.email} reset via emailed link` + (totpRequiredFor(staff) ? ", with an authenticator code" : ""),
+    after: { allSessionsEnded: true, lockoutCleared: true, pendingActivation: false },
+  });
 
   notifyStaff(staff.id, {
     type: "success",

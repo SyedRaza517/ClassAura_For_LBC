@@ -6,6 +6,13 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requireAdmin, requirePage } = require("../auth");
 const { FORMS, byType, validateAnswers } = require("../reviewForms");
+const audit = require("../audit");
+
+// A review in the audit trail: whose it is, which form, what state it is in. Never
+// the answers — a performance review is candid commentary about a named colleague,
+// and the audit trail is read on the Settings, Access and Staff pages by admins who
+// were never granted this one.
+const reviewLabel = (row) => `${row.type || "Review"} for ${row.staff ? `${row.staff.name} (${row.staff.email})` : "a colleague"}`;
 
 router.use(requireAuth, requirePage("staffreviews"));
 
@@ -129,6 +136,11 @@ router.post("/", requireAdmin, async (req, res) => {
     },
     include: { staff: true },
   });
+  audit.record(req, {
+    action: "staffReview.created", entity: "StaffReview", entityId: row.id,
+    summary: `${reviewLabel(row)} created as ${row.status} by ${row.completedBy || "an administrator"}`,
+    after: { type: row.type, staffId: row.staffId, status: row.status, dateCompleted: row.dateCompleted, completedBy: row.completedBy },
+  });
   res.status(201).json(sReview(row));
 });
 
@@ -163,11 +175,33 @@ router.put("/:id", requireAdmin, async (req, res) => {
     Object.assign(data, denormalise(form, a.answers, req.body));
   }
   const row = await prisma.staffReview.update({ where: { id: existing.id }, data, include: { staff: true } });
+  // Whether the answers moved is recorded; what they now say is not. The status is
+  // the part that matters here — submitting a review files it, and a filed review
+  // locks.
+  audit.record(req, {
+    action: "staffReview.updated", entity: "StaffReview", entityId: row.id,
+    summary: `${reviewLabel(row)} edited` + (existing.status !== row.status ? ` — ${existing.status} → ${row.status}` : "") + (data.answers !== undefined ? ", answers changed" : ""),
+    before: { status: existing.status, dateCompleted: existing.dateCompleted },
+    after: { status: row.status, dateCompleted: row.dateCompleted, answersChanged: data.answers !== undefined },
+  });
   res.json(sReview(row));
 });
 
 router.delete("/:id", requireAdmin, async (req, res) => {
-  try { await prisma.staffReview.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  const existing = await prisma.staffReview.findUnique({ where: { id: req.params.id }, include: { staff: true } });
+  if (!existing) return res.status(404).json({ error: "Review not found" });
+  try {
+    await prisma.staffReview.delete({ where: { id: existing.id } });
+    // A filed appraisal disappearing is the kind of thing an employment dispute turns
+    // on, so the fact of the deletion outlives the record itself.
+    audit.record(req, {
+      action: "staffReview.deleted", entity: "StaffReview", entityId: existing.id,
+      summary: `${reviewLabel(existing)} deleted — it was ${existing.status}, completed by ${existing.completedBy || "an administrator"}`,
+      before: { type: existing.type, staffId: existing.staffId, status: existing.status, dateCompleted: existing.dateCompleted, completedBy: existing.completedBy },
+      after: null,
+    });
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Review not found" }); }
 });
 

@@ -5,6 +5,7 @@ const prisma = require("../db");
 const { sStudentQuery } = require("../serializers");
 const { requireAuth, requireAnyPage } = require("../auth");
 const { localDate } = require("../clock");
+const audit = require("../audit");
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 const guard = requireAnyPage(["studentqueries"]);
@@ -29,6 +30,15 @@ router.put("/:id/respond", requireAuth, guard, async (req, res) => {
     where: { id: req.params.id },
     data: { response, status: "answered", respondedBy: req.user.name, respondedAt: localDate() },
     include: { student: true },
+  });
+  // The answer a student is given by the college, in their own name. The text itself
+  // stays on the query — a reply can concern welfare or finance, and the audit trail
+  // is read on pages this router's gate keeps separate from it.
+  audit.record(req, {
+    action: "studentQuery.answered", entity: "StudentQuery", entityId: updated.id,
+    summary: `Query from ${updated.student ? `${updated.student.firstName} ${updated.student.lastName} (${updated.student.studentRef})` : "a student"} answered by ${req.user.name}` + (existing.status === "answered" ? " — replacing an earlier answer" : ""),
+    before: { status: existing.status, respondedBy: existing.respondedBy, respondedAt: existing.respondedAt },
+    after: { status: "answered", respondedBy: req.user.name, respondedAt: updated.respondedAt, studentId: updated.studentId },
   });
   res.json(sStudentQuery(updated));
 });

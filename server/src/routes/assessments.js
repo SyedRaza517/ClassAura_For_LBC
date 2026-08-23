@@ -5,6 +5,7 @@ const prisma = require("../db");
 const { sAssessment, sGrade, sStudent, sUnit } = require("../serializers");
 const { requireAuth, requireAdmin, requirePage, requireAnyPage } = require("../auth");
 const { isRealDate } = require("../validate");
+const audit = require("../audit");
 
 // The Executive Dashboard is its own admin page, so its summary endpoint accepts
 // EITHER "executive" or "assessments". Registered before the router-wide gate below,
@@ -93,6 +94,11 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
   const v = await validateAssessment(req.body, false);
   if (v.error) return res.status(400).json({ error: v.error });
   const a = await prisma.assessment.create({ data: { type: "Assignment", maxMarks: 100, ...v.data }, include: { unit: { select: { code: true, name: true } }, _count: { select: { grades: true } } } });
+  audit.record(req, {
+    action: "assessment.created", entity: "Assessment", entityId: a.id,
+    summary: `Assessment "${a.title}" created on ${a.unit?.code || "a unit"} — ${a.type}, out of ${a.maxMarks}`,
+    after: { title: a.title, type: a.type, maxMarks: a.maxMarks, unitId: a.unitId, dueDate: a.dueDate },
+  });
   res.status(201).json(sAssessment(a));
 });
 
@@ -112,11 +118,33 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
     }
   }
   const a = await prisma.assessment.update({ where: { id: existing.id }, data: v.data, include: { unit: { select: { code: true, name: true } }, _count: { select: { grades: true } } } });
+  // maxMarks in particular: it is the denominator under every mark already awarded,
+  // so moving it moves every percentage, band and pass rate derived from this
+  // assessment without touching a single grade row.
+  audit.record(req, {
+    action: "assessment.updated", entity: "Assessment", entityId: a.id,
+    summary: `Assessment "${a.title}" updated` + (v.data.maxMarks != null && v.data.maxMarks !== existing.maxMarks ? ` — maximum changed from ${existing.maxMarks} to ${a.maxMarks}, which re-scores every mark already awarded` : ""),
+    before: { title: existing.title, type: existing.type, maxMarks: existing.maxMarks, dueDate: existing.dueDate },
+    after: { title: a.title, type: a.type, maxMarks: a.maxMarks, dueDate: a.dueDate },
+  });
   res.json(sAssessment(a));
 });
 
 router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
-  try { await prisma.assessment.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  // Read first, so the log can say what went. Deleting an assessment takes every mark
+  // awarded under it, which is student academic record, not scaffolding.
+  const existing = await prisma.assessment.findUnique({ where: { id: req.params.id }, include: { unit: { select: { code: true } }, _count: { select: { grades: true } } } });
+  if (!existing) return res.status(404).json({ error: "Assessment not found" });
+  try {
+    await prisma.assessment.delete({ where: { id: existing.id } });
+    audit.record(req, {
+      action: "assessment.deleted", entity: "Assessment", entityId: existing.id,
+      summary: `Assessment "${existing.title}" on ${existing.unit?.code || "a unit"} deleted, taking ${existing._count.grades} awarded mark(s) with it`,
+      before: { title: existing.title, type: existing.type, maxMarks: existing.maxMarks, unitId: existing.unitId, gradesDestroyed: existing._count.grades },
+      after: null,
+    });
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Assessment not found" }); }
 });
 
@@ -234,6 +262,11 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
     if (stray.length) return res.status(400).json({ error: `${stray.length} student${stray.length === 1 ? " is" : "s are"} not enrolled on this unit` });
   }
   const gradedBy = req.user?.name || null;
+  // The marks as they stand, read before the write. A grade save is a bulk upsert, so
+  // without this snapshot the log could say a mark was set but never what it replaced
+  // — and "it used to be 62" is the whole substance of a marking dispute.
+  const priorRows = await prisma.assessmentGrade.findMany({ where: { assessmentId: a.id }, select: { studentId: true, marks: true } });
+  const prior = new Map(priorRows.map((g) => [g.studentId, g.marks]));
   await prisma.$transaction(rows.map((r) => (
     r.marks === null
       ? prisma.assessmentGrade.deleteMany({ where: { assessmentId: a.id, studentId: r.studentId } })
@@ -248,6 +281,29 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
           update: { marks: r.marks, gradedBy, gradedAt: new Date(), source: "manual" },
         })
   )));
+  // One row for the save, carrying only the marks that actually MOVED. A register
+  // screen re-submits every student on the unit whether or not anything changed, so
+  // logging the payload would bury one corrected mark under forty unchanged ones.
+  // Keyed by student id: audit.js caps the object at 40 keys, which is more than a
+  // real marking session touches and stops a 500-row bulk import from writing a
+  // 500-key blob into the log.
+  const before = {}, after = {};
+  for (const r of rows) {
+    const was = prior.has(r.studentId) ? prior.get(r.studentId) : null;
+    if (was === r.marks) continue;
+    before[r.studentId] = was;
+    after[r.studentId] = r.marks;
+  }
+  const moved = Object.keys(after).length;
+  if (moved) {
+    const cleared = Object.values(after).filter((m) => m === null).length;
+    audit.record(req, {
+      action: "assessment.grades.saved", entity: "Assessment", entityId: a.id,
+      summary: `${moved} mark(s) changed on "${a.title}" (out of ${a.maxMarks}) by ${gradedBy || "an administrator"}` + (cleared ? `, ${cleared} of them cleared` : ""),
+      before, after,
+    });
+  }
+
   const saved = await prisma.assessmentGrade.findMany({ where: { assessmentId: a.id } });
   res.json({ ok: true, saved: saved.length });
 });

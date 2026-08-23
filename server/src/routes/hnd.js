@@ -18,6 +18,11 @@ function requireTenant() {
 const sqlTenant = () => "'" + String(requireTenant()).replace(/'/g, "''") + "'";
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage } = require("../auth");
+const audit = require("../audit");
+
+// A student named for a log line: the identifiers a registry needs to find the
+// person, and nothing else off the record.
+const studentLabel = (s) => `${s.firstName} ${s.lastName} (${s.studentRef})`;
 // Mutating registers/units/courses needs one of the sections that manages them.
 // (Previously these used requireAdmin, which only checks the ADMIN role — and being
 // granted ANY single page makes an account an ADMIN, so a read-only "executive"
@@ -503,7 +508,23 @@ router.put("/units/:id", requireAuth, requireRegisters, async (req, res) => {
 
 // Deleting a unit cascades to its sessions, marks and enrolments (schema-level).
 router.delete("/units/:id", requireAuth, requireRegisters, async (req, res) => {
-  try { await prisma.unit.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  // Read first: the cascade is silent and wide, and the log has to be able to say how
+  // much attendance history went with the unit.
+  const existing = await prisma.unit.findUnique({
+    where: { id: req.params.id },
+    include: { _count: { select: { sessions: true, enrolments: true, assessments: true } } },
+  });
+  if (!existing) return res.status(404).json({ error: "Unit not found" });
+  try {
+    await prisma.unit.delete({ where: { id: existing.id } });
+    audit.record(req, {
+      action: "unit.deleted", entity: "Unit", entityId: existing.id,
+      summary: `Unit ${existing.code} "${existing.name}" deleted, taking ${existing._count.sessions} session(s) and their attendance marks, ${existing._count.enrolments} enrolment(s) and ${existing._count.assessments} assessment(s) with it`,
+      before: { code: existing.code, name: existing.name, termId: existing.termId, sessions: existing._count.sessions, enrolments: existing._count.enrolments, assessments: existing._count.assessments },
+      after: null,
+    });
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Unit not found" }); }
 });
 
@@ -521,6 +542,10 @@ router.put("/units/:id/enrolments", requireAuth, requireHndWrite, async (req, re
     const found = await prisma.student.count({ where: { id: { in: studentIds } } });
     if (found !== studentIds.length) return res.status(400).json({ error: "One or more students do not exist" });
   }
+  // The set as it stands, so the log can name who was taken OFF rather than only
+  // who is on now — un-enrolling is the half of this call that loses something.
+  const before = (await prisma.enrolment.findMany({ where: { unitId: mod.id }, select: { studentId: true } })).map((e) => e.studentId);
+  const removed = before.filter((id) => !studentIds.includes(id));
   await prisma.$transaction([
     prisma.enrolment.deleteMany({ where: { unitId: mod.id, studentId: { notIn: studentIds.length ? studentIds : ["__none__"] } } }),
     ...studentIds.map((studentId) => prisma.enrolment.upsert({
@@ -530,6 +555,15 @@ router.put("/units/:id/enrolments", requireAuth, requireHndWrite, async (req, re
     })),
   ]);
   const m = await prisma.unit.findUnique({ where: { id: mod.id }, include: { _count: { select: { sessions: true, enrolments: true } } } });
+  // Enrolment decides whose name appears on a register and whose attendance is
+  // reported. This call replaces the whole set, so a mistake here silently removes
+  // people from a course rather than obviously failing.
+  audit.record(req, {
+    action: "unit.enrolments.replaced", entity: "Unit", entityId: mod.id,
+    summary: `Enrolment on ${mod.code} "${mod.name}" set to ${studentIds.length} student(s), replacing the previous ${before.length}` + (removed.length ? ` — ${removed.length} un-enrolled, their existing marks kept` : ""),
+    before: { studentIds: before },
+    after: { studentIds, unEnrolled: removed },
+  });
   res.json(sUnit(m));
 });
 
@@ -583,6 +617,11 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
     },
     include: { enrolments: { select: { unitId: true } } },
   });
+  audit.record(req, {
+    action: "student.created", entity: "Student", entityId: s.id,
+    summary: `Student ${studentLabel(s)} added` + (unitIds.length ? `, enrolled on ${unitIds.length} unit(s)` : ""),
+    after: { firstName: s.firstName, lastName: s.lastName, studentRef: s.studentRef, email: s.email, cohortId: s.cohortId, units: unitIds.length },
+  });
   res.status(201).json(sStudent(s));
 });
 
@@ -634,6 +673,15 @@ router.put("/students/:id", requireAuth, requireStudentAdmin, async (req, res) =
     where: { id: existing.id }, data,
     include: { enrolments: { select: { unitId: true } } },
   });
+  // The student number and the email are the two identifiers everything else keys
+  // off — a register, a Moodle sync and a sign-in all resolve through them — so a
+  // change to either is an identity change, not a typo fix.
+  audit.record(req, {
+    action: "student.updated", entity: "Student", entityId: s.id,
+    summary: `Student ${studentLabel(s)} updated` + (data.studentRef && data.studentRef !== existing.studentRef ? ` — student number changed from ${existing.studentRef}` : "") + (data.email && data.email !== existing.email ? ` — email changed from ${existing.email}` : "") + (data.active === false ? " — deactivated" : ""),
+    before: { firstName: existing.firstName, lastName: existing.lastName, studentRef: existing.studentRef, email: existing.email, cohortId: existing.cohortId, active: existing.active, dob: existing.dob },
+    after: { firstName: s.firstName, lastName: s.lastName, studentRef: s.studentRef, email: s.email, cohortId: s.cohortId, active: s.active, dob: s.dob },
+  });
   res.json(sStudent(s));
 });
 
@@ -649,6 +697,15 @@ router.delete("/students/:id", requireAuth, requireStudentAdmin, async (req, res
       prisma.signupRequest.deleteMany({ where: { email: existing.email } }),
       prisma.student.delete({ where: { id: existing.id } }),
     ]);
+    // Their attendance, marks, grades and PAT interactions go with them. Under a
+    // retention schedule this is the erasure the college has to be able to evidence,
+    // and this row is what survives to evidence it.
+    audit.record(req, {
+      action: "student.deleted", entity: "Student", entityId: existing.id,
+      summary: `Student ${studentLabel(existing)} deleted — enrolments, attendance marks, grades and PAT interactions removed with the record`,
+      before: { firstName: existing.firstName, lastName: existing.lastName, studentRef: existing.studentRef, email: existing.email, cohortId: existing.cohortId },
+      after: null,
+    });
     res.json({ ok: true });
   } catch (_e) { res.status(400).json({ error: "Could not delete this student" }); }
 });
@@ -669,6 +726,8 @@ router.put("/students/:id/enrolments", requireAuth, requireHndWrite, async (req,
     const found = await prisma.unit.count({ where: { id: { in: unitIds } } });
     if (found !== unitIds.length) return res.status(400).json({ error: "One or more units do not exist" });
   }
+  const before = (await prisma.enrolment.findMany({ where: { studentId: student.id }, select: { unitId: true } })).map((e) => e.unitId);
+  const removed = before.filter((id) => !unitIds.includes(id));
   await prisma.$transaction([
     prisma.enrolment.deleteMany({ where: { studentId: student.id, unitId: { notIn: unitIds.length ? unitIds : ["__none__"] } } }),
     ...unitIds.map((unitId) => prisma.enrolment.upsert({
@@ -678,6 +737,12 @@ router.put("/students/:id/enrolments", requireAuth, requireHndWrite, async (req,
     })),
   ]);
   const s = await prisma.student.findUnique({ where: { id: student.id }, include: { enrolments: { select: { unitId: true } } } });
+  audit.record(req, {
+    action: "student.enrolments.replaced", entity: "Student", entityId: student.id,
+    summary: `${studentLabel(student)} enrolled on ${unitIds.length} unit(s), replacing the previous ${before.length}` + (removed.length ? ` — dropped from ${removed.length}, their existing marks kept` : ""),
+    before: { unitIds: before },
+    after: { unitIds, droppedFrom: removed },
+  });
   res.json(sStudent(s));
 });
 
@@ -969,6 +1034,13 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
   // — which is the first question an audit asks.
   const outOfTerm = Boolean(term && req.body?.override === true);
   const takenBy = req.user?.name ? (outOfTerm ? `${req.user.name} (out-of-term correction)` : req.user.name) : null;
+  // The register as it stands, read before the write. takenBy on the mark itself is
+  // overwritten by the next save, so without this snapshot a mark changed from A to P
+  // months later leaves nothing behind saying it was ever an A.
+  const priorMarks = new Map(
+    (await prisma.attendanceMark.findMany({ where: { sessionId: session.id }, select: { studentId: true, status: true } }))
+      .map((m) => [m.studentId, m.status])
+  );
   await prisma.$transaction(rows.map((r) => (
     r.status === null
       ? prisma.attendanceMark.deleteMany({ where: { sessionId: session.id, studentId: r.studentId } })
@@ -978,6 +1050,31 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
           update: { status: r.status, ...(r.hasRemark ? { remark: r.remark } : {}), takenBy, takenAt: new Date() },
         })
   )));
+
+  // Attendance is the record a college is asked to evidence most often — funding,
+  // visa compliance, a student disputing a mark. Only the marks that actually MOVED
+  // are written: a register save re-sends the whole class whether or not anything
+  // changed, and one corrected A buried under thirty unchanged Ps is not a record of
+  // anything. audit.js caps the object at 40 keys, which covers a class and stops a
+  // bulk import writing a several-hundred-key blob.
+  const before = {}, after = {};
+  for (const r of rows) {
+    const was = priorMarks.has(r.studentId) ? priorMarks.get(r.studentId) : null;
+    if (was === r.status) continue;
+    before[r.studentId] = was;
+    after[r.studentId] = r.status;
+  }
+  const moved = Object.keys(after).length;
+  if (moved) {
+    audit.record(req, {
+      action: outOfTerm ? "attendance.register.corrected" : "attendance.register.saved",
+      entity: "HndSession", entityId: session.id,
+      summary: `${moved} attendance mark(s) changed on the ${session.date} register for ${session.unit?.code || "a unit"}` +
+        (outOfTerm ? ` — an out-of-term correction made after ${term.name} closed on ${term.end}` : "") +
+        ` by ${req.user?.name || "an administrator"}`,
+      before, after,
+    });
+  }
 
   const saved = await prisma.attendanceMark.findMany({ where: { sessionId: session.id } });
   res.json({ ok: true, saved: saved.length, marks: saved.map(sMark) });

@@ -11,6 +11,12 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, hasPage } = require("../auth");
 const { isRealDate } = require("../validate");
+const audit = require("../audit");
+
+// Who the review is about and who wrote it — never what it says. A progress review
+// is a lecturer's candid account of a named student, and the audit trail is read on
+// pages this router's own gate deliberately keeps separate from it.
+const srLabel = (row) => `Student review of ${row.student ? `${row.student.firstName} ${row.student.lastName} (${row.student.studentRef})` : "a student"}`;
 
 const PROGRESS = ["On Track", "Monitor", "At Risk"];
 const CONCERNS = ["Attendance", "Assessment Progress", "Academic Performance", "Wellbeing", "Engagement", "No Concerns"];
@@ -232,6 +238,11 @@ router.post("/", async (req, res) => {
     data: { ...v.data, staffId: req.user.id, staffName: req.user?.name || "" },
     include: INCLUDE,
   });
+  audit.record(req, {
+    action: "studentReview.created", entity: "StudentReview", entityId: row.id,
+    summary: `${srLabel(row)} filed by ${row.staffName || "a lecturer"}`,
+    after: { studentId: row.studentId, staffId: row.staffId, date: row.date, followUpDate: row.followUpDate },
+  });
   res.status(201).json(sReview(row));
 });
 
@@ -260,6 +271,14 @@ router.put("/:id", async (req, res) => {
   if (v.error) return res.status(400).json({ error: v.error });
   try {
     const row = await prisma.studentReview.update({ where: { id: found.row.id }, data: v.data, include: INCLUDE });
+    // An admin correcting somebody else's review is the case worth separating out:
+    // the author's name stays on the record either way, so without this the edit is
+    // invisible and the review still reads as entirely theirs.
+    audit.record(req, {
+      action: "studentReview.updated", entity: "StudentReview", entityId: row.id,
+      summary: `${srLabel(row)} edited` + (found.row.staffId !== req.user.id ? ` by ${req.user.name}, who is not its author (${row.staffName || "unknown"})` : ""),
+      after: { studentId: row.studentId, staffId: row.staffId, date: row.date, followUpDate: row.followUpDate, editedByAuthor: found.row.staffId === req.user.id, fieldsChanged: audit.changedKeys(found.row, { ...found.row, ...v.data }) },
+    });
     res.json(sReview(row));
   } catch (e) {
     // Two admins on the same review: one deletes while the other saves. P2025 is "record
@@ -275,6 +294,12 @@ router.delete("/:id", async (req, res) => {
   if (found.error) return res.status(404).json({ error: "Review not found" });
   try {
     await prisma.studentReview.delete({ where: { id: found.row.id } });
+    audit.record(req, {
+      action: "studentReview.deleted", entity: "StudentReview", entityId: found.row.id,
+      summary: `Student review dated ${found.row.date}, filed by ${found.row.staffName || "a lecturer"}, deleted` + (found.row.staffId !== req.user.id ? ` by ${req.user.name}, who is not its author` : ""),
+      before: { studentId: found.row.studentId, staffId: found.row.staffId, staffName: found.row.staffName, date: found.row.date },
+      after: null,
+    });
     res.json({ ok: true });
   } catch (e) {
     if (e?.code === "P2025") return res.status(404).json({ error: "Review not found" });
