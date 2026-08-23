@@ -1,4 +1,12 @@
 node_modules
+
+# Secrets. `.env` alone was not enough: a .env.backup / .env.local / .env.prod is
+# the same credentials under a name git was still happy to commit, and that is
+# exactly how a production password reaches a public repo. Ignore the whole family
+# and re-admit only the committed template.
 .env
+.env.*
+!.env.example
+
 dev.db
 dev.db-journal
