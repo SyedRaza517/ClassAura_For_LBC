@@ -13,12 +13,66 @@ datasource db {
 
 // A person who can log in. accountRole is "ADMIN" or "STAFF".
 // (SQLite via Prisma has no native enums, so we use validated strings.)
+
+/// One customer institution. Every other table hangs off this, and the Prisma
+/// client extension in src/db.js refuses any query that does not name one — so a
+/// route added tomorrow is isolated without anyone remembering to isolate it.
+model Tenant {
+  id        String   @id @default(cuid())
+  /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.
+  slug      String   @unique
+  name      String
+  /// Switched off rather than deleted, so an ended contract keeps its data
+  /// recoverable until the retention schedule removes it.
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  staff                  Staff[]
+  deviceToken            DeviceToken[]
+  passwordReset          PasswordReset[]
+  signupRequest          SignupRequest[]
+  notification           Notification[]
+  checkIn                CheckIn[]
+  leave                  Leave[]
+  adjustment             Adjustment[]
+  document               Document[]
+  semester               Semester[]
+  course                 Course[]
+  timetableSlot          TimetableSlot[]
+  termCalendar           TermCalendar[]
+  cohort                 Cohort[]
+  term                   Term[]
+  unit                   Unit[]
+  assessment             Assessment[]
+  assessmentGrade        AssessmentGrade[]
+  student                Student[]
+  studentQuery           StudentQuery[]
+  interaction            Interaction[]
+  enrolment              Enrolment[]
+  hndSession             HndSession[]
+  attendanceMark         AttendanceMark[]
+  timesheetEntry         TimesheetEntry[]
+  moodleSync             MoodleSync[]
+  staffReview            StaffReview[]
+  studentReview          StudentReview[]
+  admission              Admission[]
+  ism                    Ism[]
+  admissionDocument      AdmissionDocument[]
+  admissionCourse        AdmissionCourse[]
+  admissionIntake        AdmissionIntake[]
+  attendanceEmailConfig  AttendanceEmailConfig[]
+  sentNotification       SentNotification[]
+  slcApplication         SlcApplication[]
+
+  @@index([active])
+}
+
 model Staff {
   id           String   @id @default(cuid())
   name         String
   jobTitle     String
   dept         String
-  email        String   @unique
+  email        String
   dob          String?  // YYYY-MM-DD — used for birthday emails (optional)
   passwordHash String
   accountRole  String   @default("STAFF") // ADMIN | STAFF
@@ -82,6 +136,12 @@ model Staff {
   staffReviews     StaffReview[]
   studentReviews   StudentReview[]
   unitsTaught      Unit[]          @relation("UnitTutor")
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 // A phone (or browser) registered to receive push notifications.
@@ -101,6 +161,11 @@ model DeviceToken {
   lastSeenAt DateTime @default(now())
 
   @@index([staffId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A single-use "forgot password" token.
@@ -122,6 +187,11 @@ model PasswordReset {
   createdAt DateTime  @default(now())
 
   @@index([staffId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A self-service sign-up from the staff mobile app, awaiting admin approval.
@@ -143,7 +213,7 @@ model SignupRequest {
   // existing student record; blank for staff requests.
   collegeId    String?
   name         String
-  email        String   @unique
+  email        String
   passwordHash String
   jobTitle     String   // "position" on the sign-up form
   dept         String
@@ -155,6 +225,12 @@ model SignupRequest {
   createdAt    DateTime @default(now())
 
   @@index([status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 // A persisted, per-user notification (survives reload, unlike the in-memory toasts).
@@ -169,6 +245,11 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([staffId, read])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 model CheckIn {
@@ -183,6 +264,11 @@ model CheckIn {
   createdAt DateTime @default(now())
 
   @@unique([staffId, date])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 model Leave {
@@ -199,6 +285,11 @@ model Leave {
   decidedBy   String?
   decidedAt   String?
   note        String?
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 model Adjustment {
@@ -208,6 +299,11 @@ model Adjustment {
   days    Int
   note    String
   date    String
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 model Document {
@@ -233,6 +329,11 @@ model Document {
   mimeType     String?
   sizeBytes    Int?
   uploadedAt   DateTime?
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // ============================================================
@@ -251,6 +352,11 @@ model Semester {
   start     String   // YYYY-MM-DD, inclusive
   end       String   // YYYY-MM-DD, inclusive
   createdAt DateTime @default(now())
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A course of study, e.g. "HND Business". Groups the units (courses) taught
@@ -258,18 +364,25 @@ model Semester {
 // its units intact but unassigned (onDelete: SetNull), so registers never vanish.
 model Course {
   id        String   @id @default(cuid())
-  name      String   @unique
+  name      String
   colour    String   @default("#1a3a8f")
   // The Moodle course this was imported from. Set by the VLE sync so a re-run
   // updates this row rather than creating a second copy; null for courses created
   // by hand in the app.
-  moodleCourseId Int? @unique
+  moodleCourseId Int?
   createdAt DateTime @default(now())
 
   units Unit[]
   cohorts Cohort[]
   timetableSlots TimetableSlot[]
   termCalendars TermCalendar[]
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, name])
+  @@unique([tenantId, moodleCourseId])
+  @@index([tenantId])
 }
 
 // One row of a weekly timetable, shown to students on their app.
@@ -310,6 +423,11 @@ model TimetableSlot {
 
   @@index([courseId, year, termNumber])
   @@index([unitId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // The academic calendar for one (course, year, term): the term's start/end dates and a
@@ -331,6 +449,11 @@ model TermCalendar {
   updatedAt  DateTime @updatedAt
 
   @@unique([courseId, year, termNumber])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // An intake of students on a course, e.g. "SEP 2025" or "June 2023". The same
@@ -351,6 +474,11 @@ model Cohort {
 
   @@unique([courseId, name]) // no duplicate intake names within one course
   @@index([courseId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // One teaching term within a cohort. An HND cohort runs 6: Year 1 Terms 1-3 and
@@ -371,6 +499,11 @@ model Term {
 
   @@unique([cohortId, year, index]) // one of each term per cohort
   @@index([cohortId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A taught HND unit, e.g. code "OBM" / name "Organisational Behaviour Management".
@@ -442,6 +575,11 @@ model Unit {
   @@index([courseId])
   @@index([cohortId])
   @@index([termId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // An assessment belonging to a unit (course) — e.g. "Assignment 1" worth 40%.
@@ -451,7 +589,7 @@ model Assessment {
   unit    Unit @relation(fields: [unitId], references: [id], onDelete: Cascade)
   unitId  String
   // The Moodle grade item this mirrors (unique per site), plus its course-module id.
-  moodleItemId Int? @unique
+  moodleItemId Int?
   moodleCmid   Int?
   title     String
   type      String   @default("Assignment") // Assignment | Exam | Presentation | Project | Portfolio
@@ -463,6 +601,12 @@ model Assessment {
   grades AssessmentGrade[]
 
   @@index([unitId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, moodleItemId])
+  @@index([tenantId])
 }
 
 // One student's mark for one assessment. marks is 0..assessment.maxMarks.
@@ -487,6 +631,11 @@ model AssessmentGrade {
 
   @@unique([assessmentId, studentId])
   @@index([studentId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A student on the HND course. studentRef is the college number used in
@@ -495,11 +644,11 @@ model Student {
   id         String   @id @default(cuid())
   // The Moodle user this student was matched to, so later syncs re-use the match
   // instead of re-resolving by student number/email every time.
-  moodleUserId Int? @unique
+  moodleUserId Int?
   firstName  String
   lastName   String
-  studentRef String   @unique
-  email      String   @unique
+  studentRef String
+  email      String
   dob        String?  // YYYY-MM-DD — used for birthday emails (optional)
   initials   String
   colour     String
@@ -524,6 +673,14 @@ model Student {
   reviews      StudentReview[]
 
   @@index([cohortId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, moodleUserId])
+  @@unique([tenantId, studentRef])
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 // A message a student sends to the college from the student app, and the admin's
@@ -543,6 +700,11 @@ model StudentQuery {
 
   @@index([studentId])
   @@index([status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A PAT (Personal Academic Tutor) interaction — a logged meeting/contact with a
@@ -565,6 +727,11 @@ model Interaction {
 
   @@index([studentId])
   @@index([followUpRequired])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // Links a student to a unit. A student is only listed on a unit's
@@ -579,6 +746,11 @@ model Enrolment {
 
   @@unique([studentId, unitId])
   @@index([unitId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // One timetabled class for a unit — the row shown in the sessions list.
@@ -598,7 +770,7 @@ model HndSession {
   // register created in Staff Hub itself. It exists so an import can be (a) re-run
   // without duplicating anything and (b) removed again in one statement, without
   // touching a single register a member of staff took by hand.
-  moodleSessionId Int?   @unique
+  moodleSessionId Int?
   createdAt   DateTime  @default(now())
 
   marks AttendanceMark[]
@@ -609,6 +781,12 @@ model HndSession {
   // denominator — and two concurrent generates to create exact duplicates.
   @@unique([unitId, date, startTime])
   @@index([unitId, date])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, moodleSessionId])
+  @@index([tenantId])
 }
 
 // One student's mark for one session. status is P | L | E | A
@@ -627,6 +805,11 @@ model AttendanceMark {
 
   @@unique([sessionId, studentId])
   @@index([studentId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // One line on a staff member's timesheet: a class or work session on a given day,
@@ -658,6 +841,11 @@ model TimesheetEntry {
 
   @@index([staffId, date])
   @@index([staffId, status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // One row per VLE sync run - what was created/updated, and anything that needed a
@@ -677,6 +865,11 @@ model MoodleSync {
   error       String?
 
   @@index([startedAt])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A completed staff review — the Strategic Lecturer Self-Reflection, the Monthly
@@ -708,6 +901,11 @@ model StaffReview {
   @@index([staffId])
   @@index([type])
   @@index([status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A lecturer's review of one student on one unit — the "Student Review" a staff
@@ -745,6 +943,11 @@ model StudentReview {
   @@index([staffId])
   @@index([followUp])
   @@index([date])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A submitted HND application (admissions). One row per applicant, entered by an admin
@@ -900,6 +1103,11 @@ model Admission {
   updatedAt DateTime @updatedAt
 
   @@index([surname, firstName])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // An Intention to Study Meeting (ISM) — the admission interview record. Linked to an
@@ -927,6 +1135,11 @@ model Ism {
   updatedAt DateTime @updatedAt
 
   @@index([admissionId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // One uploaded document belonging to an application. There is at most one row per
@@ -955,6 +1168,11 @@ model AdmissionDocument {
 
   @@unique([admissionId, docType])
   @@index([admissionId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // Admissions-managed course list — the courses shown on the application form's course
@@ -966,6 +1184,11 @@ model AdmissionCourse {
   active    Boolean  @default(true)   // hidden from the form when false, without deleting
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // Admissions-managed intake list, e.g. "September 2026". A single combined label the
@@ -976,6 +1199,11 @@ model AdmissionIntake {
   active    Boolean  @default(true)
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // Single-row config for the automated monthly attendance emails. `data` is a JSON blob
@@ -986,6 +1214,11 @@ model AttendanceEmailConfig {
   id        String   @id @default("singleton")
   data      Json
   updatedAt DateTime @updatedAt
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // A ledger of one-off automated emails already sent, used purely to de-duplicate the
@@ -995,6 +1228,11 @@ model AttendanceEmailConfig {
 model SentNotification {
   key    String   @id
   sentAt DateTime @default(now())
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // Student Loans Company (SLC) tracking — one row per student's loan application, with its
@@ -1020,4 +1258,9 @@ model SlcApplication {
   updatedAt       DateTime @updatedAt
 
   @@index([status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
