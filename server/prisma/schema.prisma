@@ -10,6 +10,21 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Pinned, and it has to be.
+  //
+  // npm workspaces installs @prisma/client TWICE — once hoisted to the repo root and
+  // once under server/ — and `prisma generate` resolves one of them while the running
+  // server resolves the other. On a fresh install that meant the real client was
+  // generated into the root copy while server/src loaded the stub next to server's
+  // copy, which throws "@prisma/client did not initialize yet". It survived locally
+  // only because an older node_modules happened to be in the right state; CI, which
+  // always installs fresh, failed on the seed with migrations having already applied
+  // cleanly — the confusing shape of the bug.
+  //
+  // This path is relative to THIS file, so it always lands in server/node_modules,
+  // which is where server/src resolves @prisma/client from. Generation and runtime
+  // can no longer disagree.
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
