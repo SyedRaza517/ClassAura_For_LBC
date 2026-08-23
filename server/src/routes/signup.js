@@ -81,10 +81,10 @@ router.post("/", async (req, res) => {
     if (!collegeId) return res.status(400).json({ error: "Your college ID is required" });
 
     const [staffClash, byRef, byEmail, existingRequest] = await Promise.all([
-      prisma.staff.findUnique({ where: { email } }),
-      prisma.student.findUnique({ where: { studentRef: collegeId } }),
-      prisma.student.findUnique({ where: { email } }),
-      prisma.signupRequest.findUnique({ where: { email } }),
+      prisma.staff.findFirst({ where: { email } }),
+      prisma.student.findFirst({ where: { studentRef: collegeId } }),
+      prisma.student.findFirst({ where: { email } }),
+      prisma.signupRequest.findFirst({ where: { email } }),
     ]);
     // Link the request to an existing student record ONLY when the college ID and the
     // email point at the SAME person. Trusting the college ID alone meant a mistyped
@@ -137,8 +137,8 @@ router.post("/", async (req, res) => {
   // pending request or a rejected one — otherwise this endpoint becomes a public
   // "does this person work here?" oracle.
   const [existingStaff, existingRequest] = await Promise.all([
-    prisma.staff.findUnique({ where: { email } }),
-    prisma.signupRequest.findUnique({ where: { email } }),
+    prisma.staff.findFirst({ where: { email } }),
+    prisma.signupRequest.findFirst({ where: { email } }),
   ]);
 
   // A request only blocks a re-application while it is still live. An "approved" one
@@ -209,7 +209,7 @@ async function readEdits(body, row) {
   if ("email" in patch) {
     if (!EMAIL_REGEX.test(patch.email)) return { error: "Enter a valid email address" };
     patch.email = patch.email.toLowerCase();
-    const clash = await prisma.signupRequest.findUnique({ where: { email: patch.email } });
+    const clash = await prisma.signupRequest.findFirst({ where: { email: patch.email } });
     if (clash && clash.id !== row.id) return { error: "Another sign-up request already uses that email" };
   }
   if ("site" in patch && patch.site && !isHomeSite(patch.site)) return { error: "Unknown site" };
@@ -274,8 +274,8 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
     // college number at a known domain, so email is a public identifier, not proof.
     if (!student) {
       const [byEmail, byRef] = await Promise.all([
-        prisma.student.findUnique({ where: { email: reqRow.email } }),
-        reqRow.collegeId ? prisma.student.findUnique({ where: { studentRef: reqRow.collegeId } }) : Promise.resolve(null),
+        prisma.student.findFirst({ where: { email: reqRow.email } }),
+        reqRow.collegeId ? prisma.student.findFirst({ where: { studentRef: reqRow.collegeId } }) : Promise.resolve(null),
       ]);
       if (byRef && byEmail && byRef.id === byEmail.id) {
         student = byRef;                        // both agree — safe to link
@@ -313,7 +313,7 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
   }
 
   // Approval. Someone may have been added manually with this email in the meantime.
-  const clash = await prisma.staff.findUnique({ where: { email: reqRow.email } });
+  const clash = await prisma.staff.findFirst({ where: { email: reqRow.email } });
   if (clash) return res.status(409).json({ error: "A staff account with that email already exists" });
 
   let days = 28;

@@ -24,12 +24,12 @@ const verifyPassword = (pw, hash) => bcrypt.compareSync(pw, hash);
 // Session lifetime, configurable via JWT_EXPIRES (e.g. "8h", "1d", "7d").
 // Shorter = tighter security, more frequent re-authentication. Default 1 day.
 const EXPIRES = process.env.JWT_EXPIRES || "1d";
-const signToken = (staff) => jwt.sign({ sub: staff.id, kind: "staff", role: staff.accountRole, purpose: "session", ver: staff.tokenVersion ?? 0 }, SECRET, { expiresIn: EXPIRES });
+const signToken = (staff) => jwt.sign({ sub: staff.id, kind: "staff", role: staff.accountRole, purpose: "session", ver: staff.tokenVersion ?? 0, tid: staff.tenantId }, SECRET, { expiresIn: EXPIRES });
 // A student session token. kind:"student" routes requireAuth down the student path.
-const signStudentToken = (student) => jwt.sign({ sub: student.id, kind: "student", purpose: "session", ver: student.tokenVersion ?? 0 }, SECRET, { expiresIn: EXPIRES });
+const signStudentToken = (student) => jwt.sign({ sub: student.id, kind: "student", purpose: "session", ver: student.tokenVersion ?? 0, tid: student.tenantId }, SECRET, { expiresIn: EXPIRES });
 // An applicant session token. kind:"applicant" routes requireAuth down the applicant path
 // (a prospective student tracking their own Admission record).
-const signApplicantToken = (applicant) => jwt.sign({ sub: applicant.id, kind: "applicant", purpose: "session", ver: applicant.tokenVersion ?? 0 }, SECRET, { expiresIn: EXPIRES });
+const signApplicantToken = (applicant) => jwt.sign({ sub: applicant.id, kind: "applicant", purpose: "session", ver: applicant.tokenVersion ?? 0, tid: applicant.tenantId }, SECRET, { expiresIn: EXPIRES });
 
 // The ONLY routers a student session may reach.
 //   /api/student  — their own data, every route scoped to req.user.id
@@ -54,6 +54,15 @@ async function requireAuth(req, res, next) {
     // before this field existed have no purpose at all, so treat only an explicit
     // non-session purpose as a rejection.
     if (payload.purpose && payload.purpose !== "session") return res.status(401).json({ error: "Invalid token" });
+
+    // A session belongs to ONE institution. Without this, a token issued by college
+    // A could be presented against college B just by changing the X-Tenant header:
+    // the signature is valid, the account exists, and every query would then run in
+    // B's scope. Tokens minted before tenancy carry no tid and are still accepted,
+    // so upgrading does not sign everyone out.
+    if (payload.tid && req.tenant && payload.tid !== req.tenant.id) {
+      return res.status(401).json({ error: "Session does not belong to this institution" });
+    }
 
     // Student session — a fully isolated path. The staff branch below is unchanged,
     // so nothing about existing staff/admin auth is affected.

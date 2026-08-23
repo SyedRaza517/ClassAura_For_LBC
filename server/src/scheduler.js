@@ -120,10 +120,16 @@ async function maybeSyncMoodle() {
 // limit real work to its own day/hour. unref() so the timer never keeps the process
 // alive on its own.
 function startScheduler() {
+  // Once per institution. These run on a timer, outside any request, so nothing has
+  // resolved a tenant for them — see eachTenant.js. One college failing must not stop
+  // the rest, which forEachTenant guarantees.
+  const { forEachTenant } = require("./eachTenant");
   const run = () => {
-    sendTimesheetReminders().catch((e) => console.error("scheduler run failed:", e.message));
+    forEachTenant("timesheet-reminders", () => sendTimesheetReminders())
+      .catch((e) => console.error("scheduler run failed:", e.message));
     // Kept separate so a failing Moodle import can never stop the reminders.
-    maybeSyncMoodle().catch((e) => console.error("nightly Moodle import failed:", e.message));
+    forEachTenant("moodle-import", () => maybeSyncMoodle())
+      .catch((e) => console.error("nightly Moodle import failed:", e.message));
   };
   run(); // run once on boot (covers a deploy that happens on the reminder day)
   setInterval(run, 60 * 60 * 1000).unref();

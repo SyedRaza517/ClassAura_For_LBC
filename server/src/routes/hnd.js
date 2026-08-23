@@ -541,9 +541,9 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   // both passed the exact-match uniqueness check and two students shared a mailbox.
   const email = (str(req.body?.email) || `${studentRef}@edtech.co.uk`).toLowerCase();
 
-  const refClash = await prisma.student.findUnique({ where: { studentRef } });
+  const refClash = await prisma.student.findFirst({ where: { studentRef } });
   if (refClash) return res.status(409).json({ error: `Student number ${studentRef} is already in use` });
-  const emailClash = await prisma.student.findUnique({ where: { email } });
+  const emailClash = await prisma.student.findFirst({ where: { email } });
   if (emailClash) return res.status(409).json({ error: `Email ${email} is already in use` });
 
   // Validate enrolments up front so a bad unitId can't blow up the nested create.
@@ -594,14 +594,14 @@ router.put("/students/:id", requireAuth, requireStudentAdmin, async (req, res) =
   if (req.body?.studentRef !== undefined) {
     const studentRef = str(req.body.studentRef);
     if (!studentRef) return res.status(400).json({ error: "Student number required" });
-    const clash = await prisma.student.findUnique({ where: { studentRef } });
+    const clash = await prisma.student.findFirst({ where: { studentRef } });
     if (clash && clash.id !== existing.id) return res.status(409).json({ error: `Student number ${studentRef} is already in use` });
     data.studentRef = studentRef;
   }
   if (req.body?.email !== undefined) {
     const email = str(req.body.email).toLowerCase();
     if (!email) return res.status(400).json({ error: "Email required" });
-    const clash = await prisma.student.findUnique({ where: { email } });
+    const clash = await prisma.student.findFirst({ where: { email } });
     if (clash && clash.id !== existing.id) return res.status(409).json({ error: `Email ${email} is already in use` });
     data.email = email;
   }

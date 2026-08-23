@@ -57,9 +57,21 @@ app.use(express.json({ limit: "1mb" }));
 // Health check
 app.get("/api/health", (_req, res) => res.json({ ok: true, service: "edtech-hub-api" }));
 
-// Routes. wrapAsync makes a rejected promise inside an async handler reach the
-// error middleware below instead of terminating the process — see asyncRoutes.js.
+// wrapAsync makes a rejected promise inside an async handler reach the error
+// middleware below instead of terminating the process — see asyncRoutes.js.
 const { wrapAsync } = require("./asyncRoutes");
+// The same protection for an async MIDDLEWARE, which would otherwise reject into an
+// unhandled rejection rather than a 500.
+const wrapAsyncMw = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const { tenantMiddleware } = require("./tenant");
+
+// Which institution is this request for? Resolved BEFORE authentication, because
+// Staff.email is unique per tenant now, so a login cannot find an account from an
+// email address alone. Everything after this line runs inside that tenant's scope,
+// so no route has to remember to filter — see db.js.
+app.use("/api", wrapAsyncMw(tenantMiddleware));
+
+// Routes.
 app.use("/api/auth", wrapAsync(require("./routes/auth")));
 app.use("/api/signup", wrapAsync(require("./routes/signup")));
 app.use("/api/staff", wrapAsync(require("./routes/staff")));

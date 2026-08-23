@@ -27,8 +27,12 @@ async function tick() {
 }
 
 function start() {
-  setInterval(tick, 60 * 60 * 1000); // hourly
-  setTimeout(tick, 30 * 1000);        // and once ~30s after boot, in case we start in the send hour
+  // Per institution — each has its own staff, students and send hour. See eachTenant.js.
+  const { forEachTenant } = require("./eachTenant");
+  const runAll = () => forEachTenant("daily-notifications", () => tick())
+    .catch((e) => console.error("[notifications-scheduler] failed:", e.message));
+  setInterval(runAll, 60 * 60 * 1000); // hourly
+  setTimeout(runAll, 30 * 1000);       // and once ~30s after boot, in case we start in the send hour
   console.log(`[notifications-scheduler] started — daily student/staff emails at ${String(SEND_HOUR).padStart(2, "0")}:00`);
 }
 

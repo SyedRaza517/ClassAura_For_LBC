@@ -37,8 +37,13 @@ async function tick() {
 }
 
 function start() {
-  setInterval(tick, 60 * 60 * 1000); // hourly
-  setTimeout(tick, 30 * 1000);        // and once ~30s after boot, in case we start on month-end
+  // Per institution — each has its own attendance-email configuration and its own
+  // recipients. See eachTenant.js.
+  const { forEachTenant } = require("./eachTenant");
+  const runAll = () => forEachTenant("attendance-emails", () => tick())
+    .catch((e) => console.error("[attendance-scheduler] failed:", e.message));
+  setInterval(runAll, 60 * 60 * 1000); // hourly
+  setTimeout(runAll, 30 * 1000);       // and once ~30s after boot, in case we start on month-end
   console.log("[attendance-scheduler] started — month-end attendance emails (enable in the Attendance Emails tab)");
 }
 

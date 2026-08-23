@@ -175,7 +175,7 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     if (!dbCourse) {
       // A course of the same name may already exist from manual setup — adopt it
       // rather than creating a duplicate.
-      const byName = await prisma.course.findUnique({ where: { name: courseName } });
+      const byName = await prisma.course.findFirst({ where: { name: courseName } });
       // Only adopt a same-named course that ISN'T already claimed by another Moodle
       // course. Two Moodle courses sharing a fullname both adopted the same row and
       // rewrote moodleCourseId, so one Staff Hub course flip-flopped between them on

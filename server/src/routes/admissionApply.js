@@ -54,8 +54,8 @@ router.post("/", async (req, res) => {
   if (data.email) {
     const emailLc = String(data.email).toLowerCase();
     const [staff, student, appl] = await Promise.all([
-      prisma.staff.findUnique({ where: { email: emailLc } }).catch(() => null),
-      prisma.student.findUnique({ where: { email: emailLc } }).catch(() => null),
+      prisma.staff.findFirst({ where: { email: emailLc } }).catch(() => null),
+      prisma.student.findFirst({ where: { email: emailLc } }).catch(() => null),
       prisma.admission.findFirst({ where: { email: { equals: emailLc, mode: "insensitive" }, passwordHash: { not: null } } }).catch(() => null),
     ]);
     if (staff || student || appl) {

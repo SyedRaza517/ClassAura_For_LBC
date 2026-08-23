@@ -205,7 +205,7 @@ router.post("/login", async (req, res) => {
   }
 
   const emailLc = String(email).toLowerCase();
-  const staff = await prisma.staff.findUnique({ where: { email: emailLc } });
+  const staff = await prisma.staff.findFirst({ where: { email: emailLc } });
   // A pending-activation staff account cannot be signed into (its password is random
   // and unknown); treat it as a non-match so the generic error message applies.
   const staffOk = staff && !staff.pendingActivation && verifyPassword(password, staff.passwordHash);
@@ -228,7 +228,7 @@ router.post("/login", async (req, res) => {
   // Not a valid staff login — try a student account. This isolated branch is the
   // only place a student session is issued; a student with no passwordHash (never
   // approved) or a deactivated one cannot sign in.
-  const student = await prisma.student.findUnique({ where: { email: emailLc } });
+  const student = await prisma.student.findFirst({ where: { email: emailLc } });
   if (student && student.passwordHash && student.active !== false && verifyPassword(password, student.passwordHash)) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
     return res.json({ token: signStudentToken(student), user: { ...sStudent(student), kind: "student" } });
@@ -579,7 +579,7 @@ router.post("/forgot-password", async (req, res) => {
   // limited on a specific address would leak that the address is worth guessing.
   if (resetRateLimited(req, email)) return res.json({ ok: true, message: RESET_SENT_MESSAGE });
 
-  const staff = await prisma.staff.findUnique({ where: { email } });
+  const staff = await prisma.staff.findFirst({ where: { email } });
   if (staff) {
     // Any earlier outstanding RESET link for this account stops working now, so a
     // forwarded or intercepted old email can't be used later.

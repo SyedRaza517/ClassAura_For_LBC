@@ -25,8 +25,8 @@ const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|#%]+/g, " ").replace
 // would resolve to the wrong account. `exceptId` skips the caller's own Admission row.
 async function emailInUse(emailLc, exceptId) {
   const [staff, student, appl] = await Promise.all([
-    prisma.staff.findUnique({ where: { email: emailLc } }).catch(() => null),
-    prisma.student.findUnique({ where: { email: emailLc } }).catch(() => null),
+    prisma.staff.findFirst({ where: { email: emailLc } }).catch(() => null),
+    prisma.student.findFirst({ where: { email: emailLc } }).catch(() => null),
     prisma.admission.findFirst({
       where: {
         email: { equals: emailLc, mode: "insensitive" },
