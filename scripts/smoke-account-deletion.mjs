@@ -12,9 +12,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, 
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const totp = require(`${ROOT}/server/src/totp.js`);
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
-const db = new PrismaClient({ datasources: { db: { url: `file:${ROOT}/server/prisma/dev.db` } } });
+// The same database the API under test is using. This was a hardcoded SQLite file
+// path — a leftover from before the move to PostgreSQL — which made every suite that
+// touches the database directly fail schema validation before running a single query.
+if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
+const SEED_PW = process.env.SEED_PASSWORD || "password123";
 const TAG = `del${Date.now()}`;
 const made = [];
 let pass = 0, fail = 0;
@@ -27,7 +32,7 @@ async function call(path, { method = "GET", body, token } = {}) {
   let data = null; try { data = await res.json(); } catch (_) {}
   return { status: res.status, data };
 }
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
 
 async function mkStaff(suffix, password = "DelPass123!") {
   const email = `${TAG}.${suffix}@edtech.co.uk`;
@@ -63,7 +68,7 @@ check("the 2FA account is gone", !(await db.staff.findUnique({ where: { email: m
 console.log("\n--- the last administrator cannot delete themselves ---");
 const adminCount = await db.staff.count({ where: { accountRole: "ADMIN" } });
 if (adminCount === 1) {
-  const r = await call("/auth/account", { method: "DELETE", token: admin.token, body: { password: "password123", confirm: "DELETE" } });
+  const r = await call("/auth/account", { method: "DELETE", token: admin.token, body: { password: SEED_PW, confirm: "DELETE" } });
   check("sole admin is blocked (400)", r.status === 400, r.data?.error);
   check("the admin account still exists", !!(await db.staff.findUnique({ where: { email: "admin@edtech.co.uk" } })));
 } else {

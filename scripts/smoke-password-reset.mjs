@@ -14,6 +14,7 @@ const require = createRequire(pathToFileURL(join(server, "package.json")));
 const totp = require(join(server, "src", "totp.js"));
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
+const SEED_PW = process.env.SEED_PASSWORD || "password123";
 const PLAIN_EMAIL = "reset.plain@edtech.co.uk";      // no authenticator
 const MFA_EMAIL = "reset.mfa@edtech.co.uk";          // authenticator enrolled
 const PASSWORD = "OriginalPass123!";
@@ -35,7 +36,11 @@ async function call(path, { method = "GET", body, token } = {}) {
 }
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
-const db = new PrismaClient({ datasources: { db: { url: `file:${join(server, "prisma", "dev.db").replace(/\\/g, "/")}` } } });
+// The same database the API under test is using. This was a hardcoded SQLite file
+// path — a leftover from before the move to PostgreSQL — which made every suite that
+// touches the database directly fail schema validation before running a single query.
+if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 const EMAILS = [PLAIN_EMAIL, MFA_EMAIL];
 const wipe = async () => {
@@ -60,7 +65,7 @@ async function issueKnownToken(staffId, { expiresInMs = 30 * 60 * 1000 } = {}) {
   return raw;
 }
 
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
 
 // --- create two staff members through the real sign-up + approval path ---
 async function makeStaff(email, name, enrol2fa) {
@@ -68,14 +73,31 @@ async function makeStaff(email, name, enrol2fa) {
   const req = (await call("/signup?status=pending", { token: admin.token })).data.find((x) => x.email === email);
   const created = (await call(`/signup/${req.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved" } })).data;
   const login = (await call("/auth/login", { method: "POST", body: { email, password: PASSWORD } })).data;
-  const setup = (await call("/auth/totp/setup", { method: "POST", body: { challengeToken: login.challengeToken } })).data;
-  const enabled = (await call("/auth/totp/enable", { method: "POST", body: { challengeToken: login.challengeToken, code: totp.generateCode(setup.secret) } })).data;
+
+  // Enrol through whichever route this deployment actually offers, so the suite is
+  // valid with mandatory 2FA either ON or OFF:
+  //   • challengeToken present  → 2FA is mandatory; enrol mid-sign-in, password
+  //     already proven at login, so none is required again.
+  //   • no challengeToken       → 2FA is optional; login returned a real session,
+  //     so enrol from it — which deliberately demands the password, otherwise
+  //     someone holding a borrowed session could add a factor only they hold.
+  // Everything this suite asserts about resets and 2FA is equally true of a
+  // voluntarily-enrolled account, so no coverage is lost while enforcement is off.
+  const viaChallenge = Boolean(login.challengeToken);
+  const auth = viaChallenge
+    ? { body: { challengeToken: login.challengeToken } }
+    : { token: login.token, body: { password: PASSWORD } };
+
+  const setup = (await call("/auth/totp/setup", { method: "POST", token: auth.token, body: { ...auth.body } })).data;
+  const enabled = (await call("/auth/totp/enable", { method: "POST", token: auth.token, body: { ...auth.body, code: totp.generateCode(setup.secret) } })).data;
   if (!enrol2fa) {
     // Strip 2FA back off via the admin reset so this account is password-only.
     await call(`/staff/${created.staff.id}/totp`, { method: "DELETE", token: admin.token });
     await db.staff.update({ where: { id: created.staff.id }, data: { mustSetupTotp: false } });
   }
-  return { id: created.staff.id, secret: setup.secret, token: enabled.token };
+  // Enrolling from a session returns no new token (the caller already had one), so
+  // fall back to the session we signed in with.
+  return { id: created.staff.id, secret: setup.secret, token: enabled?.token || login.token };
 }
 
 console.log("\n--- setup ---");

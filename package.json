@@ -9,7 +9,8 @@
     "dev": "concurrently -n SERVER,CLIENT -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
-    "studio": "npm --workspace server run studio"
+    "studio": "npm --workspace server run studio",
+    "test": "node scripts/test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

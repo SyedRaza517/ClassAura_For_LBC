@@ -1,0 +1,81 @@
+name: CI
+
+# Every push and every pull request. Production deploys automatically from main,
+# so this is the only thing standing between a commit and a live customer.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch makes an in-flight run pointless — cancel it
+# rather than queueing behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # A throwaway database per run. The suites write real rows — sign-ups,
+      # leave, adjustments, password-reset tokens — so they must never point at
+      # a database anyone cares about.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: edtech_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/edtech_test
+      # Never a real secret — this database and this server exist for one run.
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else
+      SEED_PASSWORD: ci-seed-password-2026
+      APP_TIMEZONE: Europe/London
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Installs both workspaces; server's postinstall runs prisma generate.
+      - name: Install
+        run: npm install
+
+      # Catches a broken import or JSX error before the tests even start, and is
+      # what Vercel will run — so a green build here means a green build there.
+      - name: Build client
+        run: npm run build --workspace client
+        env:
+          VITE_API_URL: https://ci.invalid/api
+
+      # Applies every migration to the empty database. Proves the migration
+      # history can build the schema from nothing — the property that makes it
+      # trustworthy, and the thing `prisma db push` could never demonstrate.
+      - name: Apply migrations
+        run: npm run migrate:deploy --workspace server
+
+      # Boots its own API against the service container, seeds fixtures, runs
+      # every suite, exits non-zero if any fail.
+      - name: Test
+        run: npm test
+
+      # Advisory only: a new CVE in a transitive dependency should be visible,
+      # but it must not block an unrelated change at 5pm on a Friday.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true

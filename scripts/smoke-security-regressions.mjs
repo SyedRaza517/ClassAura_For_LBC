@@ -22,9 +22,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, 
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const totp = require(`${ROOT}/server/src/totp.js`);
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
-const db = new PrismaClient({ datasources: { db: { url: `file:${ROOT}/server/prisma/dev.db` } } });
+// The same database the API under test is using. This was a hardcoded SQLite file
+// path — a leftover from before the move to PostgreSQL — which made every suite that
+// touches the database directly fail schema validation before running a single query.
+if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
-const BASE = "http://localhost:4000/api";
+const BASE = process.env.API_URL || "http://localhost:4000/api";
+const SEED_PW = process.env.SEED_PASSWORD || "password123";
 const TAG = `vf${Date.now()}`;
 const made = [];
 
@@ -45,7 +50,7 @@ async function call(path, { method = "GET", body, token } = {}) {
 }
 const alive = async () => (await call("/health")).status === 200;
 
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
 if (!admin?.token) { console.error("admin login failed — is the API up?"); process.exit(1); }
 
 // Create a staff account directly (admin route), returns {id, email, password, token}

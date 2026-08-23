@@ -1,5 +1,6 @@
 // Smoke-tests the bug fixes against the running API.
-const BASE = "http://localhost:4000/api";
+const BASE = process.env.API_URL || "http://localhost:4000/api";
+const SEED_PW = process.env.SEED_PASSWORD || "password123";
 const login = async (email, password) => {
   const r = await fetch(`${BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
   return (await r.json()).token;
@@ -8,8 +9,8 @@ const j = (t) => ({ "Content-Type": "application/json", Authorization: `Bearer $
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => { console.log(`${ok ? "✓" : "✗"} ${name}${detail ? "  — " + detail : ""}`); ok ? pass++ : fail++; };
 
-const admin = await login("admin@edtech.co.uk", "password123");
-const staff = await login("j.whitfield@edtech.co.uk", "password123");
+const admin = await login("admin@edtech.co.uk", SEED_PW);
+const staff = await login("j.whitfield@edtech.co.uk", SEED_PW);
 
 // 1) /staff reduced shape for staff, full for admin
 const adminStaff = await (await fetch(`${BASE}/staff`, { headers: j(admin) })).json();

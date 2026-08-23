@@ -14,9 +14,14 @@ import crypto from "node:crypto";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
-const db = new PrismaClient({ datasources: { db: { url: `file:${ROOT}/server/prisma/dev.db` } } });
+// The same database the API under test is using. This was a hardcoded SQLite file
+// path — a leftover from before the move to PostgreSQL — which made every suite that
+// touches the database directly fail schema validation before running a single query.
+if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
+const SEED_PW = process.env.SEED_PASSWORD || "password123";
 const TAG = `inv${Date.now()}`;
 const made = [];
 let pass = 0, fail = 0;
@@ -29,7 +34,7 @@ async function call(path, { method = "GET", body, token } = {}) {
   let data = null; try { data = await res.json(); } catch (_) {}
   return { status: res.status, data };
 }
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
 
 // The raw invite token only exists in the email, so read it back the way the server
 // stores it: hash a candidate and look for the row. Here we plant a known one.
@@ -89,7 +94,7 @@ await db.passwordReset.create({ data: { staffId: s2.id, tokenHash: hash(rawReset
 check("a reset token is refused by the invite endpoint", (await call("/auth/invite/accept", { method: "POST", body: { token: rawReset, newPassword: "Whatever123!" } })).status === 400);
 
 console.log("\n--- re-sending an invitation ---");
-check("staff cannot re-send invitations", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@edtech.co.uk", password: "password123" } })).data.token })).status === 403);
+check("staff cannot re-send invitations", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@edtech.co.uk", password: SEED_PW } })).data.token })).status === 403);
 check("an admin can re-send", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: admin.token })).status === 200);
 check("re-sending retires the previous link", (await call("/auth/invite/verify", { method: "POST", body: { token: inviteTok } })).status === 400);
 check("re-sending to an already-active account is refused", (await call(`/staff/${(await db.staff.findUnique({ where: { email } })).id}/invite`, { method: "POST", token: admin.token })).status === 400);
