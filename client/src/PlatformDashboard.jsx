@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
-  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug,
+  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft,
 } from "lucide-react";
 
 const INK = "#0f172a";
@@ -67,7 +67,7 @@ function Banner({ kind = "error", children, onClose }) {
 
 /* ------------------------------------------------------------------- login --- */
 
-function PlatformLogin({ onSignedIn }) {
+function PlatformLogin({ onSignedIn, onBack }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -110,6 +110,11 @@ function PlatformLogin({ onSignedIn }) {
         <p className="mt-4 text-center text-[11px] text-slate-400">
           Operator accounts are created from the server command line, never through this page.
         </p>
+        {onBack && (
+          <button type="button" onClick={onBack} className="mt-3 flex w-full items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500 transition hover:text-slate-800">
+            <ArrowLeft size={13} /> Back to the college sign-in
+          </button>
+        )}
       </form>
     </div>
   );
@@ -243,7 +248,7 @@ function Modal({ open, title, onClose, children, width = 460 }) {
   );
 }
 
-export default function PlatformDashboard() {
+export default function PlatformDashboard({ onBack }) {
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
   const [data, setData] = useState(null);
@@ -295,7 +300,7 @@ export default function PlatformDashboard() {
   if (checking) {
     return <div className="flex min-h-screen items-center justify-center bg-slate-100 text-slate-500"><Loader2 className="animate-spin" /></div>;
   }
-  if (!admin) return <PlatformLogin onSignedIn={async (a) => { setAdmin(a); await load(); }} />;
+  if (!admin) return <PlatformLogin onBack={onBack} onSignedIn={async (a) => { setAdmin(a); await load(); }} />;
 
   const totals = data?.totals;
 

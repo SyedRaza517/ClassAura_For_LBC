@@ -306,6 +306,11 @@ export default function App() {
     // The Student Portal — a prospective student (general public) registers / signs in to
     // apply to the College and track their application. The public front door.
     if (entry === "applicant") return (<><style>{GLOBAL_STYLE}</style><ApplicantAuth onBack={() => setEntry(null)} /></>);
+    // The Super Admin tile. Same component the ?platform URL reaches — that URL still
+    // works and is unchanged; this simply gives it a visible front door. It carries its
+    // own operator token in sessionStorage and knows nothing about a college session,
+    // so no college user is implied by getting here.
+    if (entry === "platform") return (<><style>{GLOBAL_STYLE}</style><PlatformDashboard onBack={() => setEntry(null)} /></>);
     if (entry === "app") return (
       // 100dvh (not vh) so collapsing mobile browser chrome can't clip the page.
       <div className="w-full" style={{ minHeight: "100dvh", height: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: "radial-gradient(1200px 600px at 50% -10%, #e7ecf6 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
@@ -313,7 +318,7 @@ export default function App() {
         <MobileAuth onExit={() => setEntry(null)} />
       </div>
     );
-    return (<><style>{GLOBAL_STYLE}</style><Landing onStaffApp={() => setEntry("app")} onAdmin={() => setEntry("admin")} onStudent={() => setEntry("applicant")} /></>);
+    return (<><style>{GLOBAL_STYLE}</style><Landing onStaffApp={() => setEntry("app")} onAdmin={() => setEntry("admin")} onStudent={() => setEntry("applicant")} onPlatform={() => setEntry("platform")} /></>);
   }
 
   // App lock sits in front of everything a signed-in user can see, including the

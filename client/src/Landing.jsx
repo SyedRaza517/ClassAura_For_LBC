@@ -1,7 +1,9 @@
 // First screen for anyone who isn't signed in: choose the staff mobile app
-// (which has its own in-app sign in / sign up) or the admin dashboard login.
+// (which has its own in-app sign in / sign up), the public student portal, the
+// college admin dashboard, or — for an operator of the platform itself — the
+// Super Admin tier that sits above every institution.
 import React from "react";
-import { GraduationCap, Smartphone, Monitor, ArrowRight, ShieldCheck, UserPlus } from "lucide-react";
+import { GraduationCap, Smartphone, Monitor, ArrowRight, ShieldCheck, UserPlus, Building2, Layers } from "lucide-react";
 import { BrandLockup } from "./Brand";
 
 const NAVY = "#1a3a8f", NAVY_DARK = "#14306f", MAROON = "#9e1b32";
@@ -34,7 +36,7 @@ function Choice({ Icon, title, subtitle, points, onClick, accent, delay }) {
   );
 }
 
-export default function Landing({ onStaffApp, onAdmin, onStudent }) {
+export default function Landing({ onStaffApp, onAdmin, onStudent, onPlatform }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <div className="animated-gradient absolute inset-0" style={{ background: `linear-gradient(135deg, ${NAVY_DARK} 0%, ${NAVY} 30%, #2b3f9e 55%, ${MAROON} 100%)`, backgroundSize: "220% 220%" }} />
@@ -45,7 +47,7 @@ export default function Landing({ onStaffApp, onAdmin, onStudent }) {
         <div className="float absolute -bottom-28 left-1/4 h-72 w-72 rounded-full blur-3xl" style={{ background: "rgba(73,99,205,0.30)", animationDelay: "2.4s" }} />
       </div>
 
-      <div className="relative w-full max-w-5xl">
+      <div className="relative w-full max-w-6xl">
         <div className="scale-in mb-8 flex flex-col items-center text-center">
           <div className="float mb-3 flex flex-col items-center justify-center gap-1 rounded-2xl bg-white px-5 py-3 shadow-lg ring-1 ring-slate-200/80">
             <BrandLockup />
@@ -54,7 +56,7 @@ export default function Landing({ onStaffApp, onAdmin, onStudent }) {
           <p className="mt-1 text-sm text-white/70">Choose how you'd like to continue</p>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <Choice
             Icon={Smartphone}
             title="Staff App"
@@ -91,10 +93,27 @@ export default function Landing({ onStaffApp, onAdmin, onStudent }) {
               { Icon: Monitor, label: "Registers, balances, reporting" },
             ]}
           />
+          {/* The tier ABOVE every college. Deliberately last, deliberately slate-and-amber
+              rather than college navy or maroon: an operator here can suspend a customer
+              or delete their data, and a tile that looked like the others would invite
+              exactly the mistake of not noticing which door you took. */}
+          <Choice
+            Icon={Building2}
+            title="Super Admin"
+            subtitle="Platform operators only"
+            accent="linear-gradient(135deg, #0f172a, #b45309)"
+            delay="0.32s"
+            onClick={onPlatform}
+            points={[
+              { Icon: Layers, label: "Every institution on the system" },
+              { Icon: ShieldCheck, label: "Provision, suspend & configure" },
+            ]}
+          />
         </div>
 
         <p className="fade-up mt-7 text-center text-[11px] text-white/50" style={{ animationDelay: "0.3s" }}>
           Administrators can switch to the staff app at any time once signed in.
+          <br />Super Admin is for operators of the platform itself — not a college sign-in.
         </p>
       </div>
     </div>
