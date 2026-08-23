@@ -17,6 +17,57 @@ datasource db {
 /// One customer institution. Every other table hangs off this, and the Prisma
 /// client extension in src/db.js refuses any query that does not name one — so a
 /// route added tomorrow is isolated without anyone remembering to isolate it.
+/// An operator of the PLATFORM, above every institution.
+///
+/// Deliberately NOT a Staff row. Staff.isSuperAdmin already means "top of ONE
+/// college" — it decides who may manage colleagues' page access — and conflating the
+/// two tiers is how a tenant admin ends up able to read every customer's data. A
+/// PlatformAdmin has no tenantId, is listed in UNSCOPED_MODELS in db.js, and signs in
+/// through its own endpoint issuing its own token kind.
+model PlatformAdmin {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  /// Switched off rather than deleted, so an operator who leaves keeps their audit trail.
+  active       Boolean   @default(true)
+  /// Bumped to revoke every session already issued — same mechanism as Staff.
+  tokenVersion Int       @default(0)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([active])
+}
+
+/// One institution's credentials for one external system (Moodle, SharePoint).
+///
+/// These were process-level env vars, which cannot work once more than one college
+/// exists: every tenant would sync from, and upload into, the same institution's
+/// systems. The secret half is encrypted at rest and never returned to any client —
+/// the API reports only whether it is configured and when it was last changed.
+model TenantIntegration {
+  id        String   @id @default(cuid())
+  /// "moodle" | "sharepoint"
+  provider  String
+  /// AES-256-GCM ciphertext. Never serialised to a response.
+  secretEnc String
+  /// Non-secret settings shown back in the UI, as JSON — a Moodle URL, a SharePoint
+  /// site path. Nothing here is sensitive; anything sensitive belongs in secretEnc.
+  settings  String?
+  /// Whether this integration is switched on for this institution.
+  enabled   Boolean  @default(false)
+  lastTestedAt DateTime?
+  lastTestOk   Boolean?
+  lastTestNote String?
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, provider])
+  @@index([tenantId])
+}
+
 model Tenant {
   id        String   @id @default(cuid())
   /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.
@@ -63,6 +114,7 @@ model Tenant {
   attendanceEmailConfig  AttendanceEmailConfig[]
   sentNotification       SentNotification[]
   slcApplication         SlcApplication[]
+  integrations           TenantIntegration[]
 
   @@index([active])
 }

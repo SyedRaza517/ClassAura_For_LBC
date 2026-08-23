@@ -65,6 +65,11 @@ const { wrapAsync } = require("./asyncRoutes");
 const wrapAsyncMw = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const { tenantMiddleware } = require("./tenant");
 
+// The PLATFORM surface sits above every institution, so it is mounted BEFORE the
+// tenant middleware — demanding a tenant here would be circular. Its own guard
+// (requirePlatformAdmin) rejects any staff, student or applicant token.
+app.use("/api/platform", wrapAsync(require("./routes/platform")));
+
 // Which institution is this request for? Resolved BEFORE authentication, because
 // Staff.email is unique per tenant now, so a login cannot find an account from an
 // email address alone. Everything after this line runs inside that tenant's scope,
@@ -103,6 +108,9 @@ app.use("/api/admission-offers", wrapAsync(require("./routes/admissionOffer")));
 app.use("/api/admission-apply", wrapAsync(require("./routes/admissionApply")));
 app.use("/api/applicant", wrapAsync(require("./routes/applicant")));
 app.use("/api/ism", wrapAsync(require("./routes/ism")));
+// Each institution's own Moodle / SharePoint credentials. Inside the tenant
+// middleware, so an admin can only ever reach their own.
+app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
 
 // 404 + error handlers
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));

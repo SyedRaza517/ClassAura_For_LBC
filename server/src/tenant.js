@@ -21,10 +21,18 @@ const { runInTenant, crossTenant } = require("./db");
 
 const FALLBACK_SLUG = process.env.DEFAULT_TENANT_SLUG || "default";
 
-// Requests that must work before any tenant is known. Health is polled by the host's
-// monitoring and by the keep-alive; failing it because a header was missing would
-// take the service down for a configuration mistake.
-const TENANT_EXEMPT = new Set(["/api/health"]);
+// Requests that must work before any tenant is known.
+//   /health   — polled by the host's monitoring and by the keep-alive. Failing it
+//               because a header was missing would take the service down over a
+//               configuration mistake.
+//   /platform — the platform-admin surface sits ABOVE every tenant, so demanding one
+//               would be circular. It is also mounted before this middleware in
+//               index.js, so this is defence in depth rather than the only guard.
+//
+// NOTE these are mount-relative. This middleware is attached with app.use("/api"),
+// so Express strips that prefix and req.path here is "/health", never "/api/health".
+const TENANT_EXEMPT = new Set(["/health"]);
+const TENANT_EXEMPT_PREFIXES = ["/platform"];
 
 // A tenant lookup on every request would be a database round trip per request, on
 // data that changes when a customer is created — roughly never. Cached by slug for
@@ -78,6 +86,7 @@ const forget = (slug) => cache.delete(slug);
  */
 async function tenantMiddleware(req, res, next) {
   if (TENANT_EXEMPT.has(req.path)) return next();
+  if (TENANT_EXEMPT_PREFIXES.some((prefix) => req.path === prefix || req.path.startsWith(prefix + "/"))) return next();
 
   const slug = slugFor(req);
   let tenant;
