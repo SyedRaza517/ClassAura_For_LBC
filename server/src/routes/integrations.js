@@ -145,7 +145,9 @@ router.post("/:provider/test", requireAuth, requirePage("settings"), async (req,
   const spec = PROVIDERS[provider];
   if (!spec) return res.status(404).json({ error: "Unknown integration" });
 
-  const mod = provider === "moodle" ? require("./../moodle") : require("./../sharepoint");
+  const mod = provider === "moodle" ? require("./../moodle")
+    : provider === "email" ? require("./../email")
+    : require("./../sharepoint");
   // A provider's own failure is a RESULT here, not a 500 — "your client secret is
   // wrong" is the answer the caller asked for. Only an unexpected throw is an error,
   // and even that is recorded rather than lost.

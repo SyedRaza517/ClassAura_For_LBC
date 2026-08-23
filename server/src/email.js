@@ -29,13 +29,65 @@ const mailAssets = require("./mailAssets");
 // under that college's name. A bounce nobody owns is a better failure than a letter
 // signed by the wrong institution, and it shows up on the first send rather than months
 // later in somebody else's inbox.
-const FROM =
-  process.env.MAIL_FROM ||
-  (/@/.test(process.env.SMTP_USER || "") ? process.env.SMTP_USER : "Staff Hub <no-reply@localhost>");
+// Resolved per SEND, not once at require time.
+//
+// This was a module-level constant read from process.env, which is the whole defect in
+// miniature: whichever institution the server was configured for became the sender for
+// every other institution on the platform. A college's applicants must see that
+// college's address, or the offer they receive is, quite literally, from someone else.
+//
+// Order: what this college saved, then its username if that is an address, then the
+// server-wide setting, then a deliberately undeliverable address. That last step is
+// intentional — a bounce nobody owns is a better failure than a letter signed by the
+// wrong institution, and it surfaces on the first send rather than months later in
+// somebody else's inbox.
+const FROM = () => {
+  const c = E();
+  if (c.fromEmail) return String(c.fromEmail);
+  if (/@/.test(String(c.user || ""))) return String(c.user);
+  if (process.env.MAIL_FROM) return process.env.MAIL_FROM;
+  if (/@/.test(process.env.SMTP_USER || "")) return process.env.SMTP_USER;
+  return "Staff Hub <no-reply@localhost>";
+};
 // Resend (https://resend.com) sends over HTTPS, so it works on hosts that block
 // outbound SMTP ports (e.g. Render's free tier). Preferred when RESEND_API_KEY is set.
-const useResend = () => Boolean(process.env.RESEND_API_KEY);
-const isConfigured = () => Boolean(process.env.RESEND_API_KEY || process.env.SMTP_URL || process.env.SMTP_HOST);
+// --- Whose mailbox is this? ------------------------------------------------------
+//
+// This used to read process.env directly, which cannot survive more than one
+// institution: every college's applicants received mail from whichever college the
+// server happened to be configured for. That is not a branding problem — a student
+// receiving an offer "from" another institution is a different institution's letter.
+//
+// So the settings are resolved per tenant, exactly like Moodle and SharePoint:
+// what the college saved, then the environment, then nothing. Same choke-point trick
+// as moodle.js — cfg.load() is awaited once at the entry point (sendEmail /
+// verifyEmail) and the synchronous accessors below read the primed value, so the
+// dozens of call sites did not have to become async.
+//
+// A deployment where no college has configured anything behaves exactly as before.
+const cfg = require("./integrationConfig");
+
+const E = () => cfg.peek("email");
+const RESEND_KEY = () => {
+  const c = E();
+  // Resend and SMTP share the `password` slot: a college picks one transport, and the
+  // key only counts as a Resend key when the college said "resend".
+  if (c.provider === "resend" && c.password) return c.password;
+  return process.env.RESEND_API_KEY || "";
+};
+const SMTP_HOST = () => String(E().host || "");
+const SMTP_PORT = () => Number(E().port) || 587;
+const SMTP_SECURE = () => {
+  const v = E().secure;
+  if (v === undefined || v === "" || v === null) return SMTP_PORT() === 465;
+  return v === true || String(v).toLowerCase() === "true";
+};
+const SMTP_USER = () => String(E().user || "");
+const SMTP_PASS = () => (E().provider === "resend" ? "" : String(E().password || ""));
+const SMTP_URL = () => String(E().url || process.env.SMTP_URL || "");
+
+const useResend = () => Boolean(RESEND_KEY());
+const isConfigured = () => Boolean(RESEND_KEY() || SMTP_URL() || SMTP_HOST());
 
 // Send via Resend's HTTP API with a hard timeout so it can never hang a request.
 // `attachments` (optional) is [{ filename, content }] where content is a Buffer or a
@@ -44,7 +96,7 @@ async function sendViaResend(to, subject, text, html, attachments, from) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
-    const payload = { from: from || FROM, to, subject, text, html };
+    const payload = { from: from || FROM(), to, subject, text, html };
     if (attachments && attachments.length) {
       payload.attachments = attachments.map((a) => ({
         filename: a.filename,
@@ -53,7 +105,7 @@ async function sendViaResend(to, subject, text, html, attachments, from) {
     }
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${RESEND_KEY()}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: ctrl.signal,
     });
@@ -67,21 +119,30 @@ async function sendViaResend(to, subject, text, html, attachments, from) {
   } finally { clearTimeout(timer); }
 }
 
-let transporter = null;
+// PER TENANT, not per process. A single module-level transporter would hold one
+// college's authenticated SMTP connection and hand it to every other college's mail —
+// the same defect the SharePoint token cache had, with the same consequence: mail
+// leaving under the wrong institution's name. Keyed by the resolved settings so a
+// college that corrects its password gets a new connection rather than the stale one.
+const transports = new Map();
+
 function getTransport() {
-  if (transporter) return transporter;
-  if (process.env.SMTP_URL) {
-    transporter = nodemailer.createTransport(process.env.SMTP_URL);
+  const key = [SMTP_URL(), SMTP_HOST(), SMTP_PORT(), SMTP_USER(), SMTP_SECURE()].join("|");
+  const cached = transports.get(key);
+  if (cached) return cached;
+  let transporter;
+  if (SMTP_URL()) {
+    transporter = nodemailer.createTransport(SMTP_URL());
   } else {
-    const port = Number(process.env.SMTP_PORT) || 587;
+    const port = SMTP_PORT();
     // Implicit TLS is port 465; 587 uses STARTTLS, which nodemailer negotiates
     // automatically when secure is false.
-    const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === "true" : port === 465;
+    const secure = SMTP_SECURE();
     transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
+      host: SMTP_HOST(),
       port,
       secure,
-      auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+      auth: SMTP_USER() ? { user: SMTP_USER(), pass: SMTP_PASS() } : undefined,
       // Fail fast instead of hanging ~2 min when the SMTP port is blocked/unreachable
       // (common on PaaS free tiers). A blocked send must not stall the request.
       connectionTimeout: 10000,
@@ -89,6 +150,7 @@ function getTransport() {
       socketTimeout: 20000,
     });
   }
+  transports.set(key, transporter);
   return transporter;
 }
 
@@ -127,6 +189,9 @@ function defaultHtml(subject, text, brand) {
 // Send a message. Returns { sent, stubbed, messageId?, previewUrl?, error? } so
 // callers and the check script can report what happened; nothing throws.
 async function sendEmail(to, subject, body, { html, attachments, from } = {}) {
+  // The choke point. Every accessor below reads what this primes; without it they
+  // fall back to the environment, which is the old single-institution behaviour.
+  await cfg.load("email");
   if (!to) return { sent: false, stubbed: false, error: "no recipient" };
 
   if (!isConfigured()) {
@@ -155,7 +220,7 @@ async function sendEmail(to, subject, body, { html, attachments, from } = {}) {
 
   try {
     const info = await getTransport().sendMail({
-      from: from || FROM,
+      from: from || FROM(),
       to,
       subject,
       text: body,
@@ -176,6 +241,7 @@ async function sendEmail(to, subject, body, { html, attachments, from } = {}) {
 
 // Check the configured SMTP connection without sending anything.
 async function verifyEmail() {
+  await cfg.load("email");
   if (!isConfigured()) return { configured: false };
   try {
     await getTransport().verify();
@@ -187,10 +253,35 @@ async function verifyEmail() {
 
 // One-line description of the active mode, for the startup banner.
 function describeEmail() {
-  if (useResend()) return `Resend HTTP API as "${FROM}"`;
-  if (!isConfigured()) return "console stub (set RESEND_API_KEY, or SMTP_URL/SMTP_HOST, in server/.env to send real email)";
-  const target = process.env.SMTP_URL ? process.env.SMTP_URL.replace(/\/\/[^@]*@/, "//***@") : `${process.env.SMTP_HOST}:${Number(process.env.SMTP_PORT) || 587}`;
-  return `SMTP via ${target} as "${FROM}"`;
+  if (useResend()) return `Resend HTTP API as "${FROM()}"`;
+  if (!isConfigured()) return "console stub (no email configured — add it under Settings, Connected systems)";
+  const target = SMTP_URL() ? SMTP_URL().replace(/\/\/[^@]*@/, "//***@") : `${SMTP_HOST()}:${SMTP_PORT()}`;
+  return `SMTP via ${target} as "${FROM()}"`;
 }
 
-module.exports = { sendEmail, verifyEmail, describeEmail, isConfigured };
+// --- Test connection -------------------------------------------------------------
+// Same contract as moodle.testConnection / sharepoint.testConnection, so the Settings
+// screen can offer one button per integration. Read-only: it opens the connection and
+// authenticates, and sends nothing — a college testing its settings must not have to
+// put a real message in somebody's inbox to find out it typed the password wrong.
+async function testConnection() {
+  await cfg.load("email");
+  if (!isConfigured()) {
+    return { ok: false, note: "Not configured — add an SMTP server, or a Resend API key." };
+  }
+  if (useResend()) {
+    // Resend has no cheap authenticated no-op, so the key's shape is all that can be
+    // checked without sending. Said plainly rather than implied as a full check.
+    return RESEND_KEY().startsWith("re_")
+      ? { ok: true, note: "Resend API key is present. It is only verified for real when the first message is sent." }
+      : { ok: false, note: "That does not look like a Resend API key (they begin \"re_\")." };
+  }
+  try {
+    await getTransport().verify();
+    return { ok: true, note: "Connected to " + SMTP_HOST() + (SMTP_USER() ? " as " + SMTP_USER() : "") + "." };
+  } catch (e) {
+    return { ok: false, note: "Could not sign in to the mail server — " + e.message };
+  }
+}
+
+module.exports = { sendEmail, verifyEmail, describeEmail, isConfigured, testConnection };

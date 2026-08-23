@@ -28,6 +28,23 @@ const PROVIDERS = {
     env: { token: "MOODLE_TOKEN", url: "MOODLE_URL", autoSync: "MOODLE_AUTO_SYNC" },
     describe: (s) => (s.url ? s.url : "no URL set"),
   },
+  // Outbound email. The one that made this whole exercise urgent: it lived as
+  // process-wide SMTP_* and MAIL_FROM, so every institution on the platform sent its
+  // applicants mail from whichever college the server happened to be configured for.
+  // A student receiving an offer "from" another institution is not a branding problem.
+  //
+  // The secret is the SMTP password (or the Resend API key, which is stored in the
+  // same slot — a provider chooses one or the other and never both).
+  email: {
+    label: "Email",
+    secretField: "password",
+    settingFields: ["provider", "host", "port", "secure", "user", "fromName", "fromEmail"],
+    env: {
+      password: "SMTP_PASS", host: "SMTP_HOST", port: "SMTP_PORT",
+      secure: "SMTP_SECURE", user: "SMTP_USER", fromEmail: "MAIL_FROM",
+    },
+    describe: (s) => (s.host ? s.host + (s.user ? " as " + s.user : "") : s.provider === "resend" ? "Resend API" : "no server set"),
+  },
   sharepoint: {
     label: "SharePoint",
     secretField: "clientSecret",

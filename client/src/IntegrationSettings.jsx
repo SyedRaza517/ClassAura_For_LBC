@@ -37,6 +37,31 @@ const FORMS = {
       ] },
     ],
   },
+  // Outbound email. Listed first because it is the one that affects every applicant
+  // and student a college has: offers, interview invitations, password resets and
+  // attendance notices all leave from here, under this college's name.
+  email: {
+    label: "Email",
+    blurb: "The mailbox your offers, invitations and notices are sent from. Without this, nothing is emailed to your applicants or students.",
+    secret: { key: "password", label: "Password or API key", hint: "Your SMTP password, or your Resend API key if you chose Resend." },
+    fields: [
+      { key: "host", label: "SMTP server", placeholder: "smtp.office365.com", hint: "Leave blank if you are using Resend." },
+      { key: "port", label: "Port", placeholder: "587", hint: "587 for STARTTLS, 465 for implicit TLS." },
+      { key: "user", label: "Username", placeholder: "admissions@yourcollege.ac.uk" },
+      { key: "fromEmail", label: "Send from", placeholder: "Your College <admissions@yourcollege.ac.uk>", hint: "The address applicants see and reply to." },
+    ],
+    choices: [
+      { key: "provider", label: "How to send", options: [
+        { value: "", label: "SMTP server" },
+        { value: "resend", label: "Resend (HTTP API)" },
+      ] },
+      { key: "secure", label: "Encryption", options: [
+        { value: "", label: "Automatic (TLS on 465, STARTTLS otherwise)" },
+        { value: "true", label: "Always implicit TLS" },
+        { value: "false", label: "STARTTLS" },
+      ] },
+    ],
+  },
   sharepoint: {
     label: "SharePoint",
     blurb: "Creates a folder per applicant and stores their documents in your own Microsoft 365, so files stay under your permissions.",
