@@ -89,7 +89,16 @@ if (!external) {
   child = spawn("node", ["src/index.js"], {
     cwd: server,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: "test", JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production" },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      NODE_ENV: "test",
+      JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production",
+      // No tenant caching under test: the isolation suite suspends an institution and
+      // immediately checks it is locked out. With the production 60s cache that
+      // assertion would pass or fail depending on timing, which is worse than useless.
+      TENANT_CACHE_MS: "0",
+    },
   });
   let bootLog = "";
   child.stdout.on("data", (d) => { bootLog += d; });

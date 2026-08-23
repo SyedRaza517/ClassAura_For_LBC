@@ -19,6 +19,12 @@ const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+// Every row belongs to an institution now. This client is deliberately bare — it
+// verifies what the API did, so nothing injects a tenant for it — which means the
+// fixtures below have to name one themselves. They target the seeded institution,
+// the same one the API resolves to when no X-Tenant header is sent.
+const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
+if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -42,7 +48,7 @@ const hash = (raw) => crypto.createHash("sha256").update(raw).digest("hex");
 async function inviteTokenFor(staffId) {
   const raw = crypto.randomBytes(32).toString("hex");
   await db.passwordReset.updateMany({ where: { staffId, purpose: "invite", usedAt: null }, data: { usedAt: new Date() } });
-  await db.passwordReset.create({ data: { staffId, tokenHash: hash(raw), purpose: "invite", expiresAt: new Date(Date.now() + 7 * 864e5) } });
+  await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId, tokenHash: hash(raw), purpose: "invite", expiresAt: new Date(Date.now() + 7 * 864e5) } });
   return raw;
 }
 
@@ -61,7 +67,7 @@ for (const guess of ["Password123!", "changeme", "welcome", "edtech2026", ""]) {
   const r = await call("/auth/login", { method: "POST", body: { email, password: guess } });
   check(`a guessed password "${guess || "(empty)"}" is refused`, r.status !== 200 && !r.data?.token, `HTTP ${r.status}`);
 }
-const row = await db.staff.findUnique({ where: { email } });
+const row = await db.staff.findFirst({ where: { email } });
 check("the stored password is not the shared default", !!row && row.pendingActivation === true);
 
 console.log("\n--- activating it ---");
@@ -72,12 +78,12 @@ check("a valid invite verifies", verify.status === 200 && verify.data?.email ===
 check("verify returns no secrets", !JSON.stringify(verify.data).match(/passwordHash|totpSecret|tokenHash/));
 
 check("a short password is refused", (await call("/auth/invite/accept", { method: "POST", body: { token, newPassword: "short" } })).status === 400);
-check("the account is still inactive after that", (await db.staff.findUnique({ where: { email } })).pendingActivation === true);
+check("the account is still inactive after that", (await db.staff.findFirst({ where: { email } })).pendingActivation === true);
 
 const accept = await call("/auth/invite/accept", { method: "POST", body: { token, newPassword: "MyOwnPass123!" } });
 check("activation succeeds", accept.status === 200, JSON.stringify(accept.data));
 check("no session is handed back — they sign in fresh", !accept.data?.token);
-check("the account is now active", (await db.staff.findUnique({ where: { email } })).pendingActivation === false);
+check("the account is now active", (await db.staff.findFirst({ where: { email } })).pendingActivation === false);
 check("they can sign in with THEIR password", !!(await call("/auth/login", { method: "POST", body: { email, password: "MyOwnPass123!" } })).data?.token);
 check("password123 still does not work", (await call("/auth/login", { method: "POST", body: { email, password: "password123" } })).status === 401);
 check("the invite link is single-use", (await call("/auth/invite/verify", { method: "POST", body: { token } })).status === 400);
@@ -90,14 +96,14 @@ const inviteTok = await inviteTokenFor(s2.id);
 check("an invite token is refused by the password-reset endpoint", (await call("/auth/reset-password", { method: "POST", body: { token: inviteTok, newPassword: "Whatever123!" } })).status === 400);
 // ...and the reverse
 const rawReset = crypto.randomBytes(32).toString("hex");
-await db.passwordReset.create({ data: { staffId: s2.id, tokenHash: hash(rawReset), purpose: "reset", expiresAt: new Date(Date.now() + 18e5) } });
+await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId: s2.id, tokenHash: hash(rawReset), purpose: "reset", expiresAt: new Date(Date.now() + 18e5) } });
 check("a reset token is refused by the invite endpoint", (await call("/auth/invite/accept", { method: "POST", body: { token: rawReset, newPassword: "Whatever123!" } })).status === 400);
 
 console.log("\n--- re-sending an invitation ---");
 check("staff cannot re-send invitations", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@edtech.co.uk", password: SEED_PW } })).data.token })).status === 403);
 check("an admin can re-send", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: admin.token })).status === 200);
 check("re-sending retires the previous link", (await call("/auth/invite/verify", { method: "POST", body: { token: inviteTok } })).status === 400);
-check("re-sending to an already-active account is refused", (await call(`/staff/${(await db.staff.findUnique({ where: { email } })).id}/invite`, { method: "POST", token: admin.token })).status === 400);
+check("re-sending to an already-active account is refused", (await call(`/staff/${(await db.staff.findFirst({ where: { email } })).id}/invite`, { method: "POST", token: admin.token })).status === 400);
 
 console.log("\n--- an explicit password still works (no invitation) ---");
 const email3 = `${TAG}.c@edtech.co.uk`;
@@ -111,13 +117,13 @@ console.log("\n--- app sign-up still requires approval (unchanged) ---");
 const email4 = `${TAG}.d@edtech.co.uk`;
 made.push(email4);
 await call("/signup", { method: "POST", body: { name: "Invite Four", email: email4, password: "TheirPass123!", confirmPassword: "TheirPass123!", position: "Tutor", dept: "Teaching" } });
-check("no Staff row before approval", !(await db.staff.findUnique({ where: { email: email4 } })));
+check("no Staff row before approval", !(await db.staff.findFirst({ where: { email: email4 } })));
 check("cannot sign in before approval", (await call("/auth/login", { method: "POST", body: { email: email4, password: "TheirPass123!" } })).status === 401);
 
 // cleanup
 await db.passwordReset.deleteMany({ where: { staff: { email: { in: made } } } });
 for (const e of made) {
-  const s = await db.staff.findUnique({ where: { email: e } });
+  const s = await db.staff.findFirst({ where: { email: e } });
   if (s) await db.staff.delete({ where: { id: s.id } });
 }
 await db.signupRequest.deleteMany({ where: { email: { in: made } } });

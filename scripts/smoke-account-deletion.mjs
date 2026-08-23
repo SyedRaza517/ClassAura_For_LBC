@@ -17,6 +17,12 @@ const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+// Every row belongs to an institution now. This client is deliberately bare — it
+// verifies what the API did, so nothing injects a tenant for it — which means the
+// fixtures below have to name one themselves. They target the seeded institution,
+// the same one the API resolves to when no X-Tenant header is sent.
+const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
+if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -49,7 +55,7 @@ check("anonymous cannot delete an account", (await call("/auth/account", { metho
 check("missing confirmation phrase refused", (await call("/auth/account", { method: "DELETE", token: u.token, body: { password: u.password } })).status === 400);
 check("wrong confirmation phrase refused", (await call("/auth/account", { method: "DELETE", token: u.token, body: { password: u.password, confirm: "delete my account" } })).status === 400);
 check("wrong password refused", (await call("/auth/account", { method: "DELETE", token: u.token, body: { password: "NotMyPassword1!", confirm: "DELETE" } })).status === 400);
-check("account still exists after those attempts", !!(await db.staff.findUnique({ where: { email: u.email } })));
+check("account still exists after those attempts", !!(await db.staff.findFirst({ where: { email: u.email } })));
 check("session still works after those attempts", (await call("/auth/me", { token: u.token })).status === 200);
 
 console.log("\n--- a 2FA account also needs its code ---");
@@ -60,17 +66,17 @@ const mfaLogin = (await call("/auth/login", { method: "POST", body: { email: m.e
 const mfaSession = (await call("/auth/totp/verify", { method: "POST", body: { challengeToken: mfaLogin.challengeToken, code: totp.generateCode(setup.secret) } })).data.token;
 check("password + phrase alone is NOT enough when 2FA is on", (await call("/auth/account", { method: "DELETE", token: mfaSession, body: { password: m.password, confirm: "DELETE" } })).status === 400);
 check("a wrong code is refused", (await call("/auth/account", { method: "DELETE", token: mfaSession, body: { password: m.password, confirm: "DELETE", code: "000000" } })).status === 400);
-check("the account survived both attempts", !!(await db.staff.findUnique({ where: { email: m.email } })));
+check("the account survived both attempts", !!(await db.staff.findFirst({ where: { email: m.email } })));
 const okDel = await call("/auth/account", { method: "DELETE", token: mfaSession, body: { password: m.password, confirm: "DELETE", code: totp.generateCode(setup.secret) } });
 check("correct password + phrase + code deletes it", okDel.status === 200, JSON.stringify(okDel.data));
-check("the 2FA account is gone", !(await db.staff.findUnique({ where: { email: m.email } })));
+check("the 2FA account is gone", !(await db.staff.findFirst({ where: { email: m.email } })));
 
 console.log("\n--- the last administrator cannot delete themselves ---");
 const adminCount = await db.staff.count({ where: { accountRole: "ADMIN" } });
 if (adminCount === 1) {
   const r = await call("/auth/account", { method: "DELETE", token: admin.token, body: { password: SEED_PW, confirm: "DELETE" } });
   check("sole admin is blocked (400)", r.status === 400, r.data?.error);
-  check("the admin account still exists", !!(await db.staff.findUnique({ where: { email: "admin@edtech.co.uk" } })));
+  check("the admin account still exists", !!(await db.staff.findFirst({ where: { email: "admin@edtech.co.uk" } })));
 } else {
   console.log(`… skipped: ${adminCount} admins exist, so this rule does not apply right now`);
 }
@@ -85,7 +91,7 @@ await call("/adjustments", { method: "POST", token: admin.token, body: { staffId
 await call(`/leave/${lv.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved" } });
 const doc = (await call("/documents", { method: "POST", token: admin.token, body: { name: `Del Probe Doc ${TAG}`, type: "Payroll", scope: "personal", assignedTo: d.id } })).data;
 // and a sign-up request carrying the same email + a password hash
-await db.signupRequest.create({ data: { name: "Del data", email: d.email, passwordHash: "x", jobTitle: "T", dept: "T", status: "approved" } });
+await db.signupRequest.create({ data: { tenantId: TENANT.id, name: "Del data", email: d.email, passwordHash: "x", jobTitle: "T", dept: "T", status: "approved" } });
 
 const before = {
   checkIns: await db.checkIn.count({ where: { staffId: d.id } }),
@@ -117,7 +123,7 @@ check("admins were told about the deletion", adminNotes.some((n) => n.message.in
 await db.document.deleteMany({ where: { name: { startsWith: "Del Probe Doc" } } });
 await db.signupRequest.deleteMany({ where: { email: { contains: TAG } } });
 for (const email of made) {
-  const s = await db.staff.findUnique({ where: { email } });
+  const s = await db.staff.findFirst({ where: { email } });
   if (s) await db.staff.delete({ where: { id: s.id } });
 }
 await db.notification.deleteMany({ where: { message: { contains: "Del " } } });

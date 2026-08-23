@@ -1,8 +1,15 @@
 // Seeds the database with an admin + sample staff and demo data.
 // Run with: npm run seed
-const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
-const prisma = new PrismaClient();
+// The EXTENDED client, deliberately — not a bare PrismaClient. Every create below
+// then has its tenantId stamped on automatically by the isolation extension, so the
+// seed did not need rewriting row by row when tenancy landed.
+const prisma = require("../src/db");
+const { runInTenant, crossTenant } = require("../src/db");
+
+// Which institution this demo data belongs to. Defaults to the tenant the tenancy
+// migration adopted every pre-existing row into.
+const SEED_TENANT_SLUG = process.env.SEED_TENANT_SLUG || "default";
 
 const hash = (pw) => bcrypt.hashSync(pw, 10);
 const today = new Date().toISOString().slice(0, 10);
@@ -181,4 +188,13 @@ async function main() {
   console.log("  STAFF:  j.whitfield@edtech.co.uk, a.rahman@edtech.co.uk, d.okoye@edtech.co.uk, s.marin@edtech.co.uk, p.nair@edtech.co.uk");
 }
 
-main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());
+// Ensure the tenant exists, then run the whole seed inside it.
+(async () => {
+  const tenant = await crossTenant(() => prisma.tenant.upsert({
+    where: { slug: SEED_TENANT_SLUG },
+    create: { slug: SEED_TENANT_SLUG, name: "Default Institution" },
+    update: {},
+  }));
+  console.log("Seeding into tenant: " + tenant.slug + " (" + tenant.id + ")");
+  await runInTenant(tenant.id, () => main());
+})().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

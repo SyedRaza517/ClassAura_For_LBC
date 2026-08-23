@@ -30,7 +30,11 @@ const TENANT_EXEMPT = new Set(["/api/health"]);
 // data that changes when a customer is created — roughly never. Cached by slug for
 // a minute: long enough to matter, short enough that suspending a customer takes
 // effect while you are still looking at the screen.
-const CACHE_MS = 60_000;
+// Consequence worth stating plainly: suspending or deleting a customer takes up to
+// this long to bite, because a cached row still says active. That is acceptable for a
+// commercial suspension (non-payment, end of contract) and not acceptable in a test,
+// so it is configurable — CI sets TENANT_CACHE_MS=0 and gets immediate effect.
+const CACHE_MS = process.env.TENANT_CACHE_MS !== undefined ? Number(process.env.TENANT_CACHE_MS) : 60_000;
 const cache = new Map(); // slug -> { tenant, at }
 
 function slugFromHost(host) {
@@ -56,7 +60,7 @@ function slugFor(req) {
 
 async function lookup(slug) {
   const hit = cache.get(slug);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.tenant;
+  if (CACHE_MS > 0 && hit && Date.now() - hit.at < CACHE_MS) return hit.tenant;
   // Tenant is exempt from the isolation extension, but crossTenant() is used anyway
   // so the intent is explicit and this still works if that ever changes.
   const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { slug } }));

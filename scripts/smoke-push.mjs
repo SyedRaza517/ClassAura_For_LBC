@@ -105,7 +105,7 @@ check("its device tokens went with it", (await db.deviceToken.count({ where: { s
 await db.deviceToken.deleteMany({ where: { token: { contains: TAG } } });
 await db.leave.deleteMany({ where: { reason: "push probe" } });
 for (const email of made) {
-  const s = await db.staff.findUnique({ where: { email } });
+  const s = await db.staff.findFirst({ where: { email } });
   if (s) await db.staff.delete({ where: { id: s.id } });
 }
 await db.notification.deleteMany({ where: { message: { contains: "Push " } } });
