@@ -173,12 +173,33 @@ router.post("/activate", async (req, res) => {
 
   // The slug is settled at ACTIVATION, not at approval: another institution may have
   // taken it in between, and an applicant should not be turned away for that.
-  let slug = reg.requestedSlug || reg.legalName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30);
-  if (!SLUG_RE.test(slug) || RESERVED_SLUGS.has(slug)) slug = "college-" + reg.id.slice(-6).toLowerCase();
-  for (let i = 0; i < 50; i++) {
+  //
+  // Every CANDIDATE is validated, not just the first. Appending a "-2" to a slug that
+  // was already at the 32-character limit produced a 33-character one that SLUG_RE
+  // rejects — and routes/platform.js applies that same expression when an operator
+  // creates an institution by hand. So activation could mint a tenant whose slug the
+  // platform's own create route would refuse: an invariant broken on a DNS-shaped,
+  // customer-visible identifier. The suffix is made room for rather than added blindly.
+  const acceptable = (v) => SLUG_RE.test(v) && !RESERVED_SLUGS.has(v);
+  const withSuffix = (base, n) => {
+    const suffix = "-" + n;
+    // Trim the base so base+suffix still fits, and never end on a hyphen — SLUG_RE
+    // requires the last character to be alphanumeric.
+    return base.slice(0, 32 - suffix.length).replace(/-+$/, "") + suffix;
+  };
+
+  const fallback = "college-" + reg.id.slice(-6).toLowerCase();
+  let base = reg.requestedSlug || reg.legalName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30);
+  if (!acceptable(base)) base = fallback;
+
+  let slug = base;
+  for (let i = 2; i <= 50; i++) {
     const taken = await crossTenant(() => prisma.tenant.findUnique({ where: { slug } }));
-    if (!taken) break;
-    slug = (reg.requestedSlug || "college") + "-" + (i + 2);
+    if (!taken && acceptable(slug)) break;
+    slug = withSuffix(base, i);
+    // If the base itself cannot be made to fit, fall back to the id-derived one, which
+    // is short by construction.
+    if (!acceptable(slug)) slug = withSuffix(fallback, i);
   }
 
   const tenant = await crossTenant(() => prisma.tenant.create({ data: { slug, name: reg.tradingName || reg.legalName } }));
