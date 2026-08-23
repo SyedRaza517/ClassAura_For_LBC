@@ -74,6 +74,10 @@ const { tenantMiddleware } = require("./tenant");
 // tenant middleware — demanding a tenant here would be circular. Its own guard
 // (requirePlatformAdmin) rejects any staff, student or applicant token.
 app.use("/api/platform", wrapAsync(require("./routes/platform")));
+// Organisations APPLYING to join. Mounted here, above the tenant middleware, for the
+// same reason the platform surface is: an applicant is not yet an institution and has
+// no tenant to be resolved to. Two of its routes are deliberately public.
+app.use("/api/registrations", wrapAsync(require("./routes/registrations")));
 
 // Which institution is this request for? Resolved BEFORE authentication, because
 // Staff.email is unique per tenant now, so a login cannot find an account from an

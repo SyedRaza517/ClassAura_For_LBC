@@ -16,6 +16,7 @@ import { BrandMark } from "./Brand";
 import StudentApp from "./StudentApp";
 import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
 import PlatformDashboard from "./PlatformDashboard";
+import CollegeRegistration from "./CollegeRegistration";
 import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
@@ -257,6 +258,14 @@ export default function App() {
   // account, its own token, and no relationship to whoever may be signed in here.
   if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("platform")) {
     return (<><style>{GLOBAL_STYLE}</style><PlatformDashboard /></>);
+  }
+
+  // College registration — an organisation applying to join, or redeeming the access
+  // code we issued. Checked here with the platform surface rather than below the auth
+  // gate, because an applicant has no account by definition and a stale session on this
+  // browser must not divert them into somebody else's college.
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("register")) {
+    return (<><style>{GLOBAL_STYLE}</style><CollegeRegistration onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} /></>);
   }
 
   // These public pages are valid whether or not a stale session exists, and deliberately

@@ -33,7 +33,7 @@ const FALLBACK_SLUG = process.env.DEFAULT_TENANT_SLUG || "default";
 // NOTE these are mount-relative. This middleware is attached with app.use("/api"),
 // so Express strips that prefix and req.path here is "/health", never "/api/health".
 const TENANT_EXEMPT = new Set(["/health"]);
-const TENANT_EXEMPT_PREFIXES = ["/platform"];
+const TENANT_EXEMPT_PREFIXES = ["/platform", "/registrations"];
 
 // A tenant lookup on every request would be a database round trip per request, on
 // data that changes when a customer is created — roughly never. Cached by slug for

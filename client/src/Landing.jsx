@@ -115,6 +115,13 @@ export default function Landing({ onStaffApp, onAdmin, onStudent, onPlatform }) 
           Administrators can switch to the staff app at any time once signed in.
           <br />Super Admin is for operators of the platform itself — not a college sign-in.
         </p>
+
+        <p className="fade-up mt-3 text-center text-[11px] text-white/60" style={{ animationDelay: "0.36s" }}>
+          Are you an institution that would like to use this system?{" "}
+          <a href="?register" className="font-bold text-white underline underline-offset-2 hover:text-white/80">
+            Register your college
+          </a>
+        </p>
       </div>
     </div>
   );

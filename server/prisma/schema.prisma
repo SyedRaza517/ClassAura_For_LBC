@@ -281,6 +281,83 @@ model TenantEmailTemplate {
   @@index([tenantId])
 }
 
+/// An organisation asking to join the platform, before it is one of our institutions.
+///
+/// Deliberately NOT a Tenant. A Tenant is a customer we have accepted; this is an
+/// application from a stranger on a public form, and conflating the two would mean an
+/// unvetted submission appearing in the estate, counting toward usage, and — because
+/// tenant resolution works off slug — being reachable at a URL before anyone had
+/// looked at it.
+///
+/// Nothing here grants access. A row becomes a Tenant only when an operator approves
+/// it AND the applicant redeems the code that approval issued, which is two different
+/// people agreeing rather than one form being filled in.
+model CollegeRegistration {
+  id          String   @id @default(cuid())
+  submittedAt DateTime @default(now())
+
+  // --- the organisation ---
+  legalName     String
+  tradingName   String?
+  /// "fe" | "he" | "private" | "training" | "other" — validated as a string, matching
+  /// how every other enum in this schema is done.
+  institutionType String?
+  /// Companies House number, charity number, UKPRN — whatever identifies them
+  /// officially. Free text because it differs by country and by kind of provider.
+  registrationNumber String?
+  website       String?
+  addressLines  String?
+  country       String?
+  approxStaff   Int?
+  approxStudents Int?
+
+  // --- who is asking ---
+  contactName  String
+  contactRole  String?
+  contactEmail String
+  contactPhone String?
+
+  /// The subdomain they would like, e.g. "brookes". Checked against existing tenants
+  /// at approval, not at submission — a name being taken is our problem to resolve,
+  /// not a reason to reject someone at the form.
+  requestedSlug String?
+  notes         String?
+
+  // --- where the application has got to ---
+  /// pending | approved | activated | rejected
+  ///   pending   — submitted, nobody has looked at it
+  ///   approved  — an operator accepted it and an access code was issued
+  ///   activated — the code was redeemed and the institution now exists
+  ///   rejected  — declined; kept rather than deleted so a resubmission has history
+  status String @default("pending")
+
+  /// The code an operator issues on approval. Stored HASHED, like a password-reset
+  /// token: it is the only thing standing between an approved application and a live
+  /// institution, and a readable copy in the database — or in a backup, or in a
+  /// screenshot of Prisma Studio — is the whole control defeated.
+  accessCodeHash String?
+  /// Last four characters, so an operator can tell a caller which code is current
+  /// without being able to read it back.
+  accessCodeHint String?
+  codeIssuedAt   DateTime?
+  /// Codes expire. An approval that sat unused for months is not evidence that the
+  /// person still works there.
+  codeExpiresAt  DateTime?
+  /// Wrong-code attempts, so a code cannot be ground down by guessing.
+  codeAttempts   Int @default(0)
+
+  reviewedAt   DateTime?
+  reviewedBy   String?
+  decisionNote String?
+
+  /// Set once activated — the institution this application became.
+  tenantId String?
+
+  @@index([status])
+  @@index([contactEmail])
+}
+
+
 model Tenant {
   id        String   @id @default(cuid())
   /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.

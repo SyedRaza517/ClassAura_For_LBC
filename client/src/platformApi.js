@@ -28,7 +28,7 @@ export const setPlatformToken = (t) => {
   try { if (t) store().setItem(KEY, t); else store().removeItem(KEY); } catch { /* ignore */ }
 };
 
-async function request(path, { method = "GET", body, timeoutMs = 30000 } = {}) {
+async function request(path, { method = "GET", body, timeoutMs = 30000, prefix = "/platform" } = {}) {
   const headers = { "Content-Type": "application/json" };
   const token = getPlatformToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -36,7 +36,7 @@ async function request(path, { method = "GET", body, timeoutMs = 30000 } = {}) {
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   let res;
   try {
-    res = await fetch(BASE + "/platform" + path, {
+    res = await fetch(BASE + prefix + path, {
       method, headers, cache: "no-store", signal: controller?.signal,
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -72,6 +72,11 @@ export const platformApi = {
   usage: () => request("/usage", { timeoutMs: 60000 }),
   // Is this SERVER configured — credential storage, email, file storage?
   health: () => request("/health"),
+  // Organisations applying to join. These live under /registrations, not /platform,
+  // because two of that router's routes are public — see routes/registrations.js.
+  registrations: (status) => request("/registrations" + (status ? "?status=" + encodeURIComponent(status) : ""), { prefix: "" }),
+  approveRegistration: (id, note) => request(`/registrations/${id}/approve`, { method: "POST", body: { note }, prefix: "" }),
+  rejectRegistration: (id, note) => request(`/registrations/${id}/reject`, { method: "POST", body: { note }, prefix: "" }),
   // Restoring access to a college that has locked itself out. Both calls are scoped to
   // one institution and reach only its ADMINISTRATORS — see routes/platform.js.
   collegeAdmins: (tenantId) => request(`/tenants/${tenantId}/admins`),
