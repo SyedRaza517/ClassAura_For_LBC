@@ -1,7 +1,7 @@
 {
-  "name": "lbc-staff-hub-server",
+  "name": "edtech-hub-server",
   "version": "1.0.0",
-  "description": "London Brookes College Staff Hub — API server",
+  "description": "EdTech Staff Hub — API server",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch --watch-path=./src src/index.js",

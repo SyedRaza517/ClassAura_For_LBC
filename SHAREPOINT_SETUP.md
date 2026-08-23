@@ -1,6 +1,6 @@
 # SharePoint setup for the Admissions document feature
 
-This guide walks you through connecting the **LBC Staff Hub API** to your college's
+This guide walks you through connecting the **EdTech Hub API** to your college's
 **SharePoint** so it can create a folder for each applicant and store the documents
 they email in. You will do this by creating an **app registration** in Microsoft — a
 kind of "robot account" that lets the server talk to Microsoft on its own, without a
@@ -59,7 +59,7 @@ consent**) can *only* be done by an administrator.
 2. In the left-hand menu, click **App registrations**.
 3. Click **+ New registration** (near the top).
 4. Fill in the form:
-   - **Name:** type something clear, for example **`LBC Staff Hub – SharePoint`**.
+   - **Name:** type something clear, for example **`EdTech Hub – SharePoint`**.
      (This is just a label so you recognise it later — it can be anything.)
    - **Supported account types:** choose **"Accounts in this organizational directory only
      (Single tenant)"**. This keeps the app private to your college.
@@ -210,7 +210,7 @@ the hosting dashboard. The names must be **exactly** as written (capital letters
 
 ### For the live service (production) — Render
 
-1. Sign in to **Render** and open the **`lbc-staff-hub-api`** service.
+1. Sign in to **Render** and open the **`edtech-hub-api`** service.
 2. Click the **Environment** tab in the left menu.
 3. For each variable in the summary table below, click **Add Environment Variable**, type the
    **Key** (e.g. `SP_TENANT_ID`) and paste its **Value**.

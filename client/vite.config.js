@@ -21,7 +21,7 @@ function requireProductionApiUrl() {
         throw new Error(
           `\n\nVITE_API_URL is "${url || "(unset)"}" — a build with this cannot reach the API from a phone.\n` +
           `Set it in client/.env.production (or the CI environment) to the deployed API, e.g.\n` +
-          `  VITE_API_URL="https://lbc-staff-hub-api.onrender.com/api"\n\n` +
+          `  VITE_API_URL="https://edtech-hub-api.onrender.com/api"\n\n` +
           `To build against a local server on purpose, run with SKIP_API_URL_CHECK=1.\n`
         );
       }

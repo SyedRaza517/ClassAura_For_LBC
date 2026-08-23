@@ -4,7 +4,7 @@
 // Spins up N concurrent workers that hammer a mixed read-heavy workload for
 // the given duration, then reports throughput, latency percentiles, errors.
 const BASE = process.env.API_BASE || "http://localhost:4000/api";
-const ADMIN = { email: "admin@lbc.ac.uk", password: "password123" };
+const ADMIN = { email: "admin@edtech.co.uk", password: "password123" };
 const CONCURRENCY = Number(process.argv[2]) || 50;
 const DURATION_MS = (Number(process.argv[3]) || 15) * 1000;
 

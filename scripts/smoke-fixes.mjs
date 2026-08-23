@@ -8,14 +8,14 @@ const j = (t) => ({ "Content-Type": "application/json", Authorization: `Bearer $
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => { console.log(`${ok ? "✓" : "✗"} ${name}${detail ? "  — " + detail : ""}`); ok ? pass++ : fail++; };
 
-const admin = await login("admin@lbc.ac.uk", "password123");
-const staff = await login("j.whitfield@lbc.ac.uk", "password123");
+const admin = await login("admin@edtech.co.uk", "password123");
+const staff = await login("j.whitfield@edtech.co.uk", "password123");
 
 // 1) /staff reduced shape for staff, full for admin
 const adminStaff = await (await fetch(`${BASE}/staff`, { headers: j(admin) })).json();
 const staffStaff = await (await fetch(`${BASE}/staff`, { headers: j(staff) })).json();
 check("admin sees emails for all staff", adminStaff.every(s => "email" in s));
-const others = staffStaff.filter(s => s.email !== "j.whitfield@lbc.ac.uk");
+const others = staffStaff.filter(s => s.email !== "j.whitfield@edtech.co.uk");
 check("staff does NOT see colleagues' email", others.length > 0 && others.every(s => s.email === undefined));
 const self = staffStaff.find(s => s.role && s.dept && s.name === "James Whitfield");
 check("staff still sees OWN full record (allowance present)", self && self.allowance !== undefined, `allowance=${self?.allowance}`);

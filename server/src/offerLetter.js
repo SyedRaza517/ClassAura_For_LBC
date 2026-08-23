@@ -1,7 +1,7 @@
 // Builds the "unconditional offer" letter that Admissions sends to a successful HND
 // applicant, rendered as a two-page A4 PDF and returned as an in-memory Buffer.
 //
-// The letter is a faithful copy of the printed London Brookes College offer template:
+// The letter is a faithful copy of the printed EdTech offer template:
 // page 1 carries the branded letterhead, the "Congratulations" headline, the offer
 // body (First Day + Accept Your Place), and the "Your journey starts here." line;
 // page 2 carries the sign-off. The letterhead logo is the college's fanlight emblem,
@@ -109,7 +109,7 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       const drawHeader = () => {
         drawEmblem(MARGIN, 40, 44);
         doc.font("Times-Bold").fontSize(18).fillColor(NAVY)
-          .text("LONDON BROOKES", MARGIN, 70, { lineBreak: false });
+          .text("EDTECH", MARGIN, 70, { lineBreak: false });
         doc.font("Times-Bold").fontSize(9.5).fillColor(MAROON)
           .text("COLLEGE", MARGIN, 91, { characterSpacing: 4, lineBreak: false });
         doc.font("Times-BoldItalic").fontSize(9).fillColor("#333333")
@@ -122,9 +122,9 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       const drawFooter = () => {
         doc.page.margins.bottom = 0; // stop pdfkit spilling this low block onto a new page
         const lines = [
-          "London Brookes College is a company limited by guarantee registered in England and Wales 6683232.  Registered Office: 42 The Burroughs, Hendon, London NW4 4AP",
+          "EdTech is a company limited by guarantee registered in England and Wales 6683232.  Registered Office: 42 The Burroughs, Hendon, London NW4 4AP",
           "Tel: 0208 202 2007 | Fax: 0208 202 2047",
-          "email: info@londonbrookescollege.co.uk | website: www.Londonbrookescollege.co.uk",
+          "email: info@edtech.co.uk | website: www.edtech.co.uk",
           "ISI No: 482 - Dfes No: 23278- SLN No: GNVKF0HT9",
         ];
         const fopts = { width: CONTENT_WIDTH, align: "center", lineGap: 1.5 };
@@ -181,7 +181,7 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       // Opening two paragraphs.
       para([
         ["We are delighted to confirm that your application to "],
-        ["London Brookes College has been successful", "Times-Bold"],
+        ["EdTech has been successful", "Times-Bold"],
         ["."],
       ], { gapAfter: 10 });
       para([
@@ -200,7 +200,7 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
         ["  |  ", "Times-Roman"],
         ["Start: ", "Times-Bold"], [sessionTime, "Times-Roman"],
       ], { gapAfter: 3 });
-      para([["Location: ", "Times-Bold"], ["London Brookes College", "Times-Roman"]], { gapAfter: 10 });
+      para([["Location: ", "Times-Bold"], ["EdTech", "Times-Roman"]], { gapAfter: 10 });
       para([
         ["Attendance at induction is required to complete your enrolment. During the session, you will receive your "],
         ["timetable, student ID card, programme information", "Times-Bold"],
@@ -216,11 +216,11 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       ], { gapAfter: 10 });
       para([["If you have any questions before joining us, please contact our Admissions Team:"]], { gapAfter: 6 });
       para([
-        ["admissions@londonbrookescollege.co.uk", "Times-Bold", { color: NAVY, underline: true }],
+        ["admissions@edtech.co.uk", "Times-Bold", { color: NAVY, underline: true }],
         ["  |  ", "Times-Roman"],
         ["+44 7946 830578", "Times-Bold"],
       ], { gapAfter: 12 });
-      para([["We are excited to welcome you to London Brookes College and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
+      para([["We are excited to welcome you to EdTech and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
 
       // Closing line.
       head("YOUR JOURNEY STARTS HERE.", 19, { gapAfter: 0 });
@@ -236,7 +236,7 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       para([["Yours sincerely,"]], { gapAfter: 26 });
       para([[signatoryName, "Times-Bold"]], { gapAfter: 2 });
       para([[signatoryTitle, "Times-Roman"]], { gapAfter: 2 });
-      para([["London Brookes College", "Times-Bold"]], { gapAfter: 0 });
+      para([["EdTech", "Times-Bold"]], { gapAfter: 0 });
 
       drawFooter();
 

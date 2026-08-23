@@ -539,7 +539,7 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   // Lower-case BOTH branches. The generated address previously kept whatever case
   // the student number had, so "HND123@..." and a later hand-typed "hnd123@..."
   // both passed the exact-match uniqueness check and two students shared a mailbox.
-  const email = (str(req.body?.email) || `${studentRef}@londonbrookescollege.co.uk`).toLowerCase();
+  const email = (str(req.body?.email) || `${studentRef}@edtech.co.uk`).toLowerCase();
 
   const refClash = await prisma.student.findUnique({ where: { studentRef } });
   if (refClash) return res.status(409).json({ error: `Student number ${studentRef} is already in use` });

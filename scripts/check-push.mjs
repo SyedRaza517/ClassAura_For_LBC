@@ -23,7 +23,7 @@ if (!isConfigured()) {
   console.log("instead of delivering them. In-app notifications and email still work.\n");
   console.log("To enable real push:");
   console.log("  1. Create a Firebase project at https://console.firebase.google.com");
-  console.log("  2. Add an Android app (package uk.ac.lbc.staffhub) and download google-services.json");
+  console.log("  2. Add an Android app (package uk.co.edtech.hub) and download google-services.json");
   console.log("     -> client/android/app/google-services.json");
   console.log("  3. For iOS, add an iOS app, download GoogleService-Info.plist into client/ios/App/App/,");
   console.log("     and upload your APNs key under Project settings -> Cloud Messaging");

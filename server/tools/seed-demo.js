@@ -7,7 +7,7 @@
 //   npx prisma generate        # regenerate the client for the new Course/Unit models
 //   node seed-demo.js
 //
-// Login afterwards:  raza@lbc.ac.uk / 123456789  (super admin)
+// Login afterwards:  raza@edtech.co.uk / 123456789  (super admin)
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
@@ -51,12 +51,12 @@ async function main() {
   let pw = hashPassword("123456789");
   if (pw && typeof pw.then === "function") pw = await pw;
   const staffDefs = [
-    { name: "Raza", jobTitle: "Principal", dept: "Leadership", email: "raza@lbc.ac.uk", accountRole: "ADMIN", isSuperAdmin: true, adminPages: null, initials: "R", colour: "#6d28d9" },
-    { name: "HR Administrator", jobTitle: "HR & Operations", dept: "Administration", email: "admin@lbc.ac.uk", accountRole: "ADMIN", isSuperAdmin: false, adminPages: null, initials: "HR", colour: "#0f172a" },
-    { name: "James Whitfield", jobTitle: "Business Lecturer", dept: "HND", email: "j.whitfield@lbc.ac.uk", accountRole: "STAFF", initials: "JW", colour: "#1a3a8f" },
-    { name: "Aisha Rahman", jobTitle: "Care Lecturer", dept: "HND", email: "a.rahman@lbc.ac.uk", accountRole: "STAFF", initials: "AR", colour: "#9e1b32" },
-    { name: "Daniel Okoye", jobTitle: "Digital Lecturer", dept: "HND", email: "d.okoye@lbc.ac.uk", accountRole: "STAFF", initials: "DO", colour: "#0d7a5f" },
-    { name: "Sofia Marin", jobTitle: "Exams Officer", dept: "Exams", email: "s.marin@lbc.ac.uk", accountRole: "STAFF", initials: "SM", colour: "#b45309" },
+    { name: "Raza", jobTitle: "Principal", dept: "Leadership", email: "raza@edtech.co.uk", accountRole: "ADMIN", isSuperAdmin: true, adminPages: null, initials: "R", colour: "#6d28d9" },
+    { name: "HR Administrator", jobTitle: "HR & Operations", dept: "Administration", email: "admin@edtech.co.uk", accountRole: "ADMIN", isSuperAdmin: false, adminPages: null, initials: "HR", colour: "#0f172a" },
+    { name: "James Whitfield", jobTitle: "Business Lecturer", dept: "HND", email: "j.whitfield@edtech.co.uk", accountRole: "STAFF", initials: "JW", colour: "#1a3a8f" },
+    { name: "Aisha Rahman", jobTitle: "Care Lecturer", dept: "HND", email: "a.rahman@edtech.co.uk", accountRole: "STAFF", initials: "AR", colour: "#9e1b32" },
+    { name: "Daniel Okoye", jobTitle: "Digital Lecturer", dept: "HND", email: "d.okoye@edtech.co.uk", accountRole: "STAFF", initials: "DO", colour: "#0d7a5f" },
+    { name: "Sofia Marin", jobTitle: "Exams Officer", dept: "Exams", email: "s.marin@edtech.co.uk", accountRole: "STAFF", initials: "SM", colour: "#b45309" },
   ];
   const staff = [];
   for (const s of staffDefs) {
@@ -112,7 +112,7 @@ async function main() {
     const cohort = pick(cohorts);
     students.push({
       id, firstName: fn, lastName: ln, studentRef: ref,
-      email: `${ref}@student.lbc.ac.uk`, initials: (fn[0] + ln[0]).toUpperCase(),
+      email: `${ref}@student.edtech.co.uk`, initials: (fn[0] + ln[0]).toUpperCase(),
       colour: pick(COLOURS), active: Math.random() > 0.06, cohortId: cohort.id,
     });
     ability.set(id, clamp(0.32 + Math.random() * 0.6, 0.1, 0.98));
@@ -185,7 +185,7 @@ async function main() {
   await insertMany(prisma.checkIn, checkins);
   console.log(`Leave: ${leaveRows.length} · Check-ins: ${checkins.length}`);
 
-  console.log("\n✅  Seed complete. Login: raza@lbc.ac.uk / 123456789 (super admin)\n");
+  console.log("\n✅  Seed complete. Login: raza@edtech.co.uk / 123456789 (super admin)\n");
 }
 
 main().catch((e) => { console.error("❌ Seed failed:", e); process.exit(1); }).finally(() => prisma.$disconnect());

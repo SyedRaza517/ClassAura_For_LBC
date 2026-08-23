@@ -112,7 +112,7 @@ export default function Login({ onBack }) {
                   // one person's password against another person's email.
                   if (pwFromStore && !passwordMatchesEmail(e.target.value)) { setPassword(""); setPwFromStore(false); }
                 }}
-                disabled={busy} placeholder="name@londonbrookescollege.co.uk"
+                disabled={busy} placeholder="name@edtech.co.uk"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/60 py-2.5 pl-9 pr-3 text-sm outline-none transition-all duration-200 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
             </div>
           </div>

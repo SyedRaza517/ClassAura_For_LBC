@@ -27,10 +27,10 @@ async function call(path, { method = "GET", body, token } = {}) {
   let data = null; try { data = await res.json(); } catch (_) {}
   return { status: res.status, data };
 }
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 
 async function mkStaff(suffix, password = "DelPass123!") {
-  const email = `${TAG}.${suffix}@lbc.ac.uk`;
+  const email = `${TAG}.${suffix}@edtech.co.uk`;
   const r = await call("/staff", { method: "POST", token: admin.token, body: { name: `Del ${suffix}`, email, password } });
   made.push(email);
   await db.staff.update({ where: { id: r.data.id }, data: { mustChangePassword: false } });
@@ -65,7 +65,7 @@ const adminCount = await db.staff.count({ where: { accountRole: "ADMIN" } });
 if (adminCount === 1) {
   const r = await call("/auth/account", { method: "DELETE", token: admin.token, body: { password: "password123", confirm: "DELETE" } });
   check("sole admin is blocked (400)", r.status === 400, r.data?.error);
-  check("the admin account still exists", !!(await db.staff.findUnique({ where: { email: "admin@lbc.ac.uk" } })));
+  check("the admin account still exists", !!(await db.staff.findUnique({ where: { email: "admin@edtech.co.uk" } })));
 } else {
   console.log(`… skipped: ${adminCount} admins exist, so this rule does not apply right now`);
 }

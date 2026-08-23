@@ -14,8 +14,8 @@ const require = createRequire(pathToFileURL(join(server, "package.json")));
 const totp = require(join(server, "src", "totp.js"));
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
-const PLAIN_EMAIL = "reset.plain@lbc.ac.uk";      // no authenticator
-const MFA_EMAIL = "reset.mfa@lbc.ac.uk";          // authenticator enrolled
+const PLAIN_EMAIL = "reset.plain@edtech.co.uk";      // no authenticator
+const MFA_EMAIL = "reset.mfa@edtech.co.uk";          // authenticator enrolled
 const PASSWORD = "OriginalPass123!";
 const NEW_PASSWORD = "BrandNewPass456!";
 
@@ -60,7 +60,7 @@ async function issueKnownToken(staffId, { expiresInMs = 30 * 60 * 1000 } = {}) {
   return raw;
 }
 
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 
 // --- create two staff members through the real sign-up + approval path ---
 async function makeStaff(email, name, enrol2fa) {
@@ -87,7 +87,7 @@ console.log("\n--- requesting a link gives nothing away ---");
 let r = await call("/auth/forgot-password", { method: "POST", body: { email: PLAIN_EMAIL } });
 const knownMsg = r.data?.message;
 check("known address accepted (200)", r.status === 200 && !!knownMsg);
-r = await call("/auth/forgot-password", { method: "POST", body: { email: "nobody-here@lbc.ac.uk" } });
+r = await call("/auth/forgot-password", { method: "POST", body: { email: "nobody-here@edtech.co.uk" } });
 check("unknown address gives the identical reply", r.status === 200 && r.data?.message === knownMsg);
 check("no token is returned to the caller", !JSON.stringify(r.data).match(/token/i));
 r = await call("/auth/forgot-password", { method: "POST", body: {} });
@@ -155,7 +155,7 @@ if (!process.env.RESET_LOG) {
   // A brand-new address each run. The reset limiter is keyed on IP + email and
   // survives in the server process, so reusing an address across runs would hit
   // the 5-per-hour cap and silently send no email at all.
-  const e2eEmail = `reset.e2e.${Date.now()}@lbc.ac.uk`;
+  const e2eEmail = `reset.e2e.${Date.now()}@edtech.co.uk`;
   const e2ePassword = "EndToEndPass789!";
   EMAILS.push(e2eEmail);
   const e2eUser = await makeStaff(e2eEmail, "Reset E2e", false);

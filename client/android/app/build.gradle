@@ -11,10 +11,10 @@ if (keystorePropsFile.exists()) {
 }
 
 android {
-    namespace = "uk.ac.lbc.staffhub"
+    namespace = "uk.co.edtech.hub"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "uk.ac.lbc.staffhub"
+        applicationId "uk.co.edtech.hub"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Play rejects a versionCode it has seen before, on any track — including one

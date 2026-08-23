@@ -26,10 +26,10 @@ async function call(path, { method = "GET", body, token } = {}) {
   let data = null; try { data = await res.json(); } catch (_) {}
   return { status: res.status, data };
 }
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 
 async function mkStaff(suffix) {
-  const email = `${TAG}.${suffix}@lbc.ac.uk`;
+  const email = `${TAG}.${suffix}@edtech.co.uk`;
   const r = await call("/staff", { method: "POST", token: admin.token, body: { name: `Push ${suffix}`, email, password: "PushPass123!" } });
   made.push(email);
   await db.staff.update({ where: { id: r.data.id }, data: { mustChangePassword: false } });

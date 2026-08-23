@@ -19,7 +19,7 @@ async function call(path, { method = "GET", token, body } = {}) {
 (async () => {
   const prisma = require("../src/db");
   // Credentials come from the environment — never hard-coded, so this file is safe to
-  // commit:  ADMIN_EMAIL=you@lbc.ac.uk ADMIN_PASSWORD=... node scripts/verify-reviews.js
+  // commit:  ADMIN_EMAIL=you@edtech.co.uk ADMIN_PASSWORD=... node scripts/verify-reviews.js
   const EMAIL = process.env.ADMIN_EMAIL, PASSWORD = process.env.ADMIN_PASSWORD;
   if (!EMAIL || !PASSWORD) {
     console.log("Set ADMIN_EMAIL and ADMIN_PASSWORD, and make sure the API is running on :4000.");
@@ -30,7 +30,7 @@ async function call(path, { method = "GET", token, body } = {}) {
   if (!A) { console.log(`cannot sign in as ${EMAIL} (${login.status})`); process.exit(1); }
 
   // A throwaway lecturer with no admin pages at all — the audience the roster fix is for.
-  const email = `verify.${Date.now()}@lbc.ac.uk`;
+  const email = `verify.${Date.now()}@edtech.co.uk`;
   const bcrypt = require("bcryptjs");
   // Created through the API so every required column gets its normal default, then
   // given a password directly so this test can sign in as them.
@@ -128,12 +128,12 @@ async function call(path, { method = "GET", token, body } = {}) {
     `the two halves sum to the whole (${noFollow.data?.length} + ${yesFollow.data?.length} = ${all.data?.length})`);
 
   console.log("\n--- 10. the studentreviews page grant means what it says ---");
-  const patOnly = await mk("Verify PAT", "Administrator", `verify.pat.${Date.now()}@lbc.ac.uk`, "ADMIN", ["pat"]);
+  const patOnly = await mk("Verify PAT", "Administrator", `verify.pat.${Date.now()}@edtech.co.uk`, "ADMIN", ["pat"]);
   const P = (await call("/auth/login", { method: "POST", body: { email: patOnly.email, password: "Passw0rd!verify" } })).data?.token;
   ok((await call("/student-reviews", { token: P })).status === 403, "a 'pat'-only admin can no longer read every student review");
 
   console.log("\n--- 11. login lockout survives a forged address ---");
-  const ghost = `nobody.${Date.now()}@lbc.ac.uk`;
+  const ghost = `nobody.${Date.now()}@edtech.co.uk`;
   let locked = false;
   for (let i = 0; i < 24; i++) {
     const r = await fetch(BASE + "/auth/login", {

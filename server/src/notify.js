@@ -39,7 +39,7 @@ async function notifyStaff(staffId, { type = "info", message, link = null } = {}
   try {
     const n = await prisma.notification.create({ data: { staffId, type, message, link } });
     const staff = await prisma.staff.findUnique({ where: { id: staffId } });
-    if (staff?.email) await sendEmail(staff.email, "London Brookes College — Staff Hub", message);
+    if (staff?.email) await sendEmail(staff.email, "EdTech — Staff Hub", message);
     await pushToDevices(staffId, { type, message, link });
     return n;
   } catch (e) {

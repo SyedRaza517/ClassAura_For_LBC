@@ -48,14 +48,14 @@ async function sendInvite(staff, { invitedBy } = {}) {
   const who = invitedBy ? ` by ${invitedBy}` : "";
   const text =
     `Hello ${staff.name},\n\n` +
-    `A Staff Hub account has been created for you${who} at London Brookes College.\n\n` +
+    `A Staff Hub account has been created for you${who} at EdTech.\n\n` +
     `Choose your password to activate it. This link is valid for 7 days and can only be used once:\n\n${link}\n\n` +
     `Until you do, the account cannot be used. If you weren't expecting this, you can ignore this email.`;
 
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
     <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">London Brookes College</p>
+      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">
@@ -72,7 +72,7 @@ async function sendInvite(staff, { invitedBy } = {}) {
   </div>
 </div>`;
 
-  await sendEmail(staff.email, "Your London Brookes College Staff Hub account", text, { html });
+  await sendEmail(staff.email, "Your EdTech Staff Hub account", text, { html });
   return { ok: true };
 }
 

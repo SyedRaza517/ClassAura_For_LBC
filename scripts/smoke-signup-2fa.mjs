@@ -13,8 +13,8 @@ const require = createRequire(pathToFileURL(join(server, "package.json")));
 const totp = require(join(server, "src", "totp.js"));
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
-const EMAIL = "smoke.applicant@lbc.ac.uk";
-const REJECT_EMAIL = "smoke.rejected@lbc.ac.uk";
+const EMAIL = "smoke.applicant@edtech.co.uk";
+const REJECT_EMAIL = "smoke.rejected@edtech.co.uk";
 const PASSWORD = "SmokePass123!";
 const NAME = "Smoke Applicant";
 
@@ -53,15 +53,15 @@ check("cannot sign in while pending (401)", r.status === 401);
 
 r = await call("/signup", { method: "POST", body: { name: "X", email: "bad-email", password: PASSWORD, position: "P", dept: "D" } });
 check("invalid email rejected (400)", r.status === 400);
-r = await call("/signup", { method: "POST", body: { name: "X", email: "someone@lbc.ac.uk", password: "short", position: "P", dept: "D" } });
+r = await call("/signup", { method: "POST", body: { name: "X", email: "someone@edtech.co.uk", password: "short", position: "P", dept: "D" } });
 check("short password rejected (400)", r.status === 400);
-r = await call("/signup", { method: "POST", body: { name: "X", email: "someone@lbc.ac.uk", password: PASSWORD, confirmPassword: "Nope12345", position: "P", dept: "D" } });
+r = await call("/signup", { method: "POST", body: { name: "X", email: "someone@edtech.co.uk", password: PASSWORD, confirmPassword: "Nope12345", position: "P", dept: "D" } });
 check("mismatched confirmation rejected (400)", r.status === 400);
-r = await call("/signup", { method: "POST", body: { name: "X", email: "admin@lbc.ac.uk", password: PASSWORD, position: "P", dept: "D" } });
+r = await call("/signup", { method: "POST", body: { name: "X", email: "admin@edtech.co.uk", password: PASSWORD, position: "P", dept: "D" } });
 check("existing email leaks nothing (202, not 400)", r.status === 202);
 
 console.log("\n--- admin queue ---");
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 check("admin still signs in one step (no 2FA)", !!admin.token && !admin.mfaRequired);
 
 const pending = (await call("/signup?status=pending", { token: admin.token })).data;
@@ -69,7 +69,7 @@ const mine = pending.find((x) => x.email === EMAIL);
 check("request visible to admin", !!mine);
 check("position and department captured", mine?.role === "Lecturer" && mine?.dept === "Teaching");
 
-const staff = (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@lbc.ac.uk", password: "password123" } })).data;
+const staff = (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@edtech.co.uk", password: "password123" } })).data;
 check("staff cannot list requests (403)", (await call("/signup", { token: staff.token })).status === 403);
 check("staff cannot approve (403)", (await call(`/signup/${mine.id}/decision`, { method: "PUT", token: staff.token, body: { status: "approved" } })).status === 403);
 
@@ -116,7 +116,7 @@ console.log("\n--- the pending enrolment secret must be STABLE ---");
 // effect, a retry after a mistyped code) silently invalidated the QR the user had
 // already scanned — their authenticator could then never produce an accepted code.
 {
-  const stableEmail = `smoke.stable.${Date.now()}@lbc.ac.uk`;
+  const stableEmail = `smoke.stable.${Date.now()}@edtech.co.uk`;
   await call("/signup", { method: "POST", body: { name: "Smoke Stable", email: stableEmail, password: PASSWORD, confirmPassword: PASSWORD, position: "Tutor", dept: "Teaching" } });
   const sreq = (await call("/signup?status=pending", { token: admin.token })).data.find((x) => x.email === stableEmail);
   await call(`/signup/${sreq.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved" } });

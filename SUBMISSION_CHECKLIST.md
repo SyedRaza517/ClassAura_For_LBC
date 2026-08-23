@@ -1,4 +1,4 @@
-# LBC Staff Hub — App Store & Play Store Submission Checklist
+# EdTech Hub — App Store & Play Store Submission Checklist
 
 Everything you need to submit without getting rejected. The three biggest rejection
 causes are handled here: **(1) reviewer demo accounts, (2) privacy declarations, (3) privacy policy.**
@@ -22,8 +22,8 @@ Provide **both** a staff and a student account (your app has two sign-in types):
 
 | Purpose | Email | Password |
 | --- | --- | --- |
-| Staff / Admin | `reviewer.staff@lbc.ac.uk` | *(set a simple strong one)* |
-| Student | `reviewer.student@lbc.ac.uk` | *(set a simple strong one)* |
+| Staff / Admin | `reviewer.staff@edtech.co.uk` | *(set a simple strong one)* |
+| Student | `reviewer.student@edtech.co.uk` | *(set a simple strong one)* |
 
 **Important:**
 - Make sure these accounts are **approved/active** (not pending) so login works immediately.
@@ -36,8 +36,8 @@ Provide **both** a staff and a student account (your app has two sign-in types):
 
 **Notes field text (paste this):**
 > The app has two account types selected at sign-in: Staff and Student.
-> Staff/Admin login: reviewer.staff@lbc.ac.uk / <password>
-> Student login: reviewer.student@lbc.ac.uk / <password>
+> Staff/Admin login: reviewer.staff@edtech.co.uk / <password>
+> Student login: reviewer.student@edtech.co.uk / <password>
 > New sign-ups require admin approval, so please use the accounts above.
 
 ---
@@ -103,10 +103,10 @@ Browsing history, or any Advertising/Analytics purpose.
 
 A ready policy is included in your repo and will deploy with your web app:
 - File: `client/public/privacy.html`
-- **Public URL (after next Vercel deploy):** `https://lbc-staff-hub-client.vercel.app/privacy.html`
+- **Public URL (after next Vercel deploy):** `https://edtech-hub-client.vercel.app/privacy.html`
 
 **Before submitting:**
-- [ ] Replace the bracketed placeholders in the policy: **contact email** (e.g. privacy@lbc.ac.uk) and **College address**.
+- [ ] Replace the bracketed placeholders in the policy: **contact email** (e.g. privacy@edtech.co.uk) and **College address**.
 - [ ] Redeploy the web app (Vercel auto-deploys on push) and confirm the URL loads.
 - [ ] Paste that URL into:
   - **Apple:** App Store Connect → App Information → **Privacy Policy URL**
@@ -116,8 +116,8 @@ A ready policy is included in your repo and will deploy with your web app:
 
 ## 4. Store listing content (prepare once, use on both)
 
-- [ ] **App name:** LBC Staff Hub
-- [ ] **Short description** (Google, 80 chars): e.g. "Attendance, leave and student records for London Brookes College."
+- [ ] **App name:** EdTech Hub
+- [ ] **Short description** (Google, 80 chars): e.g. "Attendance, leave and student records for EdTech."
 - [ ] **Full description** (what staff & students can do)
 - [ ] **App icon** (1024×1024, no transparency/rounded corners for Apple)
 - [ ] **Screenshots** — required sizes:
@@ -163,12 +163,12 @@ A ready policy is included in your repo and will deploy with your web app:
 ## Quick pre-submit sanity test
 ```bash
 # Backend live?
-curl https://lbc-staff-hub-api.onrender.com/api/health
+curl https://edtech-hub-api.onrender.com/api/health
 # Reviewer login works?
-curl -X POST https://lbc-staff-hub-api.onrender.com/api/auth/login \
+curl -X POST https://edtech-hub-api.onrender.com/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"reviewer.staff@lbc.ac.uk","password":"<password>"}'
+  -d '{"email":"reviewer.staff@edtech.co.uk","password":"<password>"}'
 # Privacy policy live?
-curl -I https://lbc-staff-hub-client.vercel.app/privacy.html
+curl -I https://edtech-hub-client.vercel.app/privacy.html
 ```
 All three green → you're ready to submit.

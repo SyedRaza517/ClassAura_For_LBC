@@ -162,7 +162,7 @@ router.put("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async (re
         message: `${req.user.name} changed the email address on your account from ${target.email} to ${staff.email}. If you weren't expecting this, tell the college office straight away.`,
       });
       sendEmail(target.email, "Your Staff Hub email address was changed",
-        `Hello ${target.name},\n\n${req.user.name} changed the email address on your London Brookes College Staff Hub account to ${staff.email}.\n\nIf you did not expect this, contact the college office immediately — whoever holds the new address can now request a password reset for your account.`
+        `Hello ${target.name},\n\n${req.user.name} changed the email address on your EdTech Staff Hub account to ${staff.email}.\n\nIf you did not expect this, contact the college office immediately — whoever holds the new address can now request a password reset for your account.`
       ).catch(() => {});
     }
     res.json(sStaff(staff));

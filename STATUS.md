@@ -13,9 +13,9 @@ This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 | Check | Result |
 |---|---|
 | API boots (`node src/index.js`) | ✅ listening on `http://localhost:4000` |
-| `GET /api/health` | ✅ `{ ok: true, service: "lbc-staff-hub-api" }` |
-| Admin login (`admin@lbc.ac.uk` / `password123`) | ✅ token + user returned |
-| Staff login (`j.whitfield@lbc.ac.uk` / `password123`) | ✅ token + user returned |
+| `GET /api/health` | ✅ `{ ok: true, service: "edtech-hub-api" }` |
+| Admin login (`admin@edtech.co.uk` / `password123`) | ✅ token + user returned |
+| Staff login (`j.whitfield@edtech.co.uk` / `password123`) | ✅ token + user returned |
 | All 12 read endpoints as admin | ✅ every one returned 200 |
 | Staff sees only own leave | ✅ 1 of 6 rows, all their own |
 | Colleagues' emails hidden from staff | ✅ reduced shape returned |
@@ -74,7 +74,7 @@ Every mutation writes to the DB and the client refetches, so the staff app and t
 admin dashboard never disagree.
 
 ```
-lbc-staff-hub/
+edtech-hub/
 ├── server/   Express + Prisma + SQLite API  (8 route files, ~50 endpoints)
 ├── client/   React 18 + Vite SPA            (staff app + admin dashboard)
 └── scripts/  setup, load-test, smoke-test, screenshot automation
@@ -265,7 +265,7 @@ session:
 $env:Path += ";C:\Program Files\nodejs"
 ```
 
-Then, from `lbc-staff-hub\lbc-staff-hub\lbc-staff-hub`:
+Then, from `edtech-hub\edtech-hub\edtech-hub`:
 
 ```powershell
 npm run dev        # API on :4000 + client on :5173, together
@@ -275,15 +275,15 @@ Dependencies are **already installed** and the database is **already built and
 seeded** — you do *not* need `npm install` or `npm run setup` again. Running
 `npm run setup` would re-seed and **wipe any data you've entered**.
 
-> Note: the project sits three folders deep — `Downloads\lbc-staff-hub\lbc-staff-hub\lbc-staff-hub`.
+> Note: the project sits three folders deep — `Downloads\edtech-hub\edtech-hub\edtech-hub`.
 > That's the real root (the one with `package.json`). Worth flattening at some point.
 
 ### Logins (all `password123`)
 
 | Role | Email |
 |---|---|
-| Admin | `admin@lbc.ac.uk` |
-| Staff | `j.whitfield@lbc.ac.uk`, `a.rahman@lbc.ac.uk`, `d.okoye@lbc.ac.uk`, `s.marin@lbc.ac.uk`, `p.nair@lbc.ac.uk` |
+| Admin | `admin@edtech.co.uk` |
+| Staff | `j.whitfield@edtech.co.uk`, `a.rahman@edtech.co.uk`, `d.okoye@edtech.co.uk`, `s.marin@edtech.co.uk`, `p.nair@edtech.co.uk` |
 
 ### Other commands
 

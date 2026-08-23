@@ -44,23 +44,23 @@ import { isNativeApp } from "./PhoneShell";
 // ============================================================================
 export const BIOMETRICS_ENABLED = false;
 
-const ENABLED_KEY = "lbc_biometric_enabled";
+const ENABLED_KEY = "edtech_biometric_enabled";
 // The WebAuthn credential id (base64url) created when the lock is switched on in a
 // browser. It identifies which platform credential to ask for later; the private key
 // never leaves the authenticator, so this is not a secret.
-const CRED_KEY = "lbc_biometric_credential";
+const CRED_KEY = "edtech_biometric_credential";
 // Who the remembered session and credential belong to.
 //
 // Without this the keys are device-global and nothing ties them to an account, so on
 // a shared machine user A could arm the lock, user B sign in and be re-remembered
 // under A's credential, and A then unlock straight into B's session. The sign-in
 // button also refuses to appear for an address that isn't this one.
-const OWNER_KEY = "lbc_biometric_owner";
+const OWNER_KEY = "edtech_biometric_owner";
 // Where the remembered session lives. Capacitor Preferences is app-private storage
 // (Android SharedPreferences / iOS UserDefaults) — another app cannot read it, though
 // it is not the Keychain, which is why the token is only ever put there when the user
 // has switched biometric unlock ON and is only ever taken out after a successful check.
-const SESSION_KEY = "lbc_remembered_session";
+const SESSION_KEY = "edtech_remembered_session";
 
 async function prefs() {
   if (!isNativeApp()) return null;
@@ -189,7 +189,7 @@ async function webEnrol(name) {
   const cred = await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "London Brookes College Staff Hub", id: window.location.hostname },
+      rp: { name: "EdTech Staff Hub", id: window.location.hostname },
       user: {
         id: crypto.getRandomValues(new Uint8Array(16)),
         name: name || "Staff Hub",
@@ -531,7 +531,7 @@ export const clearBiometricPrefs = () => {
     localStorage.removeItem(ENABLED_KEY);
     localStorage.removeItem(CRED_KEY);
     localStorage.removeItem(OWNER_KEY);
-    localStorage.removeItem("lbc_biometric_prompt_dismissed");
+    localStorage.removeItem("edtech_biometric_prompt_dismissed");
   } catch (_) {}
   // Fire-and-forget: the caller is signing out and must not wait on storage.
   forgetSession();

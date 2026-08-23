@@ -66,7 +66,7 @@ function Phone({ children, onBack }) {
             <BrandMark size={22} />
           </span>
           <div className="leading-tight">
-            <p className="text-[13px] font-extrabold tracking-tight text-white" style={{ fontFamily: "'Lora', serif" }}>London Brookes College</p>
+            <p className="text-[13px] font-extrabold tracking-tight text-white" style={{ fontFamily: "'Lora', serif" }}>EdTech</p>
             <p className="text-[10px] font-semibold tracking-[0.2em] text-white/60">STAFF HUB</p>
           </div>
         </div>
@@ -143,7 +143,7 @@ function SignIn({ onNeedSecondStep, goSignUp, goForgot }) {
             // A stored password belongs to the stored address only.
             if (pwFromStore && !passwordMatchesEmail(e.target.value)) { setPassword(""); setPwFromStore(false); }
           }}
-          placeholder="name@londonbrookescollege.co.uk" autoComplete="username" autoCapitalize="none" spellCheck={false}
+          placeholder="name@edtech.co.uk" autoComplete="username" autoCapitalize="none" spellCheck={false}
           className={inputClass} style={{ "--tw-ring-color": NAVY }} />
       </Labelled>
 
@@ -300,7 +300,7 @@ function SignUp({ goSignIn }) {
       </Labelled>
 
       <Labelled label="Email" Icon={Mail}>
-        <input type="email" value={form.email} onChange={set("email")} disabled={busy} placeholder={role === "student" ? "100121@londonbrookescollege.co.uk" : "name@londonbrookescollege.co.uk"} autoComplete="email" className={inputClass} style={{ "--tw-ring-color": NAVY }} />
+        <input type="email" value={form.email} onChange={set("email")} disabled={busy} placeholder={role === "student" ? "100121@edtech.co.uk" : "name@edtech.co.uk"} autoComplete="email" className={inputClass} style={{ "--tw-ring-color": NAVY }} />
       </Labelled>
 
       {role === "student" && (
@@ -413,7 +413,7 @@ export default function MobileAuth({ onExit }) {
       {mode === "signin" && (
         <div className="pb-5 text-center">
           <p className="flex items-center justify-center gap-1 text-[10px] text-slate-300">
-            <Clock size={11} /> London Brookes College · Staff Hub
+            <Clock size={11} /> EdTech · Staff Hub
           </p>
           <p className="mt-0.5 text-[10px] text-slate-300">© 2026 Syed Muhammad Raza</p>
         </div>

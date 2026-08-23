@@ -6,7 +6,7 @@ Two helper scripts in `scripts/`:
 |---|---|
 | `node scripts/seed-100.mjs [count]` | Logs in as admin and creates `count` (default 100) staff via the real `POST /api/staff` endpoint — exercises auth, validation, bcrypt, and DB writes. Emails are unique (`loadtest.<n>...`) so re-runs don't collide. |
 | `node scripts/stress-test.mjs [concurrency] [seconds]` | Closed-loop load test: N concurrent workers hit a weighted read-heavy mix (staff/leave/checkins/health + occasional login) and report throughput, latency percentiles, and error rate. |
-| `node scripts/cleanup-loadtest.mjs [--dry-run]` | Removes only the load-test staff (`loadtest.*@lbc.ac.uk`), leaving the 6 original accounts intact. Use `--dry-run` to preview first. |
+| `node scripts/cleanup-loadtest.mjs [--dry-run]` | Removes only the load-test staff (`loadtest.*@edtech.co.uk`), leaving the 6 original accounts intact. Use `--dry-run` to preview first. |
 
 Prereq: API running on `http://localhost:4000` (`npm run dev`).
 

@@ -174,7 +174,7 @@ async function buildApplicationPdf(admission = {}) {
       doc.font("Helvetica-Bold").fontSize(8).fillColor(MAROON)
         .text("HND APPLICATION FORM", bx, 42, { characterSpacing: 2, lineBreak: false });
       doc.font("Helvetica-Bold").fontSize(18).fillColor(NAVY)
-        .text("London Brookes College", bx, 54, { lineBreak: false });
+        .text("EdTech", bx, 54, { lineBreak: false });
 
       // Applicant identity beneath the wordmark.
       doc.font("Helvetica-Bold").fontSize(13).fillColor(VALUE)
@@ -226,7 +226,7 @@ async function buildApplicationPdf(admission = {}) {
       if (doc.y > BOTTOM - 24) doc.addPage();
       doc.font("Helvetica").fontSize(7.5).fillColor(GREY)
         .text(
-          "London Brookes College · 42 The Burroughs, Hendon, London NW4 4AP · info@londonbrookescollege.co.uk · www.londonbrookescollege.co.uk",
+          "EdTech · 42 The Burroughs, Hendon, London NW4 4AP · info@edtech.co.uk · www.edtech.co.uk",
           MARGIN, BOTTOM - 12, { width: CONTENT_WIDTH, align: "center", lineBreak: false }
         );
 

@@ -1,11 +1,11 @@
 // Per-category "From" addresses — the college's Microsoft 365 shared mailboxes.
 //
 // Different kinds of automated email go out from different mailboxes so replies land in
-// the right team's inbox (all on the londonbrookescollege.ac.uk domain):
-//   attendance  → attendance@londonbrookescollege.ac.uk   (attendance emails)
-//   pat         → PAT@londonbrookescollege.ac.uk          (PAT / tutorial records)
-//   ask         → ASK@londonbrookescollege.ac.uk          (academic queries, reminders)
-//   wellbeing   → Wellbeing@londonbrookescollege.ac.uk    (wellbeing / support)
+// the right team's inbox (all on the edtech.co.uk domain):
+//   attendance  → attendance@edtech.co.uk   (attendance emails)
+//   pat         → PAT@edtech.co.uk          (PAT / tutorial records)
+//   ask         → ASK@edtech.co.uk          (academic queries, reminders)
+//   wellbeing   → Wellbeing@edtech.co.uk    (wellbeing / support)
 //
 // Pass one of these as `from` to email.sendEmail(to, subject, body, { html, from }).
 //
@@ -14,11 +14,11 @@
 // with 5.2.252 SendAsDenied — exactly like sending as admissions@. Grant Send As on each
 // shared mailbox in the M365 / Exchange admin centre. Each address can also be overridden
 // with an env var without a code change.
-const NAME = "London Brookes College";
+const NAME = "EdTech";
 
 module.exports = {
-  attendance: process.env.MAIL_FROM_ATTENDANCE || `${NAME} Attendance <attendance@londonbrookescollege.ac.uk>`,
-  pat:        process.env.MAIL_FROM_PAT        || `${NAME} PAT <PAT@londonbrookescollege.ac.uk>`,
-  ask:        process.env.MAIL_FROM_ASK        || `${NAME} ASK <ASK@londonbrookescollege.ac.uk>`,
-  wellbeing:  process.env.MAIL_FROM_WELLBEING  || `${NAME} Wellbeing <Wellbeing@londonbrookescollege.ac.uk>`,
+  attendance: process.env.MAIL_FROM_ATTENDANCE || `${NAME} Attendance <attendance@edtech.co.uk>`,
+  pat:        process.env.MAIL_FROM_PAT        || `${NAME} PAT <PAT@edtech.co.uk>`,
+  ask:        process.env.MAIL_FROM_ASK        || `${NAME} ASK <ASK@edtech.co.uk>`,
+  wellbeing:  process.env.MAIL_FROM_WELLBEING  || `${NAME} Wellbeing <Wellbeing@edtech.co.uk>`,
 };

@@ -328,7 +328,7 @@ function renderSignoff(text, theme) {
       </td></tr></table>`;
 }
 
-// Wrap the rendered body in the branded shell: a band-tinted header with the LBC logo,
+// Wrap the rendered body in the branded shell: a band-tinted header with the EdTech logo,
 // a hero showing the big attendance % and a themed progress bar, a one-line band note,
 // the body, and a footer. `meta` = { theme, pct, bandLabel, period }.
 function htmlShell(bodyHtml, meta) {
@@ -350,17 +350,17 @@ function htmlShell(bodyHtml, meta) {
   return `<div style="margin:0;padding:24px 12px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.10)">
     <div style="background:linear-gradient(135deg,${t.grad[0]},${t.grad[1]});padding:22px 28px">
-      <img src="${mailAssets.logoUrl}" width="46" height="28" alt="London Brookes College" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:46px" />
+      <img src="${mailAssets.logoUrl}" width="46" height="28" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:46px" />
       <p style="margin:0 0 2px;color:rgba(255,255,255,.72);font-size:11px;letter-spacing:.2em">STUDENT ATTENDANCE</p>
-      <p style="margin:0;color:#fff;font-size:19px;font-weight:800">London Brookes College</p>
+      <p style="margin:0;color:#fff;font-size:19px;font-weight:800">EdTech</p>
     </div>
     <div style="padding:26px 28px">
       ${hero}
       <div>${bodyHtml}</div>
     </div>
     <div style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e6eaf1">
-      <p style="margin:0 0 3px;font-size:11px;color:#94a3b8">This is an automated attendance update from London Brookes College. Reply to this email to reach the attendance team.</p>
-      <p style="margin:0;font-size:11px;color:#b6becb">42 The Burroughs, Hendon, London NW4 4AP &middot; attendance@londonbrookescollege.ac.uk</p>
+      <p style="margin:0 0 3px;font-size:11px;color:#94a3b8">This is an automated attendance update from EdTech. Reply to this email to reach the attendance team.</p>
+      <p style="margin:0;font-size:11px;color:#b6becb">42 The Burroughs, Hendon, London NW4 4AP &middot; attendance@edtech.co.uk</p>
     </div>
   </div>
 </div>`;

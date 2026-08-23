@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">LBC Staff Hub</string>
-    <string name="title_activity_main">LBC Staff Hub</string>
-    <string name="package_name">uk.ac.lbc.staffhub</string>
-    <string name="custom_url_scheme">uk.ac.lbc.staffhub</string>
+    <string name="app_name">EdTech Hub</string>
+    <string name="title_activity_main">EdTech Hub</string>
+    <string name="package_name">uk.co.edtech.hub</string>
+    <string name="custom_url_scheme">uk.co.edtech.hub</string>
 </resources>

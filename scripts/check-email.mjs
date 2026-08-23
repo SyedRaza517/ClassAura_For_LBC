@@ -49,7 +49,7 @@ process.stdout.write(`Sending a test message to ${to}… `);
 const res = await sendEmail(
   to,
   "Staff Hub email test",
-  "This is a test message from the London Brookes College Staff Hub.\n\nIf you can read this, password-reset emails will reach your staff.",
+  "This is a test message from the EdTech Staff Hub.\n\nIf you can read this, password-reset emails will reach your staff.",
 );
 if (res.sent) {
   console.log("SENT");

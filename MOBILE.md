@@ -132,11 +132,11 @@ account. Everything either side of it is already built and tested — see
 
 **1 — Create the project** (2 minutes, free)
    - Go to <https://console.firebase.google.com> → **Add project**
-   - Name it e.g. `lbc-staff-hub`. Google Analytics is not needed — turn it off.
+   - Name it e.g. `edtech-hub`. Google Analytics is not needed — turn it off.
 
 **2 — Add the Android app** (this is all Android needs)
    - Project overview → the **Android** icon
-   - Package name — must match exactly: `uk.ac.lbc.staffhub`
+   - Package name — must match exactly: `uk.co.edtech.hub`
    - Download **`google-services.json`** and put it at:
      ```
      client/android/app/google-services.json
@@ -145,7 +145,7 @@ account. Everything either side of it is already built and tested — see
      applies itself as soon as that file exists.
 
 **3 — Add the iOS app** (only when you have a Mac and a paid Apple account)
-   - Project overview → the **iOS** icon, bundle ID `uk.ac.lbc.staffhub`
+   - Project overview → the **iOS** icon, bundle ID `uk.co.edtech.hub`
    - Download **`GoogleService-Info.plist`** → `client/ios/App/App/`
    - Apple Developer portal → **Keys** → create an *Apple Push Notifications service
      (APNs)* key → download the `.p8`
@@ -158,8 +158,8 @@ account. Everything either side of it is already built and tested — see
      notifications to every one of your users.
    - In `server/.env`:
      ```env
-     FCM_PROJECT_ID="lbc-staff-hub"
-     FCM_SERVICE_ACCOUNT="C:/secure/path/lbc-staff-hub-firebase-adminsdk.json"
+     FCM_PROJECT_ID="edtech-hub"
+     FCM_SERVICE_ACCOUNT="C:/secure/path/edtech-hub-firebase-adminsdk.json"
      ```
 
 **5 — Check it**
@@ -168,7 +168,7 @@ account. Everything either side of it is already built and tested — see
    node scripts/check-push.mjs <device-token>  # sends a real test notification
    ```
    The server banner should change from `console stub` to
-   `Firebase project "lbc-staff-hub" as …`.
+   `Firebase project "edtech-hub" as …`.
 
    To get a device token: run the app on a real device, sign in, then read it from
    the `DeviceToken` table (`npm run studio`).
@@ -212,7 +212,7 @@ Covered by `scripts/smoke-push.mjs` (24 checks).
 
 ```
 client/
-├── capacitor.config.json   app id (uk.ac.lbc.staffhub), name, splash, status bar
+├── capacitor.config.json   app id (uk.co.edtech.hub), name, splash, status bar
 ├── android/                generated Android project — buildable on Windows
 ├── ios/                    generated iOS project  — needs a Mac
 ├── public/                 manifest, icons

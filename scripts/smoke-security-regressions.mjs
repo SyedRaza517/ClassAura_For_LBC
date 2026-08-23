@@ -45,12 +45,12 @@ async function call(path, { method = "GET", body, token } = {}) {
 }
 const alive = async () => (await call("/health")).status === 200;
 
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 if (!admin?.token) { console.error("admin login failed — is the API up?"); process.exit(1); }
 
 // Create a staff account directly (admin route), returns {id, email, password, token}
 async function mkStaff(suffix, allowance = 28) {
-  const email = `${TAG}.${suffix}@lbc.ac.uk`;
+  const email = `${TAG}.${suffix}@edtech.co.uk`;
   const r = await call("/staff", { method: "POST", token: admin.token, body: { name: `VF ${suffix}`, email, allowance, password: "InitPass123!" } });
   made.push(email);
   // admin-created accounts carry mustChangePassword; clear it so login returns a session

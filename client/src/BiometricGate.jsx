@@ -14,7 +14,7 @@ const NAVY = "#1a3a8f", NAVY_DARK = "#14306f";
 
 // Remembers that the user has already been offered the one-time "turn on Face ID"
 // prompt and said no — so it isn't shoved in their face on every sign-in.
-const PROMPT_DISMISSED_KEY = "lbc_biometric_prompt_dismissed";
+const PROMPT_DISMISSED_KEY = "edtech_biometric_prompt_dismissed";
 
 // Re-lock only after a real absence. Without this, the OS briefly backgrounding the
 // app (a permission dialog, the notification shade) would demand a fingerprint

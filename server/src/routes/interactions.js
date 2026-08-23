@@ -50,7 +50,7 @@ function buildInteractionEmail(row) {
   // Only mention a follow-up when one was actually arranged.
   if (row.followUpRequired) rows.push(["Follow-up arranged for", row.followUpDate || dash]);
 
-  const subject = `London Brookes College — Record of your ${row.queryType || "meeting"}`;
+  const subject = `EdTech — Record of your ${row.queryType || "meeting"}`;
 
   // Plain-text alternative.
   const text = [
@@ -61,7 +61,7 @@ function buildInteractionEmail(row) {
     ...rows.map(([k, v]) => `${k}: ${v}`),
     "",
     "Kind regards,",
-    "London Brookes College",
+    "EdTech",
   ].join("\n");
 
   // Branded HTML — table-safe, inline styles, everything interpolated is escaped.
@@ -75,21 +75,21 @@ function buildInteractionEmail(row) {
     `<p style="margin:0 0 14px">Dear ${esc(first)},</p>` +
     `<p style="margin:0 0 16px">A record of your ${esc(type)} on ${esc(row.date)} at ${esc(row.time)} has been logged by your tutor.</p>` +
     `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px">${tableRows}\n      </table>` +
-    `<p style="margin:16px 0 0">Kind regards,<br>London Brookes College</p>`;
+    `<p style="margin:16px 0 0">Kind regards,<br>EdTech</p>`;
 
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
     <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="London Brookes College" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
+      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
       <p style="margin:0 0 2px;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">PERSONAL ACADEMIC TUTOR</p>
-      <p style="margin:0;color:#fff;font-size:18px;font-weight:800">London Brookes College</p>
+      <p style="margin:0;color:#fff;font-size:18px;font-weight:800">EdTech</p>
     </div>
     <div style="padding:24px">
       <h1 style="margin:0 0 12px;font-size:18px;color:#0f172a">${heading}</h1>
       <div style="font-size:14px;line-height:1.6;color:#334155">${bodyHtml}</div>
     </div>
     <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;color:#94a3b8">London Brookes College · 42 The Burroughs, Hendon, London NW4 4AP · info@londonbrookescollege.co.uk</p>
+      <p style="margin:0;font-size:11px;color:#94a3b8">EdTech · 42 The Burroughs, Hendon, London NW4 4AP · info@edtech.co.uk</p>
     </div>
   </div>
 </div>`;

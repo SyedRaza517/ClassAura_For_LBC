@@ -1,7 +1,7 @@
 {
-  "name": "London Brookes College — Staff Hub",
+  "name": "EdTech — Staff Hub",
   "short_name": "Staff Hub",
-  "description": "Staff attendance, leave and HND attendance registers for London Brookes College.",
+  "description": "Staff attendance, leave and HND attendance registers for EdTech.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

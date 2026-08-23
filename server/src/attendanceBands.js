@@ -4,7 +4,7 @@
  * attendanceBands.js
  *
  * Pure CommonJS module (no external dependencies) for the automated
- * student-attendance email system at London Brookes College.
+ * student-attendance email system at EdTech.
  *
  * It defines:
  *   - BANDS:             the attendance percentage bands (best -> worst)
@@ -71,7 +71,7 @@ const DEFAULT_VALUES = {
   tutorName: "",
   jobTitle: "",
   department: "",
-  institution: "London Brookes College",
+  institution: "EdTech",
   vle: "Moodle",
   officeHours: "",
   patContact: "",

@@ -443,13 +443,13 @@ function Shell({ user, logout, entry }) {
       <div className={`animated-gradient slide-down z-50 flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-white shadow-lg ${handset ? "" : "sticky top-0"}`} style={{ background: "linear-gradient(90deg, #0f172a 0%, #14306f 50%, #0f172a 100%)", backgroundSize: "220% 220%", ...(handset ? { paddingTop: "max(env(safe-area-inset-top), 8px)" } : {}) }}>
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-8 items-center justify-center rounded-lg bg-white/95 ring-1 ring-white/15"><BrandMark size={20} /></div>
-          <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>LBC</span>
+          <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>EdTech</span>
         </div>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
           {/* The Staff-App / Admin-Dashboard view toggle used to live here. It's
               gone now: the front-door Landing screen already asks which one to
               open, so switching again from the header was redundant. */}
-          <span className="min-w-0 truncate font-semibold tracking-wide text-slate-200">London Brookes College · Staff Hub</span>
+          <span className="min-w-0 truncate font-semibold tracking-wide text-slate-200">EdTech · Staff Hub</span>
         </div>
         <div className="flex items-center gap-2.5">
           <LiveClock />
@@ -473,7 +473,7 @@ function Shell({ user, logout, entry }) {
           has its own footer on the "More" screen. */}
       {!(handset && view === "app") && (
         <footer className="shrink-0 border-t border-slate-200 bg-white/70 px-4 py-3 text-center text-[11px] text-slate-400">
-          © {new Date().getFullYear()} Syed Muhammad Raza · London Brookes College · Staff Hub
+          © {new Date().getFullYear()} Syed Muhammad Raza · EdTech · Staff Hub
         </footer>
       )}
 

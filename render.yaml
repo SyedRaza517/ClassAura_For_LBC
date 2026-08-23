@@ -1,11 +1,11 @@
-# Render Blueprint for the LBC Staff Hub API.
+# Render Blueprint for the EdTech Hub API.
 # In Render:  New +  →  Blueprint  →  connect this repo.
 # It creates the web service below; paste the secret values when prompted.
 #
 # The database is already hosted on Supabase — nothing to provision here.
 services:
   - type: web
-    name: lbc-staff-hub-api
+    name: edtech-hub-api
     runtime: node
     region: frankfurt          # closest EU region to your Supabase DB (eu-north-1)
     plan: free                 # change to "starter" ($7/mo) to stop it sleeping after 15 min idle
@@ -31,9 +31,9 @@ services:
       - key: JWT_SECRET
         sync: false              # the long random secret from server/.env
       - key: CLIENT_URL
-        sync: false              # your dashboard URL, e.g. https://lbc-hub.vercel.app  (set after step 2)
+        sync: false              # your dashboard URL, e.g. https://edtech-hub.vercel.app  (set after step 2)
       - key: CORS_ORIGINS
-        sync: false              # dashboard URL + mobile: "https://lbc-hub.vercel.app,capacitor://localhost,http://localhost"
+        sync: false              # dashboard URL + mobile: "https://edtech-hub.vercel.app,capacitor://localhost,http://localhost"
       - key: APP_TIMEZONE
         value: Europe/London     # the organisation's wall clock; drives dates, the term
                                  # gate and the 02:00 Moodle sync

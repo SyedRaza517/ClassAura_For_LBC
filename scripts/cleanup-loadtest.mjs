@@ -1,8 +1,8 @@
-// Removes the load-test staff added by seed-100.mjs (emails: loadtest.*@lbc.ac.uk).
+// Removes the load-test staff added by seed-100.mjs (emails: loadtest.*@edtech.co.uk).
 // Leaves the original seeded accounts (admin + 5 staff) untouched.
 // Usage: node scripts/cleanup-loadtest.mjs [--dry-run]
 const BASE = process.env.API_BASE || "http://localhost:4000/api";
-const ADMIN = { email: "admin@lbc.ac.uk", password: "password123" };
+const ADMIN = { email: "admin@edtech.co.uk", password: "password123" };
 const DRY_RUN = process.argv.includes("--dry-run");
 const CONCURRENCY = 10;
 const PREFIX = "loadtest.";

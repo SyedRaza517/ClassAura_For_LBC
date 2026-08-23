@@ -28,11 +28,11 @@ const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
 });
-process.env.FCM_PROJECT_ID = "lbc-staff-hub-test";
+process.env.FCM_PROJECT_ID = "edtech-hub-test";
 process.env.FCM_SERVICE_ACCOUNT_JSON = JSON.stringify({
   type: "service_account",
-  project_id: "lbc-staff-hub-test",
-  client_email: "staff-hub@lbc-staff-hub-test.iam.gserviceaccount.com",
+  project_id: "edtech-hub-test",
+  client_email: "staff-hub@edtech-hub-test.iam.gserviceaccount.com",
   private_key: privateKey,
 });
 
@@ -61,7 +61,7 @@ const { sendPush, verifyPush, describePush, isConfigured } = require(`${ROOT}/se
 console.log("\n--- configuration ---");
 check("reports itself as configured", isConfigured() === true);
 const desc = describePush();
-check("the startup banner names the project", /lbc-staff-hub-test/.test(desc), desc);
+check("the startup banner names the project", /edtech-hub-test/.test(desc), desc);
 check("the banner does not leak the private key", !desc.includes("PRIVATE KEY"));
 
 console.log("\n--- the OAuth assertion Google would receive ---");
@@ -76,7 +76,7 @@ const assertion = body.get("assertion");
 let claims = null;
 try { claims = jwt.verify(assertion, publicKey, { algorithms: ["RS256"] }); } catch (e) { claims = { _error: e.message }; }
 check("the assertion is a valid RS256 signature over our key", !claims._error, claims._error || "");
-check("issued by the service account", claims?.iss === "staff-hub@lbc-staff-hub-test.iam.gserviceaccount.com");
+check("issued by the service account", claims?.iss === "staff-hub@edtech-hub-test.iam.gserviceaccount.com");
 check("audience is the token endpoint", claims?.aud === "https://oauth2.googleapis.com/token");
 check("requests the firebase.messaging scope", claims?.scope === "https://www.googleapis.com/auth/firebase.messaging");
 check("expires within the hour Google allows", claims && claims.exp - claims.iat <= 3600 && claims.exp > claims.iat);
@@ -86,7 +86,7 @@ calls.length = 0;
 const sent = await sendPush("device-token-abc", { title: "Staff Hub", body: "Your leave was approved.", data: { link: "balance", type: "success" } });
 check("reports success", sent.sent === true, JSON.stringify(sent));
 const fcmCall = calls.find((c) => c.url.includes("fcm.googleapis.com"));
-check("posts to the v1 endpoint for the right project", fcmCall?.url === "https://fcm.googleapis.com/v1/projects/lbc-staff-hub-test/messages:send", fcmCall?.url);
+check("posts to the v1 endpoint for the right project", fcmCall?.url === "https://fcm.googleapis.com/v1/projects/edtech-hub-test/messages:send", fcmCall?.url);
 check("carries the access token as a Bearer header", fcmCall?.opts.headers.Authorization === "Bearer access-1");
 const msg = JSON.parse(fcmCall.opts.body).message;
 check("addresses the device token", msg.token === "device-token-abc");

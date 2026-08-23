@@ -1,7 +1,7 @@
 {
-  "name": "lbc-staff-hub",
+  "name": "edtech-hub",
   "version": "1.0.0",
-  "description": "London Brookes College Staff Hub — full-stack (server + client)",
+  "description": "EdTech Staff Hub — full-stack (server + client)",
   "private": true,
   "workspaces": ["server", "client"],
   "scripts": {

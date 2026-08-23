@@ -1,4 +1,4 @@
-// Regenerate every app icon from the London Brookes College fanlight emblem.
+// Regenerate every app icon from the EdTech fanlight emblem.
 //
 // The emblem is defined here as SVG (a solid royal-blue semicircle with a white
 // fanlight — outer ring, hub and radial spokes), so this script is the single source
@@ -9,7 +9,7 @@ import sharp from "sharp";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const BLUE = "#1e40af";   // emblem blue (matches src/Brand.jsx LBC_BLUE)
+const BLUE = "#1e40af";   // emblem blue (matches src/Brand.jsx BRAND_BLUE)
 const WHITE = "#ffffff";
 
 // A square SVG containing the centred fanlight emblem.
@@ -55,7 +55,7 @@ console.log("\nPlay feature graphic:");
 const FEATURE = `<svg width="1024" height="500" xmlns="http://www.w3.org/2000/svg">
   <rect width="1024" height="500" fill="${WHITE}"/>
   <text x="430" y="238" font-family="Georgia,'Times New Roman',serif" font-size="70" font-weight="bold" fill="${BLUE}">Staff Hub</text>
-  <text x="434" y="298" font-family="Helvetica,Arial,sans-serif" font-size="28" fill="#334155">London Brookes College</text>
+  <text x="434" y="298" font-family="Helvetica,Arial,sans-serif" font-size="28" fill="#334155">EdTech</text>
 </svg>`;
 const featureLogo = await png({ S: 300 }).toBuffer();
 await out("store/play-feature-1024x500.png",

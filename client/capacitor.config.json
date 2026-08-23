@@ -1,6 +1,6 @@
 {
-  "appId": "uk.ac.lbc.staffhub",
-  "appName": "LBC Staff Hub",
+  "appId": "uk.co.edtech.hub",
+  "appName": "EdTech Hub",
   "webDir": "dist",
   "backgroundColor": "#1a3a8fff",
   "android": {

@@ -305,7 +305,7 @@ router.post("/totp/setup", async (req, res) => {
     formattedSecret: totp.formatSecret(secret),
     otpauthUrl: totp.otpauthUrl(secret, staff.email),
     account: staff.email,
-    issuer: "London Brookes College",
+    issuer: "EdTech",
   });
 });
 
@@ -611,7 +611,7 @@ router.post("/forgot-password", async (req, res) => {
     const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
     <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">London Brookes College</p>
+      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">

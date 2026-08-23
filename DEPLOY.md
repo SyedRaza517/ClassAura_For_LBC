@@ -1,4 +1,4 @@
-# Deployment guide — LBC Staff Hub
+# Deployment guide — EdTech Hub
 
 Four things ship: **API** (Render) → **Dashboard** (Vercel) → **Android** (Play) → **iOS** (App Store).
 Database is already on **Supabase** (PostgreSQL, eu-north-1). Deploy in that order.
@@ -17,11 +17,11 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
    |-----|-------|
    | `DATABASE_URL` | your Supabase **session-pooler** URL (from `server/.env`) |
    | `JWT_SECRET` | the long random secret from `server/.env` |
-   | `CLIENT_URL` | your dashboard URL (fill after step 2), e.g. `https://lbc-hub.vercel.app` |
-   | `CORS_ORIGINS` | `https://lbc-hub.vercel.app,capacitor://localhost,http://localhost` |
+   | `CLIENT_URL` | your dashboard URL (fill after step 2), e.g. `https://edtech-hub.vercel.app` |
+   | `CORS_ORIGINS` | `https://edtech-hub.vercel.app,capacitor://localhost,http://localhost` |
    | `SMTP_*`, `MAIL_FROM` | your email provider settings (optional) |
 
-4. Deploy → note the URL, e.g. `https://lbc-staff-hub-api.onrender.com`. That is your **API base**.
+4. Deploy → note the URL, e.g. `https://edtech-hub-api.onrender.com`. That is your **API base**.
    - `NODE_ENV=production` and `JWT_EXPIRES=1d` are set for you.
    - Health check: `GET /api/health`.
    - Free plan sleeps after 15 min idle (cold start ~30s). Use **Starter ($7/mo)** for always-on.
@@ -36,8 +36,8 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
 
 1. Vercel → **Add New Project** → same repo.
 2. **Root Directory** = `client` · Framework = **Vite** · Build = `npm run build` · Output = `dist`.
-3. Env var: `VITE_API_URL = https://lbc-staff-hub-api.onrender.com/api`  (API URL **+ `/api`**).
-4. Deploy → e.g. `https://lbc-hub.vercel.app`.
+3. Env var: `VITE_API_URL = https://edtech-hub-api.onrender.com/api`  (API URL **+ `/api`**).
+4. Deploy → e.g. `https://edtech-hub.vercel.app`.
 5. Back in **Render**, set `CLIENT_URL` and `CORS_ORIGINS` to this URL → redeploy the API.
 
 (Netlify alternative: base `client`, build `npm run build`, publish `dist`, add a `_redirects` file with `/*  /index.html  200`.)
@@ -46,7 +46,7 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
 
 ## 3. Android — Google Play  (build on Windows ✅, $25 one-time)
 
-1. `client/.env`: `VITE_API_URL=https://lbc-staff-hub-api.onrender.com/api`
+1. `client/.env`: `VITE_API_URL=https://edtech-hub-api.onrender.com/api`
 2. In `client/`:
    ```bash
    npm run build

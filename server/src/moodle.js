@@ -109,7 +109,7 @@ const clean = (s) => String(s ?? "").replace(/<[^>]*>/g, "").replace(/&amp;/g, "
 //
 // Moodle's `idnumber` was the obvious source, but on this site it holds an opaque
 // internal hash ("_-_AQaJw5yr2TMLcSRJLR5qIfg"), not the college number. The real
-// number is the local part of the college email — 100104@londonbrookescollege.co.uk.
+// number is the local part of the college email — 100104@edtech.co.uk.
 // Importing the hash left every student with a reference nobody could ever quote,
 // so sign-up could not match them and staff could not search for them.
 const COLLEGE_NUMBER = /^\d{4,10}$/;

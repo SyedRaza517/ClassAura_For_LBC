@@ -61,12 +61,12 @@ function markFor(studentRef, sessionId) {
 }
 
 const STAFF = [
-  { id: "admin", name: "HR Administrator", jobTitle: "HR & Operations", dept: "Administration", email: "admin@lbc.ac.uk", accountRole: "ADMIN", allowance: 30, initials: "HR", colour: "#0f172a" },
-  { id: "s1", name: "James Whitfield", jobTitle: "Mathematics Teacher", dept: "Sixth Form", email: "j.whitfield@lbc.ac.uk", accountRole: "STAFF", allowance: 28, initials: "JW", colour: "#1a3a8f" },
-  { id: "s2", name: "Aisha Rahman", jobTitle: "Head of Science", dept: "Sixth Form", email: "a.rahman@lbc.ac.uk", accountRole: "STAFF", allowance: 30, initials: "AR", colour: "#9e1b32" },
-  { id: "s3", name: "Daniel Okoye", jobTitle: "English Tutor", dept: "Tuition Centre", email: "d.okoye@lbc.ac.uk", accountRole: "STAFF", allowance: 25, initials: "DO", colour: "#0d7a5f" },
-  { id: "s4", name: "Sofia Marin", jobTitle: "Exams Officer", dept: "Exam Centre", email: "s.marin@lbc.ac.uk", accountRole: "STAFF", allowance: 26, initials: "SM", colour: "#b45309" },
-  { id: "s5", name: "Priya Nair", jobTitle: "Admissions Lead", dept: "Administration", email: "p.nair@lbc.ac.uk", accountRole: "STAFF", allowance: 28, initials: "PN", colour: "#6d28d9" },
+  { id: "admin", name: "HR Administrator", jobTitle: "HR & Operations", dept: "Administration", email: "admin@edtech.co.uk", accountRole: "ADMIN", allowance: 30, initials: "HR", colour: "#0f172a" },
+  { id: "s1", name: "James Whitfield", jobTitle: "Mathematics Teacher", dept: "Sixth Form", email: "j.whitfield@edtech.co.uk", accountRole: "STAFF", allowance: 28, initials: "JW", colour: "#1a3a8f" },
+  { id: "s2", name: "Aisha Rahman", jobTitle: "Head of Science", dept: "Sixth Form", email: "a.rahman@edtech.co.uk", accountRole: "STAFF", allowance: 30, initials: "AR", colour: "#9e1b32" },
+  { id: "s3", name: "Daniel Okoye", jobTitle: "English Tutor", dept: "Tuition Centre", email: "d.okoye@edtech.co.uk", accountRole: "STAFF", allowance: 25, initials: "DO", colour: "#0d7a5f" },
+  { id: "s4", name: "Sofia Marin", jobTitle: "Exams Officer", dept: "Exam Centre", email: "s.marin@edtech.co.uk", accountRole: "STAFF", allowance: 26, initials: "SM", colour: "#b45309" },
+  { id: "s5", name: "Priya Nair", jobTitle: "Admissions Lead", dept: "Administration", email: "p.nair@edtech.co.uk", accountRole: "STAFF", allowance: 28, initials: "PN", colour: "#6d28d9" },
 ];
 
 async function main() {
@@ -121,7 +121,7 @@ async function main() {
     await prisma.student.create({ data: {
       id: `st-${s.ref}`,
       firstName: s.firstName, lastName: s.lastName, studentRef: s.ref,
-      email: `${s.ref}@londonbrookescollege.co.uk`,
+      email: `${s.ref}@edtech.co.uk`,
       initials: `${s.firstName[0]}${s.lastName[0]}`.toUpperCase(),
       colour: colourFor(s.ref + s.lastName),
     }});
@@ -177,8 +177,8 @@ async function main() {
   }
 
   console.log("\nSeed complete. All demo accounts use the SEED_PASSWORD you supplied (not printed).");
-  console.log("  ADMIN:  admin@lbc.ac.uk");
-  console.log("  STAFF:  j.whitfield@lbc.ac.uk, a.rahman@lbc.ac.uk, d.okoye@lbc.ac.uk, s.marin@lbc.ac.uk, p.nair@lbc.ac.uk");
+  console.log("  ADMIN:  admin@edtech.co.uk");
+  console.log("  STAFF:  j.whitfield@edtech.co.uk, a.rahman@edtech.co.uk, d.okoye@edtech.co.uk, s.marin@edtech.co.uk, p.nair@edtech.co.uk");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

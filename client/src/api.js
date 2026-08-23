@@ -24,7 +24,7 @@ const BASE = resolveBase();
 // NOTE for the packaged app: localStorage inside the Capacitor WebView is private
 // to the app, but it is not the Keychain / Android Keystore. Before shipping,
 // consider moving the JWT to secure storage — see MOBILE.md.
-const TOKEN_KEY = "lbc_token";
+const TOKEN_KEY = "edtech_token";
 
 // Session persistence, by platform:
 //   Native app  → sessionStorage. It survives backgrounding (the WebView stays

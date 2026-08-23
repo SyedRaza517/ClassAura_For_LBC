@@ -78,7 +78,7 @@ function verifyCode(secret, code, at = Date.now()) {
 
 // The otpauth:// URL an authenticator app expects behind a QR code.
 // The label is "Issuer:account" by convention, and both parts must be encoded.
-function otpauthUrl(secret, account, issuer = "London Brookes College") {
+function otpauthUrl(secret, account, issuer = "EdTech") {
   const label = encodeURIComponent(`${issuer}:${account}`);
   // Built by hand rather than with URLSearchParams: that encodes spaces as "+",
   // and some authenticator apps show the "+" literally in the issuer name.

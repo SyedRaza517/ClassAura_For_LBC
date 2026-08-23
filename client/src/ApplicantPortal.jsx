@@ -114,7 +114,7 @@ export function ApplicantAuth({ onBack }) {
               <GraduationCap size={26} />
             </div>
             <h1 className="text-xl font-extrabold tracking-tight text-slate-800">Student Portal</h1>
-            <p className="mt-0.5 text-xs text-slate-500">London Brookes College · applications & admissions</p>
+            <p className="mt-0.5 text-xs text-slate-500">EdTech · applications & admissions</p>
           </div>
 
           <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
@@ -329,7 +329,7 @@ function Overview({ me, go }) {
           <div>
             <p className="text-sm font-bold">Congratulations — you've been enrolled!</p>
             {p.inductionDate
-              ? <p className="mt-0.5 text-[13px] font-semibold">Your induction is on {fmtDate(p.inductionDate)}{p.inductionTime ? ` at ${p.inductionTime}` : ""} — London Brookes College. Please bring photo ID.</p>
+              ? <p className="mt-0.5 text-[13px] font-semibold">Your induction is on {fmtDate(p.inductionDate)}{p.inductionTime ? ` at ${p.inductionTime}` : ""} — EdTech. Please bring photo ID.</p>
               : <p className="mt-0.5 text-[13px]">The admissions team will be in touch with your next steps.</p>}
           </div>
         </div>
@@ -504,7 +504,7 @@ function InterviewTab({ me }) {
           </div>
           <div className="flex flex-col gap-3 p-5">
             <Row Icon={CalendarClock} label="When" value={`${fmtDate(iv.date)}${iv.time ? ` at ${iv.time}` : ""}`} />
-            <Row Icon={iv.mode === "Online" ? Video : MapPin} label="Where" value={iv.mode === "Online" ? "Online" : (iv.location || "London Brookes College")} />
+            <Row Icon={iv.mode === "Online" ? Video : MapPin} label="Where" value={iv.mode === "Online" ? "Online" : (iv.location || "EdTech")} />
             {iv.mode === "Online" && iv.link && <Row Icon={Video} label="Join link" value={<a href={iv.link} target="_blank" rel="noreferrer" className="break-all font-bold text-teal-700 underline">{iv.link}</a>} />}
             {iv.note && <div className="rounded-xl bg-slate-50 p-3.5 text-[13px] leading-relaxed text-slate-600">{iv.note}</div>}
             <p className="text-[12px] text-slate-400">If the time doesn't suit you, reply to the invitation email and we'll rearrange.</p>
@@ -552,7 +552,7 @@ function OfferTab({ me, onAccepted, flash }) {
         <p className="mt-1 text-[12px] font-bold uppercase tracking-[0.16em] text-white/80">Unconditional Offer</p>
       </div>
       <div className="flex flex-col gap-4 p-6">
-        <p className="text-[14px] leading-relaxed text-slate-600">We're delighted to offer you a place on <b>{o.course || "your course"}</b> at London Brookes College. Your official offer letter is ready to download below.</p>
+        <p className="text-[14px] leading-relaxed text-slate-600">We're delighted to offer you a place on <b>{o.course || "your course"}</b> at EdTech. Your official offer letter is ready to download below.</p>
         {o.inductionDate && <Row Icon={CalendarClock} label="Induction / first day" value={fmtDate(o.inductionDate)} />}
         <div className="flex flex-wrap gap-2">
           <PrimaryBtn tone="navy" onClick={download}><Download size={16} /> Download offer letter</PrimaryBtn>

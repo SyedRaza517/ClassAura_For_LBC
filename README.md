@@ -1,4 +1,4 @@
-# London Brookes College — Staff Hub (Full-Stack)
+# EdTech — Staff Hub (Full-Stack)
 
 A connected staff attendance & leave-management system:
 
@@ -11,7 +11,7 @@ A connected staff attendance & leave-management system:
 It has a real **database**, **login (JWT)**, **role-based access**, and a **REST API**.
 
 ```
-lbc-staff-hub/
+edtech-hub/
 ├── server/   Express + Prisma + SQLite API (auth, RBAC, all endpoints)
 └── client/   React (Vite) app — staff app + admin dashboard, wired to the API
 ```
@@ -23,7 +23,7 @@ lbc-staff-hub/
 > First install **Node.js LTS** from https://nodejs.org (this provides `npm`).
 
 1. **Unzip** this folder anywhere.
-2. In your IDE: **File → Open…** and select the **outer `lbc-staff-hub` folder** (not `server` or `client`). Both appear together in the Project panel.
+2. In your IDE: **File → Open…** and select the **outer `edtech-hub` folder** (not `server` or `client`). Both appear together in the Project panel.
 3. Open the terminal (**Alt+F12**) and run these **three commands once**:
    ```bash
    npm install      # installs BOTH server and client (npm workspaces)
@@ -49,8 +49,8 @@ This project ships with ready-made **Run configurations**. In the top-right Run 
 
 | Role  | Email |
 |-------|-------|
-| Admin | `admin@lbc.ac.uk` |
-| Staff | `j.whitfield@lbc.ac.uk`, `a.rahman@lbc.ac.uk`, `d.okoye@lbc.ac.uk`, `s.marin@lbc.ac.uk`, `p.nair@lbc.ac.uk` |
+| Admin | `admin@edtech.co.uk` |
+| Staff | `j.whitfield@edtech.co.uk`, `a.rahman@edtech.co.uk`, `d.okoye@edtech.co.uk`, `s.marin@edtech.co.uk`, `p.nair@edtech.co.uk` |
 
 - **Admin** sees a VIEW MODE toggle (Staff App ↔ Admin Dashboard) and can act on all data.
 - **Staff** see only their own staff app; the "Manager Approval" tile and dashboard are hidden.
@@ -278,9 +278,9 @@ To point it at a real provider, edit the SMTP block in `server/.env`:
 SMTP_HOST="smtp.gmail.com"
 SMTP_PORT=587                 # 587 = STARTTLS (usual), 465 = implicit TLS
 SMTP_SECURE=false             # true only for port 465
-SMTP_USER="no-reply@lbc.ac.uk"
+SMTP_USER="no-reply@edtech.co.uk"
 SMTP_PASS="your-app-password"
-MAIL_FROM="London Brookes College Staff Hub <no-reply@lbc.ac.uk>"
+MAIL_FROM="EdTech Staff Hub <no-reply@edtech.co.uk>"
 ```
 
 A single `SMTP_URL="smtp://user:pass@host:587"` works too. Then check it:

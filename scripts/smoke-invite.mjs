@@ -29,7 +29,7 @@ async function call(path, { method = "GET", body, token } = {}) {
   let data = null; try { data = await res.json(); } catch (_) {}
   return { status: res.status, data };
 }
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 
 // The raw invite token only exists in the email, so read it back the way the server
 // stores it: hash a candidate and look for the row. Here we plant a known one.
@@ -42,7 +42,7 @@ async function inviteTokenFor(staffId) {
 }
 
 console.log("\n--- an admin-created account cannot be signed into ---");
-const email = `${TAG}.a@lbc.ac.uk`;
+const email = `${TAG}.a@edtech.co.uk`;
 made.push(email);
 const created = await call("/staff", { method: "POST", token: admin.token, body: { name: "Invite One", email, role: "Lecturer", dept: "Teaching" } });
 check("account created (201)", created.status === 201);
@@ -50,7 +50,7 @@ check("flagged as pending activation", created.data?.pendingActivation === true,
 check("the response says an invitation was sent", created.data?.invited === true);
 
 check("THE OLD HOLE IS CLOSED: password123 is refused", (await call("/auth/login", { method: "POST", body: { email, password: "password123" } })).status === 401);
-for (const guess of ["Password123!", "changeme", "welcome", "lbc2026", ""]) {
+for (const guess of ["Password123!", "changeme", "welcome", "edtech2026", ""]) {
   // An empty password is a 400 ("email and password required") rather than a 401;
   // what matters is that no session ever comes back.
   const r = await call("/auth/login", { method: "POST", body: { email, password: guess } });
@@ -78,7 +78,7 @@ check("password123 still does not work", (await call("/auth/login", { method: "P
 check("the invite link is single-use", (await call("/auth/invite/verify", { method: "POST", body: { token } })).status === 400);
 
 console.log("\n--- invite tokens and reset tokens are not interchangeable ---");
-const email2 = `${TAG}.b@lbc.ac.uk`;
+const email2 = `${TAG}.b@edtech.co.uk`;
 made.push(email2);
 const s2 = (await call("/staff", { method: "POST", token: admin.token, body: { name: "Invite Two", email: email2 } })).data;
 const inviteTok = await inviteTokenFor(s2.id);
@@ -89,13 +89,13 @@ await db.passwordReset.create({ data: { staffId: s2.id, tokenHash: hash(rawReset
 check("a reset token is refused by the invite endpoint", (await call("/auth/invite/accept", { method: "POST", body: { token: rawReset, newPassword: "Whatever123!" } })).status === 400);
 
 console.log("\n--- re-sending an invitation ---");
-check("staff cannot re-send invitations", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@lbc.ac.uk", password: "password123" } })).data.token })).status === 403);
+check("staff cannot re-send invitations", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: (await call("/auth/login", { method: "POST", body: { email: "j.whitfield@edtech.co.uk", password: "password123" } })).data.token })).status === 403);
 check("an admin can re-send", (await call(`/staff/${s2.id}/invite`, { method: "POST", token: admin.token })).status === 200);
 check("re-sending retires the previous link", (await call("/auth/invite/verify", { method: "POST", body: { token: inviteTok } })).status === 400);
 check("re-sending to an already-active account is refused", (await call(`/staff/${(await db.staff.findUnique({ where: { email } })).id}/invite`, { method: "POST", token: admin.token })).status === 400);
 
 console.log("\n--- an explicit password still works (no invitation) ---");
-const email3 = `${TAG}.c@lbc.ac.uk`;
+const email3 = `${TAG}.c@edtech.co.uk`;
 made.push(email3);
 const s3 = await call("/staff", { method: "POST", token: admin.token, body: { name: "Invite Three", email: email3, password: "ChosenByAdmin1!" } });
 check("created with a supplied password", s3.status === 201);
@@ -103,7 +103,7 @@ check("not pending activation", s3.data?.pendingActivation === false);
 check("usable immediately", !!(await call("/auth/login", { method: "POST", body: { email: email3, password: "ChosenByAdmin1!" } })).data?.token);
 
 console.log("\n--- app sign-up still requires approval (unchanged) ---");
-const email4 = `${TAG}.d@lbc.ac.uk`;
+const email4 = `${TAG}.d@edtech.co.uk`;
 made.push(email4);
 await call("/signup", { method: "POST", body: { name: "Invite Four", email: email4, password: "TheirPass123!", confirmPassword: "TheirPass123!", position: "Tutor", dept: "Teaching" } });
 check("no Staff row before approval", !(await db.staff.findUnique({ where: { email: email4 } })));

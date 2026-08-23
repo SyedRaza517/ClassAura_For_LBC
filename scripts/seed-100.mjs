@@ -2,7 +2,7 @@
 // Usage: node scripts/seed-100.mjs [count]
 // Exercises the real auth + validation path, not a direct DB insert.
 const BASE = process.env.API_BASE || "http://localhost:4000/api";
-const ADMIN = { email: "admin@lbc.ac.uk", password: "password123" };
+const ADMIN = { email: "admin@edtech.co.uk", password: "password123" };
 const COUNT = Number(process.argv[2]) || 100;
 const CONCURRENCY = 10;
 
@@ -32,7 +32,7 @@ async function createStaff(token, i) {
   const last = pick(LAST, Math.floor(i / FIRST.length) + i);
   const name = `${first} ${last}`;
   // Unique email per record so re-runs don't collide.
-  const email = `loadtest.${i}.${first}.${last}@lbc.ac.uk`.toLowerCase();
+  const email = `loadtest.${i}.${first}.${last}@edtech.co.uk`.toLowerCase();
   const body = {
     name,
     role: pick(TITLES, i),

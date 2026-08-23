@@ -1,4 +1,4 @@
-package uk.ac.lbc.staffhub;
+package uk.co.edtech.hub;
 
 import com.getcapacitor.BridgeActivity;
 

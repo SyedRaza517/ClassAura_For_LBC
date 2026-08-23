@@ -13,36 +13,36 @@
 @layer utilities {
   /* Rises and fades in — the default entrance for cards and rows. Pair with an
      inline animation-delay to stagger a list. */
-  .fade-up { animation: lbc-fade-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  @keyframes lbc-fade-up {
+  .fade-up { animation: edtech-fade-up 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes edtech-fade-up {
     from { opacity: 0; transform: translate3d(0, 10px, 0); }
     to   { opacity: 1; transform: none; }
   }
 
   /* Grows in from slightly small — for modals, rings and hero numbers. */
-  .scale-in { animation: lbc-scale-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  @keyframes lbc-scale-in {
+  .scale-in { animation: edtech-scale-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes edtech-scale-in {
     from { opacity: 0; transform: scale(0.94); }
     to   { opacity: 1; transform: none; }
   }
 
   /* A small attention pop — badges and counters. */
-  .pop { animation: lbc-pop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
-  @keyframes lbc-pop {
+  .pop { animation: edtech-pop 0.34s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  @keyframes edtech-pop {
     0%   { opacity: 0; transform: scale(0.7); }
     100% { opacity: 1; transform: none; }
   }
 
   /* Slides in from the left — sidebar/nav items. */
-  .slide-in { animation: lbc-slide-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  @keyframes lbc-slide-in {
+  .slide-in { animation: edtech-slide-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes edtech-slide-in {
     from { opacity: 0; transform: translate3d(-12px, 0, 0); }
     to   { opacity: 1; transform: none; }
   }
 
   /* A bouncier entrance for success ticks. */
-  .bounce-in { animation: lbc-bounce-in 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
-  @keyframes lbc-bounce-in {
+  .bounce-in { animation: edtech-bounce-in 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+  @keyframes edtech-bounce-in {
     0%   { opacity: 0; transform: scale(0.5); }
     60%  { opacity: 1; transform: scale(1.06); }
     100% { transform: none; }
@@ -57,23 +57,23 @@
   .skeleton {
     background: linear-gradient(100deg, #e9edf3 30%, #f4f7fb 48%, #e9edf3 66%);
     background-size: 220% 100%;
-    animation: lbc-shimmer 1.25s ease-in-out infinite;
+    animation: edtech-shimmer 1.25s ease-in-out infinite;
   }
-  @keyframes lbc-shimmer {
+  @keyframes edtech-shimmer {
     from { background-position: 180% 0; }
     to   { background-position: -60% 0; }
   }
 
   /* A slow drift, for decorative hero art. */
-  .float { animation: lbc-float 5.5s ease-in-out infinite; }
-  @keyframes lbc-float {
+  .float { animation: edtech-float 5.5s ease-in-out infinite; }
+  @keyframes edtech-float {
     0%, 100% { transform: translateY(0); }
     50%      { transform: translateY(-7px); }
   }
 
   /* A soft pulsing halo — marks "today" and live states. */
-  .glow-pulse { animation: lbc-glow 2.4s ease-in-out infinite; }
-  @keyframes lbc-glow {
+  .glow-pulse { animation: edtech-glow 2.4s ease-in-out infinite; }
+  @keyframes edtech-glow {
     0%, 100% { box-shadow: 0 0 0 0 rgba(26, 58, 143, 0.45); }
     50%      { box-shadow: 0 0 0 7px rgba(26, 58, 143, 0); }
   }
@@ -84,16 +84,16 @@
     content: ""; position: absolute; inset: 0;
     background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.28) 50%, transparent 65%);
     transform: translateX(-120%);
-    animation: lbc-shine 3.6s ease-in-out infinite;
+    animation: edtech-shine 3.6s ease-in-out infinite;
   }
-  @keyframes lbc-shine {
+  @keyframes edtech-shine {
     0%, 65% { transform: translateX(-120%); }
     100%    { transform: translateX(120%); }
   }
 
   /* A slowly moving gradient, for full-bleed brand backgrounds. */
-  .animated-gradient { animation: lbc-gradient 14s ease infinite; }
-  @keyframes lbc-gradient {
+  .animated-gradient { animation: edtech-gradient 14s ease infinite; }
+  @keyframes edtech-gradient {
     0%, 100% { background-position: 0% 50%; }
     50%      { background-position: 100% 50%; }
   }

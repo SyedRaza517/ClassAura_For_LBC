@@ -23,12 +23,12 @@
 // The sign-in screen then offers "Sign in with Face / Fingerprint", which unlocks a
 // remembered SESSION — a token that expires on its own and that the server can revoke.
 // Same one-tap result, no reusable password on disk.
-const KEY = "lbc_remembered_login";
+const KEY = "edtech_remembered_login";
 // The previous email-only key. Read once for prefill so existing users don't lose
 // their address, but it deliberately does NOT tick the box: everyone who had the old
 // email-only "remember me" must opt in to password storage explicitly, rather than
 // being silently upgraded into it by a relabelled tickbox.
-const LEGACY_EMAIL_KEY = "lbc_remembered_email";
+const LEGACY_EMAIL_KEY = "edtech_remembered_email";
 
 const readRecord = () => {
   try {

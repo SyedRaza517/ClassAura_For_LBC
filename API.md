@@ -286,7 +286,7 @@ applied twice. (Single-process; a multi-process deployment needs a database-leve
 | PUT    | `/hnd/sessions/:id/register` | admin | `{ marks: [{ studentId, status, remark? }] }` |
 | GET    | `/hnd/attendance?semesterId=` | auth | — per-student/per-module + overall percentages |
 
-`email` defaults to `<studentRef>@londonbrookescollege.co.uk` when omitted.
+`email` defaults to `<studentRef>@edtech.co.uk` when omitted.
 A mark with `status: null` clears that student's mark. Partial `marks` arrays are
 allowed, so a half-taken register can be saved and finished later.
 

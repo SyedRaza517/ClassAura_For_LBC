@@ -11,7 +11,7 @@ This folder is served by GitHub Pages, which needs no deployment of its own:
 
 That publishes:
 
-    https://syedraza517.github.io/lbc_staff_hub/
+    https://syedraza517.github.io/EdTech/
 
 `index.html` and `privacy.html` here are copies of `client/public/privacy.html`.
 When the policy changes, update that file and copy it here so the two do not drift.

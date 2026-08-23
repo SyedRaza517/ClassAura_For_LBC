@@ -3,13 +3,13 @@
 #
 # ONE-TIME SETUP in the Codemagic UI (do this AFTER your Apple Developer account
 # is approved and you've created the app in App Store Connect):
-#   1. Sign in at codemagic.io with GitHub, add the repo "SyedRaza517/lbc_staff_hub".
+#   1. Sign in at codemagic.io with GitHub, add the repo "SyedRaza517/EdTech".
 #   2. Team → Integrations → App Store Connect → connect an API key
 #      (App Store Connect → Users and Access → Integrations → generate an API key,
 #       role "App Manager"; download the .p8, note the Key ID + Issuer ID).
 #      Give the integration a NAME and put that same name below in
 #      `app_store_connect: <NAME>` under integrations.
-#   3. App Store Connect → create the app (bundle ID uk.ac.lbc.staffhub) — this
+#   3. App Store Connect → create the app (bundle ID uk.co.edtech.hub) — this
 #      gives you the numeric "Apple ID" for the app. Put it in APP_STORE_APPLE_ID.
 #   4. Push this file, then in Codemagic run the "ios-release" workflow.
 #
@@ -44,15 +44,15 @@ workflows:
       # no new certificate is burned each time (Apple caps distribution certs).
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: uk.ac.lbc.staffhub
+        bundle_identifier: uk.co.edtech.hub
       vars:
         XCODE_SCHEME: "App"
-        BUNDLE_ID: "uk.ac.lbc.staffhub"
+        BUNDLE_ID: "uk.co.edtech.hub"
         # The packaged app has no usable host (capacitor://), so the API URL MUST be
         # baked in at build time. .env.production is gitignored and never reaches
         # this cloud build, so set it here explicitly — otherwise the app falls back
         # to http://localhost and every request dies with "Load failed" on the phone.
-        VITE_API_URL: "https://lbc-staff-hub-api.onrender.com/api"
+        VITE_API_URL: "https://edtech-hub-api.onrender.com/api"
         # Numeric Apple ID of the app from App Store Connect (step 3). Until you
         # have it, the "increment build number" step below will fail — set it first.
         APP_STORE_APPLE_ID: 6795300712

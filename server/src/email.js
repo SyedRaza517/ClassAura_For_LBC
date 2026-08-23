@@ -13,13 +13,13 @@
 //   SMTP_SECURE  true|false     (default: true only when the port is 465)
 //   SMTP_USER    username       (optional — omit for an open relay / local MTA)
 //   SMTP_PASS    password
-//   MAIL_FROM    "London Brookes College <no-reply@lbc.ac.uk>"
+//   MAIL_FROM    "EdTech <no-reply@edtech.co.uk>"
 //
 // Sending is always best-effort: a mail failure is logged and swallowed so it can
 // never break the action that triggered it (approving leave, resetting a password).
 const nodemailer = require("nodemailer");
 
-const FROM = process.env.MAIL_FROM || "London Brookes College Staff Hub <no-reply@lbc.ac.uk>";
+const FROM = process.env.MAIL_FROM || "EdTech Staff Hub <no-reply@edtech.co.uk>";
 // Resend (https://resend.com) sends over HTTPS, so it works on hosts that block
 // outbound SMTP ports (e.g. Render's free tier). Preferred when RESEND_API_KEY is set.
 const useResend = () => Boolean(process.env.RESEND_API_KEY);
@@ -91,7 +91,7 @@ function defaultHtml(subject, text) {
   return `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
     <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">London Brookes College</p>
+      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">

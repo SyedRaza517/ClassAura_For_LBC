@@ -29,7 +29,7 @@ import { api } from "./api";
 import useReveal from "./RevealButton";
 
 /* ============================================================
-   LONDON BROOKES COLLEGE — STAFF HUB
+   EDTECH — STAFF HUB
    Connected system: Staff Mobile App  <->  Admin Dashboard
    Every app tab has a matching dashboard page that handles its data.
    Brand: navy #1a3a8f / accent maroon #9e1b32
@@ -392,7 +392,7 @@ function Modal({ open, onClose, title, children, width = 460 }) {
   // warning above the top of the screen.
   return typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
-// The London Brookes College logo. In tight boxes (`small`) we show just the arch
+// The EdTech logo. In tight boxes (`small`) we show just the arch
 // emblem; elsewhere the full emblem + wordmark lockup. Both come from ./Brand.
 function Logo({ small }) {
   return small ? <BrandMark size={30} /> : <BrandLockup />;
@@ -2060,7 +2060,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
       <div className="animated-gradient relative overflow-hidden rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 50%, ${MAROON} 140%)`, backgroundSize: "200% 200%" }}>
         <Building2 size={56} className="float-slow absolute -right-2 -top-2 text-white/10" />
         <div className="relative mb-2 flex h-9 w-12 items-center justify-center rounded-md bg-white"><Logo small /></div>
-        <p className="relative text-sm font-bold">London Brookes College</p>
+        <p className="relative text-sm font-bold">EdTech</p>
         <p className="relative mt-0.5 flex items-center gap-1.5 text-[11px] text-white/70"><MapPin size={11} /> 42 The Burroughs, London NW4 4AP</p>
         <p className="relative flex items-center gap-1.5 text-[11px] text-white/70"><Phone size={11} /> 020 8202 2007</p>
         <p className="relative mt-2 text-[10px] text-white/50">Staff Hub · v2.0</p>
@@ -2107,7 +2107,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
       )}
       <ConfirmDialog open={confirmOut} title="Sign out?" message="You'll need to sign in again to get back in." confirmLabel="Sign out" cancelLabel="Stay" danger onConfirm={logout} onCancel={() => setConfirmOut(false)} />
 
-      <p className="mt-4 text-center text-[11px] text-slate-400">London Brookes College · Staff Hub</p>
+      <p className="mt-4 text-center text-[11px] text-slate-400">EdTech · Staff Hub</p>
       <p className="text-center text-[11px] text-slate-400">© {new Date().getFullYear()} Syed Muhammad Raza</p>
 
       <Modal open={showDelete} onClose={() => setShowDelete(false)} title="Delete my account">
@@ -2542,8 +2542,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   const me = store.currentUser;
   // Collapsible sidebar (desktop) so an admin can reclaim full width; remembered across
   // sessions. On mobile the sidebar is already a horizontal chip bar, so this is desktop-only.
-  const [sidebarOpen, setSidebarOpen] = useState(() => { try { return localStorage.getItem("lbc.sidebar") !== "0"; } catch { return true; } });
-  const toggleSidebar = (v) => { setSidebarOpen(v); try { localStorage.setItem("lbc.sidebar", v ? "1" : "0"); } catch { /* ignore */ } };
+  const [sidebarOpen, setSidebarOpen] = useState(() => { try { return localStorage.getItem("edtech.sidebar") !== "0"; } catch { return true; } });
+  const toggleSidebar = (v) => { setSidebarOpen(v); try { localStorage.setItem("edtech.sidebar", v ? "1" : "0"); } catch { /* ignore */ } };
   // NOTE: the isAdmin guard is deliberately below the hooks (see the return further
   // down). Returning before them would change the hook count if the flag ever flipped
   // while mounted, which React rejects and turns into an app-wide crash.
@@ -4941,7 +4941,7 @@ function HndStudents({ store }) {
   const filtered = store.students.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql));
   const paged = usePaged(filtered, 12, ql);
   // The email defaults to the student number, matching the college convention.
-  const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@londonbrookescollege.co.uk` : "");
+  const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@edtech.co.uk` : "");
 
   return (
     <>
@@ -4997,7 +4997,7 @@ function HndStudents({ store }) {
             <Field label="Last name"><input value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputCls} /></Field>
           </div>
           <Field label="Student number"><input value={form.studentRef} onChange={e => setForm(f => ({ ...f, studentRef: e.target.value }))} placeholder="e.g. 100121" className={inputCls} /></Field>
-          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@londonbrookescollege.co.uk"} className={inputCls} /></Field>
+          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@edtech.co.uk"} className={inputCls} /></Field>
           {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-400">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
           <Field label="Cohort (intake)">
             <select value={form.cohortId} onChange={e => setForm(f => ({ ...f, cohortId: e.target.value }))} className={inputCls}>
@@ -5180,7 +5180,7 @@ function AdminStudents({ store }) {
     return !ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql);
   });
   const paged = usePaged(filtered, 12, `${ql}|${unitFilter}|${statusFilter}|${riskFilter}`);
-  const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@londonbrookescollege.co.uk` : "");
+  const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@edtech.co.uk` : "");
 
   // Headline figures.
   const total = store.students.length;
@@ -5341,7 +5341,7 @@ function AdminStudents({ store }) {
             <Field label="Last name"><input value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} className={inputCls} /></Field>
           </div>
           <Field label="Student number"><input value={form.studentRef} onChange={e => setForm(f => ({ ...f, studentRef: e.target.value }))} placeholder="e.g. 100121" className={inputCls} /></Field>
-          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@londonbrookescollege.co.uk"} className={inputCls} /></Field>
+          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@edtech.co.uk"} className={inputCls} /></Field>
           {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-400">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
           <Field label="Cohort (intake)">
             <select value={form.cohortId} onChange={e => setForm(f => ({ ...f, cohortId: e.target.value }))} className={inputCls}>
@@ -6067,7 +6067,7 @@ function srExportPdf(review, form) {
   <p class="meta">${[review.term, review.academicYear].filter(Boolean).map(esc).join(" · ") || "—"}${review.dateCompleted ? ` · Completed ${esc(review.dateCompleted)}` : ""} · ${review.status === "draft" ? "DRAFT" : "Submitted"}</p>
 </header>
 ${body}
-<footer>London Brookes College · ${esc(review.formTitle)}${review.completedBy ? ` · recorded by ${esc(review.completedBy)}` : ""} · generated ${new Date().toLocaleDateString("en-GB")}</footer>
+<footer>EdTech · ${esc(review.formTitle)}${review.completedBy ? ` · recorded by ${esc(review.completedBy)}` : ""} · generated ${new Date().toLocaleDateString("en-GB")}</footer>
 </body></html>`;
 
   const w = window.open("", "_blank", "width=900,height=1000");
@@ -9827,7 +9827,7 @@ function AdminStaff({ store }) {
               </select>
             </Field>
           </div>
-          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="name@londonbrookescollege.co.uk" className={inputCls} /></Field>
+          <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="name@edtech.co.uk" className={inputCls} /></Field>
           <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => setForm(f => ({ ...f, dob: e.target.value }))} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Site"><select value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} className={inputCls}><option value="">Not set</option>{HOME_SITES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
@@ -10105,7 +10105,7 @@ const INTAKE_MONTHS = ["January", "April", "June", "September"];
 // admin-managed AdmissionIntake list (the "Courses & intakes" manager). Until an admin
 // adds their own, offer the four standard months across the current and next year.
 const INTAKE_FALLBACK = (() => { const y = new Date().getFullYear(); return [y, y + 1].flatMap((yr) => INTAKE_MONTHS.map((m) => `${m} ${yr}`)); })();
-// Transcribed verbatim from the college's "London Brookes College HND Application Form"
+// Transcribed verbatim from the college's "EdTech HND Application Form"
 // (Microsoft Forms, 61 questions across 9 pages). Question text, option lists, required
 // flags and the page/section help notes match the original one-for-one so an admin can
 // copy a paper/online application straight down the screen. Fields expecting "N/A" as an
@@ -10115,7 +10115,7 @@ export const ADMISSION_SECTIONS = [
   { title: "Course Details", fields: [
     { key: "course", label: "Which course are you applying for", type: "select", required: true, options: ["HND - Business", "HND - Sustainable Business Management", "HND - Leadership and Management"] },
     { key: "intake", label: "Which intake are you applying for?", type: "select", required: true, options: INTAKE_FALLBACK },
-    { key: "foundVia", label: "How did you find out about London Brookes College?", type: "select", required: true, options: ["College Website/Social Media", "Agent", "Family Member", "Friend", "Other"] },
+    { key: "foundVia", label: "How did you find out about EdTech?", type: "select", required: true, options: ["College Website/Social Media", "Agent", "Family Member", "Friend", "Other"] },
     { key: "classOption", label: "Select the class option you would prefer:", type: "select", hint: "You are required to complete 12hrs of onsite study.", options: ["Two days per week - 10 a.m.-5 p.m (12hrs)", "Two evenings online - 6 p.m.-9 p.m. (6hrs) plus One day In-Campus 10 a.m. - 5 p.m. (6hrs)"] },
     { key: "firstName", label: "First Name", type: "text", required: true },
     { key: "middleName", label: "Middle Name (if any)", type: "text" },
@@ -10150,10 +10150,10 @@ export const ADMISSION_SECTIONS = [
     { key: "criminalDetails", label: "If yes, please provide further details, including date(s), nature of conviction and punishment imposed. If no, then please write N/A.", type: "textarea", required: true, span: 2 },
   ] },
   { title: "Disabilities",
-    note: "The information you provide will be kept confidential and used to support our equal opportunities monitoring, routine academic and administration processes. It may be shared with statutory bodies such as the Higher Education Statistics Agency and the Office for Students in line with data protection laws. London Brookes College is committed to ensuring that every student is as comfortable as possible during their time with us.",
+    note: "The information you provide will be kept confidential and used to support our equal opportunities monitoring, routine academic and administration processes. It may be shared with statutory bodies such as the Higher Education Statistics Agency and the Office for Students in line with data protection laws. EdTech is committed to ensuring that every student is as comfortable as possible during their time with us.",
     fields: [
     { key: "medicalConditions", label: "Do you have any medical conditions that may require special adjustments or arrangements?", type: "select", required: true, options: YES_NO },
-    { key: "medicalDetails", label: "If yes, please describe your condition(s) and adjustments/arrangements that London Brookes College would need to make to support your studies. If no, please write N/A.", type: "textarea", required: true, span: 2 },
+    { key: "medicalDetails", label: "If yes, please describe your condition(s) and adjustments/arrangements that EdTech would need to make to support your studies. If no, please write N/A.", type: "textarea", required: true, span: 2 },
     { key: "learningDifficulty", label: "Do you have any learning difficulty?", type: "select", required: true, options: YES_NO },
     { key: "learningDetails", label: "If yes, give details of learning difficulty? (If NO, enter N/A).", type: "textarea", required: true, span: 2 },
   ] },
@@ -10195,7 +10195,7 @@ export const ADMISSION_SECTIONS = [
     { key: "religion", label: "Religion", type: "select", required: true, options: ["Christianity", "Hinduism", "Islam", "Buddhism", "Sikhism", "Judaism", "Other", "Prefer not to say"] },
   ] },
   { title: "Declaration",
-    note: "I, the undersigned, hereby declare that the information provided in this application form is true and accurate to the best of my knowledge. I understand that any false or incorrect information may result in the rejection of my application for admission and/or the withdrawal of my registration at London Brookes College. Furthermore, I authorise London Brookes College to carry out any necessary checks to verify the information provided, including contacting previous employers, educational institutions, referees, and any other organisations listed in my application. I also confirm that I have been informed of and understand the following requirements of London Brookes College: (1) A minimum attendance of 85% is required. (2) If I have been referred by an agent, I confirm that all the above information has been clearly explained to me. (3) All assignments must be submitted by the stated deadlines in order to progress to the second year and successfully complete the course. By signing this application form, I confirm that I have read, understood, and agree to the above declaration.",
+    note: "I, the undersigned, hereby declare that the information provided in this application form is true and accurate to the best of my knowledge. I understand that any false or incorrect information may result in the rejection of my application for admission and/or the withdrawal of my registration at EdTech. Furthermore, I authorise EdTech to carry out any necessary checks to verify the information provided, including contacting previous employers, educational institutions, referees, and any other organisations listed in my application. I also confirm that I have been informed of and understand the following requirements of EdTech: (1) A minimum attendance of 85% is required. (2) If I have been referred by an agent, I confirm that all the above information has been clearly explained to me. (3) All assignments must be submitted by the stated deadlines in order to progress to the second year and successfully complete the course. By signing this application form, I confirm that I have read, understood, and agree to the above declaration.",
     fields: [
     { key: "signature", label: "Signature — write down your full name here", type: "text", required: true, span: 2 },
     { key: "declarationDate", label: "Date", type: "date", required: true },
@@ -11055,7 +11055,7 @@ function AdmissionInterviewPanel({ r, store, onChanged }) {
           </Field></div>
           {f.mode === "Online"
             ? <div className="mt-2"><Field label="Meeting link"><input type="url" value={f.link} onChange={e => setF(s => ({ ...s, link: e.target.value }))} placeholder="https://teams.microsoft.com/…" className={inputCls} /></Field></div>
-            : <div className="mt-2"><Field label="Location"><input type="text" value={f.location} onChange={e => setF(s => ({ ...s, location: e.target.value }))} placeholder="e.g. London Brookes College, 42 The Burroughs, room 2" className={inputCls} /></Field></div>}
+            : <div className="mt-2"><Field label="Location"><input type="text" value={f.location} onChange={e => setF(s => ({ ...s, location: e.target.value }))} placeholder="e.g. EdTech, 42 The Burroughs, room 2" className={inputCls} /></Field></div>}
           <div className="mt-2"><Field label="Note (optional)"><textarea rows={2} value={f.note} onChange={e => setF(s => ({ ...s, note: e.target.value }))} placeholder="Anything the applicant should bring or know." className={`${inputCls} resize-y`} /></Field></div>
           <PrimaryBtn colour={NAVY} onClick={send} disabled={busy} className="mt-3 w-full">{busy ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <><Send size={16} /> Save & send interview call</>}</PrimaryBtn>
         </div>
@@ -11604,7 +11604,7 @@ function AdminAdmissions({ store }) {
               <Field label="Induction date"><input type="date" value={enrollDate} onChange={e => setEnrollDate(e.target.value)} className={inputCls} /></Field>
               <Field label="Induction time"><input type="time" value={enrollTime} onChange={e => setEnrollTime(e.target.value)} className={inputCls} /></Field>
             </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">The email location is London Brookes College, 42 The Burroughs, Hendon, London NW4 4AP. On enrol, the applicant's SharePoint folder is renamed to "&lt;Student ID&gt; - {admissionName(enrollFor)}".</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">The email location is EdTech, 42 The Burroughs, Hendon, London NW4 4AP. On enrol, the applicant's SharePoint folder is renamed to "&lt;Student ID&gt; - {admissionName(enrollFor)}".</p>
             <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
               <button onClick={() => setEnrollFor(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
               <PrimaryBtn colour="#059669" onClick={doEnroll} disabled={enrolling}>{enrolling ? <><Loader2 size={16} className="animate-spin" /> Enrolling…</> : <><CheckCircle2 size={16} /> Enrol &amp; send email</>}</PrimaryBtn>
@@ -12087,7 +12087,7 @@ function AdminSettings({ store }) {
               <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.docs.length}</p><p className="text-[10px] text-slate-400">Documents</p></div>
             </div>
           </div>
-          <div className="animated-gradient relative overflow-hidden rounded-2xl p-5 text-white shadow-md transition-all duration-300 hover:shadow-xl fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 45%, ${MAROON} 130%)`, backgroundSize: "200% 200%" }}><Building2 size={64} className="float-slow absolute -right-3 -top-3 text-white/10" /><div className="relative mb-2 flex h-9 w-12 items-center justify-center rounded-md bg-white"><Logo small /></div><p className="relative text-sm font-bold">London Brookes College</p><p className="relative mt-1 flex items-center gap-1.5 text-xs text-white/70"><MapPin size={12} /> 42 The Burroughs, London NW4 4AP</p><p className="relative flex items-center gap-1.5 text-xs text-white/70"><Phone size={12} /> 020 8202 2007</p><p className="relative mt-3 text-[11px] text-white/50">Staff Hub Admin Console v2.0</p><p className="relative text-[11px] text-white/50">© 2026 Syed Muhammad Raza</p></div>
+          <div className="animated-gradient relative overflow-hidden rounded-2xl p-5 text-white shadow-md transition-all duration-300 hover:shadow-xl fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 45%, ${MAROON} 130%)`, backgroundSize: "200% 200%" }}><Building2 size={64} className="float-slow absolute -right-3 -top-3 text-white/10" /><div className="relative mb-2 flex h-9 w-12 items-center justify-center rounded-md bg-white"><Logo small /></div><p className="relative text-sm font-bold">EdTech</p><p className="relative mt-1 flex items-center gap-1.5 text-xs text-white/70"><MapPin size={12} /> 42 The Burroughs, London NW4 4AP</p><p className="relative flex items-center gap-1.5 text-xs text-white/70"><Phone size={12} /> 020 8202 2007</p><p className="relative mt-3 text-[11px] text-white/50">Staff Hub Admin Console v2.0</p><p className="relative text-[11px] text-white/50">© 2026 Syed Muhammad Raza</p></div>
         </div>
       </div>
       <Modal open={!!deleteTarget} onClose={() => !deleteBusy && setDeleteTarget(null)} title="Remove staff member">
@@ -12134,7 +12134,7 @@ function AdminSettings({ store }) {
           <Field label="Full name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Maria Gonzalez" className={inputCls} /></Field>
           <Field label="Role"><input value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} placeholder="e.g. Physics Teacher" className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3"><Field label="Department"><select value={form.dept} onChange={e => setForm(f => ({ ...f, dept: e.target.value }))} className={inputCls}>{deptOptions.map(d => <option key={d}>{d}</option>)}</select></Field><Field label="Allowance (days)"><input type="number" value={form.allowance} onChange={e => setForm(f => ({ ...f, allowance: e.target.value }))} className={inputCls} /></Field></div>
-          <Field label="Email"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="name@londonbrookescollege.co.uk" className={inputCls} /></Field>
+          <Field label="Email"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="name@edtech.co.uk" className={inputCls} /></Field>
           <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => setForm(f => ({ ...f, dob: e.target.value }))} className={inputCls} /></Field>
           <PrimaryBtn onClick={save} disabled={!form.name.trim()} className="w-full"><Save size={16} /> {edit ? "Save changes" : "Add staff member"}</PrimaryBtn>
         </div>

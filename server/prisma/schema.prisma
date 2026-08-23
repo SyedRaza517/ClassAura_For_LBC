@@ -1,4 +1,4 @@
-// London Brookes College — Staff Hub database schema
+// EdTech — Staff Hub database schema
 // SQLite for zero-config local dev. To use PostgreSQL in production,
 // change provider to "postgresql" and set DATABASE_URL accordingly.
 
@@ -490,7 +490,7 @@ model AssessmentGrade {
 }
 
 // A student on the HND course. studentRef is the college number used in
-// their email (e.g. 100121 -> 100121@londonbrookescollege.co.uk).
+// their email (e.g. 100121 -> 100121@edtech.co.uk).
 model Student {
   id         String   @id @default(cuid())
   // The Moodle user this student was matched to, so later syncs re-use the match

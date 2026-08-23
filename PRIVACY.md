@@ -1,13 +1,13 @@
 # Privacy Policy
 
-**London Brookes College — LBC Staff Hub**
+**EdTech — EdTech Hub**
 Last updated: 5 August 2026
 
-This Privacy Policy explains how the **LBC Staff Hub** application ("the app", "we", "us") collects, uses, stores and protects personal data when you use it. The app is provided by **London Brookes College** ("the College") for use by its **staff, administrators and enrolled students**. We are committed to protecting your privacy and handling your data in line with the **UK General Data Protection Regulation (UK GDPR)** and the Data Protection Act 2018.
+This Privacy Policy explains how the **EdTech Hub** application ("the app", "we", "us") collects, uses, stores and protects personal data when you use it. The app is provided by **EdTech** ("the College") for use by its **staff, administrators and enrolled students**. We are committed to protecting your privacy and handling your data in line with the **UK General Data Protection Regulation (UK GDPR)** and the Data Protection Act 2018.
 
 ## 1. Who is responsible for your data
 
-The data controller is **London Brookes College**. For any privacy questions or requests, contact us at **info@londonbrookescollege.co.uk**.
+The data controller is **EdTech**. For any privacy questions or requests, contact us at **info@edtech.co.uk**.
 
 ## 2. What data we collect
 
@@ -74,7 +74,7 @@ We keep your data for as long as you hold an account with the College, and delet
 
 ## 8. Your rights
 
-Under UK GDPR you have the right to access, correct, erase, restrict or object to the processing of your data, and to data portability. To exercise these rights, contact **info@londonbrookescollege.co.uk**.
+Under UK GDPR you have the right to access, correct, erase, restrict or object to the processing of your data, and to data portability. To exercise these rights, contact **info@edtech.co.uk**.
 
 You also have the right to complain to the UK Information Commissioner's Office (ICO) at [ico.org.uk](https://ico.org.uk).
 
@@ -97,5 +97,5 @@ We may update this policy from time to time. The "Last updated" date above shows
 
 ## 12. Contact us
 
-London Brookes College
-Email: **info@londonbrookescollege.co.uk**
+EdTech
+Email: **info@edtech.co.uk**

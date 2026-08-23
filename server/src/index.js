@@ -55,7 +55,7 @@ app.use(cors({
 app.use(express.json({ limit: "1mb" }));
 
 // Health check
-app.get("/api/health", (_req, res) => res.json({ ok: true, service: "lbc-staff-hub-api" }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, service: "edtech-hub-api" }));
 
 // Routes. wrapAsync makes a rejected promise inside an async handler reach the
 // error middleware below instead of terminating the process — see asyncRoutes.js.

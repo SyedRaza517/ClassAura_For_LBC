@@ -216,7 +216,7 @@ export default function StudentApp({ user, logout }) {
 
   // "New reply" badge: answered queries this student hasn't opened yet. Seen-state is
   // kept per student in localStorage, so it's entirely personal to them.
-  const seenKey = `lbc_seen_replies_${user.id}`;
+  const seenKey = `edtech_seen_replies_${user.id}`;
   const answered = queries.filter(q => q.status === "answered");
   let seen = new Set();
   try { seen = new Set(JSON.parse(localStorage.getItem(seenKey) || "[]")); } catch (_) { /* ignore */ }
@@ -230,7 +230,7 @@ export default function StudentApp({ user, logout }) {
 
   // The same seen-state trick for reviews a lecturer has filed but the student hasn't
   // opened. Separate key so clearing one badge never clears the other.
-  const seenReviewKey = `lbc_seen_reviews_${user.id}`;
+  const seenReviewKey = `edtech_seen_reviews_${user.id}`;
   const reviewList = reviews || [];
   let seenReviews = new Set();
   try { seenReviews = new Set(JSON.parse(localStorage.getItem(seenReviewKey) || "[]")); } catch (_) { /* ignore */ }
@@ -1012,7 +1012,7 @@ function MoreScreen({ user, logout, setScreen }) {
         )}
       </Card>
 
-      <p className="px-1 pb-2 text-center text-[10px] text-slate-400">London Brookes College · Student Hub</p>
+      <p className="px-1 pb-2 text-center text-[10px] text-slate-400">EdTech · Student Hub</p>
     </Screen>
   );
 }

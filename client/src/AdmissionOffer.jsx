@@ -131,7 +131,7 @@ export default function AdmissionOffer({ token }) {
         </h1>
 
         <p className="mx-auto mt-3 max-w-md text-sm text-slate-600">
-          You've been offered a place on {state.course} at London Brookes College.
+          You've been offered a place on {state.course} at EdTech.
           {state.inductionDate ? ` Your induction day is ${state.inductionDate}.` : ""}
         </p>
 

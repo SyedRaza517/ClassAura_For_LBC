@@ -2,11 +2,11 @@
 //
 // The password is NEVER hard-coded here. This file is committed, so a literal in it
 // is a published credential for anyone holding the repo — which is exactly what it
-// used to be ("raza@lbc.ac.uk / 123456789", printed to the console for good measure).
+// used to be ("raza@edtech.co.uk / 123456789", printed to the console for good measure).
 // It now comes from the environment and must be a real one.
 //
 //   cd server
-//   ADMIN_EMAIL=you@lbc.ac.uk ADMIN_PASSWORD='a-long-passphrase' node create-admin.js
+//   ADMIN_EMAIL=you@edtech.co.uk ADMIN_PASSWORD='a-long-passphrase' node create-admin.js
 //
 // On Windows CMD set the variables first with `set VAR=value`; in PowerShell use
 // `$env:VAR = "value"`.

@@ -1,9 +1,9 @@
-# Delete your account — LBC Staff Hub
+# Delete your account — EdTech Hub
 
-**App:** LBC Staff Hub
-**Developer / provider:** London Brookes College
+**App:** EdTech Hub
+**Developer / provider:** EdTech
 
-This page explains how to request deletion of your **LBC Staff Hub** account and what happens to your data. Last updated: 5 August 2026.
+This page explains how to request deletion of your **EdTech Hub** account and what happens to your data. Last updated: 5 August 2026.
 
 ---
 
@@ -11,7 +11,7 @@ This page explains how to request deletion of your **LBC Staff Hub** account and
 
 ### If you are a member of staff
 
-1. Open **LBC Staff Hub** and sign in.
+1. Open **EdTech Hub** and sign in.
 2. Tap **More** on the home screen.
 3. Tap **Delete my account**.
 4. Enter your password to confirm. If you have an authenticator app enabled, enter your six-digit code as well.
@@ -19,7 +19,7 @@ This page explains how to request deletion of your **LBC Staff Hub** account and
 
 ### If you are a student
 
-1. Open **LBC Staff Hub** and sign in.
+1. Open **EdTech Hub** and sign in.
 2. Tap **More**.
 3. Tap **Delete my account**.
 4. Enter your password to confirm.
@@ -27,7 +27,7 @@ This page explains how to request deletion of your **LBC Staff Hub** account and
 
 ### If you cannot sign in
 
-Email **info@londonbrookescollege.co.uk** from the address on your account, with the subject **"Delete my Staff Hub account"**. We will verify your identity with the College and complete the deletion within **30 days**.
+Email **info@edtech.co.uk** from the address on your account, with the subject **"Delete my Staff Hub account"**. We will verify your identity with the College and complete the deletion within **30 days**.
 
 ---
 
@@ -82,7 +82,7 @@ If you are the **only administrator**, the app will not let you delete your acco
 
 ## Contact
 
-London Brookes College
-Email: **info@londonbrookescollege.co.uk**
+EdTech
+Email: **info@edtech.co.uk**
 
 See also our [Privacy Policy](PRIVACY.md).

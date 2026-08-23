@@ -26,7 +26,7 @@ function prismaBin(server) {
   return JSON.stringify(found); // quote in case the path contains spaces
 }
 
-console.log("Setting up London Brookes College — Staff Hub …");
+console.log("Setting up EdTech — Staff Hub …");
 ensureEnv("server");
 ensureEnv("client");
 
@@ -40,4 +40,4 @@ run(`${prisma} migrate deploy`, server);
 run("node prisma/seed.js", server);  // loads admin + sample data
 
 console.log("\n✅ Setup complete. Start everything with:  npm run dev");
-console.log("   Then open http://localhost:5173  (admin@lbc.ac.uk / password123)");
+console.log("   Then open http://localhost:5173  (admin@edtech.co.uk / password123)");

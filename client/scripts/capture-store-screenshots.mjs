@@ -14,7 +14,7 @@ import sharp from "sharp";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 
 const APP = process.env.APP_URL || "http://localhost:5173";
-const EMAIL = "demo.screenshots@lbc.ac.uk";
+const EMAIL = "demo.screenshots@edtech.co.uk";
 const PASSWORD = "Demo!Shots123";
 
 // Play keeps phone, 7-inch tablet and 10-inch tablet as three separate asset sets, each

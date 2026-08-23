@@ -31,9 +31,9 @@ async function call(path, { method = "GET", body, token } = {}) {
   return { status: res.status, data };
 }
 
-const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@lbc.ac.uk", password: "password123" } })).data;
+const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: "password123" } })).data;
 if (!admin?.token) { console.error("could not sign in as admin — is the API running?"); process.exit(1); }
-const staffId = (await call("/staff", { token: admin.token })).data.find((s) => s.email === "j.whitfield@lbc.ac.uk").id;
+const staffId = (await call("/staff", { token: admin.token })).data.find((s) => s.email === "j.whitfield@edtech.co.uk").id;
 
 const OVERSIZED = [2147483648, -2147483649, 9999999999, Number.MAX_SAFE_INTEGER, 1e15];
 

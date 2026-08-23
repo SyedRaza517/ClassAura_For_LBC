@@ -19,7 +19,7 @@ async function plugin() {
 }
 
 // Remember the token so sign-out can unregister exactly this device.
-const TOKEN_KEY = "lbc_push_token";
+const TOKEN_KEY = "edtech_push_token";
 export const getDeviceToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch (_) { return null; } };
 const rememberToken = (t) => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (_) {} };
 
