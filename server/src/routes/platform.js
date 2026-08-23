@@ -278,4 +278,56 @@ router.post("/admins", requirePlatformAdmin, async (req, res) => {
   res.status(201).json({ id: created.id, email: created.email, name: created.name });
 });
 
+
+/* ----------------------------------------------------------------- usage ------ */
+
+// GET /api/platform/usage — how much each institution is holding.
+//
+// Separate from /overview because it is materially more expensive: it reads
+// pg_class, counts every tenanted table, and sums document sizes. /overview is what
+// the dashboard loads on open and should stay cheap; this is asked for deliberately.
+//
+// The database figure is an ESTIMATE and is named as one in the payload — see the
+// comment at the top of usage.js for why an exact per-tenant byte count is not
+// available in a shared-table design. File storage IS exact and is reported apart
+// from it, because a college with 4GB of scanned documents has a small database and
+// a large footprint, and averaging those together would hide both.
+router.get("/usage", requirePlatformAdmin, async (_req, res) => {
+  const usage = require("./../usage");
+  const { byTenant, databaseBytes, measuredAt } = await usage.usageByTenant();
+  const tenants = await crossTenant(() => prisma.tenant.findMany({ orderBy: { name: "asc" } }));
+
+  const rows = tenants.map((t) => {
+    const u = byTenant.get(t.id) || { rows: 0, estimatedBytes: 0, topTables: [], files: 0, fileBytes: 0 };
+    return {
+      id: t.id, slug: t.slug, name: t.name, active: t.active,
+      rows: u.rows,
+      estimatedBytes: u.estimatedBytes,
+      estimatedSize: usage.formatBytes(u.estimatedBytes),
+      files: u.files,
+      fileBytes: u.fileBytes,
+      fileSize: usage.formatBytes(u.fileBytes),
+      topTables: (u.topTables || []).map((x) => ({ ...x, size: usage.formatBytes(x.estimatedBytes) })),
+    };
+  });
+
+  const accounted = rows.reduce((n, r) => n + r.estimatedBytes, 0);
+  res.json({
+    measuredAt,
+    tenants: rows.sort((a, b) => b.estimatedBytes - a.estimatedBytes),
+    database: {
+      totalBytes: databaseBytes,
+      totalSize: usage.formatBytes(databaseBytes),
+      // What the tenanted tables account for. The remainder is shared overhead —
+      // system catalogues, the migration table, indexes on unscoped tables — and is
+      // shown rather than silently folded into somebody's bill.
+      accountedBytes: accounted,
+      accountedSize: usage.formatBytes(accounted),
+      overheadBytes: Math.max(0, databaseBytes - accounted),
+      overheadSize: usage.formatBytes(Math.max(0, databaseBytes - accounted)),
+    },
+    note: "Database figures are estimated by apportioning each table's real size across the rows in it. File storage is exact.",
+  });
+});
+
 module.exports = router;

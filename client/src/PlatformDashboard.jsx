@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
-  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft,
+  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText,
 } from "lucide-react";
 
 const INK = "#0f172a";
@@ -248,6 +248,114 @@ function Modal({ open, title, onClose, children, width = 460 }) {
   );
 }
 
+
+/* --------------------------------------------------------------- usage ------- */
+
+// What each institution is holding. Loaded on demand, not with the dashboard: it
+// reads pg_class and counts every tenanted table, which is fine when asked for and
+// wasteful on every open.
+//
+// The database column says "estimated" on the screen and not only in the payload,
+// because every institution's rows share the same tables — Postgres can size the
+// Student table, not the part of it belonging to one college. File storage is exact
+// and is therefore a separate column rather than being added into the same number.
+function UsagePanel() {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    setBusy(true); setError("");
+    try { setData(await platformApi.usage()); }
+    catch (e) { setError(e.message || "Could not measure usage."); }
+    finally { setBusy(false); }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !data && !busy) load();
+  };
+
+  return (
+    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-3 p-4">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+          <HardDrive size={17} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-slate-800">Storage &amp; usage</p>
+          <p className="mt-0.5 text-[12px] text-slate-500">
+            {data ? <>Database {data.database.totalSize} total · {data.tenants.length} institution{data.tenants.length === 1 ? "" : "s"} measured</> : "How much of the database each institution is holding."}
+          </p>
+        </div>
+        {open && data && (
+          <Btn tone="ghost" onClick={load} disabled={busy}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Remeasure
+          </Btn>
+        )}
+        <Btn tone="ghost" onClick={toggle}>{open ? "Hide" : "Measure"}</Btn>
+      </div>
+
+      {open && (
+        <div className="border-t border-slate-200 p-4">
+          {error && <Banner>{error}</Banner>}
+          {busy && !data && <div className="flex justify-center py-6 text-slate-400"><Loader2 className="animate-spin" /></div>}
+          {data && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                      <th className="py-2 pr-3">Institution</th>
+                      <th className="py-2 pr-3 text-right">Rows</th>
+                      <th className="py-2 pr-3 text-right">Database (est.)</th>
+                      <th className="py-2 pr-3 text-right">Files</th>
+                      <th className="py-2 text-right">File storage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.tenants.map((t) => (
+                      <tr key={t.id} className="border-b border-slate-100 last:border-0 align-top">
+                        <td className="py-2 pr-3">
+                          <span className="font-semibold text-slate-800">{t.name}</span>
+                          <span className="ml-1.5 font-mono text-[11px] text-slate-400">{t.slug}</span>
+                          {!t.active && <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">suspended</span>}
+                          {t.topTables.length > 0 && (
+                            <div className="mt-1 text-[11px] text-slate-400">
+                              {t.topTables.map((x) => `${x.name} ${x.size}`).join(" · ")}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums text-slate-600">{t.rows.toLocaleString()}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums font-semibold text-slate-800">{t.estimatedSize}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums text-slate-600">{t.files.toLocaleString()}</td>
+                        <td className="py-2 text-right tabular-nums font-semibold text-slate-800">{t.fileSize}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-200 pt-3 text-[12px] text-slate-500">
+                <span>Database total <b className="text-slate-700">{data.database.totalSize}</b></span>
+                <span>Attributed to institutions <b className="text-slate-700">{data.database.accountedSize}</b></span>
+                <span>Shared overhead <b className="text-slate-700">{data.database.overheadSize}</b></span>
+              </div>
+              <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-400">
+                <FileText size={12} className="mt-0.5 flex-none" />
+                {data.note} Shared overhead is system catalogues and indexes on tables belonging to no
+                one institution — shown rather than folded into anybody&rsquo;s figure.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PlatformDashboard({ onBack }) {
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -332,6 +440,8 @@ export default function PlatformDashboard({ onBack }) {
             <Stat label="Students" value={totals.students} Icon={GraduationCap} />
           </div>
         )}
+
+        <UsagePanel />
 
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-extrabold uppercase tracking-wide text-slate-500">Institutions</h2>

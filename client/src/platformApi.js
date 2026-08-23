@@ -67,6 +67,9 @@ export const platformApi = {
   login: (email, password) => request("/login", { method: "POST", body: { email, password } }),
   me: () => request("/me"),
   overview: () => request("/overview"),
+  // Deliberately not loaded with the dashboard: it reads pg_class and counts every
+  // tenanted table, so it is asked for on demand rather than on open.
+  usage: () => request("/usage", { timeoutMs: 60000 }),
   createTenant: (payload) => request("/tenants", { method: "POST", body: payload }),
   setActive: (id, active) => request(`/tenants/${id}/active`, { method: "PUT", body: { active } }),
   deleteTenant: (id, confirm) => request(`/tenants/${id}`, { method: "DELETE", body: { confirm } }),
