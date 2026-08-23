@@ -121,11 +121,21 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
   // maxMarks in particular: it is the denominator under every mark already awarded,
   // so moving it moves every percentage, band and pass rate derived from this
   // assessment without touching a single grade row.
+  //
+  // unitId is here for the same reason and was missing. This route accepts a change of
+  // unit, and every mark already awarded travels with the assessment — off one unit's
+  // average, band distribution and pass rate, and onto another's. The log recorded
+  // none of it: unitId was absent from both objects, so diff() found no differences,
+  // wrote before/after as null, and a re-filing of a whole gradebook was indis-
+  // tinguishable from a save that changed nothing at all.
+  const movedUnit = v.data.unitId != null && v.data.unitId !== existing.unitId;
   audit.record(req, {
     action: "assessment.updated", entity: "Assessment", entityId: a.id,
-    summary: `Assessment "${a.title}" updated` + (v.data.maxMarks != null && v.data.maxMarks !== existing.maxMarks ? ` — maximum changed from ${existing.maxMarks} to ${a.maxMarks}, which re-scores every mark already awarded` : ""),
-    before: { title: existing.title, type: existing.type, maxMarks: existing.maxMarks, dueDate: existing.dueDate },
-    after: { title: a.title, type: a.type, maxMarks: a.maxMarks, dueDate: a.dueDate },
+    summary: `Assessment "${a.title}" updated`
+      + (movedUnit ? ` — moved to unit ${a.unit?.code || a.unitId}, taking ${a._count.grades} awarded mark(s) off the previous unit's averages` : "")
+      + (v.data.maxMarks != null && v.data.maxMarks !== existing.maxMarks ? ` — maximum changed from ${existing.maxMarks} to ${a.maxMarks}, which re-scores every mark already awarded` : ""),
+    before: { title: existing.title, type: existing.type, maxMarks: existing.maxMarks, weight: existing.weight, dueDate: existing.dueDate, unitId: existing.unitId },
+    after: { title: a.title, type: a.type, maxMarks: a.maxMarks, weight: a.weight, dueDate: a.dueDate, unitId: a.unitId },
   });
   res.json(sAssessment(a));
 });
@@ -239,7 +249,17 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
     const studentId = str(g?.studentId);
     if (!studentId) return res.status(400).json({ error: "Each grade needs a studentId" });
     let marks = g?.marks;
+    // "Not marked yet" and "scored nothing" are different facts, and only an explicit
+    // clear may mean the first. Number() on its own turned a whitespace-only cell into
+    // 0, an empty array into 0 and `true` into 1 — all of them saved silently as real
+    // marks, so a student nobody had marked was recorded as having scored zero. That
+    // drags the unit average down and fails them on a mark that was never awarded.
+    // Trim first (a spacebar is not a mark), then accept only a number or a numeric
+    // string; the string form has to stay because the grade grid posts its cells as
+    // text.
+    if (typeof marks === "string") marks = marks.trim();
     if (marks === "" || marks == null) { rows.push({ studentId, marks: null }); continue; }
+    if (typeof marks !== "number" && typeof marks !== "string") return res.status(400).json({ error: `Marks must be a whole number between 0 and ${a.maxMarks}` });
     marks = Number(marks);
     if (!isInt(marks) || marks < 0 || marks > a.maxMarks) return res.status(400).json({ error: `Marks must be a whole number between 0 and ${a.maxMarks}` });
     rows.push({ studentId, marks });

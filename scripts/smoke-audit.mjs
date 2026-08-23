@@ -48,12 +48,22 @@ async function waitFor(predicate, tries = 20) {
   return null;
 }
 
+// Both fixtures this suite has to MUTATE, so the finally block can put them back.
+// Every suite shares one seeded database in a single `npm test` run and the seed is
+// not re-run between them: a promotion left behind here is a permission this suite
+// silently granted to every suite that sorts after it.
+let promotedAdmin = null;   // { id } — the seeded admin, if we made them a Super Admin
+let accessTargetBefore = null; // { id, accountRole, adminPages } — the colleague we re-scoped
+
 try {
   // PUT /staff/:id/access is Super-Admin-only, and the seed does not create one.
   // Promoting the fixture is the honest way to exercise the real route rather than
   // choosing a less privileged action just because it is easier to reach.
   const seeded = await db.staff.findFirst({ where: { email: "admin@edtech.co.uk" } });
-  if (seeded && !seeded.isSuperAdmin) await db.staff.update({ where: { id: seeded.id }, data: { isSuperAdmin: true } });
+  if (seeded && !seeded.isSuperAdmin) {
+    await db.staff.update({ where: { id: seeded.id }, data: { isSuperAdmin: true } });
+    promotedAdmin = { id: seeded.id };
+  }
 
   const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
   check("signed in as an administrator", !!admin?.token);
@@ -64,6 +74,12 @@ try {
   check("found a colleague to act on", !!target, target?.email);
 
   const before = await db.auditLog.count();
+  // Granting a page also flips accountRole to ADMIN (see PUT /:id/access), so this
+  // call turns a seeded lecturer into a Check-In administrator. Record what they were
+  // BEFORE the write: left in place it hands "checkin" and "balances" to a fixture
+  // that later suites assert is a plain member of staff.
+  const targetRow = target?.id ? await db.staff.findUnique({ where: { id: target.id } }) : null;
+  if (targetRow) accessTargetBefore = { id: targetRow.id, accountRole: targetRow.accountRole, adminPages: targetRow.adminPages };
   const r = await call(`/staff/${target.id}/access`, { method: "PUT", token: admin.token, body: { pages: ["checkin", "balances"] } });
   check("access change accepted", r.status === 200, `HTTP ${r.status}`);
 
@@ -130,7 +146,23 @@ try {
   const anon = await call("/audit");
   check("anonymous refused", anon.status === 401, `HTTP ${anon.status}`);
 } finally {
+  // Put the seeded fixtures back exactly as the seed left them. Not tidiness: the
+  // access grant above makes a lecturer an ADMIN holding the "checkin" page, and
+  // smoke-timesheets later asserts that same lecturer is refused PUT /api/checkins.
+  // Leaving it behind turns this suite's setup into that suite's failure.
+  try {
+    if (accessTargetBefore) {
+      await db.staff.update({
+        where: { id: accessTargetBefore.id },
+        data: { accountRole: accessTargetBefore.accountRole, adminPages: accessTargetBefore.adminPages },
+      });
+    }
+    if (promotedAdmin) await db.staff.update({ where: { id: promotedAdmin.id }, data: { isSuperAdmin: false } });
+  } catch (e) {
+    console.error("cleanup problem:", e?.message || e);
+  }
   await db.$disconnect();
+  console.log("\ncleanup: seeded admin demoted, colleague's access restored");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

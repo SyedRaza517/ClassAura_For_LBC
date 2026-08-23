@@ -115,10 +115,22 @@ router.put("/:id", requireAuth, async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Entry not found" });
   // Only a timesheets admin may touch someone else's entry or a locked one.
   const isAdmin = hasPage(req.user, "timesheets");
-  if (existing.staffId !== req.user.id && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  const isOwn = existing.staffId === req.user.id;
+  if (!isOwn && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  // Unlocking a sent or approved entry is a REVIEWER's power, so it stops at the
+  // reviewer's own hours — exactly like POST /review below.
+  //
+  // The lock used to lift for any timesheets admin, their own entries included. That
+  // handed back everything the self-review rule takes away: log 8 hours, send the
+  // month, have a colleague approve it, then edit the approved rows to say 18. The
+  // entries still carry the colleague's name in reviewedBy and the month still reads
+  // "approved", so nothing downstream — payroll included — shows the numbers changed
+  // after sign-off. The audit row written at review time records what was approved,
+  // not what is now stored.
+  const canUnlock = isAdmin && !isOwn;
   // Editable only while the owner still holds it: a fresh draft, or a month bounced
   // back with "changes_requested". Once submitted or approved it is locked.
-  if (!isAdmin && !["draft", "changes_requested"].includes(existing.status)) return res.status(409).json({ error: "This timesheet has been sent and can't be edited until it's reviewed" });
+  if (!canUnlock && !["draft", "changes_requested"].includes(existing.status)) return res.status(409).json({ error: "This timesheet has been sent and can't be edited until it's reviewed" });
   const parsed = parseBody(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const rec = await prisma.timesheetEntry.update({ where: { id: existing.id }, data: parsed.data });
@@ -130,8 +142,12 @@ router.delete("/:id", requireAuth, async (req, res) => {
   const existing = await prisma.timesheetEntry.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Entry not found" });
   const isAdmin = hasPage(req.user, "timesheets");
-  if (existing.staffId !== req.user.id && !isAdmin) return res.status(403).json({ error: "Forbidden" });
-  if (!isAdmin && !["draft", "changes_requested"].includes(existing.status)) return res.status(409).json({ error: "This timesheet has been sent and can't be changed until it's reviewed" });
+  const isOwn = existing.staffId === req.user.id;
+  if (!isOwn && !isAdmin) return res.status(403).json({ error: "Forbidden" });
+  // Same rule as PUT above, and the more dangerous half of it: deleting your own
+  // approved entry leaves no row to compare against the sign-off at all.
+  const canUnlock = isAdmin && !isOwn;
+  if (!canUnlock && !["draft", "changes_requested"].includes(existing.status)) return res.status(409).json({ error: "This timesheet has been sent and can't be changed until it's reviewed" });
   await prisma.timesheetEntry.delete({ where: { id: existing.id } });
   res.json({ ok: true });
 });

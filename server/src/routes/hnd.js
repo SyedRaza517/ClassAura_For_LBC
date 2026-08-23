@@ -615,16 +615,30 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   const dob = str(req.body?.dob);
   if (dob && !isDate(dob)) return res.status(400).json({ error: "Date of birth must be a valid date (YYYY-MM-DD)" });
 
-  const s = await prisma.student.create({
+  // Enrolments are created as their OWN top-level call, never nested under the
+  // student. The tenant extension in db.js stamps tenantId onto `args.data` for the
+  // model being called and nothing deeper, so a nested `enrolments: { create: [...] }`
+  // reaches Prisma with no tenantId on the child rows — which it rejects outright
+  // ("Argument `unit` is missing", because without tenantId the unchecked-create
+  // variant no longer matches). The whole of "add a student and put them on their
+  // units", the normal way a student is added, therefore 500'd. Keeping child writes
+  // at the top level is the rule that makes multi-tenancy hold; see the identical
+  // shape in PUT /students/:id/enrolments below.
+  let s = await prisma.student.create({
     data: {
       firstName, lastName, studentRef, email, cohortId,
       dob: dob || null,
       initials: initialsOf(firstName, lastName),
       colour: colourFor(studentRef + lastName),
-      enrolments: { create: unitIds.map((unitId) => ({ unitId })) },
     },
     include: { enrolments: { select: { unitId: true } } },
   });
+  if (unitIds.length) {
+    // Every id was checked above, so this is a straight insert; re-read so the
+    // response carries the unitIds the caller just set rather than an empty list.
+    await prisma.enrolment.createMany({ data: unitIds.map((unitId) => ({ studentId: s.id, unitId })), skipDuplicates: true });
+    s = await prisma.student.findUnique({ where: { id: s.id }, include: { enrolments: { select: { unitId: true } } } });
+  }
   audit.record(req, {
     action: "student.created", entity: "Student", entityId: s.id,
     summary: `Student ${studentLabel(s)} added` + (unitIds.length ? `, enrolled on ${unitIds.length} unit(s)` : ""),

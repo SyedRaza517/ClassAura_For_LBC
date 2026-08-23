@@ -41,6 +41,11 @@ const external = Boolean(process.env.API_URL);
 // accounts it creates — so one value has to reach both. Fixed (not random) so a
 // failing run can be reproduced by hand against the same database.
 const SEED_PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
+// Credential storage must be ON for the suites, or every assertion about per-college
+// Moodle/SharePoint/email settings quietly tests the refusal path instead of the
+// feature. Passed to BOTH the API and the suites: a suite that checks the key is never
+// echoed back has to know what the key is.
+const CREDENTIALS_KEY = process.env.CREDENTIALS_KEY || "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const PORT = process.env.TEST_PORT || 4010;
 const apiUrl = process.env.API_URL || `http://localhost:${PORT}/api`;
 
@@ -101,6 +106,7 @@ if (!external) {
       PORT: String(PORT),
       NODE_ENV: "test",
       JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production",
+      CREDENTIALS_KEY,
       // No tenant caching under test: the isolation suite suspends an institution and
       // immediately checks it is locked out. With the production 60s cache that
       // assertion would pass or fail depending on timing, which is worse than useless.
@@ -128,7 +134,7 @@ for (const suite of suites) {
   console.log(`${"─".repeat(64)}\n▶ ${suite}\n${"─".repeat(64)}`);
   const r = spawnSync("node", [join(root, "scripts", suite)], {
     cwd: root, stdio: "inherit", shell: false,
-    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD },
+    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD, CREDENTIALS_KEY },
   });
   // Exit 2 is a suite reporting itself SKIPPED — it found the feature it covers
   // switched off in this build, so its assertions cannot apply. Distinct from a
