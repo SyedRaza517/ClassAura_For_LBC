@@ -15,7 +15,7 @@
 //
 // A tenant that has saved nothing therefore behaves exactly as before this existed.
 const prisma = require("./db");
-const { currentTenantId } = require("./db");
+const { currentTenantId, crossTenant } = require("./db");
 const secrets = require("./secrets");
 
 // What each provider stores. `secret` is encrypted at rest; `settings` are shown
@@ -101,10 +101,45 @@ async function stored(provider) {
  * Prime and return the configuration for the current institution. Await this at a
  * module's entry point; the synchronous accessors then use peek().
  */
+// WHICH institution, if any, may fall back to the environment.
+//
+// The env vars describe ONE institution's systems — one Moodle, one mailbox, one
+// SharePoint library. Handing them to any tenant that has not configured its own is
+// how a college ends up sending mail as another college and filing its applicants'
+// documents in that college's library. It is not hypothetical: this platform ran for
+// a period with EdTech emailing as "London Brookes College" and uploading into LBC's
+// Admissions library, purely because those were the values on the host.
+//
+// So the environment now serves exactly one tenant: the one named by
+// DEFAULT_TENANT_SLUG, which is what a single-institution deployment sets to mean
+// "this server is that college's server". Every other institution gets nothing until
+// it enters its own, and "nothing" is a safe failure — mail is not sent, a sync does
+// not run — where inheriting is not.
+//
+// A blank DEFAULT_TENANT_SLUG disables the fallback entirely, which is the right
+// setting for a genuine multi-tenant deployment.
+const ENV_TENANT_SLUG = (process.env.DEFAULT_TENANT_SLUG || "").trim().toLowerCase();
+
+// Resolved once and cached: the slug is fixed for the life of the process, and this
+// runs on the hot path of every integration read.
+let envTenantId;
+async function envTenantIdFor() {
+  if (envTenantId !== undefined) return envTenantId;
+  if (!ENV_TENANT_SLUG) { envTenantId = null; return null; }
+  try {
+    const t = await crossTenant(() => prisma.tenant.findUnique({ where: { slug: ENV_TENANT_SLUG } }));
+    envTenantId = t ? t.id : null;
+  } catch {
+    envTenantId = null;
+  }
+  return envTenantId;
+}
+
 async function load(provider) {
   if (!PROVIDERS[provider]) return {};
   const tenantId = currentTenantId();
-  // Outside a tenant (a script, a boot task) there is nothing to look up.
+  // Outside a tenant (a script, a boot task) there is no row to read, so the
+  // environment is all there is.
   if (!tenantId) return fromEnv(provider);
 
   const key = keyFor(tenantId, provider);
@@ -112,7 +147,12 @@ async function load(provider) {
   if (TTL_MS > 0 && hit && Date.now() - hit.at < TTL_MS) return hit.config;
 
   const saved = await stored(provider);
-  const config = saved || fromEnv(provider);
+  let config = saved;
+  if (!config) {
+    // Only the deployment's OWN institution may inherit the host's settings. Any other
+    // college resolves to {} — not configured — rather than to somebody else's system.
+    config = (tenantId === await envTenantIdFor()) ? fromEnv(provider) : {};
+  }
   cache.set(key, { config, at: Date.now() });
   return config;
 }
@@ -128,11 +168,19 @@ function peek(provider) {
   const tenantId = currentTenantId();
   if (!tenantId) return fromEnv(provider);
   const hit = cache.get(keyFor(tenantId, provider));
-  return hit ? hit.config : fromEnv(provider);
+  if (hit) return hit.config;
+  // Nothing primed. Falling back to the environment HERE would reintroduce exactly the
+  // leak load() now prevents — a caller that forgot to prime would silently serve one
+  // institution's credentials to another. An unprimed read reports "not configured",
+  // which is the safe answer and shows up immediately as a feature that does nothing
+  // rather than as a letter from the wrong college.
+  return tenantId === envTenantId ? fromEnv(provider) : {};
 }
 
 /** Drop cached config — call after saving or removing credentials. */
 function invalidate(tenantId, provider) {
+  // A tenant may have been created, renamed or deleted since the slug was resolved.
+  envTenantId = undefined;
   if (!tenantId) return cache.clear();
   if (provider) return void cache.delete(keyFor(tenantId, provider));
   for (const k of cache.keys()) if (k.startsWith(tenantId + ":")) cache.delete(k);
