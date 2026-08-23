@@ -465,13 +465,27 @@ function buildEmailFor(student, config = {}, opts = {}) {
 // ---------------------------------------------------------------------------
 
 // Send an email to each student that has one to receive. Returns a tally:
-//   { sent, failed, skipped, total, errors[] }
-// Skipped covers no email address, no band, no template — and the console-stub mode
-// (email not configured), which is a non-failure. Failures are collected (capped at
-// 25) as "<name>: <error>" for the caller to surface.
+//   { sent, failed, skipped, stubbed, noAddress, total, errors[], emailConfigured }
+// `skipped` means THIS STUDENT had nothing to send — no email address, no band, no
+// template — which is a normal outcome on a perfectly healthy run. `stubbed` is the
+// entirely different case where the SERVER has no mailer at all: the message was
+// printed to the console and nobody received it.
+//
+// The two used to share the `skipped` counter, so a run against an unconfigured mailer
+// delivered nothing and still reported "0 failed" — indistinguishable from a term where
+// every student simply had no marks yet. They are counted apart now, and
+// `emailConfigured` says outright whether a mailer exists, so no caller has to infer a
+// dead mailer from a zero. Failures are collected (capped at 25) as "<name>: <error>"
+// for the caller to surface.
 async function sendToStudents(students, config = {}, opts = {}) {
   const list = students || [];
-  const result = { sent: 0, failed: 0, skipped: 0, total: list.length, errors: [] };
+  const result = {
+    sent: 0, failed: 0, skipped: 0, stubbed: 0, noAddress: 0,
+    total: list.length, errors: [],
+    // Reported even on a run with nothing to send, so "is email switched on?" is
+    // answerable from the response on its own.
+    emailConfigured: email.isConfigured(),
+  };
 
   // Resolved once for the whole run rather than per student: this is one institution's
   // batch, and every message in it must carry the same identity. `from` is undefined when
@@ -482,7 +496,9 @@ async function sendToStudents(students, config = {}, opts = {}) {
   const from = await mailFrom.resolve("attendance");
 
   for (const student of list) {
-    if (!student.email) { result.skipped++; continue; }
+    // No address on file. Kept in `skipped` — it is a per-student fact, not a fault —
+    // but counted separately too, so "nobody got one" can be told from "email is off".
+    if (!student.email) { result.skipped++; result.noAddress++; continue; }
     if (student.bandKey == null) { result.skipped++; continue; }
 
     const built = buildEmailFor(student, withBrand, opts);
@@ -492,8 +508,11 @@ async function sendToStudents(students, config = {}, opts = {}) {
     if (r.sent) {
       result.sent++;
     } else if (r.stubbed) {
-      // Email isn't configured — printed to the console, not a real failure.
-      result.skipped++;
+      // Email isn't configured — printed to the console, so this student was NOT
+      // emailed. Deliberately NOT folded into `skipped`: the caller turns any
+      // stubbed > 0 into a failed run rather than letting a delivery of nothing report
+      // itself as a clean sweep of skips.
+      result.stubbed++;
     } else {
       result.failed++;
       if (result.errors.length < 25) {

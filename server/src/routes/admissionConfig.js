@@ -15,12 +15,15 @@ router.use(requireAuth, requirePage("admissions"));
 const clean = (v) => String(v == null ? "" : v).trim().slice(0, 300);
 
 // ---- Courses ---------------------------------------------------------------
+// No try/catch. This answered [] for ANY error, from the days of `prisma db push` when
+// the table might genuinely not exist yet. Migrations are authoritative now, so the only
+// errors left are real — and an empty list is the most dangerous possible answer here:
+// the admin screen shows no courses, the obvious reaction is to type them in again, and
+// the public application form loses every course it offers until someone notices. A 500
+// says something is wrong; [] lies convincingly.
 router.get("/courses", async (_req, res) => {
-  // Return [] (not a 500) if the table doesn't exist yet — e.g. before `prisma db push`.
-  try {
-    const rows = await prisma.admissionCourse.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
-    res.json(rows);
-  } catch (_) { res.json([]); }
+  const rows = await prisma.admissionCourse.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
+  res.json(rows);
 });
 
 router.post("/courses", async (req, res) => {
@@ -47,12 +50,11 @@ router.delete("/courses/:id", async (req, res) => {
 });
 
 // ---- Intakes ---------------------------------------------------------------
+// Same as /courses above: the swallow-everything fallback is gone. A read that fails must
+// fail visibly rather than quietly emptying the intake list an applicant chooses from.
 router.get("/intakes", async (_req, res) => {
-  // Return [] (not a 500) if the table doesn't exist yet — e.g. before `prisma db push`.
-  try {
-    const rows = await prisma.admissionIntake.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
-    res.json(rows);
-  } catch (_) { res.json([]); }
+  const rows = await prisma.admissionIntake.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });
+  res.json(rows);
 });
 
 router.post("/intakes", async (req, res) => {

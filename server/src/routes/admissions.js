@@ -30,15 +30,79 @@ const CLIENT_URL = (process.env.CLIENT_URL || "http://localhost:5173").replace(/
 const UPLOAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const hashToken = (raw) => crypto.createHash("sha256").update(String(raw)).digest("hex");
 
-// Never let the token hashes reach the client. Everything else on the row is admin-visible.
-// Strip every secret before an admission row reaches a client. passwordHash was
-// missing here: applicants set a password to track their application, so the bcrypt
-// hash of it was being sent to the admin dashboard on every list and update. A hash
-// is not a password, but shipping one to a browser gives an attacker something to
-// grind offline that they should never have had.
+// What of an Admission row may reach the admin client — an ALLOWLIST, not a list of
+// things to strip.
+//
+// It used to be a denylist (`const { uploadTokenHash, offerTokenHash, passwordHash,
+// ...rest } = r`), and a denylist is the wrong default here: every column added to this
+// model in future becomes public the moment it exists, and nobody adding one thinks to
+// come back to a serializer to opt it out. That is exactly how the bcrypt hash got out.
+// The applicant portal added passwordHash, active and tokenVersion to this table long
+// after the serializer was written; all three then shipped to the admin dashboard on
+// every list and every update. A hash is not a password, but handing one to a browser
+// gives an attacker an offline target they should never have had.
+//
+// So: name what goes out. A new column is invisible until it is added here on purpose,
+// which is the safe way round — a field that should have been shown is a missing badge
+// somebody reports, a field that should not have been is a breach nobody sees.
+//
+// FIELDS is the shared list of the application form's own answers (admissionFields.js),
+// so the form can gain a question without touching this list; everything after it is a
+// system/workflow column the Admissions screen actually reads.
+const ADMISSION_OUT = [
+  "id", "createdAt", "updatedAt",
+  ...FIELDS,
+  // Document workflow. spFolderUrl is a link an admin clicks; spFolderId — the Graph
+  // driveItem id behind it — has no client use, so it stays in.
+  "docsRequestedAt", "uploadTokenExpires", "spFolderUrl",
+  // Admissions decision.
+  "interviewStatus", "enrollStatus", "studentId", "ismOutcome",
+  // Offer letter. The raw accept token lives only in the email; only its status is here.
+  "offerStatus", "offerSentAt", "offerAcceptedAt", "offerInductionDate", "offerSignatoryName",
+  // Interview call (the invitation the applicant sees in the portal).
+  "interviewInviteDate", "interviewInviteTime", "interviewInviteMode", "interviewInviteLocation",
+  "interviewInviteLink", "interviewInviteNote", "interviewInviteSentAt",
+  // Enrolment induction.
+  "enrolInductionDate", "enrolInductionTime", "enrolEmailSentAt",
+  // How the row was created ("portal" | "apply" | null) and whether the applicant has
+  // pressed Submit — both drive badges in the admin list.
+  "source", "applicationSubmittedAt",
+];
+// Deliberately absent, each for a reason worth writing down so a later reader does not
+// "helpfully" add them back:
+//   passwordHash                      the applicant's bcrypt portal password
+//   uploadTokenHash / offerTokenHash  the hashed halves of the emailed magic links
+//   tokenVersion, active              the applicant's session/account state; the admin
+//                                     screen never reads either, and tokenVersion tells
+//                                     an attacker how often that session was revoked
+//   tenantId                          an internal id that only leaks the estate's shape
+
+// The uploaded-document rows that ride along on `documents`. Same rule — named, not
+// stripped. spItemId / storagePath / webUrl are storage locations the client never
+// needs: it opens a file through GET /admissions/documents/:id/file, which authorises
+// first and then mints a short-lived link.
+const ADMISSION_DOC_OUT = [
+  "id", "admissionId", "docType", "fileName", "mimeType", "sizeBytes",
+  "uploadedAt", "confirmed", "confirmedAt", "confirmedBy",
+];
+
+// `k in row` rather than a blind copy, so a column the query did not select stays
+// absent instead of appearing as an explicit undefined.
+const only = (row, keys) => {
+  const out = {};
+  for (const k of keys) if (row && k in row) out[k] = row[k];
+  return out;
+};
+
+const sAdmissionDoc = (d) => only(d, ADMISSION_DOC_OUT);
+
 const sAdmission = (r) => {
-  const { uploadTokenHash, offerTokenHash, passwordHash, ...rest } = r;
-  return rest;
+  const out = only(r, ADMISSION_OUT);
+  // `documents` is present only when the query asked for it (withDocs). Absent stays
+  // absent: the client distinguishes "this applicant has uploaded nothing" from "this
+  // response did not include the checklist" by exactly that difference.
+  if (Array.isArray(r.documents)) out.documents = r.documents.map(sAdmissionDoc);
+  return out;
 };
 
 // Format an ISO date (YYYY-MM-DD) as the offer letter reads it, e.g.
@@ -154,7 +218,11 @@ router.put("/documents/:docId/confirm", async (req, res) => {
     before: { confirmed: doc.confirmed },
     after: { confirmed, admissionId: doc.admissionId },
   });
-  res.json(sAdmission(updated));
+  // An AdmissionDocument, not an Admission — this used to be run through sAdmission,
+  // which under the old denylist quietly echoed the document row back (tenantId and the
+  // storage keys included). The client reloads the list after this call and ignores the
+  // body, so nothing depended on the wrong shape; return the right one.
+  res.json(sAdmissionDoc(updated));
 });
 
 // A link to view one uploaded document. SharePoint files return their web URL (the

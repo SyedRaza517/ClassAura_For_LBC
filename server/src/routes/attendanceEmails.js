@@ -68,6 +68,13 @@ router.post("/run", async (req, res) => {
   if (!out.ok && out.reason === "no-current-term") {
     return res.status(400).json({ error: "No teaching term is running right now (no units have current start/end dates on the registers). Pick a From–To date range to send for a specific period instead." });
   }
+  // Email off — an error, not a result. Every message was printed to the server console
+  // and no student received anything, which used to come back as a 200 full of "skipped"
+  // and read on screen as a successful send. Same 400 and the same wording as /send-one
+  // below, so the two paths cannot disagree about what happened.
+  if (!out.ok && out.reason === "email-off") {
+    return res.status(400).json({ error: `Email isn't configured on the server, so nothing was sent (${out.total} student${out.total === 1 ? "" : "s"} were due an email). Set RESEND_API_KEY or the SMTP_* variables, then run it again.` });
+  }
   res.json(out);
 });
 

@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
-  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog,
+  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound,
 } from "lucide-react";
 
 const INK = "#0f172a";
@@ -73,17 +73,77 @@ function PlatformLogin({ onSignedIn, onBack }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // When a second factor is enrolled the password step returns a CHALLENGE rather
+  // than a session, and this screen switches to asking for the code. Nothing is
+  // stored until the code is accepted — a challenge cannot act on any customer.
+  const [challenge, setChallenge] = useState(null);
+  const [code, setCode] = useState("");
+
   const submit = async (e) => {
     e.preventDefault();
     setError(""); setBusy(true);
     try {
       const res = await platformApi.login(email.trim(), password);
+      if (res.mfaRequired) {
+        setChallenge({ token: res.challengeToken, name: res.name });
+        setPassword("");
+        return;
+      }
       setPlatformToken(res.token);
       onSignedIn(res.admin);
     } catch (err) {
       setError(err.message || "Could not sign in.");
     } finally { setBusy(false); }
   };
+
+  const submitCode = async (e) => {
+    e.preventDefault();
+    setError(""); setBusy(true);
+    try {
+      const res = await platformApi.loginVerify(challenge.token, code.trim());
+      setPlatformToken(res.token);
+      onSignedIn(res.admin);
+    } catch (err) {
+      setError(err.message || "Could not verify that code.");
+    } finally { setBusy(false); }
+  };
+
+  if (challenge) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
+        <form onSubmit={submitCode} className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
+          <div className="mb-5 flex flex-col items-center text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl text-white" style={{ background: INK }}>
+              <KeyRound size={24} />
+            </div>
+            <h1 className="text-lg font-extrabold text-slate-900">Enter your code</h1>
+            <p className="mt-1 text-sm text-slate-500">Open your authenticator app and enter the six-digit code for {challenge.name}.</p>
+          </div>
+          <Field label="Six-digit code">
+            <input
+              className={inputCls + " text-center text-lg tracking-[0.4em]"}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              disabled={busy}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              autoFocus
+              required
+            />
+          </Field>
+          {error && <div className="mt-3"><Banner>{error}</Banner></div>}
+          <Btn type="submit" disabled={busy} className="mt-4 w-full">
+            {busy ? <><Loader2 size={16} className="animate-spin" /> Checking…</> : "Sign in"}
+          </Btn>
+          <button type="button" onClick={() => { setChallenge(null); setCode(""); setError(""); }}
+            className="mt-3 flex w-full items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500 transition hover:text-slate-800">
+            <ArrowLeft size={13} /> Start again
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
@@ -419,6 +479,117 @@ function ServerHealth() {
   );
 }
 
+
+/* ------------------------------------------------------- two-step for me ----- */
+
+// Enrolling an authenticator on the operator's OWN account.
+//
+// Offered rather than forced. Forcing it would lock out an operator with no
+// authenticator to hand, and the platform tier is the one place where being locked
+// out cannot be fixed from inside the product — it needs database access.
+function TwoFactorPanel({ admin, onChanged }) {
+  const [stage, setStage] = useState("idle");   // idle | password | code | off
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [setup, setSetup] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const begin = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { setSetup(await platformApi.twoFactorSetup(password)); setStage("code"); setPassword(""); }
+    catch (err) { setError(err.message || "Could not start setup."); }
+    finally { setBusy(false); }
+  };
+
+  const finish = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { await platformApi.twoFactorEnable(code.trim()); setStage("idle"); setCode(""); setSetup(null); await onChanged(); }
+    catch (err) { setError(err.message || "Could not enable."); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { await platformApi.twoFactorDisable(password, code.trim()); setStage("idle"); setPassword(""); setCode(""); await onChanged(); }
+    catch (err) { setError(err.message || "Could not remove."); }
+    finally { setBusy(false); }
+  };
+
+  const on = !!admin?.totpEnabled;
+
+  return (
+    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-3 p-4">
+        <div className={`flex h-9 w-9 flex-none items-center justify-center rounded-lg ${on ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
+          {on ? <ShieldCheck size={17} /> : <ShieldAlert size={17} />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-slate-800">Two-step verification</p>
+          <p className="mt-0.5 text-[12px] text-slate-500">
+            {on
+              ? "On. Signing in needs your password and a code from your authenticator."
+              : "Off. Your password alone can reach every institution on this system."}
+          </p>
+        </div>
+        {stage === "idle" && (
+          <Btn tone={on ? "ghost" : "amber"} onClick={() => setStage(on ? "off" : "password")}>
+            {on ? "Turn off" : "Turn on"}
+          </Btn>
+        )}
+        {stage !== "idle" && <Btn tone="ghost" onClick={() => { setStage("idle"); setError(""); setPassword(""); setCode(""); setSetup(null); }}>Cancel</Btn>}
+      </div>
+
+      {stage === "password" && (
+        <form onSubmit={begin} className="flex flex-col gap-3 border-t border-slate-200 p-4">
+          <p className="text-[12px] text-slate-500">Confirm your password to begin. This stops an unattended session from binding somebody else&rsquo;s authenticator to your account.</p>
+          <Field label="Your password">
+            <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} autoComplete="current-password" required />
+          </Field>
+          {error && <Banner>{error}</Banner>}
+          <Btn type="submit" disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : null} Continue</Btn>
+        </form>
+      )}
+
+      {stage === "code" && setup && (
+        <form onSubmit={finish} className="flex flex-col gap-3 border-t border-slate-200 p-4">
+          <p className="text-[12px] text-slate-500">
+            Add this key to your authenticator app, then enter the code it shows. It is not switched on
+            until a working code proves the app is set up correctly.
+          </p>
+          <div className="rounded-lg bg-slate-50 p-3 text-center ring-1 ring-slate-200">
+            <p className="font-mono text-sm font-bold tracking-wider text-slate-800">{setup.secret}</p>
+          </div>
+          <Field label="Code from your app">
+            <input className={inputCls + " text-center text-lg tracking-[0.4em]"} value={code} onChange={(e) => setCode(e.target.value)}
+              disabled={busy} inputMode="numeric" autoComplete="one-time-code" maxLength={7} required />
+          </Field>
+          {error && <Banner>{error}</Banner>}
+          <Btn type="submit" disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : null} Turn on</Btn>
+        </form>
+      )}
+
+      {stage === "off" && (
+        <form onSubmit={remove} className="flex flex-col gap-3 border-t border-slate-200 p-4">
+          <Banner kind="warn">Removing this leaves your password as the only thing protecting every institution on this system.</Banner>
+          <Field label="Your password">
+            <input className={inputCls} type="password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy} autoComplete="current-password" required />
+          </Field>
+          <Field label="Current code from your app">
+            <input className={inputCls + " text-center text-lg tracking-[0.4em]"} value={code} onChange={(e) => setCode(e.target.value)}
+              disabled={busy} inputMode="numeric" maxLength={7} required />
+          </Field>
+          {error && <Banner>{error}</Banner>}
+          <Btn type="submit" tone="danger" disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : null} Turn off</Btn>
+        </form>
+      )}
+    </div>
+  );
+}
+
 export default function PlatformDashboard({ onBack }) {
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -503,6 +674,8 @@ export default function PlatformDashboard({ onBack }) {
             <Stat label="Students" value={totals.students} Icon={GraduationCap} />
           </div>
         )}
+
+        <TwoFactorPanel admin={admin} onChanged={async () => { try { const me = await platformApi.me(); setAdmin(me.admin); } catch { /* the panel simply keeps its last state */ } }} />
 
         <ServerHealth />
 

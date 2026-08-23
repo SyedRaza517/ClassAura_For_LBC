@@ -7,7 +7,8 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("./../db");
 const { crossTenant, runInTenant } = require("./../db");
-const { signPlatformToken, requirePlatformAdmin } = require("./../platformAuth");
+const { signPlatformToken, requirePlatformAdmin, signPlatformChallenge, readPlatformChallenge } = require("./../platformAuth");
+const totp = require("./../totp");
 const { forget } = require("./../tenant");
 const audit = require("./../audit");
 
@@ -121,12 +122,165 @@ router.post("/login", async (req, res) => {
   }
   plClear(req, email);
 
-  platformEvent(req, "platform.signin", { actorEmail: admin.email, adminId: admin.id });
+  // The password is only the FIRST factor once one is enrolled. Nothing that can act
+  // on a customer is issued here — only a challenge, which requirePlatformAdmin
+  // refuses because its purpose is "mfa" rather than "session".
+  if (admin.totpEnabled) {
+    platformEvent(req, "platform.signin.password-ok", { actorEmail: admin.email, adminId: admin.id, awaiting: "second-factor" });
+    return res.json({
+      mfaRequired: true,
+      challengeToken: signPlatformChallenge(admin, "verify"),
+      email: admin.email,
+      name: admin.name,
+    });
+  }
+
+  platformEvent(req, "platform.signin", { actorEmail: admin.email, adminId: admin.id, secondFactor: "none" });
   await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } }));
-  res.json({ token: signPlatformToken(admin), admin: { id: admin.id, email: admin.email, name: admin.name } });
+  res.json({
+    token: signPlatformToken(admin),
+    admin: { id: admin.id, email: admin.email, name: admin.name, totpEnabled: false },
+  });
 });
 
-router.get("/me", requirePlatformAdmin, (req, res) => res.json({ admin: req.platformAdmin }));
+/* ------------------------------------------------------- the second factor --- */
+
+// Guessing an authenticator code has to be limited too. Six digits is a million
+// possibilities: a great deal for a person, very little for a script. An unlimited
+// code endpoint reduces the second factor to a formality.
+//
+// Keyed per ACCOUNT, because the code is what is being guessed, not the address.
+const CODE_ATTEMPTS = new Map();
+const CODE_WINDOW_MS = 15 * 60 * 1000;
+const CODE_MAX = 8;
+const CODE_LOCK_MS = 15 * 60 * 1000;
+
+function codeLockedFor(id) {
+  const rec = CODE_ATTEMPTS.get(id);
+  if (!rec || !rec.lockedUntil) return 0;
+  if (Date.now() >= rec.lockedUntil) { CODE_ATTEMPTS.delete(id); return 0; }
+  return Math.ceil((rec.lockedUntil - Date.now()) / 60000);
+}
+
+function recordCodeFailure(id) {
+  const now = Date.now();
+  const rec = CODE_ATTEMPTS.get(id) || { count: 0, first: now, lockedUntil: 0 };
+  if (now - rec.first > CODE_WINDOW_MS) { rec.count = 0; rec.first = now; }
+  rec.count += 1;
+  if (rec.count >= CODE_MAX) rec.lockedUntil = now + CODE_LOCK_MS;
+  CODE_ATTEMPTS.set(id, rec);
+}
+
+// POST /api/platform/login/verify — the second step of signing in.
+router.post("/login/verify", async (req, res) => {
+  const ch = await readPlatformChallenge(req.body?.challengeToken);
+  // One message for an expired challenge and a forged one alike.
+  if (!ch || ch.mode !== "verify") return res.status(401).json({ error: "That sign-in has expired. Please start again." });
+  const admin = ch.admin;
+
+  const mins = codeLockedFor(admin.id);
+  if (mins) return res.status(429).json({ error: "Too many incorrect codes. Try again in " + mins + " minute" + (mins === 1 ? "" : "s") + "." });
+
+  const code = String(req.body?.code || "").replace(/\s+/g, "");
+  if (!admin.totpSecret || !totp.verifyCode(admin.totpSecret, code)) {
+    recordCodeFailure(admin.id);
+    platformEvent(req, "platform.signin.2fa-failed", { actorEmail: admin.email, adminId: admin.id });
+    return res.status(401).json({ error: "That code is not right." });
+  }
+
+  CODE_ATTEMPTS.delete(admin.id);
+  platformEvent(req, "platform.signin", { actorEmail: admin.email, adminId: admin.id, secondFactor: "totp" });
+  await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } }));
+  res.json({
+    token: signPlatformToken(admin),
+    admin: { id: admin.id, email: admin.email, name: admin.name, totpEnabled: true },
+  });
+});
+
+// POST /api/platform/2fa/setup — begin enrolling an authenticator.
+//
+// Demands the PASSWORD again even though the caller already holds a session. Without
+// that, an unattended open laptop is enough to bind an attacker's authenticator to the
+// account — which then locks the real operator out of the only tier that could undo it.
+router.post("/2fa/setup", requirePlatformAdmin, async (req, res) => {
+  const admin = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.platformAdmin.id } }));
+  if (!admin) return res.status(401).json({ error: "Invalid token" });
+  if (admin.totpEnabled) return res.status(400).json({ error: "Two-step verification is already set up." });
+  if (!bcrypt.compareSync(String(req.body?.password || ""), admin.passwordHash)) {
+    return res.status(401).json({ error: "That password is not right." });
+  }
+
+  // Stored but deliberately NOT enabled: an operator who abandons enrolment half way
+  // must not end up locked behind a factor they cannot produce.
+  const secret = totp.generateSecret();
+  await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { totpSecret: secret } }));
+  platformEvent(req, "platform.2fa.setup-started", { actorEmail: admin.email, adminId: admin.id });
+
+  res.json({
+    secret: totp.formatSecret(secret),
+    otpauthUrl: totp.otpauthUrl(secret, admin.email, "Staff Hub Platform"),
+  });
+});
+
+// POST /api/platform/2fa/enable — prove the authenticator works, then switch it on.
+router.post("/2fa/enable", requirePlatformAdmin, async (req, res) => {
+  const admin = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.platformAdmin.id } }));
+  if (!admin) return res.status(401).json({ error: "Invalid token" });
+  if (admin.totpEnabled) return res.status(400).json({ error: "Two-step verification is already set up." });
+  if (!admin.totpSecret) return res.status(400).json({ error: "Start the setup first." });
+
+  const mins = codeLockedFor(admin.id);
+  if (mins) return res.status(429).json({ error: "Too many incorrect codes. Try again in " + mins + " minute" + (mins === 1 ? "" : "s") + "." });
+
+  // Requiring a working code BEFORE enabling is the whole point: switching it on
+  // against an unverified secret locks the operator out of the tier that could undo it.
+  const code = String(req.body?.code || "").replace(/\s+/g, "");
+  if (!totp.verifyCode(admin.totpSecret, code)) {
+    recordCodeFailure(admin.id);
+    return res.status(400).json({ error: "That code is not right. Check the app and try again." });
+  }
+
+  await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { totpEnabled: true } }));
+  CODE_ATTEMPTS.delete(admin.id);
+  platformEvent(req, "platform.2fa.enabled", { actorEmail: admin.email, adminId: admin.id });
+  res.json({ totpEnabled: true });
+});
+
+// POST /api/platform/2fa/disable — remove it. Password AND a current code.
+//
+// Both, deliberately: a stolen session must not be able to strip the factor, and
+// neither should a stolen password on its own.
+router.post("/2fa/disable", requirePlatformAdmin, async (req, res) => {
+  const admin = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.platformAdmin.id } }));
+  if (!admin) return res.status(401).json({ error: "Invalid token" });
+  if (!admin.totpEnabled) return res.status(400).json({ error: "Two-step verification is not set up." });
+
+  const mins = codeLockedFor(admin.id);
+  if (mins) return res.status(429).json({ error: "Too many incorrect codes. Try again in " + mins + " minute" + (mins === 1 ? "" : "s") + "." });
+
+  if (!bcrypt.compareSync(String(req.body?.password || ""), admin.passwordHash)) {
+    return res.status(401).json({ error: "That password is not right." });
+  }
+  const code = String(req.body?.code || "").replace(/\s+/g, "");
+  if (!totp.verifyCode(admin.totpSecret, code)) {
+    recordCodeFailure(admin.id);
+    return res.status(400).json({ error: "That code is not right." });
+  }
+
+  await crossTenant(() => prisma.platformAdmin.update({
+    where: { id: admin.id },
+    data: { totpEnabled: false, totpSecret: null, tokenVersion: { increment: 1 } },
+  }));
+  platformEvent(req, "platform.2fa.disabled", { actorEmail: admin.email, adminId: admin.id });
+  res.json({ totpEnabled: false, note: "Two-step verification removed. Every other session has been signed out." });
+});
+
+router.get("/me", requirePlatformAdmin, async (req, res) => {
+  // Whether a second factor is enrolled decides what the dashboard offers, so it
+  // has to come from the row rather than from the token, which predates any change.
+  const row = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.platformAdmin.id } }));
+  res.json({ admin: { ...req.platformAdmin, totpEnabled: !!(row && row.totpEnabled) } });
+});
 
 /* --------------------------------------------------------------- overview ----- */
 
@@ -276,6 +430,86 @@ router.post("/admins", requirePlatformAdmin, async (req, res) => {
   // deletes every customer. No tenant owns it, so it cannot be an AuditLog row.
   platformEvent(req, "platform.operator.created", { newOperator: created.email, newOperatorId: created.id });
   res.status(201).json({ id: created.id, email: created.email, name: created.name });
+});
+
+// Remove an operator's access — and DEACTIVATE rather than DELETE, deliberately.
+//
+// Three reasons, in order of weight:
+//   • The schema already says so: PlatformAdmin.active is documented as "switched off
+//     rather than deleted, so an operator who leaves keeps their audit trail". Every
+//     platformEvent line names the operator who caused it; deleting the row turns the
+//     history of who suspended which college into an orphaned email address.
+//   • It matches PUT /tenants/:id/active one screen up, which makes the same argument
+//     for customers ("an unpaid invoice should stop access, not destroy a college's
+//     records"). Two adjacent destructive-looking actions behaving the same way is
+//     worth more than either being individually clever.
+//   • It is reversible. The two guards below exist because the failure mode here —
+//     nobody left who can sign in to the platform tier — is only recoverable with
+//     direct database access, and a mistake that can be undone from the UI is a
+//     different class of problem from one that needs a psql session on production.
+//
+// Restoring is the same endpoint with active:true, which is why this is a PUT on a
+// sub-resource and not a DELETE.
+router.put("/admins/:id/active", requirePlatformAdmin, async (req, res) => {
+  const active = req.body?.active;
+  if (typeof active !== "boolean") return res.status(400).json({ error: "active must be true or false" });
+
+  const target = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.params.id } }));
+  if (!target) return res.status(404).json({ error: "Unknown operator" });
+
+  // GUARD 1 — never yourself.
+  //
+  // Deactivating your own account revokes your own session on the next line, so the
+  // request would succeed and then lock you out of the screen you would use to undo
+  // it. If you were also the last operator this is unrecoverable without touching the
+  // database. Checked before the count below because it is the likelier mistake: the
+  // row an operator clicks by accident is their own.
+  if (req.platformAdmin.id === target.id) {
+    return res.status(400).json({ error: "You cannot deactivate your own operator account. Ask another operator to do it." });
+  }
+
+  // GUARD 2 — never the last one standing.
+  //
+  // Same rule as "you are the only administrator" on DELETE /api/auth/account, and for
+  // a harder reason: a college with no admin can still be rescued by a platform
+  // operator, but a platform with no operator has nobody above it. There is no
+  // self-service recovery, no reset email to a tier that does not exist — only a
+  // command line on the server.
+  //
+  // With guard 1 in place this is nearly unreachable (the caller is an active operator
+  // and is not the target, so an active target implies at least two). It is here for
+  // the case that is not: two operators deactivating each other at the same instant,
+  // where both count 2 and both proceed. A COUNT narrows that window; it does not
+  // close it — closing it properly needs a conditional update the database arbitrates,
+  // which is a schema change. Worth stating plainly rather than implying a guarantee.
+  if (!active) {
+    const remaining = await crossTenant(() => prisma.platformAdmin.count({ where: { active: true } }));
+    if (remaining <= 1) {
+      return res.status(400).json({ error: "This is the last active platform operator. Create another operator before deactivating this one." });
+    }
+  }
+
+  // Bumping tokenVersion is what makes this take effect NOW. `active` alone would be
+  // enough — requirePlatformAdmin refuses an inactive admin on every request — but the
+  // two checks are independent and only one of them is a revocation: an 8-hour session
+  // token already issued to someone who has just been removed should die on its next
+  // request, not sit valid in a browser tab because a boolean was flipped somewhere
+  // else. Restoring does not bump it; there is nothing outstanding to revoke.
+  const updated = await crossTenant(() => prisma.platformAdmin.update({
+    where: { id: target.id },
+    data: active
+      ? { active: true }
+      : { active: false, tokenVersion: { increment: 1 } },
+  }));
+
+  // No tenant owns an operator account, so this cannot be an AuditLog row — the same
+  // reason platform.operator.created goes here. Removing the access that reads, suspends
+  // and deletes every customer is precisely the line you want in the shipped logs.
+  platformEvent(req, active ? "platform.operator.restored" : "platform.operator.deactivated", {
+    operator: target.email, operatorId: target.id, sessionsRevoked: !active,
+  });
+
+  res.json({ id: updated.id, email: updated.email, name: updated.name, active: updated.active });
 });
 
 

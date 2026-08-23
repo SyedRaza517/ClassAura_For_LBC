@@ -72,9 +72,20 @@ export const platformApi = {
   usage: () => request("/usage", { timeoutMs: 60000 }),
   // Is this SERVER configured — credential storage, email, file storage?
   health: () => request("/health"),
+  // The second step of signing in. Takes the challenge token, not a session — the
+  // session does not exist until the code is right.
+  loginVerify: (challengeToken, code) => request("/login/verify", { method: "POST", body: { challengeToken, code } }),
+  twoFactorSetup: (password) => request("/2fa/setup", { method: "POST", body: { password } }),
+  twoFactorEnable: (code) => request("/2fa/enable", { method: "POST", body: { code } }),
+  twoFactorDisable: (password, code) => request("/2fa/disable", { method: "POST", body: { password, code } }),
   createTenant: (payload) => request("/tenants", { method: "POST", body: payload }),
   setActive: (id, active) => request(`/tenants/${id}/active`, { method: "PUT", body: { active } }),
   deleteTenant: (id, confirm) => request(`/tenants/${id}`, { method: "DELETE", body: { confirm } }),
   listAdmins: () => request("/admins"),
   createAdmin: (payload) => request("/admins", { method: "POST", body: payload }),
+  // Deactivate (or restore) an operator. Not a delete — the server keeps the row so the
+  // platform log's "by=<email>" lines still resolve to a person; see the note on the
+  // route. Deactivating also bumps the operator's tokenVersion, so any session they
+  // still have open dies on its next request rather than at its 8-hour expiry.
+  setAdminActive: (id, active) => request(`/admins/${id}/active`, { method: "PUT", body: { active } }),
 };

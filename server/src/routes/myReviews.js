@@ -11,7 +11,7 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth } = require("../auth");
-const { FORMS, byType, validateAnswers } = require("../reviewForms");
+const { FORMS, byType, validateAnswers, denormalise } = require("../reviewForms");
 const audit = require("../audit");
 
 // Signed-in staff only. Students have their own router; a student token is already
@@ -21,7 +21,9 @@ router.use(requireAuth, (req, res, next) => {
   next();
 });
 
-const SELF_FORMS = () => FORMS.filter((f) => f.selfService && !f.pending);
+// (`!f.pending` was also tested here. No form has ever carried that flag — dead, and
+// dropped rather than left implying a form could be hidden by it.)
+const SELF_FORMS = () => FORMS.filter((f) => f.selfService);
 const selfForm = (type) => SELF_FORMS().find((f) => f.type === type) || null;
 const parse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
 
@@ -66,16 +68,11 @@ router.get("/:id", async (req, res) => {
   res.json(sMine(row));
 });
 
-// Lift the list-view fields out of the answers, matching the admin route.
-function denormalise(answers) {
-  const first = (...ids) => { for (const id of ids) { const v = answers[id]; if (typeof v === "string" && v) return v; } return ""; };
-  return {
-    term: first("reviewTerm", "reviewMonth").slice(0, 60),
-    academicYear: first("academicYear").slice(0, 30),
-    // Must list every id any form uses — kept in step with routes/staffReviews.js.
-    dateCompleted: first("dateCompleted", "reviewDate", "dateConducted", "dateReviewed") || null,
-  };
-}
+// denormalise() is imported from ../reviewForms and shared with routes/staffReviews.js;
+// it used to be copied into both, each with its own hand-kept list of date question ids.
+// No request body is passed here on purpose: a lecturer filling in their own reflection
+// may only supply answers, so the list fields must come from what they actually wrote and
+// can never be set directly.
 
 router.post("/", async (req, res) => {
   const form = selfForm(String(req.body?.type || "").trim());

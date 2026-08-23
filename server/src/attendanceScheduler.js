@@ -30,6 +30,10 @@ async function tick() {
     const out = await runner.runMonthly({ force: false }); // de-dupe handled inside
     if (out.ok) {
       console.log(`[attendance-scheduler] ${out.period}: ${out.sent} sent, ${out.failed} failed, ${out.skipped} skipped`);
+    } else if (out.reason === "email-off") {
+      // Loud, because this is the one failure nobody would otherwise notice: the month's
+      // letters went to the console and every student is still waiting for theirs.
+      console.error(`[attendance-scheduler] ${out.period}: NOTHING SENT — no mailer is configured (${out.stubbed} email(s) printed to the console). Set RESEND_API_KEY or the SMTP_* variables.`);
     }
   } catch (e) {
     console.error("[attendance-scheduler]", e && e.message ? e.message : e);

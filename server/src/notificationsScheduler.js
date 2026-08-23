@@ -5,11 +5,18 @@
 // assessment-deadline reminders). Every send is de-duplicated inside notifications.js on a
 // stable key, so a restart mid-morning — or the scheduler ticking more than once within the
 // send hour — can never double-send. Mirrors attendanceScheduler.js.
+const clock = require("./clock");
+
 const SEND_HOUR = 8; // 08:00 local time
 
 async function tick() {
-  const now = new Date();
-  if (now.getHours() !== SEND_HOUR) return; // only act during the send hour
+  // The organisation's wall clock (Europe/London), not the host's. This read
+  // `new Date().getHours()`, which on Render — and on every host that runs UTC — is
+  // the UTC hour, so through BST the "08:00" student and staff emails actually went
+  // out at 09:00 London and the comment above was a lie for half the year. Same
+  // treatment as attendanceScheduler.js: clock.localTime() is "HH:MM" in the zone.
+  const londonHour = Number(clock.localTime().slice(0, 2));
+  if (londonHour !== SEND_HOUR) return; // only act during the send hour
   try {
     // Required lazily so the scheduler can start before the jobs module (and Prisma) is touched.
     const out = await require("./notifications").runDaily();

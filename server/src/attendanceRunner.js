@@ -77,6 +77,9 @@ const ymPeriod = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 // instead. De-duplicates the AUTOMATIC current-term run on the YYYY-MM period (skips if
 // already run this month) unless `force`; a custom range is always a manual, forced send
 // and never touches the month marker. Returns { ok, reason?, period, term, custom, sent, ... }.
+//
+// A run that reached an unconfigured mailer comes back ok:false / reason:"email-off" — see
+// the comment at the send below.
 async function runMonthly({ force = false, from = null, to = null } = {}) {
   const custom = from && to ? service.termFromRange(from, to) : null;
   const term = custom || await service.currentTerm();
@@ -91,6 +94,15 @@ async function runMonthly({ force = false, from = null, to = null } = {}) {
   const { period: periodLabel, students } = await service.computeCurrentTermAttendance(term);
   const respondByDate = fmtDate(addWorkingDays(now, config.respondDays));
   const summary = await service.sendToStudents(students, config, { period: periodLabel, respondByDate });
+
+  // A run that only printed to the console is not a run. Two things follow, and both are
+  // the reason the service counts `stubbed` apart from `skipped`: the caller is told
+  // plainly that email is off (it used to receive a tally of skips that read like success),
+  // and the month marker is NOT advanced — otherwise the month in which someone finally
+  // configures SMTP is silently skipped, because a send of nothing already claimed it.
+  if (summary.stubbed > 0) {
+    return { ok: false, reason: "email-off", period: custom ? periodLabel : period, term: term.name, custom: !!custom, ...summary };
+  }
 
   // Only the current-term run advances the month marker; a custom range must not mark the
   // current month as "already sent".

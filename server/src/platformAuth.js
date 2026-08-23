@@ -23,6 +23,36 @@ const EXPIRES = process.env.PLATFORM_JWT_EXPIRES || "8h";
 const signPlatformToken = (admin) =>
   jwt.sign({ sub: admin.id, kind: "platform", purpose: "session", ver: admin.tokenVersion ?? 0 }, SECRET, { expiresIn: EXPIRES });
 
+// --- the second factor -----------------------------------------------------------
+//
+// Between the password step and the authenticator step the caller holds a CHALLENGE
+// token, not a session. It is signed with the same secret, so requirePlatformAdmin
+// above must reject it — which it does, by demanding purpose "session". Without that
+// check a correct password alone would reach every platform endpoint and the second
+// factor would be decoration.
+//
+// It carries `ver` for the same reason the staff challenge does: a sign-in begun with
+// the old password must not survive a password reset performed while it was in flight.
+const CHALLENGE_TTL = "10m";
+
+const signPlatformChallenge = (admin, mode) =>
+  jwt.sign({ sub: admin.id, kind: "platform", purpose: "mfa", mode, ver: admin.tokenVersion ?? 0 }, SECRET, { expiresIn: CHALLENGE_TTL });
+
+/** The operator a challenge token refers to, or null if it is not a live challenge. */
+async function readPlatformChallenge(token) {
+  try {
+    const payload = jwt.verify(String(token || ""), SECRET);
+    if (payload.kind !== "platform" || payload.purpose !== "mfa") return null;
+    const admin = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: payload.sub } }));
+    if (!admin || admin.active === false) return null;
+    // Stale challenge — the password changed after this sign-in began.
+    if ((payload.ver ?? 0) !== (admin.tokenVersion ?? 0)) return null;
+    return { admin, mode: payload.mode };
+  } catch {
+    return null;
+  }
+}
+
 async function requirePlatformAdmin(req, res, next) {
   try {
     const header = req.headers.authorization || "";
@@ -50,4 +80,4 @@ async function requirePlatformAdmin(req, res, next) {
   }
 }
 
-module.exports = { signPlatformToken, requirePlatformAdmin, PLATFORM_EXPIRES: EXPIRES };
+module.exports = { signPlatformToken, requirePlatformAdmin, PLATFORM_EXPIRES: EXPIRES, signPlatformChallenge, readPlatformChallenge };

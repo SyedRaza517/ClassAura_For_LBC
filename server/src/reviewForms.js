@@ -702,4 +702,34 @@ function validateAnswers(form, raw, { draft = false } = {}) {
   return { answers: out };
 }
 
-module.exports = { FORMS, STRATEGIC, MONTHLY, EVALUATION, TEACHING_QUALITY, byType, allQuestions, visibleQuestions, isVisible, validateAnswers, MAX_ANSWER };
+// Lift the fields the list views filter and sort by out of the answers, so a list never
+// has to parse the answers JSON to render a row: { term, academicYear, dateCompleted }.
+//
+// It lives HERE, next to the questions themselves, because the ids it looks for ARE the
+// questions — each form names the same column differently (the strategic form asks for a
+// "reviewTerm", the monthly one a "reviewMonth"; the date is "dateCompleted",
+// "reviewDate", "dateConducted" or "dateReviewed" depending on the form). It used to be
+// copied into routes/staffReviews.js and routes/myReviews.js with a comment in each
+// telling the next person to keep the two lists in step by hand. They did not: every
+// Evaluation showed no date at all until "dateReviewed" was added — to one copy. Adding
+// a question with a new id is now a one-file change, in the file that defines the id.
+//
+// `body` is the optional request body: the admin route lets a caller supply term /
+// academicYear / dateCompleted directly for a form that does not ask for them. The staff
+// app's self-service route passes nothing, because there a lecturer may only submit
+// answers — the list fields have to come from what they actually filled in.
+function denormalise(answers, body) {
+  const a = answers || {};
+  const first = (...ids) => {
+    for (const id of ids) { const v = a[id]; if (typeof v === "string" && v) return v; }
+    return "";
+  };
+  const fromBody = (k) => (typeof body?.[k] === "string" ? body[k].trim() : "");
+  return {
+    term: (first("reviewTerm", "reviewMonth") || fromBody("term")).slice(0, 60),
+    academicYear: (first("academicYear") || fromBody("academicYear")).slice(0, 30),
+    dateCompleted: first("dateCompleted", "reviewDate", "dateConducted", "dateReviewed") || fromBody("dateCompleted") || null,
+  };
+}
+
+module.exports = { FORMS, STRATEGIC, MONTHLY, EVALUATION, TEACHING_QUALITY, byType, allQuestions, visibleQuestions, isVisible, validateAnswers, denormalise, MAX_ANSWER };

@@ -125,11 +125,63 @@ router.post("/register", async (req, res) => {
   return res.status(201).json({ token: signApplicantToken(created), user: { ...sApplicant(created), kind: "applicant" } });
 });
 
+// --- check-email rate limiter (per IP) ---
+//
+// The endpoint below answers, to anybody, "does this address have an account here?" —
+// across staff, students AND applicants. Unauthenticated and unthrottled, that is a
+// roster oracle: feed it a breach dump and it tells you which of those people work or
+// study at the college, which is the reconnaissance step before a credential-stuffing
+// or phishing run. The login itself has been rate limited since July precisely so it
+// could not be used this way; this endpoint was the same oracle with no password to
+// guess and no lockout to hit.
+//
+// Same in-process shape as the limiters in routes/auth.js — a module-level Map, a
+// window, and a sweep on a size trigger so unauthenticated traffic from random
+// addresses cannot grow it without bound. Correct for one Node process; a clustered
+// deployment needs a shared store (Redis) for this one exactly as it does for those.
+const CHECK_ATTEMPTS = new Map();
+const CHECK_WINDOW_MS = 15 * 60 * 1000;
+// Generous on purpose. The form calls this on BLUR of the email field, so one real
+// person registering costs a handful, and a college network puts every applicant
+// behind one NAT address. The cap is set to stop a script working through a list, not
+// to ration a form: 40 in a quarter of an hour is far more than a shared address of
+// genuine applicants produces and far less than enumeration needs.
+const CHECK_MAX = 40;
+const CHECK_SWEEP_ABOVE = 5000;
+
+function checkEmailBudgetSpent(req) {
+  const key = String(req.ip || "?");
+  const now = Date.now();
+  let s = CHECK_ATTEMPTS.get(key);
+  if (!s || now - s.first > CHECK_WINDOW_MS) { s = { count: 0, first: now }; CHECK_ATTEMPTS.set(key, s); }
+  s.count += 1;
+  // Swept on read, so a caller who is over budget cannot stop the tidying by going
+  // quiet — the same reasoning as sweep() in auth.js.
+  if (CHECK_ATTEMPTS.size > CHECK_SWEEP_ABOVE) {
+    for (const [k, v] of CHECK_ATTEMPTS) if (now - v.first > CHECK_WINDOW_MS) CHECK_ATTEMPTS.delete(k);
+  }
+  return s.count > CHECK_MAX;
+}
+
 // POST /api/applicant/check-email — live "is this email free?" check for the forms.
 router.post("/check-email", async (req, res) => {
   const email = str(req.body?.email).toLowerCase();
+  // A malformed address never reaches the database, so it costs nothing and is not
+  // charged against the budget — otherwise somebody typing their address slowly, one
+  // blur at a time, would spend it on nothing.
   if (!EMAIL_RE.test(email)) return res.json({ valid: false, available: false });
-  res.json({ valid: true, available: !(await emailInUse(email, null)) });
+
+  // Over budget: stop ANSWERING the question rather than refusing the request. A 429
+  // here would be worse than useless — api.js turns any failure into
+  // { valid: false, available: false }, which the register form renders as "this email
+  // is already taken", so a throttled honest applicant would be told to pick a
+  // different address. Saying "available" instead simply removes the live hint; the
+  // register endpoint still refuses a duplicate with a clear 409, which is the check
+  // that actually matters. `checked: false` is there so a caller can tell the two
+  // apart; nothing enumerable is in the reply either way.
+  if (checkEmailBudgetSpent(req)) return res.json({ valid: true, available: true, checked: false });
+
+  res.json({ valid: true, available: !(await emailInUse(email, null)), checked: true });
 });
 
 /* ======================= AUTHENTICATED (applicant only) ======================= */

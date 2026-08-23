@@ -57,6 +57,16 @@ model PlatformAdmin {
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
 
+  /// Second factor for the highest-privilege login in the product. A platform
+  /// operator can read, suspend and delete every customer, and a password was the
+  /// only thing between an attacker and all of them — while an ordinary college
+  /// lecturer could already enrol an authenticator.
+  ///
+  /// Base32, as issued by src/totp.js. Never returned by any endpoint: it is shown
+  /// once during enrolment and thereafter only ever compared against.
+  totpSecret  String?
+  totpEnabled Boolean @default(false)
+
   @@index([active])
 }
 

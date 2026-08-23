@@ -5,7 +5,7 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requireAdmin, requirePage } = require("../auth");
-const { FORMS, byType, validateAnswers } = require("../reviewForms");
+const { FORMS, byType, validateAnswers, denormalise } = require("../reviewForms");
 const audit = require("../audit");
 
 // A review in the audit trail: whose it is, which form, what state it is in. Never
@@ -80,7 +80,9 @@ async function validate(body, { partial = false } = {}) {
   if (!partial || body?.type !== undefined) {
     const form = byType(type);
     if (!form) return { error: "Choose a review type" };
-    if (form.pending) return { error: `${form.title} isn't set up yet — its questions haven't been added.` };
+    // (There was a `form.pending` guard here for a form defined but not yet written.
+    // reviewForms.js has never set that flag on any form, so the branch was unreachable
+    // — removed rather than left looking like a rule someone still has to satisfy.)
     data.type = type;
   }
   if (!partial || body?.staffId !== undefined) {
@@ -98,25 +100,10 @@ async function validate(body, { partial = false } = {}) {
   return { data };
 }
 
-// Lift the fields the list view filters and sorts by out of the answers, so it never
-// has to parse the JSON. Falls back to the body for forms that don't ask for them.
-function denormalise(form, answers, body) {
-  const first = (...ids) => {
-    for (const id of ids) { const v = answers[id]; if (typeof v === "string" && v) return v; }
-    return "";
-  };
-  return {
-    // The strategic form calls it a term, the monthly one a month — the list column
-    // is the same either way, so take whichever the form actually asked for.
-    term: (first("reviewTerm", "reviewMonth") || str(body?.term)).slice(0, 60),
-    academicYear: (first("academicYear") || str(body?.academicYear)).slice(0, 30),
-    // Each form names its date differently: strategic/teaching-quality "dateCompleted",
-    // monthly "reviewDate"/"dateConducted", evaluation "dateReviewed". Every id a form
-    // actually uses must be listed here, or the list row and the CSV show no date at
-    // all — which is what happened to every Evaluation until dateReviewed was added.
-    dateCompleted: first("dateCompleted", "reviewDate", "dateConducted", "dateReviewed") || str(body?.dateCompleted) || null,
-  };
-}
+// denormalise() — the list-view fields (term, academicYear, dateCompleted) lifted out of
+// the answers — now comes from ../reviewForms, which is where the question ids it looks
+// for are defined. This file and routes/myReviews.js each held their own copy of it, with
+// a hand-maintained list of every form's date question id in both.
 
 router.post("/", requireAdmin, async (req, res) => {
   const v = await validate(req.body, { partial: false });
@@ -130,7 +117,7 @@ router.post("/", requireAdmin, async (req, res) => {
     data: {
       ...v.data,
       status,
-      ...denormalise(form, a.answers, req.body),
+      ...denormalise(a.answers, req.body),
       answers: JSON.stringify(a.answers),
       completedBy: req.user?.name || null,
     },
@@ -172,7 +159,7 @@ router.put("/:id", requireAdmin, async (req, res) => {
     const a = validateAnswers(form, raw, { draft: !submitting });
     if (a.error) return res.status(400).json({ error: a.error });
     data.answers = JSON.stringify(a.answers);
-    Object.assign(data, denormalise(form, a.answers, req.body));
+    Object.assign(data, denormalise(a.answers, req.body));
   }
   const row = await prisma.staffReview.update({ where: { id: existing.id }, data, include: { staff: true } });
   // Whether the answers moved is recorded; what they now say is not. The status is
