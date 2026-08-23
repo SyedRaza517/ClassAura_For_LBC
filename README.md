@@ -1,51 +1,107 @@
 # EdTech — Staff Hub (Full-Stack)
 
-A connected staff attendance & leave-management system:
+A multi-tenant college management platform. It started as staff attendance and leave,
+and is now the system a whole institution runs on — admissions through to grades —
+with several institutions sharing one deployment.
+
+**Staff and HR**
 
 - **Staff mobile app** — its own in-app **sign in / sign up**, then daily check-in/out, holiday balance, leave requests, documents, daily summaries.
-- **Admin dashboard** — one data-handling page per app feature: attendance, holiday balances, leave requests, approvals, documents, daily summaries, staff management.
+- **Admin dashboard** — 28 pages, 27 of which can be granted to an admin individually (see *Per-page admin access*).
+- **Timesheets** — staff log dated work sessions, submit a month as a batch, and an admin approves it or sends it back.
+- **Staff Reviews / My Reviews** — structured review forms (strategic, monthly, evaluation, teaching quality) that the reviewee fills in and an admin reviews.
+- **Notifications** — a bell in the app, backed by the database, plus push to the mobile app.
+
+**Students and teaching**
+
 - **Attendance Registers — HND** *(admin)* — student registers per module: timetable sessions, mark each student **P**resent / **L**ate / **E**xcused / **A**bsent with comments, and track attendance percentages per module and overall.
-- **Notifications** — a bell in the app, backed by the database: admins are told when a leave request arrives, staff are told the moment it's decided.
+- **Assessments** — the HND gradebook: assessments per unit, bulk mark entry, and Distinction/Merit/Pass/Fail analytics.
+- **Timetable** — a weekly timetable per course/year/term, auto-seeded from the generated registers and then published to students.
+- **Student Reviews** and **PAT** (Personal Academic Tutor) records.
+- **Attendance Emails** — banded automatic emails to students based on their attendance percentage.
+- **Student portal** — students sign in to see their own attendance, timetable and grades, and raise queries.
+
+**Admissions**
+
+- **Admissions** — the application record, document collection, interview invitations, offer letters and enrolment, with SharePoint filing.
+- **Applicant portal** — a prospective student registers, fills in their own application, uploads documents and accepts their offer.
+- **ISM** (Intention to Study Meeting) — the admission interview record.
+- **SLC** — a tracker for each student's Student Loans Company application.
+
+**Platform**
+
+- **Multi-tenancy** — one shared database, many institutions, isolation enforced centrally. See *Multi-tenancy* below.
+- **Moodle / VLE sync** — imports courses, students and attendance from each institution's own Moodle.
 - **CSV export** — one click on holiday balances, leave requests, daily summaries, the staff list, and both HND views.
 
-It has a real **database**, **login (JWT)**, **role-based access**, and a **REST API**.
+It has a real **PostgreSQL database**, **login (JWT)**, **role-based access**, and a
+**REST API** — 33 route modules and roughly 210 endpoints under `/api`.
 
 ```
 edtech-hub/
-├── server/   Express + Prisma + SQLite API (auth, RBAC, all endpoints)
-└── client/   React (Vite) app — staff app + admin dashboard, wired to the API
+├── server/   Express + Prisma + PostgreSQL API (auth, RBAC, tenant isolation, all endpoints)
+├── client/   React (Vite) app — staff app, admin dashboard, student + applicant portals
+└── scripts/  setup, the test runner and its suites, load test, screenshots
 ```
 
 ---
 
-## ⭐ Quick start (IntelliJ IDEA Ultimate / WebStorm)
+## ⭐ Quick start
 
 > First install **Node.js LTS** from https://nodejs.org (this provides `npm`).
 
-1. **Unzip** this folder anywhere.
-2. In your IDE: **File → Open…** and select the **outer `edtech-hub` folder** (not `server` or `client`). Both appear together in the Project panel.
-3. Open the terminal (**Alt+F12**) and run these **three commands once**:
+**You need a PostgreSQL database before you start.** SQLite is gone — the schema uses
+Postgres-specific features and the migrations are Postgres SQL. Any Postgres will do:
+a local install, Docker, or a free Supabase/Neon project.
+
+1. **Install dependencies** (one command installs both workspaces):
    ```bash
-   npm install      # installs BOTH server and client (npm workspaces)
-   npm run setup     # creates .env files, builds the database, loads demo data
-   npm run dev       # starts the API and the app together
+   npm install
    ```
-4. Open **http://localhost:5173** and sign in.
+2. **Create `server/.env`.** `npm run setup` copies `server/.env.example` for you, but
+   that file still ships a SQLite `DATABASE_URL`, so setup fails until you replace it.
+   Write the file yourself, or copy it and fix the one line:
+   ```env
+   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech"
+   JWT_SECRET="a-long-random-string-you-generate"
+   CLIENT_URL="http://localhost:5173"
+   ```
+3. **Choose a demo password.** The seed refuses to run without one — a password
+   literal in a committed seed file is a published credential, so there is no default.
+   It must be at least 12 characters.
+   ```bash
+   export SEED_PASSWORD='choose-a-long-demo-password'   # PowerShell: $env:SEED_PASSWORD='…'
+   ```
+4. **Build and seed the database, then start everything:**
+   ```bash
+   npm run setup    # prisma generate + prisma migrate deploy + seed demo data
+   npm run dev      # API on :4000 and client on :5173, together
+   ```
+5. Open **http://localhost:5173** and sign in.
 
-That's it — `npm run dev` runs the server **and** client in one terminal, side by side.
+`npm run setup` applies the migrations in `server/prisma/migrations` with
+**`prisma migrate deploy`** — forward-only, reviewed SQL. It is deliberately *not*
+`prisma db push`, which reconciles the database to `schema.prisma` with no history and
+can drop a column and its data without asking. See
+`server/prisma/migrations/README.md` for the full reasoning and the rules.
 
-### Even easier: click ▶ in the IDE
-This project ships with ready-made **Run configurations**. In the top-right Run dropdown you'll see:
-- **1 · Setup (first time)** — run this once (after `npm install`).
-- **2 · Dev (server + client)** — click ▶ to launch everything.
+> **`npm run setup` re-seeds, which clears the demo tables it owns.** Run it once on a
+> fresh database, not against data you care about.
 
-(After unzipping, run `npm install` in the terminal once so the IDE can find the tools, then the ▶ buttons work. If the IDE asks for a Node interpreter, point it at the Node you installed.)
+### Which database am I pointed at?
 
-> **Note on `npm install`:** it needs an internet connection the first time to download dependencies.
+There is no local database file to look at any more, so check the env var:
+
+```bash
+npm run studio      # Prisma Studio, against whatever DATABASE_URL says
+```
 
 ---
 
-## Seeded login accounts (password for all: `password123`)
+## Seeded login accounts
+
+The seed creates one institution (tenant slug `default`) and these accounts in it.
+**They all share whatever you set `SEED_PASSWORD` to** — there is no fixed password.
 
 | Role  | Email |
 |-------|-------|
@@ -55,7 +111,140 @@ This project ships with ready-made **Run configurations**. In the top-right Run 
 - **Admin** sees a VIEW MODE toggle (Staff App ↔ Admin Dashboard) and can act on all data.
 - **Staff** see only their own staff app; the "Manager Approval" tile and dashboard are hidden.
 
+To seed a *different* institution, set `SEED_TENANT_SLUG` — the seed creates that
+tenant if it does not exist and puts the demo data inside it.
+
+For a real (non-demo) administrator, use the recovery script rather than the seed:
+
+```bash
+cd server
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-passphrase' node create-admin.js
+```
+
+> **Unverified:** `create-admin.js` looks up the account with `where: { email }`, but
+> `Staff.email` is only unique *per tenant* now (`@@unique([tenantId, email])`) and the
+> script sets no tenant. It has not been re-run since tenancy landed and is expected to
+> fail. Create the first admin with the seed, or in Prisma Studio, until it is fixed.
+
 Browse the database visually anytime with: **`npm run studio`** (opens Prisma Studio).
+
+---
+
+## Multi-tenancy
+
+Several institutions share one deployment and one database. Each is a **Tenant**, and
+every other table carries a `tenantId`.
+
+### Isolation is enforced in one place, not in every route
+
+With a shared database, isolation is a property of the code rather than of the
+infrastructure: one query that forgets `tenantId` is a cross-customer data leak. There
+are ~210 endpoints, so asking each one to remember a filter is not a security model.
+
+Instead the Prisma client itself refuses. `server/src/db.js` wraps the client in an
+extension that:
+
+- **filters** every `findMany` / `count` / `updateMany` / `deleteMany` etc. by the
+  caller's tenant, and merges the tenant into the `where` of `findUnique` / `update` /
+  `delete` (asking for another tenant's id simply matches nothing);
+- **stamps** the tenant onto every `create`;
+- **throws** if a query runs with no tenant context at all, rather than quietly
+  returning every institution's rows.
+
+A route added tomorrow is isolated without its author knowing that file exists. Only
+`Tenant` and `PlatformAdmin` are exempt — the registry of institutions, and the
+operators who sit above them.
+
+The escape hatch is `crossTenant(fn)`, and it is deliberately conspicuous: it has to be
+typed out, so reading across institutions is always visible in the diff. Outside a
+request — schedulers, scripts, the seed — code must say `runInTenant(tenantId, fn)` or
+`crossTenant(fn)` explicitly.
+
+`scripts/smoke-tenant-isolation.mjs` builds two institutions that deliberately collide
+(the same admin email address at both) and tries, from one, to read and modify the
+other's data through the real HTTP API. It runs as part of `npm test`.
+
+### Which institution is a request for?
+
+`server/src/tenant.js` resolves it **before authentication**, because `Staff.email` is
+unique per tenant now — the same person can work at two colleges, so a login cannot
+find an account from an email address alone. First match wins:
+
+1. the **`X-Tenant`** header — the tenant's slug;
+2. the **subdomain** — `brookes.example.com` → `brookes` (bare hosts, IPs, and
+   `www`/`api`/`app`/`staging` are ignored);
+3. **`DEFAULT_TENANT_SLUG`** — for single-institution deployments;
+4. `"default"` — the tenant the tenancy migration adopted every pre-existing row into,
+   so nothing broke on upgrade.
+
+An unknown slug gets `404 Unknown institution` — deliberately not "tenant x does not
+exist", which would let anyone probe which colleges use the platform. A suspended one
+gets `403`. `/api/health` and `/api/platform` are exempt.
+
+Sessions are bound to their institution: the JWT carries the tenant id, and a token
+presented against a different tenant is rejected even though its signature is valid.
+
+> **Note:** the web client does not currently send an `X-Tenant` header. In practice it
+> relies on the subdomain, or on `DEFAULT_TENANT_SLUG` in a single-institution
+> deployment. The header is what the API accepts and what the tests use.
+
+Tenant lookups are cached by slug for 60 seconds, so there is not a database round trip
+per request. The trade-off is stated plainly: **suspending a customer takes up to that
+long to bite.** Set `TENANT_CACHE_MS=0` for immediate effect (the test runner does).
+
+### The platform surface
+
+Operators of the platform are `PlatformAdmin` rows, not staff. They are deliberately a
+separate tier: `Staff.isSuperAdmin` already means "top of *one* college", and
+conflating the two is how a customer's admin ends up able to read every customer's data.
+
+- Reached in the browser at **`?platform`** — e.g. `http://localhost:5173/?platform`.
+  It is checked before any college session, has its own login, and its own token.
+- The API lives at `/api/platform`, mounted **before** the tenant middleware (demanding
+  a tenant there would be circular) and guarded by `requirePlatformAdmin`, which
+  rejects any staff, student or applicant token however valid its signature.
+- Platform sessions expire in **8 hours**, not the 7 days a staff session gets — these
+  accounts can read every customer's data.
+- There is no sign-up and no password reset. Create one from the command line:
+  ```bash
+  cd server
+  PLATFORM_EMAIL=you@example.com PLATFORM_PASSWORD='a-long-passphrase' node create-platform-admin.js
+  ```
+
+From the dashboard an operator can list institutions, create one, suspend or reactivate
+one, and delete one.
+
+### Per-institution integration credentials
+
+Moodle and SharePoint credentials used to be process-level environment variables, which
+cannot work once there is more than one college — every tenant would sync from, and
+upload into, the same institution's systems. They are now rows in `TenantIntegration`,
+one per institution per provider, managed by that college's own admin under
+**Settings → Integrations** (`/api/integrations`, inside the tenant middleware, so an
+admin can only ever reach their own).
+
+The secret half is **encrypted at rest** with AES-256-GCM (`server/src/secrets.js`) and
+is never returned to any client — the API reports only whether it is configured, the
+last four characters, and when it was last changed. Non-secret settings (a Moodle URL, a
+SharePoint site path) are stored in the clear so the UI can show them back.
+
+Encryption needs **`CREDENTIALS_KEY`**, 32 bytes as base64 or hex:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+The key is read per call rather than at import, so a missing key fails the one request
+that tries to save a credential instead of stopping the server from booting.
+
+### Tenancy environment variables
+
+| Variable | Default | What it does |
+|---|---|---|
+| `DEFAULT_TENANT_SLUG` | `default` | Which institution a request belongs to when it carries no `X-Tenant` header and no subdomain. Single-institution deployments set this and never think about tenancy again. |
+| `CREDENTIALS_KEY` | *(unset)* | 32-byte base64/hex key encrypting per-institution Moodle and SharePoint credentials. Unset, those credentials cannot be saved (`503`); everything else works. |
+| `TENANT_CACHE_MS` | `60000` | How long a resolved tenant is cached. `0` disables caching, so a suspension takes effect immediately. |
+| `PLATFORM_JWT_EXPIRES` | `8h` | Platform-operator session lifetime. |
 
 ---
 
@@ -71,6 +260,25 @@ Anyone who isn't signed in lands on a **landing screen** with two choices:
 Signing out of the staff app returns you to the staff app's sign-in, not the landing
 screen. An admin who enters through **Staff App** lands in the staff app and can still
 switch to the dashboard with the VIEW MODE toggle.
+
+### The other entry points
+
+Several audiences reach the same client through a URL rather than the landing screen.
+These are checked before the sign-in gate, so they work whether or not a stale staff
+session exists:
+
+| URL | Who it's for |
+|---|---|
+| `?platform` | Platform operators — every institution on the system. Its own login and token; see *Multi-tenancy*. |
+| `?apply` | A prospective student filling in the public application form. No account needed. |
+| `?upload=<token>` | An applicant uploading their documents from an emailed link (30-day token). |
+| `?offer=<token>` | An applicant accepting their offer from an emailed link. |
+| `?invite=<token>` | A new staff member activating an admin-created account (7-day link). |
+| `?reset=<token>` | Someone completing a password reset (30-minute, single-use link). |
+
+Students and registered applicants sign in normally and are routed to the **student
+portal** or the **applicant portal** by the kind of account they hold, not by a
+separate URL.
 
 ---
 
@@ -139,12 +347,10 @@ enrolled. Resetting them:
 admin login. Enter your email and a reset link arrives; it opens a page where you choose
 a new password.
 
-> **Where's the email?** SMTP is active but pointed at a test mailbox, so the message
-> is sent for real and then captured rather than delivered. Look in the **server
-> terminal** for the `preview:` link on the `[email] sent to …` line and open it —
-> you'll see the branded email with its "Choose a new password" button, exactly as
-> the recipient would. Point `SMTP_*` at your own provider and it lands in a real
-> inbox instead.
+> **Where's the email?** That depends on how mail is configured — see *Sending real
+> email* below. With nothing configured the server runs a console stub and prints the
+> whole message, reset link included, to the **server terminal**. That is fine for
+> local development and is exactly why it must not be left that way in production.
 
 How it's kept safe:
 
@@ -222,17 +428,33 @@ applicant is told to sign in rather than wait for an approval that will never co
 - **Change your own password** anytime — the **Change password** button sits in the
   top bar, next to Sign out. Minimum 8 characters, and it must differ from the current one.
   Other devices are signed out; the one you're using stays signed in.
-- **New staff must set their own password.** When an admin adds someone, the account
-  starts on the temporary password `password123` and is flagged `mustChangePassword`.
-  On first sign-in that user hits a full-screen gate and cannot reach the app until
-  they've chosen a new password.
+- **New staff must set their own password.** An admin-created account is given an
+  unguessable random password and flagged `pendingActivation` — it cannot be signed
+  into at all until that person sets their own password from the emailed invitation.
+  (An admin who supplies a password when creating the account skips the invitation;
+  such an account is flagged `mustChangePassword` and hits a full-screen gate on first
+  sign-in.)
 - **Login rate limiting.** 8 failed attempts for the same IP + email inside 15 minutes
   locks that combination for 15 minutes (HTTP 429). The last few attempts warn you how
   many are left, and a successful login clears the counter. It's an in-process limiter —
   fine for one server; a multi-process deployment needs a shared store (e.g. Redis).
 - **Passwords are hashed with bcrypt** (cost 10) and never returned by the API.
-- **Sessions are JWTs** valid for 7 days. If a token expires or is rejected, the app
-  drops you straight back to the login screen rather than leaving a broken page.
+- **Sessions are JWTs**, 7 days by default and `JWT_EXPIRES=1d` in the shipped Render
+  config. If a token expires or is rejected, the app drops you straight back to the
+  login screen rather than leaving a broken page.
+- **Platform-operator sessions are separate and shorter** (8 hours) — see *Multi-tenancy*.
+
+### Per-page admin access
+
+The admin dashboard is 28 pages, and an admin does not have to get all of them. The
+**Super Admin** (`Staff.isSuperAdmin`, exactly one account) assigns which of the 27
+grantable pages each admin may open, on the **Access** tab — which is itself Super Admin
+only. The server enforces this per route with `requirePage` / `requireAnyPage`, not just
+in the UI.
+
+`adminPages` of `NULL` means "never configured" and grants everything, so admins who
+predate the feature are not locked out. Note that granting *any* page makes the account
+an `ADMIN` — which is why route guards test page grants rather than the role.
 
 ---
 
@@ -245,11 +467,24 @@ the transient toasts that pop up after each action.
 |---|---|
 | A staff member submits a leave request | Every admin |
 | An admin approves or declines a request | The requester (including the decision note) |
+| A staff member submits a timesheet month | Every timesheets admin |
+| An admin approves or bounces back a timesheet month | The staff member |
+| A student sends a query | Every admin with the Student Queries page |
+| A timesheet month is nearly due | Staff with nothing submitted, the day before month end |
+| Birthdays, bank-holiday closures, assessment deadlines | Run daily at 08:00 |
 
 The bell in the staff app loads your **unread** notifications on sign-in; pressing
 **Clear** marks them read on the server. Notification failures are deliberately
 swallowed, so a notification problem can never break the action that triggered it —
 approving leave still succeeds even if the notification doesn't.
+
+The scheduled jobs above run in-process on an hourly tick, not on external cron, and
+each one is fanned out **per institution** (`server/src/eachTenant.js`): one college's
+unreachable mailbox or expired Moodle token is logged and stepped over rather than
+cancelling the job for everyone else.
+
+> A reply to a student query does **not** currently notify the student — they see it
+> the next time they open their queries.
 
 ### Push notifications on the mobile app
 
@@ -260,19 +495,26 @@ and email are unaffected.
 
 ### Sending real email
 
-Mail goes out through **nodemailer**, configured entirely from `server/.env`.
+Mail is configured entirely from `server/.env`, and there are three modes. The server
+**prints which one is active on startup**, so a stubbed deployment cannot quietly look
+healthy:
 
-> **Currently active, pointed at a test mailbox.** `server/.env` holds working
-> credentials for **Ethereal**, nodemailer's throwaway SMTP service. Mail really is
-> sent over SMTP — but Ethereal *captures* it rather than delivering onward, so
-> **nothing reaches a real inbox**. Every send logs a `preview:` link in the server
-> terminal where you can read the message exactly as the recipient would. This
-> proves the whole chain works before you commit real credentials.
->
-> **To go live, replace the four `SMTP_` values in `server/.env` with your
-> provider's** and put your own address in `MAIL_FROM`. Nothing else changes.
+| Set this | What happens |
+|---|---|
+| `RESEND_API_KEY` | Sent over Resend's HTTPS API. **Preferred** — it works on hosts that block outbound SMTP ports, which includes Render's free tier. |
+| `SMTP_URL`, or `SMTP_HOST` and friends | Sent over SMTP through **nodemailer**. |
+| *nothing* | Console stub. Messages are printed to the server terminal and nobody receives anything. |
 
-To point it at a real provider, edit the SMTP block in `server/.env`:
+The stub keeps `npm run dev` working with zero configuration, but note what it means in
+production: **the password-reset link is printed into the log stream**, where anyone
+with log access can use it. Configure real email before going live.
+
+Different kinds of automated mail go out from different addresses so replies reach the
+right team — attendance, PAT, ASK and wellbeing each have their own `MAIL_FROM_*`
+override (`server/src/mailFrom.js`). On Microsoft 365 the authenticated mailbox needs
+**Send As** permission on each shared mailbox, or the send is rejected.
+
+To use SMTP, edit the SMTP block in `server/.env`:
 
 ```env
 SMTP_HOST="smtp.gmail.com"
@@ -310,14 +552,55 @@ Every table with an **Export** button writes a CSV straight from the browser (no
 server round-trip, no dependencies — see `client/src/csv.js`). Commas, quotes and
 newlines inside a value are escaped correctly.
 
+There are around twenty of them now. A representative list:
+
 | Where | File |
 |---|---|
 | Admin → Holiday Balances | `holiday-balances.csv` |
 | Admin → Leave Requests | `leave-requests.csv` |
+| Admin → Sign-Up Requests | `signup-requests.csv` |
 | Admin → Daily Summaries | `summaries-<date>.csv` |
-| Admin → Settings (staff list) | `staff.csv` |
+| Admin → Staff / Settings | `staff.csv` |
+| Admin → KPIs | `staff-kpis.csv` |
+| Admin → Timesheets | `timesheets-<month>.csv` |
 | Registers — HND → Sessions | `sessions-<module>.csv` |
+| Registers — HND → one register | `register-<module>-<date>.csv` |
 | Registers — HND → Attendance % | `hnd-attendance-<scope>.csv` |
+| Admin → Students | `students.csv` |
+| Admin → Assessments | `assessment-averages.csv` |
+| Admin → Staff Reviews | `staff-reviews.csv` |
+| Admin → Student Reviews | `student-reviews.csv` |
+| Admin → PAT | `pat-interactions.csv` |
+| Admin → SLC | `slc-records.csv` |
+| Admin → Admissions | `admissions.csv`, `admissions-selected.csv`, `admission-<name>.csv` |
+
+---
+
+## Tests
+
+```bash
+npm test                      # every suite
+npm test -- smoke-invite      # one suite (matches on name)
+```
+
+`npm test` applies the migrations to `DATABASE_URL`, seeds the fixtures, starts its own
+API on port 4010, runs every suite against it, and stops it again. The exit code is 0
+only if every suite passed, which is what lets CI gate on it. GitHub Actions runs this
+on every push and pull request against a throwaway Postgres container.
+
+> **`DATABASE_URL` must point at a scratch database.** The suites are not read-only —
+> they create staff, submit leave, plant password-reset tokens and delete accounts.
+> Never point them at production.
+
+`PASS`/`FAIL` mean what they look like. **`SKIP`** means a suite found the feature it
+covers switched off in this build, so the gap stays visible instead of reading as
+coverage. `smoke-signup-2fa` is currently skipped — mandatory two-factor enrolment is
+deliberately off (`TOTP_ENFORCED = false`).
+
+The suite worth knowing about is **`smoke-tenant-isolation`**: it builds two
+institutions that deliberately collide and proves one cannot reach the other's data
+through the real API. Full details, including how to add a suite, are in
+`scripts/README.md`.
 
 ---
 
@@ -326,22 +609,20 @@ newlines inside a value are escaped correctly.
 | Command (run from the project root) | What it does |
 |---|---|
 | `npm install` | Install server + client dependencies |
-| `npm run setup` | Create `.env` files, build & seed the database |
+| `npm run setup` | Generate the Prisma client, apply migrations, seed demo data |
 | `npm run dev` | Start API (port 4000) + client (port 5173) together |
+| `npm test` | Run every test suite against a throwaway database |
 | `npm run studio` | Open Prisma Studio to view/edit the database |
-| `node scripts/smoke-fixes.mjs` | 10 API regression checks *(leaves a little test data)* |
-| `node scripts/smoke-signup-2fa.mjs` | 46 checks over sign-up → approval → 2FA → admin reset *(self-cleaning)* |
-| `node scripts/smoke-password-reset.mjs` | 38 checks over the forgotten-password flow *(self-cleaning)* |
-| `node scripts/smoke-int-overflow.mjs` | 17 checks that oversized numbers can't crash the API |
-| `node scripts/smoke-security-regressions.mjs` | 8 checks that the security defects found on 21 Jul stay fixed |
-| `node scripts/smoke-account-deletion.mjs` | 26 checks over self-service account deletion |
-| `node scripts/smoke-push.mjs` | 24 checks over push-notification device registration |
-| `node scripts/smoke-invite.mjs` | 32 checks that admin-created accounts can't be used until activated |
-| `node scripts/smoke-push-transport.mjs` | 28 checks over the Firebase transport *(no credentials needed)* |
+| `npm run migrate --workspace server` | Create + apply a migration *(development only)* |
+| `npm run migrate:deploy --workspace server` | Apply pending migrations *(production — never resets)* |
+| `npm run migrate:status --workspace server` | Show which migrations this database has |
 | `node scripts/check-push.mjs [token]` | Verify Firebase settings, optionally send a test push |
 | `node scripts/check-email.mjs [address]` | Verify SMTP settings, optionally send a test email |
+| `node scripts/stress-test.mjs [workers] [secs]` | Closed-loop load test — see `STRESS-TEST.md` |
+| `node server/create-platform-admin.js` | Create or reset a platform operator |
 
-To reset the database, delete `server/prisma/dev.db` and run `npm run setup` again.
+To start the database over, drop and recreate the Postgres database, then run
+`npm run setup` again. (There is no `dev.db` file any more.)
 
 ---
 
@@ -367,10 +648,27 @@ member's **Holiday Balance** and the decision note shows in their history.
 | Approve / decline app sign-ups | — | ✅ |
 | Reset another staff member's two-step verification | — | ✅ |
 | Take HND registers; add students, modules, sessions | — | ✅ |
+| Log own timesheet entries and submit a month | ✅ | ✅ |
+| Approve or bounce back someone else's timesheet month | — | ✅ |
+| Fill in own self-service review | ✅ | ✅ |
+| Record a student review about a student they teach | ✅ | ✅ |
+| Read every staff review, PAT record or student review | — | ✅ |
+| Admissions, ISM, SLC, Assessments, Timetable, Attendance Emails | — | ✅ |
+| Manage this institution's Moodle / SharePoint credentials | — | ✅ |
+| Assign which admin pages other admins may open | — | Super Admin only |
+
+"ADMIN" above means an admin **who has been granted that page** — see *Per-page admin
+access*. Nobody, at any tier below platform operator, can see another institution's
+data at all.
 
 Staff can see colleagues' names, departments and initials (the calendar needs them),
 but **not** their email, allowance or account role — `GET /staff` returns a reduced
 shape to non-admins, with each user's own record still full.
+
+Students and applicants are separate account kinds, not staff with fewer rights. A
+student token reaches only `/api/student` and `/api/auth`, and an applicant token only
+`/api/applicant` and `/api/auth` — enforced by an allowlist, so every other router is
+closed to them by default.
 
 ## How HND attendance is calculated
 
@@ -397,6 +695,11 @@ register never drags a student's figure down. The dashboard shows this per
 module, per student, and overall across all modules; below 70% shows red,
 70–85% amber, 85%+ green.
 
+> Note that the **Attendance Emails** feature bands the same percentage more finely —
+> six bands from *Excellent* (85+) down to *High Risk* (under 40) — because each band
+> gets a different letter. The three register colours and the six email bands are
+> separate scales; don't expect them to line up.
+
 ### Per semester
 
 Add teaching periods on the **Semesters** tab — a semester is just a name and a
@@ -413,34 +716,182 @@ full-year view.
 > semesters*, and the picker offers **Outside any semester** so they're never
 > silently lost. The Semesters tab flags them with an amber badge.
 
-## Switching to PostgreSQL (production)
+## Moodle / VLE sync
 
-1. In `server/prisma/schema.prisma` change `provider = "sqlite"` to `provider = "postgresql"`.
-2. Set `DATABASE_URL` in `server/.env` to your Postgres connection string.
-3. Run `npm run setup` again.
+Registers, students and grades do not all have to be typed in. The sync imports them
+from the institution's Moodle, using that institution's own credentials (see
+*Per-institution integration credentials*).
+
+It is **one-way, additive, and never destructive**. Nothing is written back to Moodle,
+nothing is deleted here, and **existing marks entered in the Hub are never overwritten**
+— conflicts are counted and reported instead. Bulk grade entry stamps `source: "manual"`
+for exactly this reason, so a sync cannot revert a correction someone made by hand.
+
+| Moodle | becomes |
+|---|---|
+| Course | `Course` |
+| `"Unit N - …"` section | `Unit` |
+| LTI / Turnitin grade item | `Assessment` |
+| Enrolled student | `Student` + `Enrolment` |
+| Grade | `AssessmentGrade` |
+| `mod_attendance` register | `HndSession` + `AttendanceMark` |
+
+Moodle keeps attendance registers at course level, while the Hub keeps them per unit, so
+the import fans one register out across units by matching acronyms and unit names.
+**That matching is heuristic** — it has an ambiguity margin and a history of charging
+attendance to the wrong unit. Course-level sessions that belong to no single unit go to
+a synthetic per-course "Tutorial / Seminar" unit rather than being guessed at.
+
+Use **`GET /api/moodle/preview`** first: it reports exactly what a sync would change and
+writes nothing. `POST /api/moodle/sync` returns `202` immediately and the caller polls
+`/api/moodle/status`; runs are recorded in `MoodleSync`, and a run stuck in `running`
+for over an hour is swept to `failed`. A nightly sync also runs at **02:00**
+Europe/London.
+
+> **Known gaps, unresolved.** The nightly sync's off-switch is the process-wide
+> `MOODLE_AUTO_SYNC` env var — the per-institution `autoSync` setting is stored by the
+> integrations UI but never read, so turning it off for one college does nothing.
+> `GET /api/moodle/status` likewise reports `process.env.MOODLE_URL` rather than the
+> institution's saved URL, and can report "not set up" for a tenant whose credentials
+> are saved but whose config cache is cold. Both are tenancy leftovers.
+
+## Database & migrations
+
+**PostgreSQL, everywhere.** The old "SQLite locally, swap one line for production"
+arrangement is gone: development, CI and production all run Postgres, so the database
+you test against behaves like the one you deploy to.
+
+### The data model
+
+The schema is `server/prisma/schema.prisma` — 39 models, every one of them except
+`Tenant` and `PlatformAdmin` carrying a `tenantId` and an index on it. The baseline
+migration built 36 tables; tenancy and the platform tier added the three above it.
+
+| Area | Models |
+|---|---|
+| **Platform & tenancy** | `Tenant`, `PlatformAdmin`, `TenantIntegration` |
+| **People & accounts** | `Staff`, `Student`, `SignupRequest`, `DeviceToken`, `PasswordReset`, `Notification`, `SentNotification` |
+| **Attendance, leave & documents** | `CheckIn`, `Leave`, `Adjustment`, `Document` |
+| **Curriculum & timetable** | `Course`, `Unit`, `Cohort`, `Term`, `Semester`, `Enrolment`, `TimetableSlot`, `TermCalendar` |
+| **Teaching & assessment** | `Assessment`, `AssessmentGrade`, `HndSession`, `AttendanceMark`, `MoodleSync` |
+| **Reviews & pastoral** | `StaffReview`, `StudentReview`, `Interaction` *(PAT)*, `StudentQuery` |
+| **Admissions** | `Admission`, `AdmissionDocument`, `AdmissionCourse`, `AdmissionIntake`, `Ism`, `SlcApplication` |
+| **Staff operations** | `TimesheetEntry`, `AttendanceEmailConfig` |
+
+A few relationships are worth knowing because they are not obvious from the names:
+
+- **`Admission` doubles as the applicant account.** A prospective student who registers
+  on the portal gets a `passwordHash` and `tokenVersion` on their `Admission` row —
+  there is no separate applicant table.
+- **`Unit` is a module; `Course` is a programme.** Registers, assessments and timetable
+  slots hang off `Unit`; enrolment and admissions hang off `Course`.
+- **`AdmissionCourse` / `AdmissionIntake` are not `Course`.** They are the admin-managed
+  dropdown lists on the application form, deliberately separate from the Moodle-synced
+  `Course` table.
+- **`SlcApplication.admissionId` is an unenforced string**, not a foreign key — nothing
+  currently reads it.
+- **`Interaction` is the PAT record**, served from `/api/interactions`.
+
+Every schema change is recorded as a numbered folder of reviewed SQL in
+`server/prisma/migrations`, and **nothing changes a database except a file in that
+directory**. `prisma db push` is not used and must not be: it reconciles the database
+to whatever `schema.prisma` currently says, which means a rename is a drop-and-add that
+silently destroys the column's data, there is no history of how production reached its
+shape, and there is no way back.
+
+```bash
+npm run migrate --workspace server          # create + apply one (development)
+npm run migrate:deploy --workspace server   # apply pending ones (production)
+npm run migrate:status --workspace server   # what has this database got?
+```
+
+`0_init` is the whole schema as it stood on 23 Aug 2026, verified against the live
+database before it was written; the two migrations after it add tenancy and the
+platform-admin tier. The tenancy migration is hand-written rather than Prisma-generated,
+because the generated version adds `tenantId NOT NULL` with no backfill — correct
+against an empty database, and an immediate failure against any database with rows in
+it. It adds the column nullable, backfills every table into one adopting tenant, then
+enforces the constraint.
+
+Read `server/prisma/migrations/README.md` before changing the schema. It has the rules
+that matter — never edit an applied migration, never run `migrate dev` or
+`migrate reset` against production, always read the generated SQL before committing it.
+
+## The API surface
+
+Every mount in `server/src/index.js`. `/api/platform` sits above tenancy; everything
+else runs inside one institution's scope.
+
+| Mount | What it covers | Who |
+|---|---|---|
+| `/api/platform` | Institutions: list, provision, suspend, delete; platform operators | Platform operator |
+| `/api/health` | Liveness. No tenant needed | Anyone |
+| `/api/auth` | Login, 2FA, password change, `/me`, account deletion | All account kinds |
+| `/api/signup` | Self-service staff sign-up and the admin approval queue | Public → admin |
+| `/api/passwords` | Admin-initiated password resets | Admin |
+| `/api/staff` | Staff records, invitations, 2FA reset, per-page access | Staff / admin |
+| `/api/checkins` | Daily check-in, check-out and summaries | Staff |
+| `/api/leave` | Leave requests and decisions | Staff / admin |
+| `/api/adjustments` | Holiday balance adjustments | Admin |
+| `/api/documents` | Shared and personally-assigned documents | Staff / admin |
+| `/api/notifications` | The in-app bell | Staff |
+| `/api/devices` | Push-notification device registration | Staff |
+| `/api/hnd` | HND registers, students, modules, sessions, semesters *(the largest module)* | Admin |
+| `/api/assessments` | Gradebook: assessments, bulk marks, grade analytics | Admin |
+| `/api/timetable` | Weekly timetable per course/year/term, autofill and publish | Admin |
+| `/api/timesheets` | Staff work logs, monthly submission and review | Staff / admin |
+| `/api/interactions` | **PAT** — personal academic tutor interaction records | Admin |
+| `/api/staff-reviews` | Formal staff appraisals (four form types) | Admin |
+| `/api/my-reviews` | A lecturer's own self-service reflection | Staff |
+| `/api/student-reviews` | Lecturer records of student progress conversations | Staff / admin |
+| `/api/student-queries` | The admin side of student queries | Admin |
+| `/api/student` | The student portal: own attendance, grades, timetable, reviews, queries | Student |
+| `/api/attendance-emails` | Banded automatic attendance emails and their templates | Admin |
+| `/api/admissions` | The application record, documents, interviews, offers, enrolment | Admin |
+| `/api/admission-config` | The course and intake dropdown lists | Admin |
+| `/api/admission-pdf` | Application form and offer letter PDFs | Admin |
+| `/api/admission-apply` | The public application form | Public |
+| `/api/admission-uploads` | Document upload from an emailed token link | Token |
+| `/api/admission-offers` | Offer acceptance from an emailed token link | Token |
+| `/api/applicant` | The applicant portal: register, edit, upload, accept, download | Applicant |
+| `/api/ism` | Intention to Study Meeting records | Admin |
+| `/api/slc` | Student Loans Company application tracker | Admin |
+| `/api/moodle` | VLE sync status, dry-run preview, and sync | Admin |
+| `/api/integrations` | This institution's own Moodle / SharePoint credentials | Admin |
 
 ## Security notes for production
 
 Already in place: **bcrypt** password hashing, **login and reset rate limiting**,
 **two-step verification** via an authenticator app, **admin-approved sign-up**, a
-**hashed single-use password-reset flow** with session revocation, a **forced password
-change** for admin-created accounts, server-side **RBAC** on every route, and a
-`JWT_SECRET` that refuses to fall back to a default when `NODE_ENV=production`.
+**hashed single-use password-reset flow** with session revocation, **invited accounts**
+that cannot be signed into until activated, server-side **RBAC** on every route with
+per-page admin grants, **central tenant isolation** with an automated suite proving it,
+**encrypted integration credentials**, security headers and a CORS allowlist on every
+response, and a `JWT_SECRET` that refuses to fall back to a default when
+`NODE_ENV=production`.
 
 Still to do before going live:
 
 - Set a long random `JWT_SECRET` in `server/.env` (the shipped value is a placeholder).
-- Serve the API over HTTPS and restrict CORS to your client origin.
-- Replace the Tailwind Play CDN (in `client/index.html`) with a proper Tailwind build.
-- Shorten the token lifetime (currently 7 days) and add refresh + revocation.
+- Set `CREDENTIALS_KEY`, or per-institution Moodle/SharePoint credentials cannot be saved.
+- Set `DEFAULT_TENANT_SLUG` if you run one institution and are not using subdomains.
+- Serve the API over HTTPS and restrict CORS to your client origin (`CORS_ORIGINS`).
+- Shorten the token lifetime and add refresh tokens. Revocation exists
+  (`tokenVersion`); refresh does not.
 - Set `CLIENT_URL` in `server/.env` so reset links point at your real domain.
-- Fill in the `SMTP_*` settings so reset links actually reach people, and confirm with
-  `node scripts/check-email.mjs` (console-only until you do).
-- Move login and reset rate-limiting to a shared store (Redis) if you run more than one process.
-- Let admins set an initial password when creating staff, so new accounts don't start
-  on the shared temporary `password123`.
+- Configure `RESEND_API_KEY` (or `SMTP_*`) so reset links actually reach people, and
+  confirm with `node scripts/check-email.mjs`. Until then the console stub prints reset
+  links into the log.
+- Move login and reset rate-limiting, and the leave-decision lock, to a shared store
+  (Redis) if you run more than one process. They are in-process module-level maps.
+- **Rate-limit and add 2FA to `POST /api/platform/login`.** It is the highest-privilege
+  login in the product and currently has neither, while the ordinary staff login has both.
+- Fix `server/create-admin.js` for tenancy (see *Seeded login accounts*).
 
-See **API.md** for the full endpoint reference.
+See **API.md** for the endpoint reference — but note it currently documents only the
+original auth/leave/HND surface, not the ~20 feature areas added since. **DEPLOY.md**
+covers hosting, and `render.yaml` is a working Blueprint (it does not yet list
+`CREDENTIALS_KEY` or `DEFAULT_TENANT_SLUG`).
 
 ## Tech stack
 
@@ -460,10 +911,10 @@ See **API.md** for the full endpoint reference.
 - **bcrypt** — scrambles passwords so they're stored safely
 
 **Database (where data is stored)**
-- **SQLite** — the actual database file
-- **Prisma** — lets the code talk to the database (swap to **PostgreSQL** for production)
+- **PostgreSQL** — the database, shared by every institution
+- **Prisma** — lets the code talk to the database, and is where tenant isolation is enforced
 
-> **In one sentence:** the **React** frontend talks to a **Node.js + Express** backend, which stores everything in a **SQLite** database (through Prisma).
+> **In one sentence:** the **React** frontend talks to a **Node.js + Express** backend, which stores everything in a **PostgreSQL** database (through Prisma).
 
 ---
 
@@ -476,22 +927,32 @@ Full-stack JavaScript monorepo managed with **npm workspaces** (`server/` + `cli
 |---|---|
 | Runtime | **Node.js** (CommonJS) |
 | Web framework | **Express 4** |
-| Database | **SQLite** (swap to PostgreSQL by changing one line) |
-| ORM | **Prisma 5** (`@prisma/client` + `prisma` CLI) |
+| Database | **PostgreSQL** |
+| ORM | **Prisma 5** (`@prisma/client` + `prisma` CLI), with a **client extension** that enforces tenant isolation on every query |
+| Migrations | `prisma migrate deploy` over reviewed SQL in `server/prisma/migrations` |
+| Tenant context | `AsyncLocalStorage` (`node:async_hooks`) — request-scoped, so no handler threads a tenant id through |
 | Auth | **JWT** (`jsonwebtoken`) + **bcrypt** password hashing (`bcryptjs`) |
 | 2FA | **TOTP** (RFC 6238) hand-rolled on Node `crypto` — no dependency, no third-party service |
-| Middleware | **cors**, **dotenv** |
-| Email | **nodemailer** — SMTP from env vars, console stub when unconfigured |
+| Secrets at rest | **AES-256-GCM** on Node `crypto` (`src/secrets.js`) |
+| Middleware | **cors**, **compression**, **dotenv** |
+| Email | **Resend** HTTP API, or **nodemailer** over SMTP; console stub when unconfigured |
+| PDFs | **pdfkit** — application forms and offer letters |
+| File storage | **SharePoint** via Microsoft Graph, falling back to **Supabase Storage** (private bucket, signed URLs) — both over plain `fetch`, no SDK |
+| Scheduling | in-process hourly `setInterval`s, each fanned out per tenant (`src/eachTenant.js`) |
 | Dev reload | `node --watch` |
 
-REST API under `/api`; role-based access enforced server-side via `requireAuth` / `requireAdmin` middleware.
+REST API under `/api` — 33 route modules, roughly 210 endpoints. Access is enforced
+server-side via `requireAuth`, `requireAdmin`, `requireSuperAdmin`, `requirePage` /
+`requireAnyPage`, and the `requireStudent` / `requireApplicant` guards. Student and
+applicant tokens are additionally confined to an **allowlist** of routers, so a router
+added tomorrow is closed to them by default.
 
 ### Frontend (`client/`)
 | Layer | Choice |
 |---|---|
 | Framework | **React 18** (ESM) |
 | Build tool / dev server | **Vite 6** (`@vitejs/plugin-react`) |
-| Styling | **Tailwind CSS** (via Play CDN in `index.html`) |
+| Styling | **Tailwind CSS**, compiled at build time (`tailwind.config.js` + PostCSS). It used to load from the Play CDN, which needed the internet on every launch. |
 | Icons | **lucide-react** |
 | Charts | **Recharts** |
 | QR codes | **qrcode** (renders the authenticator enrolment QR client-side) |
@@ -503,7 +964,13 @@ REST API under `/api`; role-based access enforced server-side via `requireAuth` 
 |---|---|
 | **npm workspaces** | one install drives both server + client |
 | **concurrently** | runs API + client together (`npm run dev`) |
-| Node `.mjs` scripts | setup, seed, stress/load test, smoke tests |
+| `scripts/test.mjs` | the test runner behind `npm test` — boots an API, seeds, runs every suite |
+| **GitHub Actions** | `.github/workflows/ci.yml` — build, migrate and test on every push and PR |
+| **Capacitor** | packages the client as native iOS and Android apps (see `MOBILE.md`) |
+| Node `.mjs` scripts | setup, seed, stress/load test, screenshots |
 | Prisma Studio | visual DB browser (`npm run studio`) |
 
-**Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` → Express with JWT + RBAC → Prisma → SQLite. Every mutation writes to the DB and the client refetches, keeping the staff app and admin dashboard in sync.
+**Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` → Express with
+JWT + RBAC → tenant middleware → Prisma (isolation extension) → PostgreSQL. Every
+mutation writes to the DB and the client refetches, keeping the staff app and admin
+dashboard in sync.

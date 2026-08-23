@@ -21,6 +21,65 @@ function resolveBase() {
 }
 const BASE = resolveBase();
 
+// Which institution this browser is acting for.
+//
+// The server resolves a tenant from the X-Tenant header, then the subdomain, then a
+// server-wide default. Without the client sending anything, a single hostname could
+// only ever serve ONE college — which is fine for a dedicated deployment and useless
+// for a shared one.
+//
+// Order, first match wins:
+//   1. ?tenant=slug in the URL, remembered afterwards — how someone arrives from an
+//      invitation or a support link before a custom domain exists
+//   2. a previously remembered choice
+//   3. VITE_TENANT baked into the build — a dedicated deployment for one college
+//   4. nothing, and the server falls back to its own default
+//
+// Deliberately NOT sent when the host already carries the tenant as a subdomain:
+// the header would override it, and a stale remembered slug could then quietly point
+// someone at the wrong college.
+const TENANT_KEY = "edtech_tenant";
+
+function hostHasTenant() {
+  const base = import.meta.env.VITE_TENANT_BASE_DOMAIN;
+  if (!base || typeof window === "undefined") return false;
+  const host = window.location.hostname.toLowerCase();
+  if (!host.endsWith("." + base.toLowerCase())) return false;
+  const label = host.slice(0, -(base.length + 1));
+  return Boolean(label) && !label.includes(".") && !["www", "api", "app", "staging"].includes(label);
+}
+
+function resolveTenant() {
+  if (typeof window === "undefined") return null;
+  if (hostHasTenant()) return null; // the subdomain already says it
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get("tenant");
+    if (fromUrl && /^[a-z0-9-]{1,32}$/i.test(fromUrl)) {
+      const slug = fromUrl.toLowerCase();
+      window.localStorage.setItem(TENANT_KEY, slug);
+      return slug;
+    }
+    const remembered = window.localStorage.getItem(TENANT_KEY);
+    if (remembered) return remembered;
+  } catch (_) { /* private mode: fall through */ }
+  return import.meta.env.VITE_TENANT || null;
+}
+
+let TENANT = resolveTenant();
+
+/** Change the institution this browser acts for, and forget the old session. */
+export function setTenant(slug) {
+  TENANT = slug || null;
+  try {
+    if (slug) window.localStorage.setItem(TENANT_KEY, slug);
+    else window.localStorage.removeItem(TENANT_KEY);
+  } catch (_) { /* ignore */ }
+  // A token issued by one institution is rejected by another, so keeping it would
+  // only produce a confusing 401 on the next request.
+  setToken(null);
+}
+export const getTenant = () => TENANT;
+
 // NOTE for the packaged app: localStorage inside the Capacitor WebView is private
 // to the app, but it is not the Keychain / Android Keystore. Before shipping,
 // consider moving the JWT to secure storage — see MOBILE.md.
@@ -54,6 +113,9 @@ async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT
   const headers = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  // Omitted entirely when unknown, so the server applies its own default rather than
+  // receiving an empty header it would have to interpret.
+  if (TENANT) headers["X-Tenant"] = TENANT;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   let res;

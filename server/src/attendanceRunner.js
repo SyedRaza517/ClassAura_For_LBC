@@ -38,23 +38,25 @@ function resolveConfig(data) {
 }
 
 async function loadConfig() {
-  const row = await prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } }).catch(() => null);
+  const row = await prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } }).catch(() => null);
   return resolveConfig(row && row.data);
 }
 
 // Shallow-merge the patch over the stored blob; `values` and `templates` merge one level
 // deeper so saving one band's template (or one value) doesn't wipe the others.
 async function saveConfig(patch = {}) {
-  const row = await prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } }).catch(() => null);
+  const row = await prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } }).catch(() => null);
   const cur = (row && row.data) || {};
   const next = { ...cur, ...patch };
   if (patch.values) next.values = { ...(cur.values || {}), ...patch.values };
   if (patch.templates) next.templates = { ...(cur.templates || {}), ...patch.templates };
-  await prisma.attendanceEmailConfig.upsert({
-    where: { id: CONFIG_ID },
-    create: { id: CONFIG_ID, data: next },
-    update: { data: next },
-  });
+  // findFirst + create/update rather than upsert: the primary key is [tenantId, id]
+  // now, so { id } alone is not a selector Prisma accepts. The scoped read also means
+  // each institution finds only its OWN row — which is the bug this replaced, where
+  // every tenant fought over one literal "singleton" id and only the first could save.
+  const own = await prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } });
+  if (own) await prisma.attendanceEmailConfig.updateMany({ where: { id: CONFIG_ID }, data: { data: next } });
+  else await prisma.attendanceEmailConfig.create({ data: { id: CONFIG_ID, data: next } });
   return resolveConfig(next);
 }
 

@@ -58,12 +58,19 @@ function firstNameOf(name) {
 
 // Has an email with this key already been recorded as sent?
 async function alreadySent(key) {
-  const row = await prisma.sentNotification.findUnique({ where: { key } });
+  // [tenantId, key] is the primary key now, so { key } alone is not a selector.
+  const row = await prisma.sentNotification.findFirst({ where: { key } });
   return Boolean(row);
 }
 
-// Record a key as sent. A unique-collision (two ticks racing) is expected and ignored —
+// Record a key as sent. A collision from two ticks racing is expected and ignored —
 // the ledger only needs to end up containing the key, not who wrote it.
+//
+// Until the primary key became [tenantId, key], this also swallowed a very different
+// failure: keys like "bankholiday:2026-12-25" are identical across institutions, so
+// the SECOND tenant's write collided with the first tenant's row and was discarded
+// here in silence. That tenant then had no ledger entry, lost its dedupe guarantee,
+// and could send the same notification again.
 async function markSent(key) {
   try {
     await prisma.sentNotification.create({ data: { key } });

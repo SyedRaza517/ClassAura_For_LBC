@@ -19,11 +19,18 @@ router.post("/", requireAuth, async (req, res) => {
   // Upsert on the token, not on (staff, token): if this handset was previously
   // signed in as somebody else, the row must MOVE to the current user rather than
   // leaving the previous account subscribed to a phone they no longer hold.
-  const device = await prisma.deviceToken.upsert({
-    where: { token: token.trim() },
-    update: { staffId: req.user.id, platform: plat, lastSeenAt: new Date() },
-    create: { token: token.trim(), staffId: req.user.id, platform: plat },
-  });
+  // token is unique per INSTITUTION now, not globally — someone employed at two
+  // colleges (the case tenancy exists to support) registered the same handset at the
+  // first and then collided at the second. findFirst + create/update because
+  // { token } alone is no longer a unique selector.
+  const t = token.trim();
+  const existing = await prisma.deviceToken.findFirst({ where: { token: t } });
+  const device = existing
+    ? await prisma.deviceToken.update({
+        where: { id: existing.id },
+        data: { staffId: req.user.id, platform: plat, lastSeenAt: new Date() },
+      })
+    : await prisma.deviceToken.create({ data: { token: t, staffId: req.user.id, platform: plat } });
   res.status(201).json({ ok: true, id: device.id, platform: device.platform });
 });
 

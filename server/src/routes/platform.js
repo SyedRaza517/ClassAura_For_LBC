@@ -20,6 +20,53 @@ const RESERVED_SLUGS = new Set(["www", "api", "app", "admin", "staging", "platfo
 
 const clean = (v) => (typeof v === "string" ? v.trim() : "");
 
+/* ---------------------------------------------------------- rate limiting ----- */
+//
+// This is the highest-privilege login in the product: a platform operator can read,
+// suspend and delete every customer. The staff login has had a limiter since July;
+// this one shipped without and was the softest target on the platform.
+//
+// Tighter than the staff limiter deliberately. There are a handful of operator
+// accounts, all created from a command line by someone with server access, so a
+// genuine person fumbling five times is already unusual — and the cost of a wrong
+// lockout here is one operator waiting, against an attacker grinding the account that
+// owns every customer's data.
+//
+// In-process, matching the staff limiter: correct for one instance, and a
+// multi-instance deployment needs a shared store (Redis) for either of them.
+const PLATFORM_ATTEMPTS = new Map();
+const PL_WINDOW_MS = 15 * 60 * 1000;
+const PL_MAX = 5;
+const PL_LOCK_MS = 30 * 60 * 1000;
+
+const plKey = (req, email) => `${req.ip}|${String(email || "").toLowerCase()}`;
+// Address-independent floor, so spraying one guess from many addresses is still
+// capped. Higher than the per-address limit for the same reason the staff limiter's
+// account key is: a real operator on several devices should not lock out sooner.
+const plAccountKey = (email) => `account|${String(email || "").toLowerCase()}`;
+
+function plLockedFor(key) {
+  const rec = PLATFORM_ATTEMPTS.get(key);
+  if (!rec || !rec.lockedUntil) return 0;
+  if (Date.now() >= rec.lockedUntil) { PLATFORM_ATTEMPTS.delete(key); return 0; }
+  return Math.ceil((rec.lockedUntil - Date.now()) / 60000);
+}
+
+function plRecordFailure(key, max) {
+  const now = Date.now();
+  const rec = PLATFORM_ATTEMPTS.get(key) || { count: 0, first: now, lockedUntil: 0 };
+  if (now - rec.first > PL_WINDOW_MS) { rec.count = 0; rec.first = now; }
+  rec.count += 1;
+  if (rec.count >= max) rec.lockedUntil = now + PL_LOCK_MS;
+  PLATFORM_ATTEMPTS.set(key, rec);
+  return Math.max(0, max - rec.count);
+}
+
+const plClear = (req, email) => {
+  PLATFORM_ATTEMPTS.delete(plKey(req, email));
+  PLATFORM_ATTEMPTS.delete(plAccountKey(email));
+};
+
 /* ------------------------------------------------------------------ sign in --- */
 
 router.post("/login", async (req, res) => {
@@ -27,11 +74,26 @@ router.post("/login", async (req, res) => {
   const password = String(req.body?.password || "");
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
+  // Checked BEFORE the password, so a locked account costs an attacker a bcrypt
+  // comparison of nothing and cannot be used to time-probe which addresses exist.
+  const k = plKey(req, email), ak = plAccountKey(email);
+  const mins = plLockedFor(k) || plLockedFor(ak);
+  if (mins) {
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` });
+  }
+
   const admin = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { email } }));
   // One message for every failure — an unknown address must not be distinguishable
   // from a wrong password, or this becomes a way to enumerate platform operators.
   const ok = admin && admin.active !== false && bcrypt.compareSync(password, admin.passwordHash);
-  if (!ok) return res.status(401).json({ error: "Invalid email or password" });
+  if (!ok) {
+    const left = plRecordFailure(k, PL_MAX);
+    plRecordFailure(ak, PL_MAX * 3);
+    // The count is returned but the reason is not — still one message for unknown
+    // address and wrong password alike.
+    return res.status(401).json({ error: "Invalid email or password" + (left > 0 && left <= 2 ? ` (${left} attempt${left === 1 ? "" : "s"} left)` : "") });
+  }
+  plClear(req, email);
 
   await crossTenant(() => prisma.platformAdmin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } }));
   res.json({ token: signPlatformToken(admin), admin: { id: admin.id, email: admin.email, name: admin.name } });

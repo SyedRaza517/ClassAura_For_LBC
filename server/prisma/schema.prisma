@@ -207,7 +207,12 @@ model DeviceToken {
   id         String   @id @default(cuid())
   staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
   staffId    String
-  token      String   @unique
+  /// Unique per INSTITUTION, not globally — see @@unique([tenantId, token]) below.
+  /// An FCM registration token identifies a device, but the upsert that registers it
+  /// is tenant-scoped: someone employed at two colleges, exactly the case tenancy
+  /// exists to support, registered the handset at the first and then collided at the
+  /// second and could not receive push there at all.
+  token      String
   platform   String   @default("unknown") // ios | android | web
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
@@ -217,6 +222,7 @@ model DeviceToken {
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, token])
   @@index([tenantId])
 }
 
@@ -1263,13 +1269,19 @@ model AdmissionIntake {
 // merged over the code defaults (see attendanceBands.js / attendanceRunner.js), so the
 // shape can evolve without a migration.
 model AttendanceEmailConfig {
-  id        String   @id @default("singleton")
+  /// Was `@id @default("singleton")` — a PROCESS-GLOBAL primary key. Every institution
+  /// upserted the same literal id, so the first to save took the row and every other
+  /// one collided: their settings could never be stored. loadConfig swallowed the
+  /// error and served defaults, so the interface showed saved-looking settings that
+  /// had never been saved. Unique per tenant now.
+  id        String   @default("singleton")
   data      Json
   updatedAt DateTime @updatedAt
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@id([tenantId, id])
   @@index([tenantId])
 }
 
@@ -1278,12 +1290,17 @@ model AttendanceEmailConfig {
 // so a re-tick or a restart can never send the same one twice. `key` is a stable string,
 // e.g. "birthday:student:<id>:2026", "bankholiday:2026-12-25", "assessment:<id>".
 model SentNotification {
-  key    String   @id
+  /// Was `@id` on its own. Keys like "bankholiday:2026-12-25" are identical across
+  /// institutions, so the second tenant's markSent collided on the primary key — and
+  /// that collision was deliberately swallowed, silently losing that tenant's dedupe
+  /// guarantee and allowing the same notification to be sent again. Per tenant now.
+  key    String
   sentAt DateTime @default(now())
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@id([tenantId, key])
   @@index([tenantId])
 }
 

@@ -54,7 +54,7 @@ check("a non-string token is rejected", (await call("/devices", { method: "POST"
 
 const reg = await call("/devices", { method: "POST", token: u.token, body: { token: TOKEN_A, platform: "android" } });
 check("a valid token registers (201)", reg.status === 201, `platform=${reg.data?.platform}`);
-check("stored against the right staff member", (await db.deviceToken.findUnique({ where: { token: TOKEN_A } }))?.staffId === u.id);
+check("stored against the right staff member", (await db.deviceToken.findFirst({ where: { token: TOKEN_A } }))?.staffId === u.id);
 check("an unknown platform is normalised, not stored raw", (await call("/devices", { method: "POST", token: u.token, body: { token: TOKEN_B, platform: "windows-phone" } })).data?.platform === "unknown");
 
 console.log("\n--- re-registering is idempotent ---");
@@ -65,7 +65,7 @@ check("registering the same token again does not duplicate it", (await db.device
 console.log("\n--- a shared phone must follow the person signed in ---");
 const v = await mkStaff("two");
 await call("/devices", { method: "POST", token: v.token, body: { token: TOKEN_A, platform: "android" } });
-const moved = await db.deviceToken.findUnique({ where: { token: TOKEN_A } });
+const moved = await db.deviceToken.findFirst({ where: { token: TOKEN_A } });
 check("the device MOVES to the new user", moved?.staffId === v.id);
 check("the previous user no longer has it", (await db.deviceToken.count({ where: { staffId: u.id, token: TOKEN_A } })) === 0);
 check("it is not duplicated across both accounts", (await db.deviceToken.count({ where: { token: TOKEN_A } })) === 1);
@@ -75,9 +75,9 @@ const list = await call("/devices", { token: v.token });
 check("a user can list their own devices", list.status === 200 && list.data.length >= 1);
 check("raw tokens are never returned", !JSON.stringify(list.data).includes(TOKEN_A));
 check("one user cannot unregister another's device", (await call("/devices", { method: "DELETE", token: u.token, body: { token: TOKEN_A } })).data?.removed === 0);
-check("the device survived that attempt", !!(await db.deviceToken.findUnique({ where: { token: TOKEN_A } })));
+check("the device survived that attempt", !!(await db.deviceToken.findFirst({ where: { token: TOKEN_A } })));
 check("the owner can unregister it", (await call("/devices", { method: "DELETE", token: v.token, body: { token: TOKEN_A } })).data?.removed === 1);
-check("it is gone", !(await db.deviceToken.findUnique({ where: { token: TOKEN_A } })));
+check("it is gone", !(await db.deviceToken.findFirst({ where: { token: TOKEN_A } })));
 
 console.log("\n--- a real notification fans out to the devices ---");
 const w = await mkStaff("three");
