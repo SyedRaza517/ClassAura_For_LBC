@@ -111,6 +111,8 @@ app.use("/api/ism", wrapAsync(require("./routes/ism")));
 // Each institution's own Moodle / SharePoint credentials. Inside the tenant
 // middleware, so an admin can only ever reach their own.
 app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
+// Read-only. Who did what, scoped to the caller's own institution.
+app.use("/api/audit", wrapAsync(require("./routes/audit")));
 
 // 404 + error handlers
 app.use((_req, res) => res.status(404).json({ error: "Not found" }));

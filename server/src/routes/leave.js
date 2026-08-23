@@ -3,6 +3,7 @@ const prisma = require("../db");
 const { sLeave } = require("../serializers");
 const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const { notifyStaff, notifyAdmins } = require("../notify");
+const audit = require("../audit");
 const { localDate } = require("../clock");
 const { chargeableDays, bankHolidayCount, yearsSpanned, spanDays } = require("../bankHolidays");
 
@@ -292,6 +293,14 @@ router.put("/:id/decision", requireAuth, requireAnyPage(LEAVE_ADMIN_PAGES), asyn
     type: status === "approved" ? "success" : "error",
     message: `Your ${rec.type} leave (${span}) was ${status}.` + (note ? ` Note: "${note}"` : ""),
     link: "balance",
+  });
+  // A material record change: it moves someone's holiday balance and is the thing
+  // most likely to be disputed months later.
+  audit.record(req, {
+    action: "leave.decided", entity: "Leave", entityId: rec.id,
+    summary: `Leave for ${rec.start} to ${rec.end} ${rec.status} by ${req.user && req.user.email}` + (rec.note ? ` — "${rec.note}"` : ""),
+    before: { status: "pending" },
+    after: { status: rec.status, note: rec.note, staffId: rec.staffId, start: rec.start, end: rec.end },
   });
   res.json(sLeave(rec));
 });

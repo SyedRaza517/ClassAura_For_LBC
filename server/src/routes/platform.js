@@ -9,6 +9,7 @@ const prisma = require("./../db");
 const { crossTenant, runInTenant } = require("./../db");
 const { signPlatformToken, requirePlatformAdmin } = require("./../platformAuth");
 const { forget } = require("./../tenant");
+const audit = require("./../audit");
 
 const router = express.Router();
 
@@ -180,6 +181,11 @@ router.post("/tenants", requirePlatformAdmin, async (req, res) => {
   }));
 
   forget(slug); // so a previously-cached 404 for this slug does not linger
+  audit.record(req, {
+    tenantId: tenant.id, action: "tenant.created", entity: "Tenant", entityId: tenant.id,
+    summary: `Institution "${name}" (${slug}) created, with ${adminEmail} as its first administrator`,
+    after: { slug, name, adminEmail },
+  });
   res.status(201).json({ tenant: { id: tenant.id, slug: tenant.slug, name: tenant.name, active: tenant.active }, admin: { id: admin.id, email: admin.email } });
 });
 
@@ -192,6 +198,12 @@ router.put("/tenants/:id/active", requirePlatformAdmin, async (req, res) => {
   if (!tenant) return res.status(404).json({ error: "Unknown institution" });
   const updated = await crossTenant(() => prisma.tenant.update({ where: { id: tenant.id }, data: { active } }));
   forget(tenant.slug); // otherwise the change waits for the cache to expire
+  audit.record(req, {
+    tenantId: tenant.id, action: active ? "tenant.restored" : "tenant.suspended",
+    entity: "Tenant", entityId: tenant.id,
+    summary: `Institution "${tenant.name}" ${active ? "restored" : "suspended"} by a platform operator`,
+    before: { active: tenant.active }, after: { active },
+  });
   res.json({ tenant: { id: updated.id, slug: updated.slug, name: updated.name, active: updated.active } });
 });
 
@@ -203,6 +215,12 @@ router.delete("/tenants/:id", requirePlatformAdmin, async (req, res) => {
   if (clean(req.body?.confirm) !== tenant.slug) {
     return res.status(400).json({ error: `Type the institution's slug (${tenant.slug}) to confirm deletion` });
   }
+  // Recorded against the platform's own record-keeping BEFORE the delete: the
+  // cascade removes this institution's audit rows along with everything else, so a
+  // row written here would be destroyed by the very action it describes. Deliberately
+  // console — this is the one event the database cannot keep for us.
+  console.warn("[audit] tenant.deleted slug=" + tenant.slug + " id=" + tenant.id +
+    " by=" + (req.platformAdmin && req.platformAdmin.email) + " at=" + new Date().toISOString());
   await crossTenant(() => prisma.tenant.delete({ where: { id: tenant.id } }));
   forget(tenant.slug);
   res.json({ deleted: true, slug: tenant.slug });

@@ -16,6 +16,7 @@ const express = require("express");
 const prisma = require("./../db");
 const { requireAuth, requirePage } = require("./../auth");
 const secrets = require("./../secrets");
+const audit = require("./../audit");
 
 const router = express.Router();
 
@@ -95,6 +96,14 @@ router.put("/:provider", requireAuth, requirePage("settings"), async (req, res) 
     : await prisma.tenantIntegration.create({ data: { ...data, secretEnc: secrets.encrypt(incomingSecret) } });
 
   cfg.invalidate(req.tenant?.id, provider);
+  // WHAT changed, never the credential itself — audit.js redacts secret fields, and
+  // this deliberately passes only the non-secret settings anyway.
+  audit.record(req, {
+    action: "integration.saved", entity: "TenantIntegration", entityId: saved.id,
+    summary: `${spec.label} credentials ${existing ? "updated" : "configured"}` + (incomingSecret ? " (new secret)" : " (settings only)") + `, ${data.enabled ? "enabled" : "disabled"}`,
+    before: existing ? { enabled: existing.enabled, settings: parseSettings(existing) } : null,
+    after: { enabled: saved.enabled, settings: merged },
+  });
   res.json(present(provider, saved));
 });
 
@@ -110,6 +119,11 @@ router.delete("/:provider", requireAuth, requirePage("settings"), async (req, re
   if (!existing) return res.json({ removed: false });
   await prisma.tenantIntegration.delete({ where: { id: existing.id } });
   cfg.invalidate(req.tenant?.id, provider);
+  audit.record(req, {
+    action: "integration.removed", entity: "TenantIntegration", entityId: existing.id,
+    summary: `${PROVIDERS[provider].label} credentials removed — future syncing stopped, imported records kept`,
+    before: { enabled: existing.enabled },
+  });
   res.json({ removed: true, note: "Credentials removed. Data already imported is unaffected." });
 });
 

@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const prisma = require("../db");
+const audit = require("../audit");
 const { sStaff } = require("../serializers");
 const { requireAuth, requireAdmin, requireSuperAdmin, requireAnyPage, hasPage, hashPassword, blockedByRank } = require("../auth");
 const { notifyStaff } = require("../notify");
@@ -198,6 +199,14 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
     data = { accountRole: "ADMIN", adminPages: full ? null : JSON.stringify(clean) };
   }
   const staff = await prisma.staff.update({ where: { id: req.params.id }, data });
+  // The single most consequential change one colleague can make to another: it
+  // decides which admin pages they can reach, and therefore what data they can see.
+  audit.record(req, {
+    action: "staff.access.changed", entity: "Staff", entityId: staff.id,
+    summary: `Access for ${staff.name} (${staff.email}) set to ${clean.length === 0 ? "none — no longer an administrator" : clean.length + " page(s): " + clean.join(", ")}`,
+    before: { accountRole: target.accountRole, adminPages: target.adminPages },
+    after: { accountRole: staff.accountRole, adminPages: staff.adminPages },
+  });
   res.json(sStaff(staff));
 });
 

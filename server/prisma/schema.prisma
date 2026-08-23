@@ -1,6 +1,12 @@
 // EdTech — Staff Hub database schema
-// SQLite for zero-config local dev. To use PostgreSQL in production,
-// change provider to "postgresql" and set DATABASE_URL accordingly.
+//
+// PostgreSQL. The old "SQLite locally, change one line for production" arrangement is
+// gone: the two disagree on typing and case-sensitivity in ways that hid real bugs
+// (an out-of-range integer SQLite stored happily and Postgres refuses; unquoted
+// identifiers that SQLite folds and Postgres does not).
+//
+// Every model except Tenant and PlatformAdmin carries tenantId, and src/db.js
+// enforces it on every query — see the comment at the top of that file.
 
 generator client {
   provider = "prisma-client-js"
@@ -68,6 +74,57 @@ model TenantIntegration {
   @@index([tenantId])
 }
 
+/// An append-only record of who did what.
+///
+/// The readiness plan asks for "material record changes and privileged actions
+/// logged", and it is the item a college's IT team asks about by name — because it
+/// is what lets them answer "who changed this student's grade" six months later.
+///
+/// Scoped by tenant like everything else, so a customer administrator sees their own
+/// institution's history and nobody else's. Platform-operator actions are recorded
+/// against the institution they AFFECTED, so a college can see that the supplier
+/// suspended them — that transparency is the point, not an oversight.
+///
+/// There is no update and no delete endpoint anywhere. A log that can be edited by
+/// the people it records is not evidence.
+model AuditLog {
+  id        String   @id @default(cuid())
+  at        DateTime @default(now())
+
+  /// staff | platform | system — which tier acted. A platform operator is not a
+  /// Staff row, so actorId alone would be ambiguous.
+  actorType String
+  actorId   String?
+  /// Denormalised on purpose: an account can be deleted, and the log still has to
+  /// say who did it.
+  actorEmail String?
+
+  /// Verb, dotted and stable: "staff.access.changed", "leave.decided",
+  /// "tenant.suspended". Queried and filtered on, so it must not be prose.
+  action    String
+  /// What was acted on — model name and id, for filtering to one record's history.
+  entity    String?
+  entityId  String?
+
+  /// One line a person can read without decoding the diff.
+  summary   String
+
+  /// What actually changed. Secrets are never written here — see audit.js.
+  before    Json?
+  after     Json?
+
+  ip        String?
+  userAgent String?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, at])
+  @@index([tenantId, entity, entityId])
+  @@index([tenantId, actorId])
+  @@index([tenantId, action])
+}
+
 model Tenant {
   id        String   @id @default(cuid())
   /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.
@@ -115,6 +172,7 @@ model Tenant {
   sentNotification       SentNotification[]
   slcApplication         SlcApplication[]
   integrations           TenantIntegration[]
+  auditLogs              AuditLog[]
 
   @@index([active])
 }
