@@ -12,7 +12,8 @@
 //
 // Resolution order, first match wins:
 //   1. X-Tenant header      — what the web and mobile clients send
-//   2. Subdomain            — brookes.example.com -> "brookes"
+//   2. Subdomain            — ONLY under TENANT_BASE_DOMAIN, e.g.
+//                             brookes.edtech.co.uk -> "brookes"
 //   3. DEFAULT_TENANT_SLUG  — single-institution deployments (EdTech and LBC today)
 //   4. "default"            — the tenant the tenancy migration adopted every
 //                             existing row into, so nothing broke on upgrade
@@ -45,17 +46,28 @@ const TENANT_EXEMPT_PREFIXES = ["/platform"];
 const CACHE_MS = process.env.TENANT_CACHE_MS !== undefined ? Number(process.env.TENANT_CACHE_MS) : 60_000;
 const cache = new Map(); // slug -> { tenant, at }
 
+// Subdomain resolution applies ONLY under a domain you actually control, named by
+// TENANT_BASE_DOMAIN (e.g. "edtech.co.uk", so brookes.edtech.co.uk -> "brookes").
+//
+// Without that restriction this read the first label of ANY hostname, which broke
+// staging the moment it was deployed: edtech-staging-api.onrender.com resolved to a
+// tenant called "edtech-staging-api", which does not exist, so every college request
+// 404'd before it reached the DEFAULT_TENANT_SLUG fallback. Platform hosts, preview
+// URLs and bare service names are not customer subdomains, and no denylist of them
+// would ever be complete — an allowlist of one domain is the only version that holds.
+const BASE_DOMAIN = (process.env.TENANT_BASE_DOMAIN || "").trim().toLowerCase().replace(/^\.+/, "");
+
 function slugFromHost(host) {
+  if (!BASE_DOMAIN) return null;              // not configured: never guess
   if (!host) return null;
   const name = String(host).split(":")[0].toLowerCase();
-  // Bare hosts and IPs carry no subdomain to read.
-  if (name === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(name)) return null;
-  const parts = name.split(".");
-  if (parts.length < 3) return null;
-  const first = parts[0];
-  // Platform hostnames are not customer subdomains.
-  if (["www", "api", "app", "staging"].includes(first)) return null;
-  return first;
+  if (!name.endsWith("." + BASE_DOMAIN)) return null;
+  const label = name.slice(0, -(BASE_DOMAIN.length + 1));
+  // Only a single label counts; a.b.example.com is not customer "a".
+  if (!label || label.includes(".")) return null;
+  // Platform hostnames under the same domain are not customers.
+  if (["www", "api", "app", "staging", "admin", "platform"].includes(label)) return null;
+  return label;
 }
 
 function slugFor(req) {
