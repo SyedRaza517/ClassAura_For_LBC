@@ -6,6 +6,7 @@ const prisma = require("../db");
 const audit = require("../audit");
 const { requireAuth, requireAnyPage } = require("../auth");
 const moodle = require("../moodle");
+const cfg = require("../integrationConfig");
 
 // A sync is not confined to the gradebook: it creates students, enrolments, courses
 // and units, all of which require the registers/students pages everywhere else in the
@@ -47,12 +48,26 @@ router.get("/status", async (req, res) => {
     });
   }
   const history = await prisma.moodleSync.findMany({ orderBy: { startedAt: "desc" }, take: 10 });
+  // Prime this institution's own configuration before reporting on it.
+  //
+  // This used to answer with process.env.MOODLE_URL and moodle.isConfigured() read
+  // off a cold cache, which meant a college that had saved its own Moodle URL in
+  // Settings was shown the SERVER's URL — or, on a server with no MOODLE_URL at all,
+  // was told Moodle "isn't set up yet" while its own credentials sat saved and
+  // working one screen away. Both readings were about a different institution's
+  // configuration than the one asking.
+  await cfg.load("moodle");
+  const resolved = cfg.peek("moodle");
+  const savedHere = Boolean((await prisma.tenantIntegration.findFirst({ where: { provider: "moodle" } }))?.enabled);
   res.json({
     configured: moodle.isConfigured(),
     running: moodle.isRunning(),
     // The URL is safe to show (it's the college's own VLE); the token never leaves
     // the server.
-    url: process.env.MOODLE_URL || "",
+    url: resolved.url || "",
+    // Where that configuration came from, so "why is this not what I typed?" is
+    // answerable from the screen rather than from the server's environment.
+    source: savedHere ? "institution" : (resolved.url || resolved.token) ? "server" : "none",
     last: sRun(history[0]) || null,
     history: history.map(sRun),
   });
@@ -60,7 +75,7 @@ router.get("/status", async (req, res) => {
 
 // Dry run: report exactly what a sync would change, writing nothing.
 router.get("/preview", async (req, res) => {
-  if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add MOODLE_URL and MOODLE_TOKEN on the server." });
+  if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add your Moodle URL and web-services token under Settings → Connected systems." });
   if (moodle.isRunning()) return res.status(409).json({ error: "A sync is already running. Wait for it to finish." });
   try {
     const { summary, issues } = await moodle.syncFromMoodle({ dryRun: true });
@@ -75,7 +90,7 @@ router.get("/preview", async (req, res) => {
 // caller polls /status for the outcome — which is also recorded in MoodleSync, so
 // closing the browser doesn't lose the result.
 router.post("/sync", requireAnyPage(SYNC_PAGES), async (req, res) => {
-  if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add MOODLE_URL and MOODLE_TOKEN on the server." });
+  if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add your Moodle URL and web-services token under Settings → Connected systems." });
   if (moodle.isRunning()) return res.status(409).json({ error: "A sync is already running. Wait for it to finish." });
 
   // runSync already records the failure against the run row; catching here stops it

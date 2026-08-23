@@ -177,6 +177,7 @@ export const api = {
   listIntegrations: () => request("/integrations"),
   saveIntegration: (provider, body) => request(`/integrations/${provider}`, { method: "PUT", body }),
   removeIntegration: (provider) => request(`/integrations/${provider}`, { method: "DELETE" }),
+  testIntegration: (provider) => request(`/integrations/${provider}/test`, { method: "POST" }),
   changePassword: (currentPassword, newPassword) => request("/auth/change-password", { method: "PUT", body: { currentPassword, newPassword } }),
 
   // The audit trail. Read-only by design — the API has no write endpoint, because a

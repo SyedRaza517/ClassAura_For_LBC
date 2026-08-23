@@ -527,8 +527,40 @@ function forgetTenant(tenantId) {
   tokenCache.delete(k); siteIdCache.delete(k); driveIdCache.delete(k); rootFolderIdCache.delete(k);
 }
 
+
+// --- Test connection ----------------------------------------------------------
+// Proves an institution's saved credentials actually work, WITHOUT writing anything.
+// Three things can be wrong independently and each fails with a different message:
+// the app registration / secret (token), the site address (site id), and the document
+// library (drive id). Reporting which one failed is the difference between "it says
+// error" and an administrator being able to fix their own configuration.
+async function testConnection() {
+  await cfg.load("sharepoint");
+  if (!isConfigured()) {
+    return { ok: false, note: "Not configured — a directory ID, client ID, client secret and site are all required." };
+  }
+  try {
+    await getAccessToken();
+  } catch (e) {
+    return { ok: false, note: "Sign-in to Microsoft failed — check the directory ID, application ID and client secret. (" + e.message + ")" };
+  }
+  let siteId;
+  try {
+    siteId = await resolveSiteId();
+  } catch (e) {
+    return { ok: false, note: "Signed in, but the site could not be found — check the site host and path. (" + e.message + ")" };
+  }
+  try {
+    await resolveDriveId();
+  } catch (e) {
+    return { ok: false, note: "Site found, but the document library could not be opened — check the library name. (" + e.message + ")" };
+  }
+  return { ok: true, note: "Connected — " + describe().replace(/^SharePoint /, "") };
+}
+
 module.exports = {
   forgetTenant,
+  testConnection,
   isConfigured,
   describe,
   ensureApplicantFolder,

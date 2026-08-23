@@ -78,12 +78,29 @@ async function sendTimesheetReminders(todayOverride) {
 // Runs at 02:00 London — quiet for both systems. The hourly tick means the guard
 // below decides whether this hour is the one; the 12-hour dedupe against the
 // MoodleSync table then makes a restart (or a second tick inside the same hour)
-// harmless. Set MOODLE_AUTO_SYNC=off to leave it to the manual button only.
+// harmless. Each institution switches its own nightly import on or off under
+// Settings -> Connected systems; MOODLE_AUTO_SYNC=off is the server-wide default
+// for a deployment where nobody has saved that preference.
 const SYNC_HOUR = "02";
 
 async function maybeSyncMoodle() {
-  if (String(process.env.MOODLE_AUTO_SYNC || "").toLowerCase() === "off") return false;
   const moodle = require("./moodle");
+  // Whose switch decides this.
+  //
+  // TenantIntegration.autoSync was saved by the Settings screen and then read by
+  // nothing: the only gate was the process-wide MOODLE_AUTO_SYNC, so a college that
+  // turned its own nightly import OFF kept being imported anyway, and one that turned
+  // it ON got nothing if the server-wide variable said "off". The institution's own
+  // choice now wins, and the environment variable is what remains for a
+  // single-institution deployment that has saved nothing.
+  //
+  // Runs inside forEachTenant (see startScheduler), so this reads the right
+  // institution's row without being told which.
+  const cfg = require("./integrationConfig");
+  await cfg.load("moodle");
+  const autoSync = cfg.peek("moodle").autoSync;
+  const off = (v) => String(v ?? "").toLowerCase() === "off" || v === false || String(v) === "false";
+  if (autoSync !== undefined && autoSync !== "" ? off(autoSync) : off(process.env.MOODLE_AUTO_SYNC)) return false;
   if (!moodle.isConfigured() || moodle.isRunning()) return false;
   if (localTime().slice(0, 2) !== SYNC_HOUR) return false;
 

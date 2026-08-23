@@ -127,5 +127,54 @@ router.delete("/:provider", requireAuth, requirePage("settings"), async (req, re
   res.json({ removed: true, note: "Credentials removed. Data already imported is unaffected." });
 });
 
+
+// POST /api/integrations/:provider/test — does this institution's configuration work?
+//
+// lastTestedAt / lastTestOk / lastTestNote existed as columns and were displayed on
+// the platform dashboard, but nothing ever wrote them: there was no way to test a
+// connection, so the health indicator was permanently blank. This is what fills them.
+//
+// It is also the difference between an administrator being able to configure their
+// own college and having to raise a support ticket. Entering a Moodle token is a
+// four-field form where every field can be silently wrong, and without a check the
+// first sign of a typo is a sync that quietly imports nothing at 02:00.
+//
+// Read-only: it signs in and resolves names. It writes nothing to Moodle or SharePoint.
+router.post("/:provider/test", requireAuth, requirePage("settings"), async (req, res) => {
+  const provider = String(req.params.provider || "").toLowerCase();
+  const spec = PROVIDERS[provider];
+  if (!spec) return res.status(404).json({ error: "Unknown integration" });
+
+  const mod = provider === "moodle" ? require("./../moodle") : require("./../sharepoint");
+  // A provider's own failure is a RESULT here, not a 500 — "your client secret is
+  // wrong" is the answer the caller asked for. Only an unexpected throw is an error,
+  // and even that is recorded rather than lost.
+  let result;
+  try {
+    result = await mod.testConnection();
+  } catch (e) {
+    result = { ok: false, note: "The test itself failed: " + e.message };
+  }
+
+  // Record it against the row, so the result survives the page being closed and shows
+  // on the platform dashboard's health indicator.
+  const existing = await prisma.tenantIntegration.findFirst({ where: { provider } });
+  let saved = existing;
+  if (existing) {
+    saved = await prisma.tenantIntegration.update({
+      where: { id: existing.id },
+      data: { lastTestedAt: new Date(), lastTestOk: result.ok, lastTestNote: String(result.note || "").slice(0, 500) },
+    });
+  }
+
+  audit.record(req, {
+    action: "integration.tested", entity: "TenantIntegration", entityId: existing?.id || null,
+    summary: `${spec.label} connection tested — ${result.ok ? "succeeded" : "failed"}: ${result.note}`,
+    after: { ok: result.ok, note: result.note },
+  });
+
+  res.json({ ...result, integration: saved ? present(provider, saved) : null });
+});
+
 module.exports = router;
 module.exports.PROVIDERS = PROVIDERS;

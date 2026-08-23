@@ -545,4 +545,22 @@ async function runSync({ dryRun = false, startedBy = null, mode = "manual" } = {
   finally { inFlight = null; }
 }
 
-module.exports = { isConfigured, isRunning, call, runSync, syncFromMoodle, parseUnitSection };
+
+// --- Test connection ----------------------------------------------------------
+// core_webservice_get_site_info is the cheapest call Moodle offers that proves both
+// halves at once: the URL is reachable AND the token is accepted. Read-only, and it
+// returns the site's own name, which is the useful confirmation — an administrator
+// who pasted the wrong college's URL sees the wrong college's name back.
+async function testConnection() {
+  await cfg.load("moodle");
+  if (!isConfigured()) return { ok: false, note: "Not configured — a Moodle URL and a web-services token are both required." };
+  try {
+    const info = await call("core_webservice_get_site_info");
+    const name = info?.sitename || info?.siteurl || "your Moodle site";
+    return { ok: true, note: "Connected to " + name + (info?.username ? " as " + info.username : "") + "." };
+  } catch (e) {
+    return { ok: false, note: "Could not reach Moodle — " + e.message };
+  }
+}
+
+module.exports = { testConnection, isConfigured, isRunning, call, runSync, syncFromMoodle, parseUnitSection };

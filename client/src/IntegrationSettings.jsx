@@ -10,7 +10,7 @@
 // blank box that silently wipes a working credential is the obvious trap here.
 import React, { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
-import { Plug, Loader2, CheckCircle2, AlertTriangle, Trash2, Save, X } from "lucide-react";
+import { Plug, Loader2, CheckCircle2, AlertTriangle, Trash2, Save, X, PlugZap } from "lucide-react";
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:opacity-60";
@@ -24,6 +24,17 @@ const FORMS = {
     secret: { key: "token", label: "Web services token", hint: "The 32-character token from Site administration → Server → Web services → Manage tokens." },
     fields: [
       { key: "url", label: "Moodle URL", placeholder: "https://vle.yourcollege.ac.uk", hint: "No trailing slash, and not the /login page." },
+    ],
+    // Stored per institution and read by the 02:00 scheduler. Presented as a choice
+    // rather than a checkbox because "" (never chosen) and "off" mean different
+    // things to the server: unset defers to the server default, off is this
+    // college's own decision.
+    choices: [
+      { key: "autoSync", label: "Nightly import at 02:00", options: [
+        { value: "", label: "Use the server default" },
+        { value: "on", label: "On - import every night" },
+        { value: "off", label: "Off - only when I press Sync" },
+      ] },
     ],
   },
   sharepoint: {
@@ -59,6 +70,10 @@ function ProviderCard({ item, onSaved, onRemoved }) {
   const [enabled, setEnabled] = useState(item.enabled);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // The result of the most recent "Test connection" in THIS session. item.lastTest*
+  // carries the stored result from previous ones.
+  const [testing, setTesting] = useState(false);
+  const [test, setTest] = useState(null);
 
   useEffect(() => {
     setValues(item.settings || {});
@@ -81,6 +96,20 @@ function ProviderCard({ item, onSaved, onRemoved }) {
     } catch (err) {
       setError(err.message || "Could not save.");
     } finally { setBusy(false); }
+  };
+
+  // Save first would be the obvious thing, but this deliberately tests what is SAVED,
+  // not what is typed: the point is to confirm the credential the nightly sync will
+  // actually use. The button is only offered once something is stored.
+  const runTest = async () => {
+    setError(""); setTest(null); setTesting(true);
+    try {
+      const r = await api.testIntegration(item.provider);
+      setTest(r);
+      if (r.integration) onSaved(r.integration);
+    } catch (err) {
+      setTest({ ok: false, note: err.message || "Could not run the test." });
+    } finally { setTesting(false); }
   };
 
   const remove = async () => {
@@ -132,6 +161,19 @@ function ProviderCard({ item, onSaved, onRemoved }) {
             </Row>
           ))}
 
+          {(form.choices || []).map((c) => (
+            <Row key={c.key} label={c.label}>
+              <select
+                className={inputCls}
+                value={values[c.key] ?? ""}
+                onChange={(e) => setValues((s) => ({ ...s, [c.key]: e.target.value }))}
+                disabled={busy}
+              >
+                {c.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Row>
+          ))}
+
           <Row
             label={form.secret.label}
             hint={item.configured ? "Leave blank to keep the credential already saved." : form.secret.hint}
@@ -158,10 +200,25 @@ function ProviderCard({ item, onSaved, onRemoved }) {
             </div>
           )}
 
+          {/* The whole value of the test is the SPECIFIC reason it failed - which of
+              the secret, the site or the library is wrong - so the note is shown in
+              full rather than reduced to a red cross. */}
+          {test && (
+            <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm font-medium ring-1 ${test.ok ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-rose-50 text-rose-800 ring-rose-200"}`}>
+              {test.ok ? <CheckCircle2 size={15} className="mt-0.5 flex-none" /> : <AlertTriangle size={15} className="mt-0.5 flex-none" />}
+              <span>{test.note}</span>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2 pt-1">
             <button type="submit" disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save
             </button>
+            {item.configured && (
+              <button type="button" onClick={runTest} disabled={busy || testing} className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-50 disabled:opacity-60">
+                {testing ? <Loader2 size={15} className="animate-spin" /> : <PlugZap size={15} />} Test connection
+              </button>
+            )}
             {item.configured && (
               <button type="button" onClick={remove} disabled={busy} className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-50 disabled:opacity-60">
                 <Trash2 size={15} /> Disconnect
