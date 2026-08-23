@@ -23,18 +23,22 @@
 // takes effect rather than being frozen at require() time.
 
 // --- Configuration (all read at call time) ---------------------------------------
-const TENANT_ID = () => process.env.SP_TENANT_ID || "";
-const CLIENT_ID = () => process.env.SP_CLIENT_ID || "";
-const CLIENT_SECRET = () => process.env.SP_CLIENT_SECRET || "";
+// Prefer what THIS institution saved over the server-wide environment. Primed once
+// per request at the choke points below; peek() falls back to process.env, so a
+// deployment configured by environment behaves exactly as it always did.
+const cfg = require("./integrationConfig");
+const TENANT_ID = () => cfg.peek("sharepoint").tenantId || "";
+const CLIENT_ID = () => cfg.peek("sharepoint").clientId || "";
+const CLIENT_SECRET = () => cfg.peek("sharepoint").clientSecret || "";
 
 // Site can be given a few ways (whichever is easiest): the full site URL in SP_SITE_URL
 // (e.g. https://contoso.sharepoint.com/sites/Admissions), an explicit Graph site id in
 // SP_SITE_ID, or the split SP_SITE_HOST + SP_SITE_PATH. A full URL pasted into ANY of the
 // SP_SITE_* vars is also understood, so a copy from the browser's address bar just works.
-const SITE_ID = () => process.env.SP_SITE_ID || "";
-const SITE_HOST = () => process.env.SP_SITE_HOST || "";
-const SITE_PATH = () => process.env.SP_SITE_PATH || "";
-const SITE_URL = () => process.env.SP_SITE_URL || "";
+const SITE_ID = () => cfg.peek("sharepoint").siteId || "";
+const SITE_HOST = () => cfg.peek("sharepoint").siteHost || "";
+const SITE_PATH = () => cfg.peek("sharepoint").sitePath || "";
+const SITE_URL = () => cfg.peek("sharepoint").siteUrl || "";
 
 // Derive { host, path } from whatever site config was supplied. A full URL (in SP_SITE_URL
 // or accidentally in SP_SITE_ID/HOST/PATH) is parsed; a "/sites/<name>" or "/teams/<name>"
@@ -66,12 +70,12 @@ function siteHostAndPath() {
 // its display name (e.g. "09  Admissions"), which the server resolves among the site's
 // libraries — much friendlier than looking up an id. If neither is set, the site's
 // default library ("Documents") is used.
-const DRIVE_ID = () => process.env.SP_DRIVE_ID || "";
-const DRIVE_NAME = () => process.env.SP_DRIVE_NAME || "";
+const DRIVE_ID = () => cfg.peek("sharepoint").driveId || "";
+const DRIVE_NAME = () => cfg.peek("sharepoint").driveName || "";
 // The base folder under which the Course / Intake / Student tree is created. EMPTY (the
 // default) means create that tree DIRECTLY in the chosen library's root. Set this only if
 // you want an extra wrapper folder inside the library.
-const ROOT_FOLDER = () => process.env.SP_ROOT_FOLDER || "";
+const ROOT_FOLDER = () => cfg.peek("sharepoint").rootFolder || "";
 
 // The Graph service root. v1.0 is the stable channel; nothing here needs /beta.
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -115,6 +119,7 @@ function describe() {
 let tokenCache = { value: null, expiresAt: 0 };
 
 async function getAccessToken() {
+  await cfg.load("sharepoint");
   if (tokenCache.value && Date.now() < tokenCache.expiresAt) return tokenCache.value;
 
   const tenant = TENANT_ID();
@@ -178,6 +183,7 @@ async function getAccessToken() {
 // a raw Buffer (a file upload); either is passed through untouched, so this one helper
 // covers both the metadata calls and the file PUT without a separate "raw" function.
 async function graphFetch(path, init = {}) {
+  await cfg.load("sharepoint");
   const token = await getAccessToken();
   let res;
   try {

@@ -18,8 +18,12 @@
 const prisma = require("./db");
 const { importAttendance } = require("./moodleAttendance");
 
-const BASE = () => (process.env.MOODLE_URL || "").replace(/\/+$/, "");
-const TOKEN = () => process.env.MOODLE_TOKEN || "";
+// Prefer what THIS institution saved over the server-wide environment. Primed once
+// per request in call() below; integrationConfig.peek() falls back to process.env, so
+// a deployment that configures by environment behaves exactly as it always did.
+const cfg = require("./integrationConfig");
+const BASE = () => String(cfg.peek("moodle").url || "").replace(/\/+$/, "");
+const TOKEN = () => String(cfg.peek("moodle").token || "");
 const isConfigured = () => Boolean(BASE() && TOKEN());
 
 // --- Moodle REST -----------------------------------------------------------------
@@ -30,7 +34,10 @@ const isConfigured = () => Boolean(BASE() && TOKEN());
 const CALL_TIMEOUT_MS = 120000;
 
 async function call(wsfunction, params = {}) {
-  if (!isConfigured()) throw new Error("Moodle is not configured (set MOODLE_URL and MOODLE_TOKEN)");
+  // The single choke point every Moodle request passes through, so priming here is
+  // enough for the synchronous accessors above.
+  await cfg.load("moodle");
+  if (!isConfigured()) throw new Error("Moodle is not configured — add this institution's Moodle URL and token in Settings, or set MOODLE_URL and MOODLE_TOKEN.");
   const body = new URLSearchParams({ wstoken: TOKEN(), moodlewsrestformat: "json", wsfunction });
   for (const [k, v] of Object.entries(params)) body.append(k, String(v));
   const controller = new AbortController();

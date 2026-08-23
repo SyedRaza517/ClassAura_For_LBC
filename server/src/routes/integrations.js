@@ -19,21 +19,11 @@ const secrets = require("./../secrets");
 
 const router = express.Router();
 
-// What each provider stores. `secret` is encrypted; `settings` are shown back.
-const PROVIDERS = {
-  moodle: {
-    label: "Moodle",
-    secretField: "token",
-    settingFields: ["url", "autoSync"],
-    describe: (s) => (s.url ? s.url : "no URL set"),
-  },
-  sharepoint: {
-    label: "SharePoint",
-    secretField: "clientSecret",
-    settingFields: ["tenantId", "clientId", "siteHost", "sitePath", "driveName", "rootFolder"],
-    describe: (s) => (s.siteHost ? s.siteHost + (s.sitePath || "") : "no site set"),
-  },
-};
+// The provider spec and the env fallback live in one place — integrationConfig.js —
+// because moodle.js and sharepoint.js read from it too, and two copies of "what
+// fields does SharePoint need" would drift.
+const cfg = require("./../integrationConfig");
+const PROVIDERS = cfg.PROVIDERS;
 
 const clean = (v) => (typeof v === "string" ? v.trim() : "");
 const parseSettings = (row) => { try { return row.settings ? JSON.parse(row.settings) : {}; } catch { return {}; } };
@@ -104,6 +94,7 @@ router.put("/:provider", requireAuth, requirePage("settings"), async (req, res) 
     ? await prisma.tenantIntegration.update({ where: { id: existing.id }, data })
     : await prisma.tenantIntegration.create({ data: { ...data, secretEnc: secrets.encrypt(incomingSecret) } });
 
+  cfg.invalidate(req.tenant?.id, provider);
   res.json(present(provider, saved));
 });
 
@@ -118,28 +109,9 @@ router.delete("/:provider", requireAuth, requirePage("settings"), async (req, re
   const existing = await prisma.tenantIntegration.findFirst({ where: { provider } });
   if (!existing) return res.json({ removed: false });
   await prisma.tenantIntegration.delete({ where: { id: existing.id } });
+  cfg.invalidate(req.tenant?.id, provider);
   res.json({ removed: true, note: "Credentials removed. Data already imported is unaffected." });
 });
 
-/**
- * Read a provider's decrypted configuration for the CURRENT tenant, for server-side
- * use only (moodle.js, sharepoint.js). Returns null when not configured or disabled,
- * so callers keep their existing "not set up" behaviour.
- *
- * Never hand the result of this to a response.
- */
-async function configFor(provider) {
-  const spec = PROVIDERS[provider];
-  if (!spec) return null;
-  const row = await prisma.tenantIntegration.findFirst({ where: { provider } });
-  if (!row || !row.enabled) return null;
-  try {
-    return { ...parseSettings(row), [spec.secretField]: secrets.decrypt(row.secretEnc) };
-  } catch {
-    return null; // wrong key, or a tampered row: behave as "not configured"
-  }
-}
-
 module.exports = router;
-module.exports.configFor = configFor;
 module.exports.PROVIDERS = PROVIDERS;
