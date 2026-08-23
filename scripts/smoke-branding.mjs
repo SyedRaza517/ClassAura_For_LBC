@@ -9,7 +9,10 @@
 // nothing, prove that nothing belonging to another institution reaches it.
 import { strict as assert } from "node:assert";
 
-const BASE = process.env.API_BASE || "http://localhost:4010/api";
+// API_URL is what scripts/test.mjs actually exports to a suite (it also accepts an
+// already-running API that way). Reading API_BASE meant this suite silently used the
+// default port and would have talked to the wrong server under TEST_PORT.
+const BASE = process.env.API_URL || "http://localhost:4010/api";
 const ADMIN = process.env.SEED_ADMIN_EMAIL || "admin@edtech.co.uk";
 const PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
 

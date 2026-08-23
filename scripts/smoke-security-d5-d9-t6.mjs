@@ -140,21 +140,41 @@ const cleanup = { applicantEmails: [], platformEmails: [] };
 
 /* ============ T6: removing a platform operator ============ */
 {
+  // NOTE the toLowerCase(). These fixtures go in through a bare Prisma client, which
+  // skips POST /admins — and POST /admins is where an operator email is normalised
+  // (`clean(req.body?.email).toLowerCase()`). /platform/login lowercases the submitted
+  // address before findUnique, and PlatformAdmin.email is a plain unique column, so
+  // Postgres compares it case-SENSITIVELY. A fixture stored as "…opA@example.com" is
+  // therefore unreachable by the login that looks for "…opa@example.com": every sign-in
+  // returned 401 "Invalid email or password", which reads exactly like the product
+  // being broken. It was the suite. Any fixture written straight to the database has to
+  // do by hand what the route it bypasses would have done for it.
   const mkOperator = async (suffix) => {
-    const email = `${TAG}.${suffix}@example.com`;
+    const email = `${TAG}.${suffix}@example.com`.toLowerCase();
     const password = "OperatorPassword123!";
     cleanup.platformEmails.push(email);
     await db.platformAdmin.create({ data: { email, name: `Smoke ${suffix}`, passwordHash: bcrypt.hashSync(password, 10) } });
     const lg = await call("/platform/login", { method: "POST", body: { email, password } });
-    return { email, password, token: lg.data?.token, id: lg.data?.admin?.id, loginStatus: lg.status };
+    // mfaRequired means the password was accepted and only the second factor is
+    // outstanding — a different situation from a rejected password, and the two must
+    // not be reported as one thing.
+    return { email, password, token: lg.data?.token, id: lg.data?.admin?.id, loginStatus: lg.status, mfaRequired: !!lg.data?.mfaRequired };
   };
 
   const a = await mkOperator("opA");
   const b = await mkOperator("opB");
 
   if (!a.token || !b.token) {
-    verdict("T6", "Platform operator removal", true,
-      `could not sign in as the fixture operators (A=${a.loginStatus} B=${b.loginStatus}) — the platform login may now require a second factor, in which case this section needs updating`);
+    // A setup failure is not a vulnerability, and reporting it as one is how a suite
+    // starts crying wolf. Say which it is: an enrolled second factor (the fixtures are
+    // created without one, so this would mean the product now enforces it for every
+    // operator and this section needs rewriting) versus a rejected password (which
+    // points at the fixture, not the product — see the note on mkOperator).
+    const mfa = a.mfaRequired || b.mfaRequired;
+    verdict("T6", "Platform operator removal", !mfa,
+      mfa
+        ? `SKIPPED — the platform login now demands a second factor the fixtures cannot produce (A=${a.loginStatus} B=${b.loginStatus}). Not a finding either way; this section needs rewriting to enrol a TOTP secret and sign the code.`
+        : `could not sign in as the fixture operators (A=${a.loginStatus} B=${b.loginStatus}) and neither was asked for a second factor — the fixtures never reached a usable session, so nothing below was exercised`);
   } else {
     // 1. The route exists at all. This is the defect itself: there was no way to
     //    withdraw an operator's access short of editing the database.
