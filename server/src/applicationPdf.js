@@ -128,7 +128,10 @@ const show = (v) => {
  * @param {object} admission - the applicant record; any field may be absent.
  * @returns {Promise<Buffer>} the finished multi-page A4 PDF.
  */
-async function buildApplicationPdf(admission = {}) {
+async function buildApplicationPdfBuiltIn(admission = {}) {
+  // Resolved before the synchronous draw, as in offerLetter.js.
+  let brand = {};
+  try { brand = await require("./branding").get(); } catch { brand = {}; }
   return new Promise((resolve, reject) => {
     try {
       const a = admission || {};
@@ -226,7 +229,7 @@ async function buildApplicationPdf(admission = {}) {
       if (doc.y > BOTTOM - 24) doc.addPage();
       doc.font("Helvetica").fontSize(7.5).fillColor(GREY)
         .text(
-          "EdTech · 42 The Burroughs, Hendon, London NW4 4AP · info@edtech.co.uk · www.edtech.co.uk",
+          [brand.displayName, brand.addressLines, brand.contactEmail, brand.website].filter(Boolean).join(" · "),
           MARGIN, BOTTOM - 12, { width: CONTENT_WIDTH, align: "center", lineBreak: false }
         );
 
@@ -238,4 +241,37 @@ async function buildApplicationPdf(admission = {}) {
   });
 }
 
-module.exports = { buildApplicationPdf };
+/**
+ * The application form PDF — the college's own template when it has switched one on,
+ * and the built-in layout otherwise. Same fallback rule as the offer letter: a broken
+ * template must never stop the document being produced.
+ */
+async function buildApplicationPdf(admission = {}) {
+  try {
+    const prisma = require("./db");
+    const row = await prisma.tenantDocTemplate.findFirst({ where: { kind: "application" } });
+    if (row && row.enabled && row.pdf) {
+      const dt = require("./docTemplate");
+      const a = admission || {};
+      const first = String(a.firstName || "").trim();
+      const last = String(a.surname || a.lastName || "").trim();
+      return await dt.fill(Buffer.from(row.pdf), row.fields, {
+        fullName: [first, last].filter(Boolean).join(" "),
+        email: String(a.email || ""),
+        phone: String(a.phone || ""),
+        course: String(a.course || ""),
+        intake: String(a.intake || ""),
+        intakeYear: String(a.intakeYear || ""),
+        dob: String(a.dob || ""),
+        address: [a.street, a.city, a.postcode].filter(Boolean).join(", "),
+        today: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+        reference: String(a.reference || a.id || ""),
+      });
+    }
+  } catch (e) {
+    console.error("[application-pdf] template failed, using the built-in layout:", e.message);
+  }
+  return buildApplicationPdfBuiltIn(admission);
+}
+
+module.exports = { buildApplicationPdf, buildApplicationPdfBuiltIn };

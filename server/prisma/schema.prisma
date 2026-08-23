@@ -186,6 +186,73 @@ model TenantBranding {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
+/// A college's OWN document template — the PDF it already sends, with the places
+/// marked where an applicant's details belong.
+///
+/// The generated offer letter used to be drawn from scratch by pdfkit, which meant
+/// every institution's letter looked like the one college the code was written for.
+/// A college cannot be asked to abandon its letterhead, its typography and its
+/// registered-office footer because of how the software draws.
+///
+/// So their PDF is not redrawn — it is used AS the page, and the dynamic values are
+/// written on top at coordinates they positioned themselves. That is the only way the
+/// result is their template exactly rather than an approximation of it: nothing is
+/// re-typeset, so nothing can drift.
+model TenantDocTemplate {
+  id String @id @default(cuid())
+
+  /// "offer" | "application" — which generated document this replaces.
+  kind String
+
+  /// The uploaded PDF itself. Bytes, not a storage URL: a college uploading a
+  /// letterhead should not first have to have object storage configured, and this is
+  /// read only when a letter is generated rather than on every page load.
+  pdf      Bytes
+  pdfName  String?
+  pdfPages Int?
+
+  /// Where each value goes, as JSON:
+  ///   [{ key, page, xPct, yPct, size, bold, align, colour }]
+  /// Positions are stored as a PERCENTAGE of page width/height, not points, so a
+  /// template re-exported at a different page size still places its fields correctly.
+  fields String?
+
+  /// Off until positioned, so uploading a PDF cannot silently start sending letters
+  /// with no applicant name on them.
+  enabled Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, kind])
+  @@index([tenantId])
+}
+
+/// A college's own wording for one of the emails the system sends.
+///
+/// Subject and body are stored with {{placeholders}}; the sender, logo and colours
+/// come from TenantBranding, so a college changes what an email SAYS without having
+/// to rebuild what it looks like.
+model TenantEmailTemplate {
+  id String @id @default(cuid())
+
+  /// Which email: "offer" | "interview" | "pat" | "attendance" | "admission" ...
+  kind    String
+  subject String?
+  body    String?
+  enabled Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@unique([tenantId, kind])
+  @@index([tenantId])
+}
+
 model Tenant {
   id        String   @id @default(cuid())
   /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.
@@ -197,6 +264,8 @@ model Tenant {
   createdAt DateTime @default(now())
 
   branding               TenantBranding?
+  docTemplate            TenantDocTemplate[]
+  emailTemplate          TenantEmailTemplate[]
   staff                  Staff[]
   deviceToken            DeviceToken[]
   passwordReset          PasswordReset[]

@@ -52,6 +52,11 @@ app.use(cors({
 }));
 
 // Cap request bodies so a giant payload can't exhaust memory.
+// 1mb is right for ordinary API traffic. Uploaded documents — a college's letterhead
+// PDF, a logo — arrive as base64 on two specific routes and would exceed it, so those
+// get their own larger cap rather than raising it for every endpoint.
+app.use("/api/doc-templates", express.json({ limit: "8mb" }));
+app.use("/api/branding", express.json({ limit: "2mb" }));
 app.use(express.json({ limit: "1mb" }));
 
 // Health check
@@ -115,6 +120,9 @@ app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
 // sign-in screen must be branded before anyone has signed in — and the router
 // enforces that split with an allowlist rather than trusting each handler.
 app.use("/api/branding", wrapAsync(require("./routes/branding")));
+// A college's own offer-letter / application-form PDFs. Their document is used AS the
+// page and the applicant's details written on it — never redrawn. See docTemplate.js.
+app.use("/api/doc-templates", wrapAsync(require("./routes/docTemplates")));
 // Read-only. Who did what, scoped to the caller's own institution.
 app.use("/api/audit", wrapAsync(require("./routes/audit")));
 

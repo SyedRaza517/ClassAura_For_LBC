@@ -46,7 +46,13 @@ const BODY_SIZE = 11;
  *        signatoryName, signatoryTitle. Missing values fall back to the defaults below.
  * @returns {Promise<Buffer>} the finished two-page A4 PDF.
  */
-async function buildOfferLetterPdf(admission = {}, opts = {}) {
+async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
+  // Resolved BEFORE the Promise: the body below is synchronous (pdfkit draws in one
+  // pass), so branding cannot be awaited inside it. Falling back to an empty object
+  // keeps this working outside a request — a script, a test — where there is no
+  // institution to resolve.
+  let brand = {};
+  try { brand = await require("./branding").get(); } catch { brand = {}; }
   return new Promise((resolve, reject) => {
     try {
       // ---- Normalise the applicant fields -------------------------------------
@@ -68,8 +74,8 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       const inductionDate = String(o.inductionDate || "");
       const reportTime = String(o.reportTime || "09:45 AM");
       const sessionTime = String(o.sessionTime || "10:00 AM");
-      const signatoryName = String(o.signatoryName || "Swaroop Arja");
-      const signatoryTitle = String(o.signatoryTitle || "Admissions Officer");
+      const signatoryName = String(o.signatoryName || brand.signatoryName || "");
+      const signatoryTitle = String(o.signatoryTitle || brand.signatoryTitle || "");
 
       // ---- Set up the document and capture its bytes into a Buffer --------------
       const doc = new PDFDocument({ size: "A4", margin: MARGIN });
@@ -122,9 +128,9 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       const drawFooter = () => {
         doc.page.margins.bottom = 0; // stop pdfkit spilling this low block onto a new page
         const lines = [
-          "EdTech is a company limited by guarantee registered in England and Wales 6683232.  Registered Office: 42 The Burroughs, Hendon, London NW4 4AP",
+          brand.legalFooter || "",
           "Tel: 0208 202 2007 | Fax: 0208 202 2047",
-          "email: info@edtech.co.uk | website: www.edtech.co.uk",
+          [brand.contactEmail ? "email: " + brand.contactEmail : "", brand.website ? "website: " + brand.website : ""].filter(Boolean).join(" | "),
           "ISI No: 482 - Dfes No: 23278- SLN No: GNVKF0HT9",
         ];
         const fopts = { width: CONTENT_WIDTH, align: "center", lineGap: 1.5 };
@@ -216,9 +222,9 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
       ], { gapAfter: 10 });
       para([["If you have any questions before joining us, please contact our Admissions Team:"]], { gapAfter: 6 });
       para([
-        ["admissions@edtech.co.uk", "Times-Bold", { color: NAVY, underline: true }],
+        [brand.contactEmail || "", "Times-Bold", { color: NAVY, underline: true }],
         ["  |  ", "Times-Roman"],
-        ["+44 7946 830578", "Times-Bold"],
+        [brand.contactPhone || "", "Times-Bold"],
       ], { gapAfter: 12 });
       para([["We are excited to welcome you to EdTech and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
 
@@ -248,4 +254,51 @@ async function buildOfferLetterPdf(admission = {}, opts = {}) {
   });
 }
 
-module.exports = { buildOfferLetterPdf };
+/**
+ * The offer letter.
+ *
+ * If this institution has uploaded and switched on its OWN letter, the applicant's
+ * details are written onto THAT document and it is returned unchanged in every other
+ * respect — see docTemplate.js for why it is never redrawn. Otherwise the built-in
+ * letter below is produced exactly as before.
+ *
+ * A template that fails for any reason falls back to the built-in letter rather than
+ * failing the send. An offer that goes out on the wrong stationery is a complaint; an
+ * offer that does not go out at all is a lost student.
+ */
+async function buildOfferLetterPdf(admission = {}, opts = {}) {
+  try {
+    const prisma = require("./db");
+    const row = await prisma.tenantDocTemplate.findFirst({ where: { kind: "offer" } });
+    if (row && row.enabled && row.pdf) {
+      const dt = require("./docTemplate");
+      const branding = await require("./branding").get();
+      const a = admission || {};
+      const first = String(a.firstName || "").trim();
+      const last = String(a.surname || a.lastName || "").trim();
+      const values = {
+        firstName: first,
+        lastName: last,
+        fullName: [first, last].filter(Boolean).join(" "),
+        course: String(a.course || "").trim(),
+        intake: String(a.intake || "").trim(),
+        intakeYear: String(a.intakeYear || "").trim(),
+        inductionDate: String(opts.inductionDate || ""),
+        reportTime: String(opts.reportTime || "09:45 AM"),
+        sessionTime: String(opts.sessionTime || "10:00 AM"),
+        // The signatory comes from the college's own branding, not from a name
+        // hardcoded in this file.
+        signatoryName: String(opts.signatoryName || branding.signatoryName || ""),
+        signatoryTitle: String(opts.signatoryTitle || branding.signatoryTitle || ""),
+        today: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+        reference: String(a.reference || a.id || ""),
+      };
+      return await dt.fill(Buffer.from(row.pdf), row.fields, values);
+    }
+  } catch (e) {
+    console.error("[offer-letter] template failed, using the built-in letter:", e.message);
+  }
+  return buildBuiltInOfferLetter(admission, opts);
+}
+
+module.exports = { buildOfferLetterPdf, buildBuiltInOfferLetter };
