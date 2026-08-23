@@ -1,5 +1,14 @@
 // Seeds the database with an admin + sample staff and demo data.
 // Run with: npm run seed
+//
+// This file DELETES before it writes (see the deleteMany block below), so the very
+// first thing it does is refuse to run against a database that is not obviously
+// disposable. That check is here rather than in the callers because every route to
+// this destruction — `npm run seed`, `npm test`, `npm run setup` — passes through
+// this file, and a guard in three callers is a guard you can add a fourth caller
+// around. See assertDisposable.js for why it is an allowlist.
+require("dotenv").config();
+require("./assertDisposable").assertDisposable("prisma/seed.js deletes staff, students, check-ins, leave and documents before reseeding");
 const bcrypt = require("bcryptjs");
 // The EXTENDED client, deliberately — not a bare PrismaClient. Every create below
 // then has its tenantId stamped on automatically by the isolation extension, so the

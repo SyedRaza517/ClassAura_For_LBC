@@ -15,6 +15,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const server = join(root, "server");
@@ -72,6 +73,12 @@ if (!external) {
       "  In CI that is the Postgres service container; locally, a scratch database.\n");
     process.exit(1);
   }
+  // Checked HERE as well as inside the seed, so the refusal arrives BEFORE migrations
+  // are applied rather than after. migrate:deploy against the wrong database is not
+  // destructive on its own, but it is still a schema change somewhere you did not mean
+  // to make one, and failing early gives a clearer message than failing mid-run.
+  createRequire(import.meta.url)(join(server, "prisma", "assertDisposable.js"))
+    .assertDisposable("npm test applies migrations and seeds fixtures, deleting existing rows");
   if (!existsSync(join(server, "node_modules"))) {
     console.error("\n✗ server/node_modules missing — run `npm install` first.\n");
     process.exit(1);
