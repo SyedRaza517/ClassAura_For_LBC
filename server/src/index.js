@@ -111,6 +111,10 @@ app.use("/api/ism", wrapAsync(require("./routes/ism")));
 // Each institution's own Moodle / SharePoint credentials. Inside the tenant
 // middleware, so an admin can only ever reach their own.
 app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
+// This institution's own name, colours and logo. GET is deliberately public — the
+// sign-in screen must be branded before anyone has signed in — and the router
+// enforces that split with an allowlist rather than trusting each handler.
+app.use("/api/branding", wrapAsync(require("./routes/branding")));
 // Read-only. Who did what, scoped to the caller's own institution.
 app.use("/api/audit", wrapAsync(require("./routes/audit")));
 

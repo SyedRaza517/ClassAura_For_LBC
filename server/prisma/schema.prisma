@@ -128,6 +128,64 @@ model AuditLog {
   @@index([tenantId, action])
 }
 
+/// Everything about how one institution PRESENTS itself — its name in a letter, the
+/// colours of its app, its logo, the address at the foot of an offer.
+///
+/// All of this used to be literals scattered across the code: "EdTech" in sixteen
+/// server files, "42 The Burroughs, Hendon" in the offer letter, #1a3a8f in
+/// seventy-six places in the client. A second college would have sent its applicants
+/// letters branded for the first one — which is not a cosmetic problem, it is a
+/// letter from the wrong institution.
+///
+/// One row per tenant, every column optional. Missing values fall back to the
+/// platform defaults, so an institution that sets nothing looks exactly as it did
+/// before this existed and a college can change one thing without supplying all of it.
+model TenantBranding {
+  id String @id @default(cuid())
+
+  // --- names ---
+  /// "London Brookes College" — used in letters, emails and page titles.
+  displayName String?
+  /// "LBC" — where the full name will not fit.
+  shortName   String?
+  /// The two lines of the app's own lockup, e.g. "EDTECH" / "HUB".
+  wordmarkTop String?
+  wordmarkSub String?
+
+  // --- colour ---
+  /// Hex, validated server-side. primary drives headers, buttons and links;
+  /// accent is the second colour in gradients and destructive-adjacent highlights.
+  primaryColor String?
+  accentColor  String?
+
+  // --- logo ---
+  /// A data: URI. Deliberately NOT a file in object storage: branding is small, is
+  /// read on every page load, and must not add a storage dependency to a college
+  /// simply picking its colours. Capped server-side — see routes/branding.js.
+  logoDataUri String?
+  /// Content type of the above, for the size/type check on save.
+  logoType    String?
+
+  // --- correspondence: what appears in letters and at the foot of a PDF ---
+  addressLines   String?
+  contactEmail   String?
+  contactPhone   String?
+  website        String?
+  /// "a company limited by guarantee registered in England and Wales 6683232"
+  legalFooter    String?
+  signatoryName  String?
+  signatoryTitle String?
+  /// The addresses outbound mail is sent from, as JSON: {attendance, pat, ask, wellbeing}.
+  /// Each falls back to the process-wide MAIL_FROM_* and then to the platform default.
+  mailFrom       String?
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
 model Tenant {
   id        String   @id @default(cuid())
   /// Subdomain the customer is reached on, e.g. "brookes" -> brookes.edtech.co.uk.
@@ -138,6 +196,7 @@ model Tenant {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  branding               TenantBranding?
   staff                  Staff[]
   deviceToken            DeviceToken[]
   passwordReset          PasswordReset[]
