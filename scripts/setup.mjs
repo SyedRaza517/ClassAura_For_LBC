@@ -33,7 +33,10 @@ ensureEnv("client");
 const server = join(root, "server");
 const prisma = prismaBin(server);
 run(`${prisma} generate`, server);
-run(`${prisma} db push`, server);    // creates the SQLite tables from schema
+// Applies every migration in prisma/migrations in order. Replaces `db push`, which
+// reconciled the database to schema.prisma with no history and no review step — it
+// could drop a column (and its data) silently. See prisma/migrations/README.md.
+run(`${prisma} migrate deploy`, server);
 run("node prisma/seed.js", server);  // loads admin + sample data
 
 console.log("\n✅ Setup complete. Start everything with:  npm run dev");

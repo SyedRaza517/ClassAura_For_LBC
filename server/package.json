@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "node --watch --watch-path=./src src/index.js",
     "start": "node src/index.js",
-    "migrate": "prisma migrate dev --name init",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
     "generate": "prisma generate",
     "seed": "node prisma/seed.js",
     "studio": "prisma studio",
-    "setup": "prisma generate && prisma migrate dev --name init && node prisma/seed.js",
+    "setup": "prisma generate && prisma migrate deploy && node prisma/seed.js",
     "postinstall": "prisma generate"
   },
   "prisma": {

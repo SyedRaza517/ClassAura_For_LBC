@@ -10,7 +10,13 @@ services:
     region: frankfurt          # closest EU region to your Supabase DB (eu-north-1)
     plan: free                 # change to "starter" ($7/mo) to stop it sleeping after 15 min idle
     rootDir: server            # the API lives in /server
-    buildCommand: npm install  # runs the server's postinstall → prisma generate
+    # npm install runs the server's postinstall → prisma generate.
+    # migrate:deploy then applies any migration not yet in this database, in order,
+    # using the LOCAL prisma bin (npx would fetch v7, which rejects this schema).
+    # It only ever applies forward migrations — it never resets or drops data — and
+    # a failure fails the build, so a bad migration stops the deploy instead of
+    # leaving the API running against a schema it does not match.
+    buildCommand: npm install && npm run migrate:deploy
     startCommand: npm start    # node src/index.js  (binds to Render's $PORT automatically)
     healthCheckPath: /api/health
     autoDeploy: true
