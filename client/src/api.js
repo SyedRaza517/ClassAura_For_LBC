@@ -186,6 +186,15 @@ export const api = {
   getBrandingAll: () => request("/branding/all"),
   saveBranding: (body) => request("/branding", { method: "PUT", body }),
   resetBranding: () => request("/branding", { method: "DELETE" }),
+  // A college's own offer-letter / application-form PDFs. The PDF bytes themselves are
+  // fetched directly in TemplateEditor (they are not JSON), so only the metadata and
+  // field positions go through here.
+  listDocTemplates: () => request("/doc-templates"),
+  saveDocTemplate: (kind, body) => request(`/doc-templates/${kind}`, { method: "PUT", body, timeoutMs: 60000 }),
+  deleteDocTemplate: (kind) => request(`/doc-templates/${kind}`, { method: "DELETE" }),
+  listEmailTemplates: () => request("/email-templates"),
+  saveEmailTemplate: (kind, body) => request(`/email-templates/${kind}`, { method: "PUT", body }),
+  deleteEmailTemplate: (kind) => request(`/email-templates/${kind}`, { method: "DELETE" }),
   changePassword: (currentPassword, newPassword) => request("/auth/change-password", { method: "PUT", body: { currentPassword, newPassword } }),
 
   // The audit trail. Read-only by design — the API has no write endpoint, because a

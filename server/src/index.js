@@ -123,6 +123,8 @@ app.use("/api/branding", wrapAsync(require("./routes/branding")));
 // A college's own offer-letter / application-form PDFs. Their document is used AS the
 // page and the applicant's details written on it — never redrawn. See docTemplate.js.
 app.use("/api/doc-templates", wrapAsync(require("./routes/docTemplates")));
+// A college's own wording for the emails we send on its behalf.
+app.use("/api/email-templates", wrapAsync(require("./routes/emailTemplates")));
 // Read-only. Who did what, scoped to the caller's own institution.
 app.use("/api/audit", wrapAsync(require("./routes/audit")));
 

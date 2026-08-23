@@ -29,6 +29,7 @@ import { api } from "./api";
 import useReveal from "./RevealButton";
 import IntegrationSettings from "./IntegrationSettings";
 import BrandingSettings from "./BrandingSettings";
+import DocumentSettings from "./DocumentSettings";
 
 /* ============================================================
    EDTECH — STAFF HUB
@@ -12274,6 +12275,12 @@ function AdminSettings({ store }) {
         {/* Name, colours and logo — this college's own, used across the app, its
             emails and its letters. Nothing here is shared with any other institution. */}
         <BrandingSettings />
+      </div>
+      <div className="mb-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Letters &amp; emails</p>
+        {/* This college's own offer letter and application form, and its own wording for
+            every email sent on its behalf. */}
+        <DocumentSettings />
       </div>
       <div className="mb-4">
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
