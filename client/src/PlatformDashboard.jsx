@@ -8,7 +8,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
-  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound,
+  LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound, LifeBuoy,
 } from "lucide-react";
 
 const INK = "#0f172a";
@@ -757,6 +757,118 @@ function TwoFactorPanel({ admin, onChanged }) {
   );
 }
 
+
+/* ------------------------------------------------- rescuing a college -------- */
+
+// Restoring access for a college that has locked itself out.
+//
+// This exists because email is configured per college now: an institution that has not
+// set its mailbox up, or has set it up wrongly, cannot receive a password-reset link,
+// and there is no tier above a college except this one. Without this the only recovery
+// is a database edit.
+//
+// It is deliberately a little awkward to use — the operator's own password, a
+// one-time password for the target, and a plain statement of what it does — because
+// setting a customer's administrator password is the furthest-reaching thing on this
+// screen and should not feel casual.
+function RescueCollege({ tenant, onClose }) {
+  const [admins, setAdmins] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [ownPassword, setOwnPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(null);
+
+  useEffect(() => {
+    let go = true;
+    platformApi.collegeAdmins(tenant.id)
+      .then((r) => go && setAdmins(r.admins))
+      .catch((e) => go && setError(e.message || "Could not list administrators."));
+    return () => { go = false; };
+  }, [tenant.id]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try {
+      const r = await platformApi.resetCollegeAdmin(tenant.id, sel, ownPassword, newPassword);
+      setDone(r);
+      setOwnPassword("");
+    } catch (err) {
+      setError(err.message || "Could not reset that password.");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open title={`Restore access — ${tenant.name}`} onClose={onClose} width={520}>
+      {done ? (
+        <div className="flex flex-col gap-3">
+          <Banner kind="ok">{done.note}</Banner>
+          <p className="text-sm text-slate-600">
+            Give <b>{done.email}</b> the temporary password you just set. They will be asked to choose
+            their own the moment they sign in, so it stops working immediately afterwards.
+          </p>
+          {done.stillNeedsAuthenticator && (
+            <Banner kind="warn">
+              They still have two-step verification switched on. If they have also lost their
+              authenticator, this alone will not get them in — that needs their own college
+              administrator, or a database change.
+            </Banner>
+          )}
+          <Btn onClick={onClose}>Close</Btn>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <p className="text-sm text-slate-600">
+            Use this when an administrator at this college cannot receive a reset email — usually
+            because the college has not finished setting up its own mailbox.
+          </p>
+
+          {!admins ? (
+            <div className="flex justify-center py-4 text-slate-400"><Loader2 className="animate-spin" /></div>
+          ) : admins.length === 0 ? (
+            <Banner kind="warn">This institution has no administrator account at all.</Banner>
+          ) : (
+            <Field label="Which administrator">
+              <select className={inputCls} value={sel || ""} onChange={(e) => setSel(e.target.value)} disabled={busy} required>
+                <option value="" disabled>Choose an administrator…</option>
+                {admins.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} — {a.email}{a.isSuperAdmin ? " (Super Admin)" : ""}{a.totpEnabled ? " · 2FA on" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          <Field label="Temporary password for them" hint="At least 12 characters. They must change it as they sign in, so it never becomes their real password.">
+            <input className={inputCls} type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={busy} minLength={12} required />
+          </Field>
+
+          <Field label="Your own password" hint="Confirms it is you, not an unattended session.">
+            <input className={inputCls} type="password" value={ownPassword} onChange={(e) => setOwnPassword(e.target.value)} disabled={busy} autoComplete="current-password" required />
+          </Field>
+
+          <Banner kind="warn">
+            This is recorded in <b>{tenant.name}</b>&rsquo;s own audit trail, where their staff can see it,
+            and signs out every session already open on that account.
+          </Banner>
+
+          {error && <Banner>{error}</Banner>}
+
+          <div className="flex gap-2">
+            <Btn type="submit" tone="amber" disabled={busy || !sel}>
+              {busy ? <><Loader2 size={15} className="animate-spin" /> Resetting…</> : "Reset their password"}
+            </Btn>
+            <Btn tone="ghost" onClick={onClose}>Cancel</Btn>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 export default function PlatformDashboard({ onBack }) {
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -766,6 +878,7 @@ export default function PlatformDashboard({ onBack }) {
   const [busyId, setBusyId] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [rescuing, setRescuing] = useState(null);
 
   const load = useCallback(async () => {
     try { setData(await platformApi.overview()); setError(""); }
@@ -916,6 +1029,13 @@ export default function PlatformDashboard({ onBack }) {
                           {busyId === t.id ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
                         </button>
                         <button
+                          onClick={() => setRescuing(t)}
+                          title="Restore an administrator's access"
+                          className="rounded-lg p-1.5 text-slate-500 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                        >
+                          <LifeBuoy size={14} />
+                        </button>
+                        <button
                           onClick={() => setDeleting(t)}
                           title="Delete permanently"
                           className="rounded-lg p-1.5 text-rose-500 ring-1 ring-rose-200 transition hover:bg-rose-50"
@@ -947,7 +1067,9 @@ export default function PlatformDashboard({ onBack }) {
       </Modal>
 
       <Modal open={!!deleting} title={`Delete ${deleting?.name || ""}`} onClose={() => setDeleting(null)} width={480}>
-        {deleting && (
+        {rescuing && <RescueCollege tenant={rescuing} onClose={() => setRescuing(null)} />}
+
+      {deleting && (
           <ConfirmDelete
             tenant={deleting}
             onCancel={() => setDeleting(null)}

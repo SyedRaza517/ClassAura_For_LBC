@@ -608,4 +608,127 @@ router.get("/health", requirePlatformAdmin, async (_req, res) => {
   });
 });
 
+
+/* -------------------------------------------------- rescuing a college ------- */
+//
+// A college administrator who forgets their password needs an email to receive the
+// reset link — and email is configured per college now, so an institution that has not
+// set theirs up yet, or has set it up wrongly, has no way back in at all. Nothing else
+// in the product can help them: there is no tier above a college except this one.
+//
+// That is the whole justification for these two routes, and it is worth being precise
+// about what they cost. An operator who can set a college administrator's password can
+// read everything that college holds. So:
+//
+//   • the operator must re-enter their OWN password — a borrowed session is not enough
+//   • the new password is a ONE-TIME one: mustChangePassword is set, so the operator
+//     never knows the credential the administrator ends up using
+//   • tokenVersion is bumped, so any session already open on that account dies
+//   • it is written to the COLLEGE'S OWN audit log, not just ours, so the institution
+//     can see that its supplier reset an administrator. That visibility is the point,
+//     not an oversight — the same reason a suspension is recorded against the tenant it
+//     affected.
+
+// GET /api/platform/tenants/:id/admins — who can be rescued at this institution.
+router.get("/tenants/:id/admins", requirePlatformAdmin, async (req, res) => {
+  const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { id: req.params.id } }));
+  if (!tenant) return res.status(404).json({ error: "Unknown institution" });
+
+  // Administrators only. A platform operator has no business browsing a college's
+  // whole staff list from here — this endpoint exists to restore access, and only an
+  // administrator can be locked out in a way nobody at the college can fix.
+  const admins = await runInTenant(tenant.id, () => prisma.staff.findMany({
+    where: { accountRole: "ADMIN" },
+    select: {
+      id: true, name: true, email: true, isSuperAdmin: true,
+      totpEnabled: true, mustChangePassword: true, pendingActivation: true,
+    },
+    orderBy: [{ isSuperAdmin: "desc" }, { name: "asc" }],
+  }));
+
+  res.json({ tenant: { id: tenant.id, slug: tenant.slug, name: tenant.name }, admins });
+});
+
+// PUT /api/platform/tenants/:id/admins/:staffId/password — restore access.
+router.put("/tenants/:id/admins/:staffId/password", requirePlatformAdmin, async (req, res) => {
+  const newPassword = String(req.body?.newPassword || "");
+  const ownPassword = String(req.body?.password || "");
+
+  if (newPassword.length < MIN_PASSWORD) {
+    return res.status(400).json({ error: `The temporary password must be at least ${MIN_PASSWORD} characters.` });
+  }
+
+  // The operator's own password, again. Setting a customer's administrator password is
+  // the most far-reaching thing this surface can do, and an unattended open laptop
+  // should not be sufficient for it.
+  const me = await crossTenant(() => prisma.platformAdmin.findUnique({ where: { id: req.platformAdmin.id } }));
+  if (!me || !bcrypt.compareSync(ownPassword, me.passwordHash)) {
+    return res.status(401).json({ error: "Your own password is not right." });
+  }
+
+  const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { id: req.params.id } }));
+  if (!tenant) return res.status(404).json({ error: "Unknown institution" });
+
+  const result = await runInTenant(tenant.id, async () => {
+    const target = await prisma.staff.findUnique({ where: { id: req.params.staffId } });
+    if (!target) return { error: "Unknown administrator", status: 404 };
+    if (target.accountRole !== "ADMIN") {
+      // Ordinary staff are recoverable by their own college's administrator, so there
+      // is no reason for the supplier to reach them.
+      return { error: "Only an administrator can be reset from here. A member of staff should ask their own administrator.", status: 400 };
+    }
+
+    const updated = await prisma.staff.update({
+      where: { id: target.id },
+      data: {
+        passwordHash: bcrypt.hashSync(newPassword, 10),
+        // One-time. The administrator must choose their own on the way in, so the
+        // password an operator typed is never the one that stays on the account.
+        mustChangePassword: true,
+        // Any session already open on this account dies on its next request. Without
+        // this, restoring access would leave whoever was already signed in there.
+        tokenVersion: { increment: 1 },
+        // An account still awaiting activation would otherwise refuse the new password.
+        pendingActivation: false,
+      },
+    });
+
+    // The college's OWN log. This is the transparency that makes the capability
+    // acceptable: an institution can see that its supplier reset an administrator, when,
+    // and which one.
+    audit.record(req, {
+      // tenantId is explicit because this runs inside the COLLEGE's scope but the actor
+      // is a platform operator; audit.js resolves actorType/actorId/actorEmail from
+      // req.platformAdmin on its own, so they are deliberately not passed here.
+      tenantId: tenant.id,
+      action: "staff.password.reset-by-platform",
+      entity: "Staff", entityId: target.id,
+      summary: `Platform operator ${req.platformAdmin.email} reset the password for administrator ${target.email}. ` +
+               `A one-time password was set and every existing session was signed out.`,
+      before: { mustChangePassword: target.mustChangePassword, tokenVersion: target.tokenVersion },
+      after: { mustChangePassword: true, tokenVersion: updated.tokenVersion },
+    });
+
+    return { ok: true, email: target.email, name: target.name, totpEnabled: target.totpEnabled };
+  });
+
+  if (result.error) return res.status(result.status).json({ error: result.error });
+
+  platformEvent(req, "platform.college-admin.password-reset", {
+    tenant: tenant.slug, target: result.email,
+  });
+
+  res.json({
+    ok: true,
+    email: result.email,
+    // Said out loud, because it is the thing an operator on a support call will be
+    // asked next and the thing that will otherwise waste the call: a reset password
+    // does NOT remove an authenticator. If they have lost that too, this is not enough.
+    note: result.totpEnabled
+      ? "Password reset. This administrator still has two-step verification switched on and will need their authenticator to sign in."
+      : "Password reset. They must choose a new password when they sign in.",
+    stillNeedsAuthenticator: !!result.totpEnabled,
+  });
+});
+
 module.exports = router;

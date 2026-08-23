@@ -72,6 +72,11 @@ export const platformApi = {
   usage: () => request("/usage", { timeoutMs: 60000 }),
   // Is this SERVER configured — credential storage, email, file storage?
   health: () => request("/health"),
+  // Restoring access to a college that has locked itself out. Both calls are scoped to
+  // one institution and reach only its ADMINISTRATORS — see routes/platform.js.
+  collegeAdmins: (tenantId) => request(`/tenants/${tenantId}/admins`),
+  resetCollegeAdmin: (tenantId, staffId, password, newPassword) =>
+    request(`/tenants/${tenantId}/admins/${staffId}/password`, { method: "PUT", body: { password, newPassword } }),
   // The second step of signing in. Takes the challenge token, not a session — the
   // session does not exist until the code is right.
   loginVerify: (challengeToken, code) => request("/login/verify", { method: "POST", body: { challengeToken, code } }),
