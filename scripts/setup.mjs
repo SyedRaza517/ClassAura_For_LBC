@@ -37,7 +37,15 @@ run(`${prisma} generate`, server);
 // reconciled the database to schema.prisma with no history and no review step — it
 // could drop a column (and its data) silently. See prisma/migrations/README.md.
 run(`${prisma} migrate deploy`, server);
-run("node prisma/seed.js", server);  // loads admin + sample data
+// Loads the admin account + sample data. The seed REFUSES to run without SEED_PASSWORD
+// (12+ characters) and never hard-codes a password — a seeded account that reaches a
+// real database is a real way in — so set it in the environment before running this.
+run("node prisma/seed.js", server);
 
 console.log("\n✅ Setup complete. Start everything with:  npm run dev");
-console.log("   Then open http://localhost:5173  (admin@edtech.co.uk / password123)");
+// This used to print "admin@edtech.co.uk / password123". That password has not existed
+// since the seed started reading SEED_PASSWORD, so the one instruction a first-time user
+// actually follows was the one thing on screen that was wrong: they typed it, got
+// "invalid credentials", and had no way to tell a broken setup from a wrong password.
+console.log("   Then open http://localhost:5173 and sign in as  admin@edtech.co.uk");
+console.log("   The password is the SEED_PASSWORD you set before seeding — it is never printed.");

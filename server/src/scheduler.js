@@ -104,18 +104,11 @@ async function maybeSyncMoodle() {
   if (!moodle.isConfigured() || moodle.isRunning()) return false;
   if (localTime().slice(0, 2) !== SYNC_HOUR) return false;
 
-  // Resolve abandoned runs BEFORE the dedupe counts them.
-  //
-  // A process killed mid-sync (a Render deploy, an OOM) leaves its row saying
-  // "running" for ever. The only sweeper lived inside GET /moodle/status, which the
-  // scheduler never calls — so the ghost counted as "tonight's run already happened",
-  // the import was skipped entirely, and the admin card read "Never run" beside
-  // "Nothing to change — Staff Hub already matches Moodle."
-  const STALE_AFTER_MS = 60 * 60 * 1000;
-  await prisma.moodleSync.updateMany({
-    where: { status: "running", startedAt: { lt: new Date(Date.now() - STALE_AFTER_MS) } },
-    data: { status: "failed", finishedAt: new Date(), error: "Interrupted — the server restarted while this sync was running." },
-  });
+  // Resolve abandoned runs BEFORE the dedupe below counts them: a ghost "running" row
+  // otherwise counts as "tonight's run already happened" and the import is skipped
+  // entirely. Shared with GET /moodle/status — the sweep and its threshold live in
+  // ./moodle, rather than being spelled out identically in both callers.
+  await moodle.sweepStaleRuns();
 
   const recent = await prisma.moodleSync.count({
     where: {

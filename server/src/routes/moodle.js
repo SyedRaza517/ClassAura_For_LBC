@@ -32,21 +32,10 @@ const sRun = (r) => r && ({
 // What the admin screen needs to render before anyone presses anything: is Moodle
 // configured, is a run in progress, and how did the last few go.
 router.get("/status", async (req, res) => {
-  // A process killed mid-sync (deploy, restart, out-of-memory) leaves its row saying
-  // "running" for ever. Nothing else ever resolves it, so the card read "Never run"
-  // (it keys off finishedAt) and the nightly job's 12-hour dedupe counted the ghost as
-  // tonight's run and skipped. Anything still "running" while nothing is in flight is
-  // by definition abandoned.
-  // Only rows old enough that no live run could still own them. isRunning() is
-  // per-process, so on a multi-instance deploy this GET could otherwise mark ANOTHER
-  // instance's in-flight sync as failed. A real run never approaches this age.
-  const STALE_AFTER_MS = 60 * 60 * 1000;
-  if (!moodle.isRunning()) {
-    await prisma.moodleSync.updateMany({
-      where: { status: "running", startedAt: { lt: new Date(Date.now() - STALE_AFTER_MS) } },
-      data: { status: "failed", finishedAt: new Date(), error: "Interrupted — the server restarted while this sync was running." },
-    });
-  }
+  // Resolve abandoned runs before reporting on them, or the card reads "Never run".
+  // The rule (and its one-hour threshold) lives in ../moodle, shared with the nightly
+  // job in scheduler.js — it was written out twice, in full, in both places.
+  await moodle.sweepStaleRuns();
   const history = await prisma.moodleSync.findMany({ orderBy: { startedAt: "desc" }, take: 10 });
   // Prime this institution's own configuration before reporting on it.
   //

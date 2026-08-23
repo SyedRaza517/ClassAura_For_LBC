@@ -33,7 +33,10 @@ datasource db {
 }
 
 // A person who can log in. accountRole is "ADMIN" or "STAFF".
-// (SQLite via Prisma has no native enums, so we use validated strings.)
+// A validated string, not a Prisma enum: the reason was SQLite's lack of native enums,
+// and although that is long gone the strings stayed, because changing one now means a
+// migration that rewrites the column on every deployed database to buy nothing the
+// route-layer check does not already give.
 
 /// One customer institution. Every other table hangs off this, and the Prisma
 /// client extension in src/db.js refuses any query that does not name one — so a
@@ -1062,8 +1065,9 @@ model HndSession {
 }
 
 // One student's mark for one session. status is P | L | E | A
-// (Present | Late | Excused | Absent) — validated in the route layer,
-// since SQLite via Prisma has no native enums.
+// (Present | Late | Excused | Absent) — validated in the route layer rather than by a
+// Prisma enum. That began as a SQLite limitation; on Postgres it is a deliberate choice,
+// for the reason given above Staff.
 model AttendanceMark {
   id        String     @id @default(cuid())
   session   HndSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

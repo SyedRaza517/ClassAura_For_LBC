@@ -545,6 +545,30 @@ async function runSync({ dryRun = false, startedBy = null, mode = "manual" } = {
   finally { inFlight = null; }
 }
 
+// Resolve abandoned runs.
+//
+// A process killed mid-sync (a Render deploy, an OOM) leaves its row saying "running"
+// for ever, and nothing else ever resolves it. Two things then go wrong: the admin card
+// keys off finishedAt, so it reads "Never run", and the nightly job's 12-hour dedupe
+// counts the ghost as tonight's run and skips the import entirely.
+//
+// STALE_AFTER_MS is deliberately far longer than any real sync. isRunning() is
+// PER-PROCESS, so on a multi-instance deploy the guard below cannot see another
+// instance's in-flight sync — the age is what stops this marking a live run as failed.
+//
+// Lives here because both callers (GET /moodle/status, which sweeps before reporting,
+// and the nightly job in scheduler.js, which sweeps before its dedupe counts) need the
+// identical rule. They each had their own copy, with the same hour written out twice.
+const STALE_AFTER_MS = 60 * 60 * 1000;
+async function sweepStaleRuns() {
+  if (isRunning()) return 0; // this process owns a live run; leave every row alone
+  const r = await prisma.moodleSync.updateMany({
+    where: { status: "running", startedAt: { lt: new Date(Date.now() - STALE_AFTER_MS) } },
+    data: { status: "failed", finishedAt: new Date(), error: "Interrupted — the server restarted while this sync was running." },
+  });
+  return r.count;
+}
+
 
 // --- Test connection ----------------------------------------------------------
 // core_webservice_get_site_info is the cheapest call Moodle offers that proves both
@@ -563,4 +587,4 @@ async function testConnection() {
   }
 }
 
-module.exports = { testConnection, isConfigured, isRunning, call, runSync, syncFromMoodle, parseUnitSection };
+module.exports = { testConnection, isConfigured, isRunning, call, runSync, syncFromMoodle, sweepStaleRuns, parseUnitSection };
