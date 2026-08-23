@@ -1,0 +1,75 @@
+// API client for the PLATFORM surface — the tier above every institution.
+//
+// Deliberately separate from api.js, with its own storage key. A platform operator
+// and a college administrator are different people with different reach, and sharing
+// one token slot would mean signing into one silently signs you out of the other —
+// or worse, that a stale token from one is sent to the other's endpoints.
+const API_PORT = 4000;
+
+function resolveBase() {
+  const configured = import.meta.env.VITE_API_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    if (protocol.startsWith("http") && hostname) return `${protocol}//${hostname}:${API_PORT}/api`;
+  }
+  return `http://localhost:${API_PORT}/api`;
+}
+const BASE = resolveBase();
+
+// Its own key, never "lbc_token"/"edtech_token".
+const KEY = "edtech_platform_token";
+// sessionStorage, not localStorage: this account can read every customer's data, so
+// closing the tab should end the session rather than leave it sitting on disk.
+const store = () => window.sessionStorage;
+
+export const getPlatformToken = () => { try { return store().getItem(KEY); } catch { return null; } };
+export const setPlatformToken = (t) => {
+  try { if (t) store().setItem(KEY, t); else store().removeItem(KEY); } catch { /* ignore */ }
+};
+
+async function request(path, { method = "GET", body, timeoutMs = 30000 } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  const token = getPlatformToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(BASE + "/platform" + path, {
+      method, headers, cache: "no-store", signal: controller?.signal,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("The server took too long to respond. Check your connection and try again.");
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  if (res.status === 401) {
+    setPlatformToken(null);
+    window.dispatchEvent(new CustomEvent("platform-signed-out"));
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+
+  let data = null;
+  try { data = await res.json(); } catch { /* empty body */ }
+  if (!res.ok) {
+    const err = new Error(data?.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+export const platformApi = {
+  login: (email, password) => request("/login", { method: "POST", body: { email, password } }),
+  me: () => request("/me"),
+  overview: () => request("/overview"),
+  createTenant: (payload) => request("/tenants", { method: "POST", body: payload }),
+  setActive: (id, active) => request(`/tenants/${id}/active`, { method: "PUT", body: { active } }),
+  deleteTenant: (id, confirm) => request(`/tenants/${id}`, { method: "DELETE", body: { confirm } }),
+  listAdmins: () => request("/admins"),
+  createAdmin: (payload) => request("/admins", { method: "POST", body: payload }),
+};

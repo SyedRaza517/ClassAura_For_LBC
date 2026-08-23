@@ -27,6 +27,7 @@ import DeleteAccount from "./DeleteAccount";
 import { biometricStatus, biometryLabel, isBiometricEnabled, enableBiometric, disableBiometric, BIOMETRICS_ENABLED } from "./biometric";
 import { api } from "./api";
 import useReveal from "./RevealButton";
+import IntegrationSettings from "./IntegrationSettings";
 
 /* ============================================================
    EDTECH — STAFF HUB
@@ -12041,6 +12042,12 @@ function AdminSettings({ store }) {
   return (
     <>
       <AdminHeader title="Settings" subtitle="Manage staff members and departments" Icon={Settings} action={<div className="flex flex-wrap items-center gap-2"><ExportBtn onClick={exportStaff} label="Export staff" /><PrimaryBtn onClick={openAdd}><UserPlus size={16} /> Add staff</PrimaryBtn></div>} />
+      <div className="mb-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
+        {/* This institution's OWN Moodle / SharePoint credentials — encrypted, and not
+            readable by any other institution or by a platform operator. */}
+        <IntegrationSettings />
+      </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <div className="mb-3 flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, role or dept…" className="w-full bg-transparent text-sm outline-none" /></div>

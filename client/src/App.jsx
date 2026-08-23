@@ -15,6 +15,7 @@ import { useIsHandset, isNativeApp } from "./PhoneShell";
 import { BrandMark } from "./Brand";
 import StudentApp from "./StudentApp";
 import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
+import PlatformDashboard from "./PlatformDashboard";
 import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
@@ -250,6 +251,13 @@ export default function App() {
     setApplyOpen(false);
     setEntry(null);
   };
+
+  // The PLATFORM surface — every institution on the system. Reached at ?platform and
+  // checked FIRST, before any college session is considered: it has its own operator
+  // account, its own token, and no relationship to whoever may be signed in here.
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("platform")) {
+    return (<><style>{GLOBAL_STYLE}</style><PlatformDashboard /></>);
+  }
 
   // These public pages are valid whether or not a stale session exists, and deliberately
   // run before the auth gate below.

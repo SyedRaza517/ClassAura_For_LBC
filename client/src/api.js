@@ -109,6 +109,12 @@ export const api = {
   // auth
   login: (email, password) => request("/auth/login", { method: "POST", body: { email, password } }),
   me: () => request("/auth/me"),
+
+  // This institution's own Moodle / SharePoint credentials. The saved secret is
+  // never returned — only whether one is set and its last four characters.
+  listIntegrations: () => request("/integrations"),
+  saveIntegration: (provider, body) => request(`/integrations/${provider}`, { method: "PUT", body }),
+  removeIntegration: (provider) => request(`/integrations/${provider}`, { method: "DELETE" }),
   changePassword: (currentPassword, newPassword) => request("/auth/change-password", { method: "PUT", body: { currentPassword, newPassword } }),
   // forgotten password
   forgotPassword: (email) => request("/auth/forgot-password", { method: "POST", body: { email } }),
