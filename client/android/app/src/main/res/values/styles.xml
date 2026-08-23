@@ -16,6 +16,12 @@
     </style>
 
 
+    <!-- The launch theme. @drawable/splash is an IMAGE, not a colour, so it cannot
+         follow client/brand.properties the way the colours above do — a per-college
+         splash means replacing res/drawable*/splash.png (see MOBILE.md). The colour
+         the WebView paints behind it while the bundle loads is capacitor.config.json's
+         backgroundColor, which IS generated from brand.properties; keep the artwork's
+         field colour and that value the same or there is a visible seam at launch. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>

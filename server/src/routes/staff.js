@@ -7,6 +7,7 @@ const { notifyStaff } = require("../notify");
 const { sendEmail } = require("../email");
 const { isInt32, MAX_ALLOWANCE_DAYS, isString, isNonEmptyString, isHomeSite, isRealDate, ADMIN_PAGES } = require("../validate");
 const { sendInvite, unguessablePassword } = require("../invite");
+const branding = require("../branding");
 
 // allowance is a 32-bit Int column. An out-of-range value would be stored by SQLite
 // but unreadable by Prisma afterwards, which would break GET /staff — and therefore
@@ -170,8 +171,14 @@ router.put("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async (re
         type: "warning",
         message: `${req.user.name} changed the email address on your account from ${target.email} to ${staff.email}. If you weren't expecting this, tell the college office straight away.`,
       });
+      // Resolved before the message is built so the warning names the college whose
+      // account actually moved. The clause collapses to "your Staff Hub account" when
+      // the institution has no display name — this mail exists to warn someone their
+      // account is being taken over, so it must not name an institution that isn't theirs.
+      const whose = (await branding.get()).displayName;
+      const account = whose ? `your ${whose} Staff Hub account` : "your Staff Hub account";
       sendEmail(target.email, "Your Staff Hub email address was changed",
-        `Hello ${target.name},\n\n${req.user.name} changed the email address on your EdTech Staff Hub account to ${staff.email}.\n\nIf you did not expect this, contact the college office immediately — whoever holds the new address can now request a password reset for your account.`
+        `Hello ${target.name},\n\n${req.user.name} changed the email address on ${account} to ${staff.email}.\n\nIf you did not expect this, contact the college office immediately — whoever holds the new address can now request a password reset for your account.`
       ).catch(() => {});
     }
     // Employment details and holiday allowance are disputed months later, and the

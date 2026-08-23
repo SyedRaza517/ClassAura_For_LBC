@@ -127,13 +127,15 @@ async function render(kind, values = {}) {
   if (!spec) throw new Error("Unknown email template: " + kind);
 
   const brand = await branding.get();
-  // `college` and `contactEmail` are always available, from branding, so a college
-  // never has to type its own name into its own template.
-  const merged = {
-    college: brand.displayName || "",
-    contactEmail: brand.contactEmail || "",
-    ...values,
-  };
+  // Only values that ACTUALLY resolve are merged. Injecting "" for a field a college
+  // has not set defeated this module's own rule that an unresolvable placeholder is
+  // left visible: the default offer and attendance bodies both end a sentence with
+  // "{{contactEmail}}.", so an unconfigured college sent "contact us at ." — a
+  // sentence with a hole in it, which reads as broken software rather than as a
+  // missing setting. Left as "{{contactEmail}}" it is instead obvious what to fix.
+  const merged = { ...values };
+  if (brand.displayName) merged.college = brand.displayName;
+  if (brand.contactEmail) merged.contactEmail = brand.contactEmail;
 
   let row = null;
   try { row = await prisma.tenantEmailTemplate.findFirst({ where: { kind } }); } catch { row = null; }

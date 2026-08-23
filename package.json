@@ -1,7 +1,7 @@
 {
-  "name": "edtech-hub",
+  "name": "staff-hub",
   "version": "1.0.0",
-  "description": "EdTech Staff Hub — full-stack (server + client)",
+  "description": "Staff Hub — multi-tenant staff platform, full-stack (server + client)",
   "private": true,
   "workspaces": ["server", "client"],
   "scripts": {

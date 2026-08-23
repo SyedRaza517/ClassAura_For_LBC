@@ -1,26 +1,26 @@
 {
   "appId": "uk.co.edtech.hub",
-  "appName": "EdTech Hub",
+  "appName": "Staff Hub",
   "webDir": "dist",
-  "backgroundColor": "#1a3a8fff",
+  "backgroundColor": "#ffffffff",
   "android": {
-    "backgroundColor": "#1a3a8fff",
+    "backgroundColor": "#ffffffff",
     "allowMixedContent": false
   },
   "ios": {
     "contentInset": "always",
-    "backgroundColor": "#1a3a8fff"
+    "backgroundColor": "#ffffffff"
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 800,
-      "backgroundColor": "#1a3a8fff",
+      "backgroundColor": "#ffffffff",
       "showSpinner": false,
       "androidScaleType": "CENTER_CROP"
     },
     "StatusBar": {
-      "style": "LIGHT",
-      "backgroundColor": "#14306f",
+      "style": "DARK",
+      "backgroundColor": "#FFFFFF",
       "overlaysWebView": false
     }
   },

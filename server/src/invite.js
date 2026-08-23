@@ -11,6 +11,8 @@
 const crypto = require("crypto");
 const prisma = require("./db");
 const { sendEmail } = require("./email");
+const branding = require("./branding");
+const mailAssets = require("./mailAssets");
 
 // A week, not thirty minutes: someone added on a Friday should still be able to
 // activate on Monday.
@@ -46,24 +48,31 @@ async function sendInvite(staff, { invitedBy } = {}) {
   const link = `${CLIENT_URL}/?invite=${raw}`;
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const who = invitedBy ? ` by ${invitedBy}` : "";
+  const b = await branding.get();
+  // " at <college>" is a whole clause, dropped rather than left dangling as " at ." when
+  // the institution has not set a display name — and the same for the subject, because
+  // "Your Staff Hub account" is still true of every college while naming the wrong one
+  // is not.
+  const at = b.displayName ? ` at ${b.displayName}` : "";
+  const subject = b.displayName ? `Your ${b.displayName} Staff Hub account` : "Your Staff Hub account";
   const text =
     `Hello ${staff.name},\n\n` +
-    `A Staff Hub account has been created for you${who} at EdTech.\n\n` +
+    `A Staff Hub account has been created for you${who}${at}.\n\n` +
     `Choose your password to activate it. This link is valid for 7 days and can only be used once:\n\n${link}\n\n` +
     `Until you do, the account cannot be used. If you weren't expecting this, you can ignore this email.`;
 
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
+    <div style="background:linear-gradient(135deg,${b.primaryColor},${b.accentColor});padding:20px 24px">
+      ${mailAssets.wordmark(b, { size: 16 })}
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">
       <h1 style="margin:0 0 10px;font-size:17px;color:#0f172a">Your Staff Hub account is ready</h1>
       <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Hello ${esc(staff.name)}, an account has been created for you${esc(who)}. Choose a password to activate it — this link lasts <strong>7 days</strong> and can only be used once.</p>
-      <p style="margin:0 0 18px"><a href="${link}" style="display:inline-block;background:#1a3a8f;color:#fff;text-decoration:none;padding:11px 22px;border-radius:10px;font-size:14px;font-weight:700">Set my password</a></p>
+      <p style="margin:0 0 18px"><a href="${link}" style="display:inline-block;background:${b.primaryColor};color:#fff;text-decoration:none;padding:11px 22px;border-radius:10px;font-size:14px;font-weight:700">Set my password</a></p>
       <p style="margin:0 0 6px;font-size:11px;color:#94a3b8">If the button doesn't work, copy this address into your browser:</p>
-      <p style="margin:0 0 18px;font-size:11px;word-break:break-all"><a href="${link}" style="color:#1a3a8f">${link}</a></p>
+      <p style="margin:0 0 18px;font-size:11px;word-break:break-all"><a href="${link}" style="color:${b.primaryColor}">${link}</a></p>
       <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b">Until you set a password the account cannot be used. If you weren't expecting this, ignore this email.</p>
     </div>
     <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0">
@@ -72,7 +81,7 @@ async function sendInvite(staff, { invitedBy } = {}) {
   </div>
 </div>`;
 
-  await sendEmail(staff.email, "Your EdTech Staff Hub account", text, { html });
+  await sendEmail(staff.email, subject, text, { html });
   return { ok: true };
 }
 

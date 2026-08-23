@@ -13,13 +13,25 @@
 //   SMTP_SECURE  true|false     (default: true only when the port is 465)
 //   SMTP_USER    username       (optional — omit for an open relay / local MTA)
 //   SMTP_PASS    password
-//   MAIL_FROM    "EdTech <no-reply@edtech.co.uk>"
+//   MAIL_FROM    "Your College <no-reply@your-college.ac.uk>"
 //
 // Sending is always best-effort: a mail failure is logged and swallowed so it can
 // never break the action that triggered it (approving leave, resetting a password).
 const nodemailer = require("nodemailer");
+const mailAssets = require("./mailAssets");
 
-const FROM = process.env.MAIL_FROM || "EdTech Staff Hub <no-reply@edtech.co.uk>";
+// The last-resort sender, used when neither the caller nor the institution's branding
+// supplies one. SMTP_USER comes next because on Microsoft 365 and most relays that IS
+// the authenticated mailbox, so it is the one address we know is allowed to send.
+//
+// There is deliberately no fallback DOMAIN. This used to default to a real college's
+// no-reply address, which meant an unconfigured deployment sent every college's mail
+// under that college's name. A bounce nobody owns is a better failure than a letter
+// signed by the wrong institution, and it shows up on the first send rather than months
+// later in somebody else's inbox.
+const FROM =
+  process.env.MAIL_FROM ||
+  (/@/.test(process.env.SMTP_USER || "") ? process.env.SMTP_USER : "Staff Hub <no-reply@localhost>");
 // Resend (https://resend.com) sends over HTTPS, so it works on hosts that block
 // outbound SMTP ports (e.g. Render's free tier). Preferred when RESEND_API_KEY is set.
 const useResend = () => Boolean(process.env.RESEND_API_KEY);
@@ -32,7 +44,7 @@ async function sendViaResend(to, subject, text, html, attachments, from) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
-    const payload = { from: from || FROM, to, subject, text, html: html || defaultHtml(subject, text) };
+    const payload = { from: from || FROM, to, subject, text, html };
     if (attachments && attachments.length) {
       payload.attachments = attachments.map((a) => ({
         filename: a.filename,
@@ -83,15 +95,22 @@ function getTransport() {
 // Minimal branded HTML wrapper. Used when a caller doesn't supply its own.
 // Bare URLs are turned into links so a reset link is clickable in an HTML client
 // while the plain-text alternative stays readable.
-function defaultHtml(subject, text) {
+//
+// `brand` is passed in rather than resolved here because this helper also runs where
+// there is no institution at all (a script, the startup check): sendEmail resolves it
+// once and hands over whatever it got, which may be nothing.
+function defaultHtml(subject, text, brand) {
+  const b = brand || {};
+  const primary = b.primaryColor || "#334155";
+  const accent = b.accentColor || "#475569";
   const escape = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const body = escape(text)
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#1a3a8f;word-break:break-all">$1</a>')
+    .replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" style="color:${primary};word-break:break-all">$1</a>`)
     .replace(/\n/g, "<br>");
   return `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
+    <div style="background:linear-gradient(135deg,${primary},${accent});padding:20px 24px">
+      ${mailAssets.wordmark(b, { size: 16 })}
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">
@@ -120,8 +139,19 @@ async function sendEmail(to, subject, body, { html, attachments, from } = {}) {
     return { sent: false, stubbed: true };
   }
 
+  // The wrapper needs the institution's name and colours, and both transports need the
+  // same finished HTML — so it is resolved once, here, and only when the caller has not
+  // brought its own body. An unreachable branding table must not stop a password reset
+  // going out, hence the swallow: the wrapper then renders without a wordmark.
+  let htmlBody = html;
+  if (!htmlBody) {
+    let brand = null;
+    try { brand = await require("./branding").get(); } catch { brand = null; }
+    htmlBody = defaultHtml(subject, body, brand);
+  }
+
   // Prefer the HTTP API when configured (works where SMTP is blocked).
-  if (useResend()) return sendViaResend(to, subject, body, html, attachments, from);
+  if (useResend()) return sendViaResend(to, subject, body, htmlBody, attachments, from);
 
   try {
     const info = await getTransport().sendMail({
@@ -129,7 +159,7 @@ async function sendEmail(to, subject, body, { html, attachments, from } = {}) {
       to,
       subject,
       text: body,
-      html: html || defaultHtml(subject, body),
+      html: htmlBody,
       // nodemailer takes a Buffer (or base64 with encoding) directly.
       attachments: attachments?.map((a) => ({ filename: a.filename, content: a.content })),
     });

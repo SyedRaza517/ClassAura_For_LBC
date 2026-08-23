@@ -39,7 +39,14 @@ async function notifyStaff(staffId, { type = "info", message, link = null } = {}
   try {
     const n = await prisma.notification.create({ data: { staffId, type, message, link } });
     const staff = await prisma.staff.findUnique({ where: { id: staffId } });
-    if (staff?.email) await sendEmail(staff.email, "EdTech — Staff Hub", message);
+    if (staff?.email) {
+      // The subject names the college, not the platform's first customer. A college
+      // that has not set a display name gets the bare product name — a staff member
+      // seeing "Staff Hub" in their inbox is right; seeing another college is not.
+      const brand = await require("./branding").get();
+      const subject = brand.displayName ? `${brand.displayName} — Staff Hub` : "Staff Hub";
+      await sendEmail(staff.email, subject, message);
+    }
     await pushToDevices(staffId, { type, message, link });
     return n;
   } catch (e) {

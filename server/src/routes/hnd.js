@@ -586,7 +586,15 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   // Lower-case BOTH branches. The generated address previously kept whatever case
   // the student number had, so "HND123@..." and a later hand-typed "hnd123@..."
   // both passed the exact-match uniqueness check and two students shared a mailbox.
-  const email = (str(req.body?.email) || `${studentRef}@edtech.co.uk`).toLowerCase();
+  // A generated address is built on the INSTITUTION's own domain, never a hardcoded
+  // one: minting "100121@edtech.co.uk" for a different college invents an address on
+  // a domain that college does not own, which then fails to deliver and, worse, is a
+  // real mailbox belonging to somebody else. With no contact domain configured, the
+  // address is left empty and the student simply has none — which every caller
+  // already handles, and which is honest.
+  const brand = await require("../branding").get();
+  const domain = String(brand.contactEmail || "").split("@")[1] || "";
+  const email = (str(req.body?.email) || (domain ? `${studentRef}@${domain}` : "")).toLowerCase();
 
   const refClash = await prisma.student.findFirst({ where: { studentRef } });
   if (refClash) return res.status(409).json({ error: `Student number ${studentRef} is already in use` });

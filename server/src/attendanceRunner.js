@@ -112,11 +112,16 @@ async function sendOneStudent(studentId, { from = null, to = null } = {}) {
   if (!student.bandKey) return { ok: false, reason: "no-attendance" };
 
   const config = await loadConfig();
+  // The institution's branding, as the bulk run already does. Without this one line
+  // the single-student send from the Attendance Emails tab produced the same letter
+  // with no logo, no address and no footer — the same message from two paths looking
+  // like it came from two different colleges.
+  config.brand = await require("./branding").get();
   const respondByDate = fmtDate(addWorkingDays(new Date(), config.respondDays));
   const built = service.buildEmailFor(student, config, { period, respondByDate });
   if (!built) return { ok: false, reason: "no-template" };
 
-  const r = await email.sendEmail(student.email, built.subject, built.text, { html: built.html, from: mailFrom.attendance });
+  const r = await email.sendEmail(student.email, built.subject, built.text, { html: built.html, from: await mailFrom.resolve("attendance") });
   if (r.sent) return { ok: true, student: student.name, band: student.bandLabel, email: student.email };
   return { ok: false, reason: r.stubbed ? "email-off" : "send-failed", error: r.error, student: student.name };
 }

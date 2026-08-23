@@ -212,7 +212,9 @@ Covered by `scripts/smoke-push.mjs` (24 checks).
 
 ```
 client/
-├── capacitor.config.json   app id (uk.co.edtech.hub), name, splash, status bar
+├── brand.properties        THE white-label file: app name, bundle id, chrome colours
+├── capacitor.config.json   app id, name, splash, status bar — written from brand.properties
+├── scripts/apply-brand.mjs pushes brand.properties into the iOS project and the web shell
 ├── android/                generated Android project — buildable on Windows
 ├── ios/                    generated iOS project  — needs a Mac
 ├── public/                 manifest, icons
@@ -228,6 +230,7 @@ screen ≤640px wide **or** whenever the app is running inside Capacitor.
 | Command | What it does |
 |---|---|
 | `npm --workspace client run dev:lan` | Dev server reachable from your phone over wifi |
+| `npm --workspace client run brand` | Apply `client/brand.properties` to the native projects and the web shell |
 | `npm --workspace client run sync` | Rebuild web assets and copy them into both native projects |
 | `npm --workspace client run android` | Build, sync and open Android Studio |
 | `npm --workspace client run ios` | Build, sync and open Xcode *(macOS only)* |
@@ -235,3 +238,100 @@ screen ≤640px wide **or** whenever the app is running inside Capacitor.
 | `node scripts/check-push.mjs [token]` | Validate Firebase settings, optionally send a test push |
 | `node scripts/smoke-push.mjs` | 24 checks over device registration and notification fan-out |
 | `node scripts/smoke-push-transport.mjs` | 28 checks over the Firebase transport — needs no credentials or network |
+
+---
+
+## White-labelling a build for one institution
+
+The app already brands itself at **runtime**: colours, logo and institution name all
+come from `GET /api/branding`, and the native shells load that same React bundle. So
+one installed binary already *looks* right for whichever college the signed-in user
+belongs to.
+
+Four things cannot work that way, because the operating system reads them before a
+single line of our JavaScript runs:
+
+| Baked in at build time | Why it can't follow `/api/branding` |
+|---|---|
+| Home-screen app name | Drawn by the launcher before the app is even started |
+| Bundle id / applicationId | The store listing's primary key; the OS installs by it |
+| Launcher icon | Ditto — an image in the package, not a URL |
+| Splash screen | Shown *while* the WebView is still loading |
+
+⚠️ **So a per-college app is a separate build, and a separate listing in the App
+Store and Play.** There is no arrangement of config that makes one installed binary
+show two different names on two different home screens. What follows is how to make
+that separate build cheap.
+
+### The one file
+
+Everything that varies lives in **`client/brand.properties`**:
+
+| Key | What it sets |
+|---|---|
+| `app.name` | Home-screen label — Android `app_name`, iOS `CFBundleDisplayName`, the web manifest |
+| `app.id` | Android `applicationId` and iOS `PRODUCT_BUNDLE_IDENTIFIER` |
+| `app.description` | Web manifest and the `<meta name="description">` of the shell |
+| `color.background` | Splash and WebView background, PWA `theme_color` |
+| `color.statusBar`, `color.statusBarStyle` | Android status bar and whether its icons are drawn light or dark |
+| `color.primary`, `color.primaryDark`, `color.accent` | AppCompat theme; `colorPrimary` is also the tint Android puts on our push notifications |
+
+Two different mechanisms read it, for a reason worth knowing:
+
+- **Android reads it live.** `client/android/app/build.gradle` loads it with
+  `java.util.Properties` — the same way it already loads `keystore.properties` — and
+  emits `app_name`, the package strings and the theme colours as `resValue` entries.
+  Nothing is generated into the repo, so the Android side cannot drift out of step
+  with the file. `values/strings.xml` and `values/colors.xml` are consequently empty:
+  re-adding those names there is a hard build failure (*duplicate value for resource*).
+- **iOS has it written in.** An `Info.plist` and a `.pbxproj` are static data. The one
+  mechanism that would let them read a variable — an `.xcconfig` holding
+  `$(BUNDLE_ID)` — breaks Codemagic's `xcode-project use-profiles`, which matches
+  provisioning profiles by *literal* bundle id. So `client/scripts/apply-brand.mjs`
+  writes the values in instead. It is idempotent, and it runs automatically before
+  `run sync`, `run android`, `run ios` and in `codemagic.yaml`.
+
+### Everything a white-label build must override
+
+| Value | File | Notes |
+|---|---|---|
+| App name | `client/brand.properties` → `app.name` | |
+| Bundle id | `client/brand.properties` → `app.id` | Reverse-DNS, e.g. `uk.ac.<college>.staffhub`. Permanent once published. |
+| Native chrome colours | `client/brand.properties` → `color.*` | Only if the college's splash artwork needs a coloured field; the neutral default suits most |
+| Launcher icon + splash artwork | `client/public/icon.svg`, then regenerate | Images, not config — see *App icons and splash screens* above |
+| iOS signing bundle id | `codemagic.yaml` → `ios_signing.bundle_identifier` **and** `BUNDLE_ID` | Codemagic fetches signing assets *before* any script runs, so these cannot read `brand.properties`. The build fails fast if they disagree with it. |
+| App Store Connect app | `codemagic.yaml` → `APP_STORE_APPLE_ID` | The numeric id of *that college's* app record |
+| Android upload key | `client/android/keystore.properties` | Per listing. Never committed; losing it means Google has to intervene |
+| API URL | `codemagic.yaml` → `VITE_API_URL`, or `client/.env.production` | Only if that institution is on its own backend rather than a tenant of the shared one |
+| Play `versionCode` / iOS build number | `client/android/app/build.gradle` | Per listing, and only ever upwards |
+
+The Java package `namespace` in `build.gradle` deliberately does **not** follow
+`app.id`: it is the package `MainActivity` and the generated `R` class live in,
+invisible to users, and changing it means moving the source file. Android allows the
+two to differ, and only `applicationId` reaches the store.
+
+### Rebuilding after a change
+
+```bash
+npm --workspace client run brand      # apply brand.properties (prints what it wrote)
+npm --workspace client run sync       # apply + build web assets + copy into both native projects
+npm --workspace client run android    # ...and open Android Studio
+npm --workspace client run ios        # ...and open Xcode (macOS only)
+```
+`brand` is already the first step of the other three, so it is only worth running on
+its own to see the diff before committing. Push to trigger the Codemagic `ios-release`
+workflow for the iOS side.
+
+### What is fixed for the app that already exists
+
+`uk.co.edtech.hub` is live — App Store Connect app `6795300712`, Play `versionCode 26`.
+**It stays.** Changing a published app's bundle id does not update that app; it
+publishes a *different* one, and every existing install is orphaned on the old version
+with no upgrade path. `brand.properties` therefore ships with `app.id=uk.co.edtech.hub`
+as the default, and a new institution gets a new id in its own copy of the file — never
+by editing this one in place.
+
+The app *name*, by contrast, is safe to change: the default is now the neutral,
+product-level **Staff Hub** rather than "EdTech Hub". Existing installs simply pick up
+the new label on their next update — but the store listing name should be changed to
+match, or the home screen and the App Store will disagree.

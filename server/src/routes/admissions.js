@@ -14,6 +14,8 @@ const storage = require("../storage");
 const { ADMISSION_DOC_TYPES, admissionFolderSegments } = require("../admissionDocs");
 const { FIELDS, pick, str } = require("../admissionFields");
 const mailAssets = require("../mailAssets");
+const branding = require("../branding");
+const et = require("../emailTemplate");
 const audit = require("../audit");
 
 // An applicant's name, for a log line a person can read. Never more than the name:
@@ -55,19 +57,31 @@ function formatLetterDate(d) {
 
 // The "You're enrolled" congratulations email, sent when an admin enrols an applicant and
 // sets their induction date/time. Branded, celebratory, table-based for broad client support.
-function buildEnrolEmail(a) {
+//
+// There is no editable template for this one — it is the only email in the flow with no
+// entry in emailTemplate.KINDS — so the wording is the system's and only the identity in
+// it comes from branding. Async because branding does: everything after the await is one
+// synchronous template, resolved first the way offerLetter.js does it.
+async function buildEnrolEmail(a) {
+  const b = await branding.get();
   const name = [a.firstName, a.surname].filter(Boolean).join(" ") || "there";
   const first = a.firstName || name;
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const when = `${formatOfferDate(a.enrolInductionDate)}${a.enrolInductionTime ? ` at ${a.enrolInductionTime}` : ""}`;
   const course = a.course || "your course";
-  const subject = "EdTech — You're enrolled! 🎉";
-  const text = `Dear ${first},\n\nCongratulations! We are delighted to confirm that you are now enrolled on ${course} at EdTech.\n\nYour induction is on:\n${when}\nLocation: EdTech, 42 The Burroughs, Hendon, London NW4 4AP\n\nPlease arrive a little early and bring a form of photo ID. During induction you will receive your timetable, student ID card and programme information.\n\nWe look forward to welcoming you.\n\nKind regards,\nAdmissions Team\nEdTech`;
+  // Every one of these collapses to nothing when the college has not set the field, so a
+  // sentence loses a clause rather than gaining the word "undefined" or, worse, the name
+  // and street address of a different college.
+  const atCollege = b.displayName ? ` at ${b.displayName}` : "";
+  const where = mailAssets.venue(b);
+  const signOff = ["Kind regards,", "Admissions Team", b.displayName].filter(Boolean).join("\n");
+  const subject = b.displayName ? `${b.displayName} — You're enrolled! 🎉` : "You're enrolled! 🎉";
+  const text = `Dear ${first},\n\nCongratulations! We are delighted to confirm that you are now enrolled on ${course}${atCollege}.\n\nYour induction is on:\n${when}\n${where ? `Location: ${where}\n` : ""}\nPlease arrive a little early and bring a form of photo ID. During induction you will receive your timetable, student ID card and programme information.\n\nWe look forward to welcoming you.\n\n${signOff}`;
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',Roboto,system-ui,-apple-system,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
     <tr><td style="background:linear-gradient(135deg,#0f766e,#15803d);padding:24px 28px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
-      <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800">EdTech</p>
+      ${mailAssets.logoImg(b)}
+      ${mailAssets.wordmark(b)}
       <p style="margin:3px 0 0;color:rgba(255,255,255,.8);font-size:11px;font-weight:700;letter-spacing:.18em">ENROLMENT CONFIRMED</p>
     </td></tr>
     <tr><td style="padding:30px 28px 4px;text-align:center">
@@ -76,17 +90,17 @@ function buildEnrolEmail(a) {
       <p style="margin:8px 0 0;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#0f766e">You're enrolled</p>
     </td></tr>
     <tr><td style="padding:18px 28px 4px">
-      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">We are delighted to confirm that you are now enrolled on <b>${esc(course)}</b> at EdTech. Here are your induction details.</p>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">We are delighted to confirm that you are now enrolled on <b>${esc(course)}</b>${esc(atCollege)}. Here are your induction details.</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
         <tr><td style="padding:14px 18px;border-bottom:1px solid #eef1f6;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Induction</span><br><b style="font-size:16px;color:#0f172a">${esc(when)}</b></td></tr>
-        <tr><td style="padding:14px 18px;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Location</span><br><b style="font-size:15px;color:#0f172a">EdTech, 42 The Burroughs, Hendon, London NW4 4AP</b></td></tr>
+        ${where ? `<tr><td style="padding:14px 18px;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Location</span><br><b style="font-size:15px;color:#0f172a">${esc(where)}</b></td></tr>` : ""}
       </table>
       <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Please arrive a little early and bring a form of photo ID. During induction you will receive your <b>timetable, student ID card and programme information</b>.</p>
-      <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:#334155">We look forward to welcoming you.<br><br>Kind regards,<br><b>Admissions Team</b><br>EdTech</p>
+      <p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:#334155">We look forward to welcoming you.<br><br>Kind regards,<br><b>Admissions Team</b>${b.displayName ? `<br>${esc(b.displayName)}` : ""}</p>
     </td></tr>
-    <tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">EdTech &middot; 42 The Burroughs, Hendon, London NW4 4AP<br>info@edtech.co.uk &middot; www.edtech.co.uk</p>
-    </td></tr>
+    ${mailAssets.footerHtml(b) ? `<tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
+      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">${mailAssets.footerHtml(b)}</p>
+    </td></tr>` : ""}
   </table>
 </div>`;
   return { subject, text, html };
@@ -204,50 +218,77 @@ router.post("/:id/request-documents", async (req, res) => {
 
   // Plain-text fallback — readable on its own, with the documents as a bulleted list.
   const list = ADMISSION_DOC_TYPES.map((d) => `• ${d.label}`).join("\n");
-  const nameEsc = String(name).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const subject = "EdTech — Please upload your application documents";
+  // The same escaper the other three builders in this file use — the branding values
+  // below reach the markup too, and a college with an ampersand in its name would
+  // otherwise break the message it is signing.
+  const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const nameEsc = esc(name);
+  // Resolved before the two bodies below, both of which are synchronous templates.
+  const b = await branding.get();
+  // "please contact our Admissions Team at <email> or <phone>" — the whole sentence goes
+  // when the college has given neither, because an invitation to contact nobody is worse
+  // than no invitation, and printing another college's address here would send this
+  // applicant's questions to an institution that has never heard of them.
+  const contactBits = [b.contactEmail, b.contactPhone].filter(Boolean).join(" or ");
+  const contactSentence = contactBits ? ` If you have any questions, please contact our Admissions Team at ${contactBits}.` : "";
+  const applyingTo = b.displayName ? ` to ${b.displayName}` : "";
+  const signOff = b.displayName ? `${b.displayName} Admissions` : "Admissions";
+  const subject = b.displayName
+    ? `${b.displayName} — Please upload your application documents`
+    : "Please upload your application documents";
   const text =
     `Dear ${name},\n\n` +
-    `Thank you for applying to EdTech. To move your application forward, please upload the documents below using your secure link. You only need to provide the ones that apply to you, and you can return to the same link any time to add or replace a file.\n\n` +
+    `Thank you for applying${applyingTo}. To move your application forward, please upload the documents below using your secure link. You only need to provide the ones that apply to you, and you can return to the same link any time to add or replace a file.\n\n` +
     `Documents requested:\n${list}\n\n` +
     `Upload your documents here:\n${link}\n\n` +
-    `This secure link expires in 30 days. If you have any questions, please contact our Admissions Team at admissions@edtech.co.uk or +44 7946 830578.\n\n` +
-    `Kind regards,\nEdTech Admissions`;
+    `This secure link expires in 30 days.${contactSentence}\n\n` +
+    `Kind regards,\n${signOff}`;
 
   // Branded HTML email — table-based with inline styles for broad email-client support.
   // The document rows are generated from ADMISSION_DOC_TYPES so the email always matches
   // the upload page and never drifts out of sync.
   const docRowsHtml = ADMISSION_DOC_TYPES.map((d, i) =>
     `<tr><td style="padding:11px 18px;${i < ADMISSION_DOC_TYPES.length - 1 ? "border-bottom:1px solid #eef1f6;" : ""}font-size:14px;color:#334155">` +
-    `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#9e1b32;margin-right:11px;vertical-align:middle"></span>${d.label}</td></tr>`
+    `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${b.accentColor};margin-right:11px;vertical-align:middle"></span>${d.label}</td></tr>`
   ).join("");
+
+  // The same sentence as the text body, but with the address as a mailto: link. Built
+  // here rather than inline so the two bodies cannot drift apart about whether there is
+  // anyone to contact.
+  const contactHtml = contactBits
+    ? ` If you have any questions, please contact our Admissions Team at ` +
+      [
+        b.contactEmail ? `<a href="mailto:${esc(b.contactEmail)}" style="color:${b.primaryColor}">${esc(b.contactEmail)}</a>` : null,
+        b.contactPhone ? esc(b.contactPhone) : null,
+      ].filter(Boolean).join(" or ") + `.`
+    : "";
 
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',Roboto,system-ui,-apple-system,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <tr><td style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:24px 28px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
-      <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800">EdTech</p>
+    <tr><td style="background:linear-gradient(135deg,${b.primaryColor},${b.accentColor});padding:24px 28px">
+      ${mailAssets.logoImg(b)}
+      ${mailAssets.wordmark(b)}
       <p style="margin:3px 0 0;color:rgba(255,255,255,.75);font-size:11px;font-weight:700;letter-spacing:.18em">ADMISSIONS</p>
     </td></tr>
     <tr><td style="padding:28px">
       <h1 style="margin:0 0 16px;font-size:19px;color:#0f172a">Your application documents</h1>
       <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#334155">Dear ${nameEsc},</p>
-      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Thank you for applying to EdTech. To move your application forward, please upload the documents below using your secure link. You only need to provide the ones that apply to you, and you can return to the same link any time to add or replace a file.</p>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Thank you for applying${esc(applyingTo)}. To move your application forward, please upload the documents below using your secure link. You only need to provide the ones that apply to you, and you can return to the same link any time to add or replace a file.</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
         <tr><td style="background:#f8fafc;padding:10px 18px;border-bottom:1px solid #e2e8f0;font-size:11px;font-weight:800;letter-spacing:.12em;color:#64748b;text-transform:uppercase">Documents requested</td></tr>
         ${docRowsHtml}
       </table>
-      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 18px"><tr><td style="border-radius:10px" bgcolor="#1a3a8f">
-        <a href="${link}" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,#1a3a8f,#9e1b32)">Upload your documents</a>
+      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 18px"><tr><td style="border-radius:10px" bgcolor="${b.primaryColor}">
+        <a href="${link}" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,${b.primaryColor},${b.accentColor})">Upload your documents</a>
       </td></tr></table>
       <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#64748b;text-align:center">Or paste this link into your browser:</p>
-      <p style="margin:0 0 20px;font-size:12px;line-height:1.5;word-break:break-all;text-align:center"><a href="${link}" style="color:#1a3a8f">${link}</a></p>
-      <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8">This secure link expires in 30 days. If you have any questions, please contact our Admissions Team at <a href="mailto:admissions@edtech.co.uk" style="color:#1a3a8f">admissions@edtech.co.uk</a> or +44&nbsp;7946&nbsp;830578.</p>
-      <p style="margin:18px 0 0;font-size:14px;line-height:1.6;color:#334155">Kind regards,<br><b>EdTech Admissions</b></p>
+      <p style="margin:0 0 20px;font-size:12px;line-height:1.5;word-break:break-all;text-align:center"><a href="${link}" style="color:${b.primaryColor}">${link}</a></p>
+      <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8">This secure link expires in 30 days.${contactHtml}</p>
+      <p style="margin:18px 0 0;font-size:14px;line-height:1.6;color:#334155">Kind regards,<br><b>${esc(signOff)}</b></p>
     </td></tr>
-    <tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">EdTech &middot; 42 The Burroughs, Hendon, London NW4 4AP<br>info@edtech.co.uk &middot; www.edtech.co.uk</p>
-    </td></tr>
+    ${mailAssets.footerHtml(b) ? `<tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
+      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">${mailAssets.footerHtml(b)}</p>
+    </td></tr>` : ""}
   </table>
 </div>`;
 
@@ -332,7 +373,7 @@ router.put("/:id/status", async (req, res) => {
       warning = (warning ? warning + " " : "") + "Enrolled — no email address on file, so no confirmation was sent.";
     } else {
       try {
-        const { subject, text, html } = buildEnrolEmail(row);
+        const { subject, text, html } = await buildEnrolEmail(row);
         const sent = await email.sendEmail(row.email, subject, text, { html });
         emailed = !!sent.sent;
         row = await prisma.admission.update({ where: { id: row.id }, data: { enrolEmailSentAt: new Date() } });
@@ -372,15 +413,20 @@ router.post("/:id/send-offer", async (req, res) => {
   const name = [a.firstName, a.surname].filter(Boolean).join(" ") || "Applicant";
   const inductionDate = str(req.body?.inductionDate) ? formatOfferDate(str(req.body.inductionDate)) : "";
   const letterDate = formatLetterDate(new Date());
-  // Whoever is sending types their own name in the dialog; it signs both the PDF
-  // (page 2) and the email body. Falls back to a sensible default if left blank.
-  const senderName = str(req.body?.signatoryName) || "Swaroop Arja";
+  const b = await branding.get();
+  // Whoever is sending types their own name in the dialog; it signs page 2 of the PDF.
+  // The fallback is the institution's own configured signatory — never a person's name
+  // written into this file, which is what it used to be: one college's Admissions Officer
+  // signing every other college's offer letters. Empty is a legitimate answer here;
+  // offerLetter.js omits the line rather than printing a placeholder over the signature.
+  const senderName = str(req.body?.signatoryName) || b.signatoryName || "";
+  const senderTitle = str(req.body?.signatoryTitle) || b.signatoryTitle || "Admissions Officer";
 
   // Build the PDF (required lazily so the router still loads if the module is absent).
   let pdf;
   try {
     const { buildOfferLetterPdf } = require("../offerLetter");
-    pdf = await buildOfferLetterPdf(a, { letterDate, inductionDate, signatoryName: senderName, signatoryTitle: "Admissions Officer" });
+    pdf = await buildOfferLetterPdf(a, { letterDate, inductionDate, signatoryName: senderName, signatoryTitle: senderTitle });
   } catch (e) {
     return res.status(500).json({ error: `Could not generate the offer letter: ${e.message}` });
   }
@@ -393,51 +439,79 @@ router.post("/:id/send-offer", async (req, res) => {
     data: { offerStatus: a.offerStatus === "accepted" ? "accepted" : "sent", offerSentAt: new Date(), offerTokenHash: hashToken(raw), offerInductionDate: inductionDate || null, offerSignatoryName: senderName },
   });
 
-  // Sign-off carries the sender's typed name over "Admissions Officer, London
-  // EdTech" — matching the PDF. The HTML copy is escaped defensively.
   const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const escName = esc(senderName);
   const firstEsc = esc(a.firstName || name);
   const courseEsc = esc(a.course || "your course");
-  const textSignOff = `${senderName}\nAdmissions Officer\nEdTech`;
-  const htmlSignOff = `<b>${escName}</b><br>Admissions Officer<br>EdTech`;
+
+  // The applicant-facing wording is the college's own "offer" template, so a college that
+  // has reworded it gets its words here rather than the ones this file happened to ship
+  // with. The signature block that used to close this email has gone with it: the offer
+  // is signed on page 2 of the attached PDF, and repeating a named signatory under a body
+  // the college wrote produced two sign-offs, one of which was not theirs.
+  const tpl = await et.render("offer", {
+    firstName: a.firstName || name,
+    lastName: a.surname || "",
+    fullName: name,
+    course: a.course || "your course",
+    intake: a.intake || "",
+    intakeYear: a.intakeYear || "",
+  });
 
   const acceptLink = `${CLIENT_URL}/?offer=${raw}`;
-  const subject = `EdTech — Your offer for ${a.course || "your course"}`;
-  const text = `Dear ${a.firstName || name},\n\nCongratulations! Following a review of your application, we are delighted to offer you a place on ${a.course || "your course"} at EdTech. Your official offer letter is attached to this email as a PDF.\n\nTo confirm your place, please accept your offer here:\n${acceptLink}\n\nIf you have any questions, contact our Admissions Team at admissions@edtech.co.uk or +44 7946 830578.\n\nKind regards,\n${textSignOff}`;
+  const subject = tpl.subject;
+  // The Accept link is appended by this route instead of being offered as a {{placeholder}}
+  // in the template: it is minted per send and is the only way an applicant can confirm a
+  // place, so a college rewording its own email must not be able to delete it. The contact
+  // sentence goes the other way — it is dropped when the college has given neither an
+  // address nor a number, because inviting someone to contact nobody is worse than saying
+  // nothing, and naming another college's admissions inbox is worse still.
+  const contactBits = [b.contactEmail, b.contactPhone].filter(Boolean).join(" or ");
+  const contactHtml = contactBits
+    ? `If you have any questions before joining us, please contact our Admissions Team at ` +
+      [
+        b.contactEmail ? `<a href="mailto:${esc(b.contactEmail)}" style="color:${b.primaryColor}">${esc(b.contactEmail)}</a>` : null,
+        b.contactPhone ? esc(b.contactPhone) : null,
+      ].filter(Boolean).join(" or ") + `.`
+    : "";
+  const text = [
+    tpl.text,
+    "",
+    "To confirm your place, please accept your offer here:",
+    acceptLink,
+    ...(contactBits ? ["", `If you have any questions, contact our Admissions Team at ${contactBits}.`] : []),
+  ].join("\n");
 
   // Branded, celebratory HTML email — mirrors the offer letter's look (gradient header,
   // coloured "Congratulations" headline, course card, Accept button). Table-based with
   // inline styles for broad email-client support.
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',Roboto,system-ui,-apple-system,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <tr><td style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:24px 28px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
-      <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800">EdTech</p>
+    <tr><td style="background:linear-gradient(135deg,${b.primaryColor},${b.accentColor});padding:24px 28px">
+      ${mailAssets.logoImg(b)}
+      ${mailAssets.wordmark(b)}
       <p style="margin:3px 0 0;color:rgba(255,255,255,.75);font-size:11px;font-weight:700;letter-spacing:.18em">ADMISSIONS</p>
     </td></tr>
     <tr><td style="padding:30px 28px 6px;text-align:center">
       <div style="font-size:36px;line-height:1">&#127881;</div>
-      <h1 style="margin:12px 0 0;font-size:25px;font-weight:800;color:#9e1b32">Congratulations, ${firstEsc}!</h1>
-      <p style="margin:8px 0 0;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#1a3a8f">Unconditional Offer</p>
+      <h1 style="margin:12px 0 0;font-size:25px;font-weight:800;color:${b.accentColor}">Congratulations, ${firstEsc}!</h1>
+      <p style="margin:8px 0 0;font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:${b.primaryColor}">Unconditional Offer</p>
     </td></tr>
     <tr><td style="padding:18px 28px 4px">
-      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Dear ${firstEsc}, following a review of your application, we are delighted to offer you a place on the programme below at EdTech. Your official offer letter is attached to this email as a PDF.</p>
+      <div style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">${tpl.html}</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
         <tr><td style="padding:16px 18px;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Your course</span><br><b style="font-size:16px;color:#0f172a">${courseEsc}</b></td></tr>
       </table>
       <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">To confirm your place, simply click the button below.</p>
-      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 18px"><tr><td style="border-radius:10px" bgcolor="#1a3a8f">
-        <a href="${acceptLink}" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,#1a3a8f,#9e1b32)">Accept my offer</a>
+      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 18px"><tr><td style="border-radius:10px" bgcolor="${b.primaryColor}">
+        <a href="${acceptLink}" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,${b.primaryColor},${b.accentColor})">Accept my offer</a>
       </td></tr></table>
       <p style="margin:0 0 4px;font-size:12px;line-height:1.5;color:#64748b;text-align:center">Or paste this link into your browser:</p>
-      <p style="margin:0 0 20px;font-size:12px;line-height:1.5;word-break:break-all;text-align:center"><a href="${acceptLink}" style="color:#1a3a8f">${acceptLink}</a></p>
-      <p style="margin:0;font-size:12px;line-height:1.6;color:#94a3b8">If you have any questions before joining us, please contact our Admissions Team at <a href="mailto:admissions@edtech.co.uk" style="color:#1a3a8f">admissions@edtech.co.uk</a> or +44&nbsp;7946&nbsp;830578.</p>
-      <p style="margin:18px 0 24px;font-size:14px;line-height:1.6;color:#334155">Kind regards,<br>${htmlSignOff}</p>
+      <p style="margin:0 0 20px;font-size:12px;line-height:1.5;word-break:break-all;text-align:center"><a href="${acceptLink}" style="color:${b.primaryColor}">${acceptLink}</a></p>
+      ${contactHtml ? `<p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#94a3b8">${contactHtml}</p>` : ""}
     </td></tr>
-    <tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">EdTech &middot; 42 The Burroughs, Hendon, London NW4 4AP<br>info@edtech.co.uk &middot; www.edtech.co.uk</p>
-    </td></tr>
+    ${mailAssets.footerHtml(b) ? `<tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
+      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">${mailAssets.footerHtml(b)}</p>
+    </td></tr>` : ""}
   </table>
 </div>`;
   const fileName = `Offer Letter - ${name}.pdf`;
@@ -456,7 +530,7 @@ router.post("/:id/send-offer", async (req, res) => {
   // likely to query later.
   audit.record(req, {
     action: "admission.offer.sent", entity: "Admission", entityId: a.id,
-    summary: `Offer for ${a.course || "a course"} sent to ${applicantName(a)} at ${a.email}, signed by ${senderName}` + (a.offerStatus === "accepted" ? " (re-sent — the existing acceptance was kept)" : ""),
+    summary: `Offer for ${a.course || "a course"} sent to ${applicantName(a)} at ${a.email}, signed by ${senderName || b.displayName || "the college"}` + (a.offerStatus === "accepted" ? " (re-sent — the existing acceptance was kept)" : ""),
     before: { offerStatus: a.offerStatus },
     after: { offerStatus: a.offerStatus === "accepted" ? "accepted" : "sent", course: a.course, inductionDate: inductionDate || null, signatory: senderName, emailed },
   });
@@ -500,40 +574,68 @@ router.post("/:id/send-interview-invite", async (req, res) => {
   const firstEsc = esc(a.firstName || name);
   const whenText = `${formatOfferDate(date)}${time ? ` at ${time}` : ""}`;
   const isOnline = mode === "Online";
-  const whereText = isOnline ? (link ? "Online (link below)" : "Online") : (location || "EdTech, 42 The Burroughs, Hendon, London NW4 4AP");
+  const brand = await branding.get();
+  // An in-person interview with no room given falls back to the college's own address.
+  // When it has not set one the Where line is dropped entirely — an applicant sent to an
+  // address that belongs to a different institution is the one outcome worth avoiding,
+  // and "reply to this email and we will rearrange" is already in the body.
+  const whereText = isOnline ? (link ? "Online (link below)" : "Online") : (location || mailAssets.venue(brand));
   const portalLink = `${CLIENT_URL}/`;
 
-  const text = `Dear ${a.firstName || name},\n\nWe would like to invite you to an interview for your application to ${a.course || "your course"} at EdTech.\n\nWhen: ${whenText}\nWhere: ${whereText}\n${isOnline && link ? `Join link: ${link}\n` : ""}${note ? `\n${note}\n` : ""}\nYou can see these details any time by signing in to the Student Portal: ${portalLink}\n\nIf the time does not suit you, reply to this email and we will rearrange.\n\nKind regards,\nAdmissions Team\nEdTech`;
+  // The college's own "interview" wording, with the practical detail appended by this
+  // route: where, the join link and the portal link are per-send facts, and a college
+  // rewording its invitation must not be able to leave an applicant without them.
+  const tpl = await et.render("interview", {
+    firstName: a.firstName || name,
+    lastName: a.surname || "",
+    fullName: name,
+    course: a.course || "your course",
+    interviewDate: formatOfferDate(date),
+    interviewTime: time || "",
+  });
+
+  const text = [
+    tpl.text,
+    "",
+    `When: ${whenText}`,
+    ...(whereText ? [`Where: ${whereText}`] : []),
+    ...(isOnline && link ? [`Join link: ${link}`] : []),
+    ...(note ? ["", note] : []),
+    "",
+    `You can see these details any time by signing in to the Student Portal: ${portalLink}`,
+    "",
+    "If the time does not suit you, reply to this email and we will rearrange.",
+  ].join("\n");
 
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',Roboto,system-ui,-apple-system,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <tr><td style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:24px 28px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
-      <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800">EdTech</p>
+    <tr><td style="background:linear-gradient(135deg,${brand.primaryColor},${brand.accentColor});padding:24px 28px">
+      ${mailAssets.logoImg(brand)}
+      ${mailAssets.wordmark(brand)}
       <p style="margin:3px 0 0;color:rgba(255,255,255,.75);font-size:11px;font-weight:700;letter-spacing:.18em">INTERVIEW INVITATION</p>
     </td></tr>
     <tr><td style="padding:26px 28px 4px">
-      <h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:#1a3a8f">You're invited to an interview</h1>
-      <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Dear ${firstEsc}, we would like to invite you to an interview for your application to <b>${esc(a.course || "your course")}</b>.</p>
+      <h1 style="margin:0 0 12px;font-size:22px;font-weight:800;color:${brand.primaryColor}">You're invited to an interview</h1>
+      <div style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">${tpl.html}</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
         <tr><td style="padding:14px 18px;border-bottom:1px solid #eef1f6;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">When</span><br><b style="font-size:15px;color:#0f172a">${esc(whenText)}</b></td></tr>
-        <tr><td style="padding:14px 18px;${isOnline && link ? "border-bottom:1px solid #eef1f6;" : ""}font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Where</span><br><b style="font-size:15px;color:#0f172a">${esc(whereText)}</b></td></tr>
-        ${isOnline && link ? `<tr><td style="padding:14px 18px;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Join link</span><br><a href="${esc(link)}" style="color:#1a3a8f;word-break:break-all">${esc(link)}</a></td></tr>` : ""}
+        ${whereText ? `<tr><td style="padding:14px 18px;${isOnline && link ? "border-bottom:1px solid #eef1f6;" : ""}font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Where</span><br><b style="font-size:15px;color:#0f172a">${esc(whereText)}</b></td></tr>` : ""}
+        ${isOnline && link ? `<tr><td style="padding:14px 18px;font-size:13px;color:#334155"><span style="font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Join link</span><br><a href="${esc(link)}" style="color:${brand.primaryColor};word-break:break-all">${esc(link)}</a></td></tr>` : ""}
       </table>
       ${note ? `<p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">${esc(note)}</p>` : ""}
-      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 16px"><tr><td style="border-radius:10px" bgcolor="#1a3a8f">
-        <a href="${portalLink}" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,#1a3a8f,#9e1b32)">Open the Student Portal</a>
+      <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin:0 auto 16px"><tr><td style="border-radius:10px" bgcolor="${brand.primaryColor}">
+        <a href="${portalLink}" style="display:inline-block;padding:13px 30px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:10px;background:linear-gradient(135deg,${brand.primaryColor},${brand.accentColor})">Open the Student Portal</a>
       </td></tr></table>
       <p style="margin:0 0 4px;font-size:12px;line-height:1.6;color:#94a3b8;text-align:center">You can see these details any time by signing in to the Student Portal.</p>
-      <p style="margin:16px 0 22px;font-size:14px;line-height:1.6;color:#334155">If the time does not suit you, simply reply to this email and we will rearrange.<br><br>Kind regards,<br><b>Admissions Team</b><br>EdTech</p>
+      <p style="margin:16px 0 22px;font-size:14px;line-height:1.6;color:#334155">If the time does not suit you, simply reply to this email and we will rearrange.</p>
     </td></tr>
-    <tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">EdTech &middot; 42 The Burroughs, Hendon, London NW4 4AP<br>info@edtech.co.uk &middot; www.edtech.co.uk</p>
-    </td></tr>
+    ${mailAssets.footerHtml(brand) ? `<tr><td style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0">
+      <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8">${mailAssets.footerHtml(brand)}</p>
+    </td></tr>` : ""}
   </table>
 </div>`;
 
-  const subject = `EdTech — Interview invitation for ${a.course || "your application"}`;
+  const subject = tpl.subject;
   let emailed = false, warning = null;
   try {
     const sent = await email.sendEmail(a.email, subject, text, { html });

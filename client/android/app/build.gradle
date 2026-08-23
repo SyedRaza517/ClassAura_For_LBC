@@ -10,11 +10,59 @@ if (keystorePropsFile.exists()) {
     keystoreProps.load(new FileInputStream(keystorePropsFile))
 }
 
+// White-label identity, read from client/brand.properties — ONE file that also
+// feeds the iOS project and the Capacitor config (see client/scripts/apply-brand.mjs).
+// Loaded exactly like keystore.properties above: java.util.Properties, no plugin and
+// no extra dependency, so this stays readable to anyone who knows Gradle and nothing
+// else about the build.
+//
+// Nothing here is generated into the repository — Gradle reads the file at build
+// time, so the Android side can never drift out of step with it. The fallbacks are
+// the shipped app's real values, so a checkout missing the file still builds the
+// app it always built rather than something subtly different.
+def brandPropsFile = rootProject.file("../brand.properties")
+def brandProps = new Properties()
+if (brandPropsFile.exists()) {
+    brandProps.load(new FileInputStream(brandPropsFile))
+} else {
+    logger.warn("brand.properties not found at ${brandPropsFile} — falling back to the built-in defaults.")
+}
+// .trim() matters: Properties.load strips whitespace before the value but keeps it
+// after, so a stray trailing space in brand.properties would end up in the app's
+// name — and scripts/apply-brand.mjs, which trims, would then disagree with Gradle
+// about what the brand is. An empty value falls back rather than shipping "".
+def brand = { String key, String fallback ->
+    def v = brandProps.getProperty(key)?.trim()
+    return (v == null || v.isEmpty()) ? fallback : v
+}
+
 android {
+    // NOT the store identity — this is the Java package that MainActivity and the
+    // generated R class live in (android/app/src/main/java/uk/co/edtech/hub/). It is
+    // internal, invisible to users, and changing it means moving the source file, so
+    // it deliberately does NOT follow brand.properties. applicationId below is the
+    // one that identifies the app to Play, and the two are allowed to differ.
     namespace = "uk.co.edtech.hub"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "uk.co.edtech.hub"
+        // The Play listing's primary key. Permanent for a published app — see the
+        // note on app.id in brand.properties.
+        applicationId brand("app.id", "uk.co.edtech.hub")
+
+        // These used to sit in res/values/strings.xml and res/values/colors.xml.
+        // They are generated from brand.properties instead so that the app name and
+        // the native chrome colours have exactly one home. AAPT treats a resValue as
+        // a normal resource, so @string/app_name and @color/colorPrimary resolve the
+        // same as before — but the XML files must NOT also declare them, or the build
+        // fails with "duplicate value for resource".
+        resValue "string", "app_name", brand("app.name", "Staff Hub")
+        resValue "string", "title_activity_main", brand("app.name", "Staff Hub")
+        resValue "string", "package_name", brand("app.id", "uk.co.edtech.hub")
+        resValue "string", "custom_url_scheme", brand("app.id", "uk.co.edtech.hub")
+        resValue "color", "colorPrimary", brand("color.primary", "#334155")
+        resValue "color", "colorPrimaryDark", brand("color.primaryDark", "#1E293B")
+        resValue "color", "colorAccent", brand("color.accent", "#334155")
+
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Play rejects a versionCode it has seen before, on any track — including one

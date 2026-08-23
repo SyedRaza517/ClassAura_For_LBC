@@ -27,6 +27,7 @@ const email = require("./email");
 const bands = require("./attendanceBands");
 const mailFrom = require("./mailFrom");
 const mailAssets = require("./mailAssets");
+const branding = require("./branding");
 const clock = require("./clock");
 
 // ---------------------------------------------------------------------------
@@ -336,12 +337,19 @@ function renderSignoff(text, theme) {
       </td></tr></table>`;
 }
 
-// Wrap the rendered body in the branded shell: a band-tinted header with the EdTech logo,
-// a hero showing the big attendance % and a themed progress bar, a one-line band note,
-// the body, and a footer. `meta` = { theme, pct, bandLabel, period }.
+// Wrap the rendered body in the branded shell: a band-tinted header carrying the
+// institution's own logo and name, a hero showing the big attendance % and a themed
+// progress bar, a one-line band note, the body, and a footer.
+// `meta` = { theme, pct, bandLabel, period, brand }.
+//
+// The header GRADIENT stays band-tinted rather than following the college's palette: it
+// is how a student tells a "well done" from a "we need to hear from you" at a glance, and
+// that meaning belongs to the band, not to the brand. The logo, the name and the footer
+// underneath it are the college's.
 function htmlShell(bodyHtml, meta) {
   const m = meta || {};
   const t = m.theme || DEFAULT_THEME;
+  const brand = m.brand || {};
   const pct = m.pct;
   const barW = Math.max(2, Math.min(100, Number(pct) || 0));
   const hero = pct == null ? "" : `
@@ -355,20 +363,23 @@ function htmlShell(bodyHtml, meta) {
           </td></tr></table>
       </div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 20px"><tr><td style="background:${t.soft};border:1px solid ${t.border};border-radius:12px;padding:12px 16px;font-size:13px;line-height:1.5;color:${t.accent};text-align:center">${esc(t.note)}</td></tr></table>`;
+  // Empty for a college that has filled in neither an address nor a contact detail; the
+  // paragraph is then left out rather than printed as a bare separator.
+  const footerHtml = mailAssets.footerHtml(brand);
   return `<div style="margin:0;padding:24px 12px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.10)">
     <div style="background:linear-gradient(135deg,${t.grad[0]},${t.grad[1]});padding:22px 28px">
-      <img src="${mailAssets.logoUrl}" width="46" height="28" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:46px" />
+      ${mailAssets.logoImg(brand, { width: 46, height: 28 })}
       <p style="margin:0 0 2px;color:rgba(255,255,255,.72);font-size:11px;letter-spacing:.2em">STUDENT ATTENDANCE</p>
-      <p style="margin:0;color:#fff;font-size:19px;font-weight:800">EdTech</p>
+      ${mailAssets.wordmark(brand, { size: 19 })}
     </div>
     <div style="padding:26px 28px">
       ${hero}
       <div>${bodyHtml}</div>
     </div>
     <div style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e6eaf1">
-      <p style="margin:0 0 3px;font-size:11px;color:#94a3b8">This is an automated attendance update from EdTech. Reply to this email to reach the attendance team.</p>
-      <p style="margin:0;font-size:11px;color:#b6becb">42 The Burroughs, Hendon, London NW4 4AP &middot; attendance@edtech.co.uk</p>
+      <p style="margin:0 0 3px;font-size:11px;color:#94a3b8">This is an automated attendance update${brand.displayName ? ` from ${mailAssets.esc(brand.displayName)}` : ""}. Reply to this email to reach the attendance team.</p>
+      ${footerHtml ? `<p style="margin:0;font-size:11px;color:#b6becb">${footerHtml}</p>` : ""}
     </div>
   </div>
 </div>`;
@@ -377,8 +388,15 @@ function htmlShell(bodyHtml, meta) {
 // Build the email for one student. Returns { subject, text, html }, or null when
 // there is nothing to send (the student has no band — i.e. no attendance figure).
 //
-// config = { values, templates, respondDays }; opts = { period, respondByDate }.
+// config = { values, templates, respondDays, brand }; opts = { period, respondByDate }.
 // Any missing piece falls back to the module defaults so a partial config still works.
+//
+// `config.brand` is the current institution's branding, resolved by the caller because
+// this builder is synchronous — sendToStudents below does it once for the whole run. A
+// caller that cannot await it (the single-student send in attendanceRunner) simply leaves
+// it out: the header then shows no logo and the {institution} token falls back to the
+// college's own attendance config, which is the value an admin typed. Neither path can
+// show another college's name, which is the only outcome that matters here.
 function buildEmailFor(student, config = {}, opts = {}) {
   // No band → no attendance figure this term → nothing to send.
   if (!student || student.bandKey == null) return null;
@@ -390,6 +408,15 @@ function buildEmailFor(student, config = {}, opts = {}) {
   // Institution tokens first, then the per-student tokens (which win on any clash).
   const vars = {
     ...(config.values || bands.DEFAULT_VALUES || {}),
+    // {institution} signs every one of these letters. The stored config wins when an
+    // admin has typed something there, because it may be a faculty or campus rather than
+    // the whole college; branding fills it in when they have not. It is left EMPTY when
+    // neither is set — the sign-off then ends one line early, which is better than a
+    // letter signed with the name of a college the student does not attend.
+    institution:
+      (config.values && config.values.institution) ||
+      (config.brand && config.brand.displayName) ||
+      "",
     firstName: student.firstName || "",
     lastName: student.lastName || "",
     name: student.name || "",
@@ -427,6 +454,7 @@ function buildEmailFor(student, config = {}, opts = {}) {
     pct: student.pct == null ? null : student.pct,
     bandLabel: student.bandLabel,
     period: opts.period,
+    brand: config.brand,
   });
 
   return { subject, text, html };
@@ -445,14 +473,22 @@ async function sendToStudents(students, config = {}, opts = {}) {
   const list = students || [];
   const result = { sent: 0, failed: 0, skipped: 0, total: list.length, errors: [] };
 
+  // Resolved once for the whole run rather than per student: this is one institution's
+  // batch, and every message in it must carry the same identity. `from` is undefined when
+  // the college has not set an attendance mailbox, which sends as the server's own
+  // MAIL_FROM — never as another institution's attendance team.
+  const brand = config.brand || (await branding.get());
+  const withBrand = { ...config, brand };
+  const from = await mailFrom.resolve("attendance");
+
   for (const student of list) {
     if (!student.email) { result.skipped++; continue; }
     if (student.bandKey == null) { result.skipped++; continue; }
 
-    const built = buildEmailFor(student, config, opts);
+    const built = buildEmailFor(student, withBrand, opts);
     if (!built) { result.skipped++; continue; }
 
-    const r = await email.sendEmail(student.email, built.subject, built.text, { html: built.html, from: mailFrom.attendance });
+    const r = await email.sendEmail(student.email, built.subject, built.text, { html: built.html, from });
     if (r.sent) {
       result.sent++;
     } else if (r.stubbed) {

@@ -187,7 +187,7 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
       // Opening two paragraphs.
       para([
         ["We are delighted to confirm that your application to "],
-        ["EdTech has been successful", "Times-Bold"],
+        [(brand.displayName || "the College") + " has been successful", "Times-Bold"],
         ["."],
       ], { gapAfter: 10 });
       para([
@@ -206,7 +206,11 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
         ["  |  ", "Times-Roman"],
         ["Start: ", "Times-Bold"], [sessionTime, "Times-Roman"],
       ], { gapAfter: 3 });
-      para([["Location: ", "Times-Bold"], ["EdTech", "Times-Roman"]], { gapAfter: 10 });
+      // The venue line is the institution's own address when it has one; without it the
+      // line would read "Location:" followed by nothing, so it is omitted entirely.
+      if (brand.displayName || brand.addressLines) {
+        para([["Location: ", "Times-Bold"], [[brand.displayName, brand.addressLines].filter(Boolean).join(", "), "Times-Roman"]], { gapAfter: 10 });
+      }
       para([
         ["Attendance at induction is required to complete your enrolment. During the session, you will receive your "],
         ["timetable, student ID card, programme information", "Times-Bold"],
@@ -226,7 +230,7 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
         ["  |  ", "Times-Roman"],
         [brand.contactPhone || "", "Times-Bold"],
       ], { gapAfter: 12 });
-      para([["We are excited to welcome you to EdTech and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
+      para([["We are excited to welcome you to " + (brand.displayName || "the College") + " and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
 
       // Closing line.
       head("YOUR JOURNEY STARTS HERE.", 19, { gapAfter: 0 });
@@ -242,7 +246,7 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
       para([["Yours sincerely,"]], { gapAfter: 26 });
       para([[signatoryName, "Times-Bold"]], { gapAfter: 2 });
       para([[signatoryTitle, "Times-Roman"]], { gapAfter: 2 });
-      para([["EdTech", "Times-Bold"]], { gapAfter: 0 });
+      if (brand.displayName) para([[brand.displayName, "Times-Bold"]], { gapAfter: 0 });
 
       drawFooter();
 

@@ -11,6 +11,8 @@ const { isRealDate } = require("../validate");
 const email = require("../email");
 const mailFrom = require("../mailFrom");
 const mailAssets = require("../mailAssets");
+const branding = require("../branding");
+const et = require("../emailTemplate");
 const audit = require("../audit");
 
 // An interaction in the audit trail: WHO it concerns and WHAT kind of contact it
@@ -37,15 +39,35 @@ const isTime = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 // interaction is logged. Returns { subject, text, html }; the caller sends it
 // best-effort. Keeping this at module level keeps the route handler small and
 // the plain-text / HTML bodies in lock-step (both are driven by the same `rows`).
-function buildInteractionEmail(row) {
+//
+// TWO SOURCES, DELIBERATELY SPLIT
+//
+// The prose is the "pat" email template, so a college that has reworded it — a different
+// greeting, its own closing, a sentence about how to query the record — gets its own
+// words here rather than the ones this file happened to be written with. The RECORD
+// itself is appended below that prose by this module and is not part of the template: it
+// is the substance of a pastoral note, and a college editing its wording must not be able
+// to delete the thing the email exists to deliver. Everything around both — logo,
+// colours, footer — comes from the same institution's branding.
+async function buildInteractionEmail(row) {
   // HTML-escape every interpolated value — student names and free-text notes are
   // untrusted and must never break out of the markup.
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const s = row.student || {};
   const first = str(s.firstName) || "Student";
+  const last = str(s.lastName);
   const type = row.queryType || "meeting";
   const dash = "—"; // em dash used as the placeholder for empty fields
+
+  const brand = await branding.get();
+  const tpl = await et.render("pat", {
+    firstName: first,
+    lastName: last,
+    fullName: [first, last].filter(Boolean).join(" "),
+    tutorName: row.tutor || "your tutor",
+    meetingDate: row.date || "",
+  });
 
   // Ordered label/value pairs, rendered identically in the text and HTML bodies.
   const rows = [
@@ -59,47 +81,45 @@ function buildInteractionEmail(row) {
   // Only mention a follow-up when one was actually arranged.
   if (row.followUpRequired) rows.push(["Follow-up arranged for", row.followUpDate || dash]);
 
-  const subject = `EdTech — Record of your ${row.queryType || "meeting"}`;
+  const subject = tpl.subject;
+  const recordTitle = `Record of your ${row.queryType || "meeting"}`;
 
-  // Plain-text alternative.
+  // Plain-text alternative: the college's words, then the record under its own heading.
   const text = [
-    `Dear ${first},`,
+    tpl.text,
     "",
-    `A record of your ${type} on ${row.date} at ${row.time} has been logged by your tutor.`,
-    "",
+    recordTitle,
     ...rows.map(([k, v]) => `${k}: ${v}`),
-    "",
-    "Kind regards,",
-    "EdTech",
   ].join("\n");
 
   // Branded HTML — table-safe, inline styles, everything interpolated is escaped.
-  const heading = `Record of your ${esc(row.queryType || "meeting")}`;
+  // tpl.html is already escaped by emailTemplate.render.
   const tableRows = rows.map(([k, v]) => `
         <tr>
           <td style="padding:6px 16px 6px 0;color:#64748b;font-weight:600;vertical-align:top;white-space:nowrap">${esc(k)}</td>
           <td style="padding:6px 0;color:#0f172a">${esc(v)}</td>
         </tr>`).join("");
   const bodyHtml =
-    `<p style="margin:0 0 14px">Dear ${esc(first)},</p>` +
-    `<p style="margin:0 0 16px">A record of your ${esc(type)} on ${esc(row.date)} at ${esc(row.time)} has been logged by your tutor.</p>` +
-    `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px">${tableRows}\n      </table>` +
-    `<p style="margin:16px 0 0">Kind regards,<br>EdTech</p>`;
+    tpl.html +
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;font-size:14px;margin-top:6px">${tableRows}\n      </table>`;
 
+  // The footer is left out entirely when the college has given no address and no contact
+  // details — an empty grey bar with a stray separator in it says nothing to a student.
+  const footer = mailAssets.footerHtml(brand);
   const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
+    <div style="background:linear-gradient(135deg,${brand.primaryColor},${brand.accentColor});padding:20px 24px">
+      ${mailAssets.logoImg(brand)}
       <p style="margin:0 0 2px;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">PERSONAL ACADEMIC TUTOR</p>
-      <p style="margin:0;color:#fff;font-size:18px;font-weight:800">EdTech</p>
+      ${mailAssets.wordmark(brand)}
     </div>
     <div style="padding:24px">
-      <h1 style="margin:0 0 12px;font-size:18px;color:#0f172a">${heading}</h1>
+      <h1 style="margin:0 0 12px;font-size:18px;color:#0f172a">${esc(recordTitle)}</h1>
       <div style="font-size:14px;line-height:1.6;color:#334155">${bodyHtml}</div>
     </div>
-    <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0">
-      <p style="margin:0;font-size:11px;color:#94a3b8">EdTech · 42 The Burroughs, Hendon, London NW4 4AP · info@edtech.co.uk</p>
-    </div>
+    ${footer ? `<div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0">
+      <p style="margin:0;font-size:11px;color:#94a3b8">${footer}</p>
+    </div>` : ""}
   </div>
 </div>`;
 
@@ -193,9 +213,17 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
   if (row.student && row.student.email) {
     const name = [row.student.firstName, row.student.lastName].map(str).filter(Boolean).join(" ");
     const to = name ? `${name} <${row.student.email}>` : row.student.email;
-    const { subject, text, html } = buildInteractionEmail(row);
-    const from = /wellbeing/i.test(row.queryType || "") ? mailFrom.wellbeing : mailFrom.pat;
-    email.sendEmail(to, subject, text, { html, from }).catch(() => {});
+    // Building the email now needs the institution's branding, template and sending
+    // mailbox, all of which are awaited. The response has already gone out, so this runs
+    // in its own chain — it still sits inside the request's tenant context, which is how
+    // branding.get() knows whose college this is. Swallowed for the same reason as before:
+    // a mail problem must not surface as an unhandled rejection.
+    (async () => {
+      const { subject, text, html } = await buildInteractionEmail(row);
+      const wellbeing = /wellbeing/i.test(row.queryType || "");
+      const from = await mailFrom.resolve(wellbeing ? "wellbeing" : "pat");
+      await email.sendEmail(to, subject, text, { html, from });
+    })().catch(() => {});
   }
 });
 

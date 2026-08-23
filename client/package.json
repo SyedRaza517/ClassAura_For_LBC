@@ -1,5 +1,5 @@
 {
-  "name": "edtech-hub-client",
+  "name": "staff-hub-client",
   "version": "1.2.9",
   "private": true,
   "type": "module",
@@ -8,9 +8,10 @@
     "dev:lan": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
-    "sync": "vite build && cap sync",
-    "android": "vite build && cap sync android && cap open android",
-    "ios": "vite build && cap sync ios && cap open ios"
+    "brand": "node scripts/apply-brand.mjs",
+    "sync": "npm run brand && vite build && cap sync",
+    "android": "npm run brand && vite build && cap sync android && cap open android",
+    "ios": "npm run brand && vite build && cap sync ios && cap open ios"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^10.0.0",

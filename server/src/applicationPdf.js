@@ -177,7 +177,7 @@ async function buildApplicationPdfBuiltIn(admission = {}) {
       doc.font("Helvetica-Bold").fontSize(8).fillColor(MAROON)
         .text("HND APPLICATION FORM", bx, 42, { characterSpacing: 2, lineBreak: false });
       doc.font("Helvetica-Bold").fontSize(18).fillColor(NAVY)
-        .text("EdTech", bx, 54, { lineBreak: false });
+        .text(brand.displayName || "", bx, 54, { lineBreak: false });
 
       // Applicant identity beneath the wordmark.
       doc.font("Helvetica-Bold").fontSize(13).fillColor(VALUE)

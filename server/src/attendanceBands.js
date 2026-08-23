@@ -4,7 +4,7 @@
  * attendanceBands.js
  *
  * Pure CommonJS module (no external dependencies) for the automated
- * student-attendance email system at EdTech.
+ * student-attendance email system.
  *
  * It defines:
  *   - BANDS:             the attendance percentage bands (best -> worst)
@@ -71,7 +71,12 @@ const DEFAULT_VALUES = {
   tutorName: "",
   jobTitle: "",
   department: "",
-  institution: "EdTech",
+  // Empty like the other blanks above, not a college name. These defaults are copied
+  // into every institution's editable config the first time it opens the attendance
+  // tab, so a name here would sign one college's letters with another's. The sending
+  // side fills it in from the current institution's branding when it is still blank —
+  // see attendanceEmailService.buildEmailFor.
+  institution: "",
   vle: "Moodle",
   officeHours: "",
   patContact: "",

@@ -132,8 +132,15 @@ function mailFromFor(row, resolved) {
 async function get() {
   const tenantId = currentTenantId();
   // Outside a request — a scheduler, a script — there is no institution to look up.
+  // The same completion rules as the tenant branch below are applied, because the
+  // docstring promises a COMPLETE object and two branches that disagreed about
+  // whether displayName can be null is exactly how a caller ends up handling one
+  // shape and crashing on the other.
   if (!tenantId) {
     const resolved = { ...DEFAULTS, ...fromEnv() };
+    if (!resolved.displayName) resolved.displayName = "Staff Hub";
+    if (!resolved.shortName) resolved.shortName = resolved.displayName;
+    if (!resolved.wordmarkTop) resolved.wordmarkTop = String(resolved.shortName).toUpperCase();
     return { ...resolved, mailFrom: mailFromFor(null, resolved) };
   }
 

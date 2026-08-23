@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Theme colours referenced by values/styles.xml.
+  Deliberately empty.
 
-  Without this file the resource compiler fails with
-  "resource color/colorPrimary not found" and the Android app cannot be built at
-  all — no debug APK, no release bundle. The Capacitor template's styles.xml
-  references these three names but never ships their definitions.
+  colorPrimary, colorPrimaryDark and colorAccent are still required — values/styles.xml
+  references all three, and without them the resource compiler fails with
+  "resource color/colorPrimary not found" and the app cannot be built at all. The
+  Capacitor template references these names but never ships their definitions.
 
-  Values are the college brand: navy #1a3a8f, darker navy #14306f, maroon #9e1b32.
+  They are now generated from client/brand.properties by `resValue` in
+  app/build.gradle rather than fixed here, because they are brand values: the
+  in-app UI is themed at runtime from GET /api/branding, so a colour frozen into
+  the native shell is one of the few things that CAN visibly clash with the
+  college it is running for. They used to be one college's navy (#1a3a8f) and
+  maroon (#9e1b32); the defaults are now neutral slate.
+
+  Do not add them back here: a resource declared both here and by resValue is a
+  hard build failure ("duplicate value for resource").
 -->
 <resources>
-    <color name="colorPrimary">#1a3a8f</color>
-    <color name="colorPrimaryDark">#14306f</color>
-    <color name="colorAccent">#9e1b32</color>
 </resources>

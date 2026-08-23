@@ -14,6 +14,14 @@
 #   4. Push this file, then in Codemagic run the "ios-release" workflow.
 #
 # Nothing here needs a Mac — Codemagic provides the macOS build machine.
+#
+# WHITE-LABELLING: the app's name, bundle id and native chrome colours live in
+# client/brand.properties, and the "Apply the white-label identity" step below writes
+# them into the Xcode project before the archive. The three values in THIS file that
+# name the app — ios_signing.bundle_identifier, BUNDLE_ID and APP_STORE_APPLE_ID —
+# cannot read that file: Codemagic resolves them to fetch signing assets before any
+# script has run. So each institution needs its own workflow (or its own repo/branch)
+# with those three lines changed to match its brand.properties. See MOBILE.md.
 
 workflows:
   ios-release:
@@ -44,6 +52,11 @@ workflows:
       # no new certificate is burned each time (Apple caps distribution certs).
       ios_signing:
         distribution_type: app_store
+        # MUST equal app.id in client/brand.properties. Codemagic reads this before
+        # the scripts run, so it cannot be derived from that file — if the two ever
+        # disagree, the archive is signed for one app and built as another and the
+        # upload is rejected. The "Apply the white-label identity" step below compares
+        # the two and fails the build early rather than 20 minutes later.
         bundle_identifier: uk.co.edtech.hub
       vars:
         XCODE_SCHEME: "App"
@@ -61,6 +74,28 @@ workflows:
     scripts:
       - name: Install JS dependencies (monorepo root)
         script: npm ci
+      - name: Apply the white-label identity
+        script: |
+          set -e
+          # Writes app.name / app.id / the chrome colours from client/brand.properties
+          # into capacitor.config.json, Info.plist and the Xcode project. Without this
+          # a build would ship whatever identity happened to be committed in the native
+          # project, which is the exact drift brand.properties exists to prevent.
+          node client/scripts/apply-brand.mjs
+
+          # Fail now, with the reason, rather than at the signing step with exit 65.
+          # `|| true` so a missing line reports the mismatch below instead of dying
+          # silently on `set -e` with no explanation.
+          BRAND_ID=$(grep -E '^app\.id=' client/brand.properties | cut -d= -f2- | tr -d '[:space:]' || true)
+          if [ "$BRAND_ID" != "$BUNDLE_ID" ]; then
+            echo ""
+            echo "FATAL: client/brand.properties app.id ($BRAND_ID) does not match this"
+            echo "workflow's BUNDLE_ID / ios_signing.bundle_identifier ($BUNDLE_ID)."
+            echo "Codemagic fetched the signing profile for $BUNDLE_ID before this script ran,"
+            echo "so the two must agree. Fix whichever one is wrong — but note that changing"
+            echo "the bundle id of a PUBLISHED app orphans every existing install."
+            exit 1
+          fi
       - name: Build web assets (production → Render API)
         script: |
           cd client

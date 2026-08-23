@@ -11,6 +11,8 @@ const { sendEmail } = require("../email");
 const { notifyStaff, notifyAdmins } = require("../notify");
 const totp = require("../totp");
 const audit = require("../audit");
+const branding = require("../branding");
+const mailAssets = require("../mailAssets");
 
 // --- Two-factor challenge tokens ---
 // Between "password accepted" and "second factor accepted" the caller holds a
@@ -332,12 +334,18 @@ router.post("/totp/setup", async (req, res) => {
     await prisma.staff.updateMany({ where: { id: staff.id, totpSecret: null }, data: { totpSecret: totp.generateSecret() } });
     secret = (await prisma.staff.findUnique({ where: { id: staff.id } })).totpSecret;
   }
+  // The issuer is the line the person reads in their authenticator app for the rest of
+  // their employment, so it has to name the college they are enrolling against. A college
+  // that has not set a display name gets the neutral product name — an entry called
+  // "Staff Hub" is merely vague, one called by another college's name is wrong.
+  const brand = await branding.get();
+  const issuer = brand.displayName || "Staff Hub";
   res.json({
     secret,
     formattedSecret: totp.formatSecret(secret),
-    otpauthUrl: totp.otpauthUrl(secret, staff.email),
+    otpauthUrl: totp.otpauthUrl(secret, staff.email, issuer),
     account: staff.email,
-    issuer: "EdTech",
+    issuer,
   });
 });
 
@@ -702,19 +710,21 @@ router.post("/forgot-password", async (req, res) => {
     // Hand-built HTML rather than the generic wrapper: this is the one message
     // where the whole point is a button the reader has to press.
     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Resolved here, before the template literal below, which is synchronous.
+    const b = await branding.get();
     const html = `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-    <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-      <p style="margin:0;color:#fff;font-size:16px;font-weight:700">EdTech</p>
+    <div style="background:linear-gradient(135deg,${b.primaryColor},${b.accentColor});padding:20px 24px">
+      ${mailAssets.wordmark(b, { size: 16 })}
       <p style="margin:2px 0 0;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">STAFF HUB</p>
     </div>
     <div style="padding:24px">
       <h1 style="margin:0 0 10px;font-size:17px;color:#0f172a">Reset your password</h1>
       <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#334155">Hello ${esc(staff.name)}, choose a new password using the button below. This link expires in <strong>30 minutes</strong> and can only be used once.</p>
-      <p style="margin:0 0 18px"><a href="${link}" style="display:inline-block;background:#1a3a8f;color:#fff;text-decoration:none;padding:11px 22px;border-radius:10px;font-size:14px;font-weight:700">Choose a new password</a></p>
+      <p style="margin:0 0 18px"><a href="${link}" style="display:inline-block;background:${b.primaryColor};color:#fff;text-decoration:none;padding:11px 22px;border-radius:10px;font-size:14px;font-weight:700">Choose a new password</a></p>
       ${needsCode ? `<p style="margin:0 0 14px;padding:10px 12px;background:#eff6ff;border-radius:10px;font-size:12px;line-height:1.5;color:#1d4ed8">Your account uses two-step verification, so you'll also need the current code from your authenticator app.</p>` : ""}
       <p style="margin:0 0 6px;font-size:11px;color:#94a3b8">If the button doesn't work, copy this address into your browser:</p>
-      <p style="margin:0 0 18px;font-size:11px;word-break:break-all"><a href="${link}" style="color:#1a3a8f">${link}</a></p>
+      <p style="margin:0 0 18px;font-size:11px;word-break:break-all"><a href="${link}" style="color:${b.primaryColor}">${link}</a></p>
       <p style="margin:0;font-size:12px;line-height:1.6;color:#64748b">If you didn't ask for this you can ignore this email — your password has not changed.</p>
     </div>
     <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0">

@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Nothing in this file names an institution, and it must stay that way: the
+         label, the icon and the FileProvider authority are all references
+         (@string/app_name, @mipmap/ic_launcher, ${applicationId}) that resolve from
+         client/brand.properties via app/build.gradle. A white-label build therefore
+         never edits the manifest. -->
+
     <!-- Backup is off deliberately. The only local state is the session JWT in
          WebView localStorage; with backup on, a live staff session is copied to
          Google's servers and restored onto any new device set up from that backup —

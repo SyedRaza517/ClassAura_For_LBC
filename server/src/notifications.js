@@ -14,6 +14,7 @@ const email = require("./email");
 const bankHolidays = require("./bankHolidays");
 const mailFrom = require("./mailFrom");
 const mailAssets = require("./mailAssets");
+const branding = require("./branding");
 
 // ---------------------------------------------------------------------------
 // Date helpers — all UTC / string based, matching the "YYYY-MM-DD" columns used
@@ -92,18 +93,33 @@ const esc = (s) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+// How the institution is named inside a sentence, and how it signs off. Two different
+// fallbacks on purpose: "the college" is true of every institution on the platform, so it
+// reads correctly mid-sentence when a name is missing, but as a sign-off it is dropped
+// entirely — "Best wishes, the college" reads like a placeholder nobody replaced.
+const inSentence = (brand) => brand.displayName || "the college";
+const signOff = (brand, closing) => (brand.displayName ? `${closing},\n${brand.displayName}` : closing);
+const signOffHtml = (brand, closing) =>
+  brand.displayName ? `${esc(closing)},<br><strong>${esc(brand.displayName)}</strong>` : esc(closing);
+
 // The shared branded email shell. `eyebrow` and `heading` are plain text (escaped here);
 // `bodyHtml` is trusted HTML the caller has already assembled (escaping its own values).
-function shell(eyebrow, heading, bodyHtml) {
+// `brand` is threaded in from the job rather than resolved here because these jobs run
+// once per tenant under the scheduler: the shell must never carry the previous tenant's
+// logo, colours or footer.
+function shell(brand, eyebrow, heading, bodyHtml) {
+  // Dropped whole when the college has given neither an address nor any contact detail,
+  // rather than rendering an empty grey bar with the separators still in it.
+  const footer = mailAssets.footerHtml(brand);
   return `<div style="margin:0;padding:24px;background:#eef1f6;font-family:'Segoe UI',system-ui,-apple-system,sans-serif">
     <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
-      <div style="background:linear-gradient(135deg,#1a3a8f,#9e1b32);padding:20px 24px">
-        <img src="${mailAssets.logoUrl}" width="44" height="26" alt="EdTech" style="display:block;margin:0 0 10px;border:0;outline:none;max-width:44px" />
+      <div style="background:linear-gradient(135deg,${brand.primaryColor},${brand.accentColor});padding:20px 24px">
+        ${mailAssets.logoImg(brand)}
         <p style="margin:0 0 2px;color:rgba(255,255,255,.7);font-size:11px;letter-spacing:.18em">${esc(eyebrow)}</p>
-        <p style="margin:0;color:#fff;font-size:18px;font-weight:800">EdTech</p>
+        ${mailAssets.wordmark(brand)}
       </div>
       <div style="padding:24px"><h1 style="margin:0 0 12px;font-size:19px;color:#0f172a">${esc(heading)}</h1><div style="font-size:14px;line-height:1.6;color:#334155">${bodyHtml}</div></div>
-      <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;font-size:11px;color:#94a3b8">EdTech · 42 The Burroughs, Hendon, London NW4 4AP · info@edtech.co.uk</p></div>
+      ${footer ? `<div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0"><p style="margin:0;font-size:11px;color:#94a3b8">${footer}</p></div>` : ""}
     </div>
   </div>`;
 }
@@ -115,6 +131,9 @@ function shell(eyebrow, heading, bodyHtml) {
 // Greet every active student and non-pending staff member whose DOB (month + day) is
 // today. Keyed per person per calendar year so it fires once a year, exactly once.
 async function runBirthdays() {
+  // Once per job, not once per recipient: the whole batch is one institution's mail and
+  // has to be built from one snapshot of its branding.
+  const brand = await branding.get();
   const t = today();
   const mmdd = t.slice(5);   // "MM-DD"
   const year = t.slice(0, 4);
@@ -150,15 +169,16 @@ async function runBirthdays() {
     const subject = `Happy Birthday, ${first}!`;
     const text =
       `Happy Birthday, ${first}!\n\n` +
-      `Everyone at EdTech is wishing you a wonderful day. ` +
+      `Everyone at ${inSentence(brand)} is wishing you a wonderful day. ` +
       `Thank you for being part of our community — we hope your year ahead is a brilliant one.\n\n` +
-      `With warm wishes,\nEdTech`;
+      signOff(brand, "With warm wishes");
     const html = shell(
+      brand,
       "HAPPY BIRTHDAY",
       `Happy Birthday, ${esc(first)}!`,
-      `<p style="margin:0 0 12px">Everyone at EdTech is wishing you a wonderful day. 🎉</p>
+      `<p style="margin:0 0 12px">Everyone at ${esc(inSentence(brand))} is wishing you a wonderful day. 🎉</p>
        <p style="margin:0 0 12px">Thank you for being part of our community — we hope the year ahead is a brilliant one, full of good things.</p>
-       <p style="margin:0">With warm wishes,<br><strong>EdTech</strong></p>`
+       <p style="margin:0">${signOffHtml(brand, "With warm wishes")}</p>`
     );
 
     await email.sendEmail(person.email, subject, text, { html });
@@ -177,6 +197,7 @@ async function runBirthdays() {
 // closed. One key per date (bankholiday:<date>) covers the whole broadcast, so it goes
 // out at most once regardless of how many times the scheduler ticks that day.
 async function runBankHolidayReminders() {
+  const brand = await branding.get();
   const date = addDays(today(), 1); // tomorrow, "YYYY-MM-DD"
   const year = Number(date.slice(0, 4));
   const match = bankHolidays.namedUkBankHolidays(year).find((h) => h.date === date);
@@ -209,19 +230,20 @@ async function runBankHolidayReminders() {
     const greet = r.first ? r.first : "there";
     const text =
       `Hello ${greet},\n\n` +
-      `Please note that EdTech will be closed on ${pretty} for the ${match.name}. ` +
+      `Please note that ${inSentence(brand)} will be closed on ${pretty} for the ${match.name}. ` +
       `Normal opening hours resume the next working day.\n\n` +
       `We hope you enjoy the break and take some time to rest.\n\n` +
-      `Best wishes,\nEdTech`;
+      signOff(brand, "Best wishes");
     const html = shell(
+      brand,
       "COLLEGE CLOSURE",
       "The college will be closed",
       `<p style="margin:0 0 12px">Hello ${esc(greet)},</p>
-       <p style="margin:0 0 12px">Please note that EdTech will be closed on
+       <p style="margin:0 0 12px">Please note that ${esc(inSentence(brand))} will be closed on
          <strong>${esc(pretty)}</strong> for the <strong>${esc(match.name)}</strong>.
          Normal opening hours resume the next working day.</p>
        <p style="margin:0 0 12px">We hope you enjoy the break and take some time to rest.</p>
-       <p style="margin:0">Best wishes,<br><strong>EdTech</strong></p>`
+       <p style="margin:0">${signOffHtml(brand, "Best wishes")}</p>`
     );
     await email.sendEmail(r.email, subject, text, { html });
     sent++;
@@ -239,6 +261,10 @@ async function runBankHolidayReminders() {
 // Remind students enrolled on a unit about each of its assessments due exactly 14 days
 // from today. Keyed per (assessment, student) so each student is nudged once per assessment.
 async function runAssessmentReminders() {
+  const brand = await branding.get();
+  // This institution's ASK mailbox, or undefined when it has not set one — in which case
+  // the send falls back to the server's own MAIL_FROM rather than another college's team.
+  const from = await mailFrom.resolve("ask");
   const target = addDays(today(), 14); // due in 2 weeks
   let sent = 0, skipped = 0;
 
@@ -274,8 +300,9 @@ async function runAssessmentReminders() {
         `  Due:        ${pretty}\n\n` +
         `Please plan your time so you can submit with confidence. If you need any support, ` +
         `reach out to your tutor early — we're here to help.\n\n` +
-        `Best wishes,\nEdTech`;
+        signOff(brand, "Best wishes");
       const html = shell(
+        brand,
         "ASSESSMENT REMINDER",
         `${esc(a.title)} — due in 2 weeks`,
         `<p style="margin:0 0 12px">Hello ${esc(first)},</p>
@@ -288,10 +315,10 @@ async function runAssessmentReminders() {
          </table>
          <p style="margin:0 0 12px">Please plan your time so you can submit with confidence. If you need any
            support, reach out to your tutor early — we're here to help.</p>
-         <p style="margin:0">Best wishes,<br><strong>EdTech</strong></p>`
+         <p style="margin:0">${signOffHtml(brand, "Best wishes")}</p>`
       );
 
-      await email.sendEmail(student.email, subject, text, { html, from: mailFrom.ask });
+      await email.sendEmail(student.email, subject, text, { html, from });
       await markSent(key);
       sent++;
     }
