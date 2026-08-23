@@ -11,9 +11,17 @@
 // On Windows CMD set the variables first with `set VAR=value`; in PowerShell use
 // `$env:VAR = "value"`.
 require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
 const { hashPassword } = require("./src/auth");
-const prisma = new PrismaClient();
+// The EXTENDED client. On a bare PrismaClient the isolation extension never runs, so
+// the create below would supply no tenantId — which is now required — and the whole
+// documented recovery path would fail. Through the extended client, running inside
+// runInTenant stamps it automatically.
+const prisma = require("./src/db");
+const { runInTenant, crossTenant } = require("./src/db");
+
+// Which institution this administrator belongs to. A super admin is the top of ONE
+// college, not of the platform — that tier is create-platform-admin.js.
+const TENANT_SLUG = process.env.TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default";
 
 const MIN_PASSWORD = 12;
 // Passwords this project has shipped before, plus the usual suspects. Refused outright
@@ -40,27 +48,45 @@ const BANNED = ["123456789", "password123", "password", "changeme", "admin123"];
     process.exitCode = 1; return;
   }
 
+  // A super admin is the top of ONE institution, not of the platform — that tier is
+  // create-platform-admin.js. So this has to say which institution it means.
+  const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { slug: TENANT_SLUG } }));
+  if (!tenant) {
+    console.error(`\n✗ No institution with slug "${TENANT_SLUG}". Set TENANT_SLUG, or create the institution first.\n`);
+    process.exitCode = 1; return;
+  }
+
   try {
+    // Inside the tenant, so the isolation extension stamps tenantId on the create.
+    await runInTenant(tenant.id, async () => {
     let passwordHash = hashPassword(password);
     if (passwordHash && typeof passwordHash.then === "function") passwordHash = await passwordHash;
     const initials = name.split(/\s+/).map((p) => p[0] || "").join("").slice(0, 2).toUpperCase() || "A";
-    const s = await prisma.staff.upsert({
-      where: { email },
+    // findFirst + create/update rather than upsert: Staff is @@unique([tenantId, email])
+    // now, so { where: { email } } is no longer a unique selector and Prisma rejects it.
+    const existing = await prisma.staff.findFirst({ where: { email } });
+    const s = existing
+      ? await prisma.staff.update({
+          where: { id: existing.id },
       // tokenVersion increments so any session or reset link issued under the previous
       // password stops working the moment this runs.
-      update: { passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null, pendingActivation: false, tokenVersion: { increment: 1 },
+          data: { passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null, pendingActivation: false, tokenVersion: { increment: 1 },
         // Also clear two-step verification. This is the documented recovery script,
         // and an account locked out by a lost authenticator could not otherwise be
         // recovered — the super-admin guard stops any other admin resetting it.
-        totpEnabled: false, totpSecret: null, mustSetupTotp: false },
-      create: {
-        name, jobTitle: "Administrator", dept: "Administration", email,
-        passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null,
-        initials, colour: "#6d28d9", allowance: 28, pendingActivation: false,
-      },
-    });
+            totpEnabled: false, totpSecret: null, mustSetupTotp: false },
+        })
+      : await prisma.staff.create({
+          data: {
+            name, jobTitle: "Administrator", dept: "Administration", email,
+            passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null,
+            initials, colour: "#6d28d9", allowance: 28, pendingActivation: false,
+          },
+        });
     console.log(`\n✓ Super admin ready: ${s.email}`);
+    console.log(`  Institution: ${tenant.slug}`);
     console.log("  The password is the one you passed in — deliberately not printed here.\n");
+    });
   } catch (e) {
     console.error("\n✗ Failed:", e.message, "\n");
     process.exitCode = 1;

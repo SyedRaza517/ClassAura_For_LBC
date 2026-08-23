@@ -23,7 +23,15 @@ const UPLOAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const hashToken = (raw) => crypto.createHash("sha256").update(String(raw)).digest("hex");
 
 // Never let the token hashes reach the client. Everything else on the row is admin-visible.
-const sAdmission = (r) => { const { uploadTokenHash, offerTokenHash, ...rest } = r; return rest; };
+// Strip every secret before an admission row reaches a client. passwordHash was
+// missing here: applicants set a password to track their application, so the bcrypt
+// hash of it was being sent to the admin dashboard on every list and update. A hash
+// is not a password, but shipping one to a browser gives an attacker something to
+// grind offline that they should never have had.
+const sAdmission = (r) => {
+  const { uploadTokenHash, offerTokenHash, passwordHash, ...rest } = r;
+  return rest;
+};
 
 // Format an ISO date (YYYY-MM-DD) as the offer letter reads it, e.g.
 // "Tuesday, 15th September 2026". Falls back to the raw input if unparseable.
@@ -112,7 +120,7 @@ router.put("/documents/:docId/confirm", async (req, res) => {
     where: { id: doc.id },
     data: { confirmed, confirmedAt: confirmed ? new Date() : null, confirmedBy: confirmed ? (req.user?.name || req.user?.email || null) : null },
   });
-  res.json(updated);
+  res.json(sAdmission(updated));
 });
 
 // A link to view one uploaded document. SharePoint files return their web URL (the

@@ -3,6 +3,19 @@
 // rest of the admin console.
 const router = require("express").Router();
 const prisma = require("../db");
+// Raw SQL is NOT covered by the tenant isolation extension in db.js — that hooks
+// $allModels, and $queryRaw is a client-level method that never reaches it. Every raw
+// query in this file must therefore scope itself, and these exist so that is hard to
+// forget: requireTenant() throws rather than returning a query spanning customers.
+const { currentTenantId } = require("../db");
+function requireTenant() {
+  const t = currentTenantId();
+  if (!t) throw new Error("Raw SQL attempted with no tenant context");
+  return t;
+}
+// A cuid cannot contain a quote; escaped anyway, so that changing the id strategy
+// later cannot quietly turn this into an injection.
+const sqlTenant = () => "'" + String(requireTenant()).replace(/'/g, "''") + "'";
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage } = require("../auth");
 // Mutating registers/units/courses needs one of the sections that manages them.
@@ -1003,7 +1016,11 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
       count(*) FILTER (WHERE am.status='E')::int e,
       count(*) FILTER (WHERE am.status='A')::int a
     FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId" ${unitJoin}`;
+  // Seeded FIRST and unconditionally, so the tenant predicate can never be dropped by
+  // a later change to the optional filters.
+  const TENANT = requireTenant();
   const conds = [], params = [];
+  params.push(TENANT); conds.push(`am."tenantId" = $${params.length}`);
   if (studentId) { params.push(studentId); conds.push(`am."studentId" = $${params.length}`); }
   if (unitId) { params.push(unitId); conds.push(`se."unitId" = $${params.length}`); }
   if (courseId) { params.push(courseId); conds.push(`u."courseId" = $${params.length}`); }
@@ -1022,6 +1039,7 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   // so the dashboard's "Total Sessions" tracks the filters too.
   const sJoin = needUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
   const sConds = [], sParams = [];
+  sParams.push(TENANT); sConds.push(`se."tenantId" = $${sParams.length}`);
   if (unitId) { sParams.push(unitId); sConds.push(`se."unitId" = $${sParams.length}`); }
   if (courseId) { sParams.push(courseId); sConds.push(`u."courseId" = $${sParams.length}`); }
   if (byYear) { sParams.push(yearNum); sConds.push(`u."year" = $${sParams.length}`); }
@@ -1072,13 +1090,13 @@ router.get("/attendance", requireAuth, async (req, res) => {
         count(*) FILTER (WHERE am.status='E')::int e,
         count(*) FILTER (WHERE am.status='A')::int a
       FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId"
-      WHERE ${dateCond("se.date")}
+      WHERE am."tenantId" = ${sqlTenant()} AND ${dateCond("se.date")}
       GROUP BY am."studentId", se."unitId"`),
     // Session counts per unit: all-time and scoped, in one pass.
     prisma.$queryRawUnsafe(`
       SELECT "unitId" mid, count(*)::int all_c,
         count(*) FILTER (WHERE ${dateCond("date")})::int scoped_c
-      FROM "HndSession" GROUP BY "unitId"`),
+      FROM "HndSession" WHERE "tenantId" = ${sqlTenant()} GROUP BY "unitId"`),
     prisma.enrolment.groupBy({ by: ["unitId"], _count: { _all: true } }),
   ]);
 

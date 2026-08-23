@@ -116,11 +116,21 @@ function describe() {
 // on every call would triple the traffic and slow each upload; caching it — and renewing
 // ~60s before Azure's stated expiry to leave a safety margin against clock skew and
 // in-flight requests — keeps things quick without ever presenting a stale token.
-let tokenCache = { value: null, expiresAt: 0 };
+// PER TENANT, not per process. These four caches previously held one institution's
+// OAuth token, site, document library and root folder for the whole server. Because
+// getAccessToken() and the resolve* functions returned the cached value BEFORE
+// consulting configuration, the first college to touch SharePoint after a restart
+// captured every other college's uploads: college B's applicant documents were
+// written into college A's library, where A could read them and B could not. The
+// three id caches had no TTL at all, so it persisted until the next deploy.
+const tokenCache = new Map();       // tenantId -> { value, expiresAt }
+const EMPTY_TOKEN = { value: null, expiresAt: 0 };
+const tenantKey = () => currentTenantId() || "__no_tenant__";
 
 async function getAccessToken() {
   await cfg.load("sharepoint");
-  if (tokenCache.value && Date.now() < tokenCache.expiresAt) return tokenCache.value;
+  const cached = tokenCache.get(tenantKey()) || EMPTY_TOKEN;
+  if (cached.value && Date.now() < cached.expiresAt) return cached.value;
 
   const tenant = TENANT_ID();
   if (!tenant || !CLIENT_ID() || !CLIENT_SECRET()) {
@@ -169,12 +179,13 @@ async function getAccessToken() {
   }
 
   const ttlSeconds = Number(data.expires_in) || 3600;
-  tokenCache = {
+  const nextToken = {
     value: data.access_token,
     // Renew 60s early so a request never sets out with a token about to expire.
     expiresAt: Date.now() + Math.max(0, ttlSeconds - 60) * 1000,
   };
-  return tokenCache.value;
+  tokenCache.set(tenantKey(), nextToken);
+  return nextToken.value;
 }
 
 // --- Graph fetch helper ----------------------------------------------------------
@@ -228,15 +239,18 @@ async function graphFetch(path, init = {}) {
 // Each is resolved once on first use and cached in a module variable — these ids never
 // change for the life of the process, and re-resolving them on every upload would add two
 // or three needless round-trips to Graph before the request that actually matters.
-let siteIdCache = null;
-let driveIdCache = null;
-let rootFolderIdCache = null;
+// Same reasoning as tokenCache above: keyed by tenant, because a site id resolved
+// for one institution is meaningless — and dangerous — for another.
+const siteIdCache = new Map();
+const driveIdCache = new Map();
+const rootFolderIdCache = new Map();
 
 async function resolveSiteId() {
-  if (siteIdCache) return siteIdCache;
+  const kSite = tenantKey();
+  if (siteIdCache.get(kSite)) return siteIdCache.get(kSite);
   // Use SP_SITE_ID directly ONLY if it's a real Graph id (has commas). A URL pasted into
   // it is handled as a URL by siteHostAndPath instead.
-  if (SITE_ID().includes(",")) { siteIdCache = SITE_ID().trim(); return siteIdCache; }
+  if (SITE_ID().includes(",")) { siteIdCache.set(kSite, SITE_ID().trim()); return siteIdCache.get(kSite); }
 
   const { host, path } = siteHostAndPath();
   if (!host || !path) {
@@ -247,13 +261,14 @@ async function resolveSiteId() {
   if (!site || !site.id) {
     throw new Error(`Could not resolve the SharePoint site "${host}${path}". Check the site address (SP_SITE_URL).`);
   }
-  siteIdCache = site.id;
-  return siteIdCache;
+  siteIdCache.set(kSite, site.id);
+  return site.id;
 }
 
 async function resolveDriveId() {
-  if (driveIdCache) return driveIdCache;
-  if (DRIVE_ID()) { driveIdCache = DRIVE_ID(); return driveIdCache; }
+  const kDrive = tenantKey();
+  if (driveIdCache.get(kDrive)) return driveIdCache.get(kDrive);
+  if (DRIVE_ID()) { driveIdCache.set(kDrive, DRIVE_ID()); return driveIdCache.get(kDrive); }
 
   const siteId = await resolveSiteId();
 
@@ -274,23 +289,24 @@ async function resolveDriveId() {
       const names = drives.map((d) => `"${d.name}"`).join(", ") || "(none)";
       throw new Error(`No SharePoint document library named "${wanted}" on this site. Available libraries: ${names}. Fix SP_DRIVE_NAME (or set SP_DRIVE_ID).`);
     }
-    driveIdCache = match.id;
-    return driveIdCache;
+    driveIdCache.set(kDrive, match.id);
+    return match.id;
   }
 
   const drive = await graphFetch(`/sites/${siteId}/drive`);
   if (!drive || !drive.id) {
     throw new Error("The SharePoint site has no default document library (drive). Set SP_DRIVE_ID or SP_DRIVE_NAME explicitly.");
   }
-  driveIdCache = drive.id;
-  return driveIdCache;
+  driveIdCache.set(kDrive, drive.id);
+  return drive.id;
 }
 
 // The base folder under which every applicant folder lives. Fetch it if it's there; if
 // not, create it once under the drive root. A concurrent creator racing us produces a
 // 409, which simply means "it exists now" — so re-fetch and use theirs.
 async function resolveRootFolderId() {
-  if (rootFolderIdCache) return rootFolderIdCache;
+  const kRoot = tenantKey();
+  if (rootFolderIdCache.get(kRoot)) return rootFolderIdCache.get(kRoot);
 
   const driveId = await resolveDriveId();
   const rootFolder = ROOT_FOLDER().trim();
@@ -300,13 +316,13 @@ async function resolveRootFolderId() {
   if (!rootFolder) {
     const root = await graphFetch(`/drives/${driveId}/root`);
     if (!root || !root.id) throw new Error("Could not read the SharePoint library root.");
-    rootFolderIdCache = root.id;
-    return rootFolderIdCache;
+    rootFolderIdCache.set(kRoot, root.id);
+    return root.id;
   }
 
   try {
     const item = await graphFetch(`/drives/${driveId}/root:/${encodeURIComponent(rootFolder)}`);
-    if (item && item.id) { rootFolderIdCache = item.id; return rootFolderIdCache; }
+    if (item && item.id) { rootFolderIdCache.set(kRoot, item.id); return item.id; }
   } catch (e) {
     if (e.status !== 404) throw e; // a 404 just means it doesn't exist yet; anything else is real
   }
@@ -317,13 +333,13 @@ async function resolveRootFolderId() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: rootFolder, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     });
-    rootFolderIdCache = created.id;
-    return rootFolderIdCache;
+    rootFolderIdCache.set(kRoot, created.id);
+    return created.id;
   } catch (e) {
     if (e.status === 409) {
       const item = await graphFetch(`/drives/${driveId}/root:/${encodeURIComponent(rootFolder)}`);
-      rootFolderIdCache = item.id;
-      return rootFolderIdCache;
+      rootFolderIdCache.set(kRoot, item.id);
+      return item.id;
     }
     throw e;
   }
@@ -502,7 +518,17 @@ async function moveItem(itemId, newParentId, newName) {
   return patchDriveItem(itemId, body);
 }
 
+/**
+ * Drop everything cached for one institution — call when its credentials change,
+ * otherwise a corrected configuration keeps using the old site and token.
+ */
+function forgetTenant(tenantId) {
+  const k = tenantId || "__no_tenant__";
+  tokenCache.delete(k); siteIdCache.delete(k); driveIdCache.delete(k); rootFolderIdCache.delete(k);
+}
+
 module.exports = {
+  forgetTenant,
   isConfigured,
   describe,
   ensureApplicantFolder,

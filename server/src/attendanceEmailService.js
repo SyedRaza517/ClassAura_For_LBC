@@ -14,6 +14,14 @@
 // fallback whenever the caller passes a partial config.
 
 const prisma = require("./db");
+// Raw SQL sits outside the isolation extension (which hooks $allModels only), so the
+// aggregate below scopes itself rather than spanning every institution.
+const { currentTenantId } = require("./db");
+function tenantForSql() {
+  const t = currentTenantId();
+  if (!t) throw new Error("Raw SQL attempted with no tenant context");
+  return t;
+}
 const { summariseCounts } = require("./attendance");
 const email = require("./email");
 const bands = require("./attendanceBands");
@@ -189,7 +197,7 @@ async function computeCurrentTermAttendance(term) {
     FROM "AttendanceMark" am
     JOIN "HndSession" se ON se.id = am."sessionId"
     JOIN "Enrolment" en ON en."studentId" = am."studentId" AND en."unitId" = se."unitId"
-    WHERE se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}
+    WHERE am."tenantId" = ${q(tenantForSql())} AND se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}
     GROUP BY am."studentId", se."unitId"`);
 
   // studentId -> Map(unitId -> { p, l, e, a }).

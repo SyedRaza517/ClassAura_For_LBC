@@ -95,6 +95,18 @@ const prisma = base.$extends({
           else next.data = { ...args.data, tenantId };
         }
 
+        // Fail CLOSED on anything unrecognised. Coverage is complete for Prisma 5.22
+        // on PostgreSQL today, but the whole design of this file is "the client
+        // refuses" — and a version upgrade that adds an operation (updateManyAndReturn,
+        // say) would otherwise let it through unscoped, silently.
+        const KNOWN = FILTERED.has(operation) || FILTERED_UNIQUE.has(operation) || STAMPED.has(operation) || operation === "upsert";
+        if (!KNOWN) {
+          throw new TenantScopeError(
+            model + "." + operation + " is not handled by the tenant isolation extension. " +
+            "Add it to FILTERED / FILTERED_UNIQUE / STAMPED in db.js before using it."
+          );
+        }
+
         if (operation === "upsert") {
           next.where = { ...args.where, tenantId };
           next.create = { ...args.create, tenantId };
