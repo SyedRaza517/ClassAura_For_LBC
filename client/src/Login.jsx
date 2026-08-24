@@ -6,9 +6,59 @@ import { ForgotPasswordForm } from "./ResetPassword";
 import { LogIn, Loader2, Mail, Lock, GraduationCap, ArrowLeft } from "lucide-react";
 import { BrandLockup } from "./Brand";
 import { rememberedEmail, rememberedPassword, setRememberedLogin, forgetRememberedLogin, passwordMatchesEmail } from "./rememberEmail";
+import { currentTenant, setTenant } from "./api";
 import BiometricSignIn from "./BiometricSignIn";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
+
+
+// Lets somebody name their institution when the browser has forgotten it.
+function CollegeChooser() {
+  const [open, setOpen] = React.useState(false);
+  const [slug, setSlug] = React.useState("");
+  const current = currentTenant();
+
+  const apply = (e) => {
+    e.preventDefault();
+    const v = String(slug || "").trim().toLowerCase();
+    if (!/^[a-z0-9-]{1,32}$/.test(v)) return;
+    // setTenant clears any token, because one institution's session is refused by another.
+    setTenant(v);
+    window.location.reload();
+  };
+
+  if (!open) {
+    return (
+      <p className="text-center text-[11px] text-slate-400">
+        {current ? <>Signing in to <span className="font-mono text-slate-300">{current}</span>. </> : null}
+        <button type="button" onClick={() => setOpen(true)} className="font-semibold text-slate-300 underline underline-offset-2 hover:text-white">
+          {current ? "Not your college?" : "Which college are you?"}
+        </button>
+      </p>
+    );
+  }
+
+  return (
+    <form onSubmit={apply} className="rounded-xl bg-white/10 p-3">
+      <label className="mb-1 block text-[11px] font-semibold text-slate-300">
+        Your college&rsquo;s web address
+      </label>
+      <div className="flex gap-2">
+        <input
+          value={slug}
+          onChange={(e) => setSlug(e.target.value)}
+          placeholder="your-college"
+          autoFocus
+          className="w-full rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder-slate-400 outline-none focus:border-white/40"
+        />
+        <button type="submit" className="rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-900">Go</button>
+      </div>
+      <p className="mt-1.5 text-[11px] text-slate-400">
+        It is in the link you were given when your institution was set up.
+      </p>
+    </form>
+  );
+}
 
 export default function Login({ onBack }) {
   const { login, applySession, error } = useAuth();
@@ -99,6 +149,15 @@ export default function Login({ onBack }) {
         // sign-in already had them). The browser now stores the password in the OS
         // keychain and refills it; we never touch it ourselves.
         <form onSubmit={submit} className="space-y-4">
+          {/* Several institutions share one hostname, so the app has to know WHICH college
+              this is. It is normally remembered from the link a college was given when it
+              was set up. If that memory is gone — a new device, cleared storage, a colleague
+              forwarding a bare link — sign-in fails with "invalid email or password" even
+              though the password was perfectly right. That message cannot be made more
+              specific without telling an attacker which addresses exist, so the way out is
+              offered here instead. */}
+          <CollegeChooser />
+
           <div className="fade-up" style={{ animationDelay: "0.05s" }}>
             <label htmlFor="login-email" className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</label>
             <div className="group relative mt-1">

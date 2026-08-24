@@ -70,6 +70,9 @@ function resolveTenant() {
 
 let TENANT = resolveTenant();
 
+/** Which institution this browser is acting for, or null for the server's default. */
+export const currentTenant = () => TENANT;
+
 /** Change the institution this browser acts for, and forget the old session. */
 export function setTenant(slug) {
   TENANT = slug || null;

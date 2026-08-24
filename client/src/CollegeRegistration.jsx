@@ -12,7 +12,7 @@
 import React, { useState } from "react";
 import { API_BASE } from "./api";
 import {
-  Building2, Send, KeyRound, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight,
+  Building2, Send, KeyRound, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, Copy, Check,
 } from "lucide-react";
 
 const inputCls =
@@ -226,6 +226,13 @@ export default function CollegeRegistration({ onBack }) {
   const [tab, setTab] = useState("apply");
   const [sent, setSent] = useState(false);
   const [done, setDone] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  // Built from where they already are, so it is correct on staging, on production and on
+  // a custom domain without anything being configured per environment.
+  const signInUrl = done && typeof window !== "undefined"
+    ? `${window.location.origin}${window.location.pathname}?tenant=${encodeURIComponent(done.slug)}`
+    : "";
 
   return (
     <div className="min-h-screen bg-neutral-100" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
@@ -246,21 +253,48 @@ export default function CollegeRegistration({ onBack }) {
 
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
         {done ? (
-          <div className="rounded-xl bg-white p-8 text-center ring-1 ring-neutral-300">
-            <CheckCircle2 size={34} className="mx-auto mb-3 text-black" />
-            <h2 className="text-lg font-extrabold text-black">{done.name} is set up</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-neutral-700">
-              Sign in with <b>{done.email}</b> and the password you just chose. Your first stop should be
-              Settings, where you set your own email, colours, logo and letters.
-            </p>
-            <p className="mt-3 text-[12px] text-neutral-500">
-              Your web address is <span className="font-mono font-bold text-neutral-800">{done.slug}</span>
-            </p>
-            {onBack && (
-              <button onClick={onBack} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2 text-sm font-bold text-white transition hover:bg-neutral-800">
-                Go to sign in <ArrowRight size={15} />
+          <div className="rounded-xl bg-white p-8 ring-1 ring-neutral-300">
+            <div className="text-center">
+              <CheckCircle2 size={34} className="mx-auto mb-3 text-black" />
+              <h2 className="text-lg font-extrabold text-black">{done.name} is set up</h2>
+              <p className="mx-auto mt-2 max-w-md text-sm text-neutral-700">
+                Sign in with <b>{done.email}</b> and the password you just chose.
+              </p>
+            </div>
+
+            {/* The sign-in link MUST name the institution.
+                Several colleges share one hostname, so a plain link resolves to whichever
+                institution the server treats as its default — and the new administrator is
+                told "invalid email or password" when in fact their password was right and
+                only the college was missing. That is the worst possible message at the worst
+                possible moment, so the address is spelled out here rather than assumed. */}
+            <div className="mt-6 rounded-lg bg-neutral-100 p-4 ring-1 ring-neutral-300">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-neutral-600">Your sign-in address</p>
+              <p className="mt-1 break-all font-mono text-[13px] font-semibold text-black">{signInUrl}</p>
+              <p className="mt-2 text-[12px] text-neutral-600">
+                Use this link the first time. It tells the app which institution you are, and your browser
+                remembers it afterwards. Bookmark it and share it with your colleagues.
+              </p>
+              <button
+                type="button"
+                onClick={() => { try { navigator.clipboard.writeText(signInUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard blocked — the address is on screen to copy by hand */ } }}
+                className="mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-neutral-800 ring-1 ring-neutral-400 transition hover:bg-white"
+              >
+                {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy link</>}
               </button>
-            )}
+            </div>
+
+            <p className="mt-4 text-center text-[13px] text-neutral-700">
+              Your first stop should be <b>Settings → Connected systems → Email</b>. Until you set your own
+              mailbox, nothing is emailed to your applicants or students — not even password resets.
+            </p>
+
+            <div className="mt-5 text-center">
+              <a href={signInUrl}
+                className="inline-flex items-center gap-2 rounded-lg bg-black px-4 py-2 text-sm font-bold text-white transition hover:bg-neutral-800">
+                Go to sign in <ArrowRight size={15} />
+              </a>
+            </div>
           </div>
         ) : sent ? (
           <div className="rounded-xl bg-white p-8 text-center ring-1 ring-neutral-300">

@@ -81,9 +81,25 @@ const CI_DATES = [CI_SUMMARY_DAY, CI_CHECKOUT_DAY, CI_BAD_DAY];
 // The next Monday bank holiday at least a week out. A booking wrapped around it is
 // the clearest possible demonstration of the pricing rule: five calendar days away
 // from work, two days off the allowance.
+// It must also be an ISOLATED bank holiday — the only one inside the Friday-to-Tuesday
+// span. Without that condition this quietly became date-dependent: for most of the year
+// the next Monday holiday is on its own and the span costs two days, but from late
+// August the next one is 28 December, whose span also contains Christmas Day. Two
+// holidays in five days costs ONE day, not two, and the assertion below failed on a
+// date roll-over with nothing about the product having changed. The rule being
+// demonstrated is "weekends and bank holidays are not chargeable"; a span containing
+// two of them demonstrates it just as well but not with the number written here.
 const BH = (() => {
   const y = TODAY.getUTCFullYear();
-  return [...ukBankHolidays(y), ...ukBankHolidays(y + 1)].sort().find((d) => d > shift(7) && dow(d) === 1);
+  const all = [...ukBankHolidays(y), ...ukBankHolidays(y + 1), ...ukBankHolidays(y + 2)].sort();
+  const holidays = new Set(all);
+  return all.find((d) => {
+    if (!(d > shift(7)) || dow(d) !== 1) return false;
+    // Exactly one holiday between the Friday before and the Tuesday after.
+    let n = 0;
+    for (let i = -3; i <= 1; i++) if (holidays.has(plus(d, i))) n++;
+    return n === 1;
+  });
 })();
 const BH_START = plus(BH, -3); // the Friday before
 const BH_END = plus(BH, 1);    // the Tuesday after
