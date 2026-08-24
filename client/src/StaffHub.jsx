@@ -10406,17 +10406,36 @@ function AdminSlc({ store }) {
 
 /* ============================================================ ATTENDANCE EMAILS ============================================================ */
 // Automated month-end attendance emails. Students are banded by their attendance % for the
-// CURRENT semester; each band has its own editable template. The admin reviews the bands,
-// edits the templates + signature/contacts, turns automation on (sends on the last day of
-// each month), and can also send this month's emails immediately. Overall % and per-module
-// figures are computed and re-verified on the server.
-const BAND_STYLE = {
-  excellent: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  great: "bg-green-50 text-green-700 ring-green-200",
-  good: "bg-sky-50 text-sky-700 ring-sky-200",
-  average: "bg-amber-50 text-amber-700 ring-amber-200",
-  risk: "bg-orange-50 text-orange-700 ring-orange-200",
-  highrisk: "bg-rose-50 text-rose-700 ring-rose-200",
+// CURRENT semester against THIS COLLEGE'S OWN BANDS; each band has its own editable
+// template. The admin edits the bands themselves (thresholds, colours, and which of them
+// send a letter), edits the templates + signature/contacts, turns automation on (sends on
+// the last day of each month), and can also send this month's emails immediately. Overall
+// % and per-module figures — and the banding — are computed and re-verified on the server.
+
+// A band's chip styling, derived from the band's OWN colour.
+//
+// This replaced a map from the six built-in band keys to Tailwind classes. That map was
+// the client's copy of a decision the server had already made, and it had exactly the
+// failure a duplicated decision has: a college that invents a band, or renames one,
+// produces a key the map has never heard of, and every one of that band's students
+// rendered as unstyled grey — on the one screen whose whole job is to make "who is at
+// risk" visible at a glance. The colour now travels with the band.
+const bandTint = (colour) => {
+  const hex = typeof colour === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(colour.trim())
+    // #abc -> #aabbcc, so the alpha suffixes below are always appended to six digits.
+    ? (colour.trim().length === 4 ? "#" + colour.trim().slice(1).split("").map(c => c + c).join("") : colour.trim())
+    : null;
+  if (!hex) return { color: "#475569", background: "#f8fafc", boxShadow: "inset 0 0 0 1px #e2e8f0" };
+  return { color: hex, background: hex + "14", boxShadow: `inset 0 0 0 1px ${hex}33` };
+};
+
+// Which band a percentage lands in, matched exactly as the server does: the first band
+// (best -> worst) whose LOWER bound the figure reaches. Not `min <= p <= max`, because
+// percentages carry one decimal and 69.5 satisfies neither side of a 60–69 / 70–84 pair.
+// Used only for the editor's live preview; the server's answer is the one that sends.
+const bandForPctClient = (pct, list) => {
+  if (pct == null || !Array.isArray(list)) return null;
+  return [...list].sort((a, b) => b.min - a.min).find(b => pct >= b.min) || null;
 };
 // The institution/tutor placeholders the admin fills once (used to build the Settings form).
 const ATTENDANCE_VALUE_FIELDS = [
@@ -10462,6 +10481,7 @@ function AdminAttendanceEmails({ store }) {
   const [runResult, setRunResult] = useState(null);
   const [sendingId, setSendingId] = useState(null);
   const [range, setRange] = useState({ from: "", to: "" });  // custom reporting period; both blank = auto current term
+  const [previewPct, setPreviewPct] = useState("72");        // the band editor's "a student on __% lands in" probe
 
   const load = useCallback(async (r) => {
     setLoading(true); setErr("");
@@ -10481,16 +10501,109 @@ function AdminAttendanceEmails({ store }) {
   const setValue = (k, v) => setConfig(c => ({ ...c, values: { ...c.values, [k]: v } }));
   const setTemplate = (band, field, v) => setConfig(c => ({ ...c, templates: { ...c.templates, [band]: { ...c.templates[band], [field]: v } } }));
 
+  /* ---- the band ladder ----------------------------------------------------
+     The editor manipulates a LADDER, not a set of independent rows. Each band owns
+     everything from its own lower bound up to the next band's, so upper bounds are
+     DERIVED and shown read-only rather than typed. That is deliberate: a gap or an
+     overlap is the one mistake here with a silent, invisible consequence — a student
+     in a gap is classified as having no attendance data and is skipped by the send
+     entirely — and a ladder cannot express one. The server validates independently
+     (the API is reachable without this screen), but nothing an administrator can do
+     with these controls will produce a list it refuses. */
+  const bandsDraft = config?.bands || [];
+
+  // Sort best -> worst and recompute every upper bound from the band above it.
+  const ladder = (list) => {
+    const sorted = [...list].sort((a, b) => b.min - a.min);
+    return sorted.map((b, i) => ({ ...b, max: i === 0 ? 100 : sorted[i - 1].min - 1 }));
+  };
+  const setBands = (list) => setConfig(c => ({ ...c, bands: ladder(list) }));
+
+  const setBandField = (i, patch) => setBands(bandsDraft.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+
+  // A lower bound is clamped to leave at least one whole percent for the band above and
+  // the band below, so dragging one threshold can never swallow its neighbour. The
+  // lowest band is pinned at 0 — bands must cover 0% or a student attending nothing
+  // falls out of the system, which is the worst possible student to lose.
+  const setBandMin = (i, raw) => {
+    if (i === bandsDraft.length - 1) return; // the floor is not editable
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n)) return;
+    const above = bandsDraft[i - 1]; // better band, or undefined at the top
+    const below = bandsDraft[i + 1]; // worse band, always present here
+    const lo = below.min + 1;
+    const hi = above ? above.min - 1 : 100;
+    setBandField(i, { min: Math.max(lo, Math.min(hi, n)) });
+  };
+
+  // Reorder = swap two adjacent bands' IDENTITIES (name, colour, whether they email),
+  // leaving the two spans where they are. Moving a band "up" means its label now
+  // describes the higher slice of the ladder, which is what an administrator means by
+  // it — and it keeps the list contiguous by construction.
+  const moveBand = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= bandsDraft.length) return;
+    const a = bandsDraft[i], b = bandsDraft[j];
+    setBands(bandsDraft.map((x, k) => {
+      if (k === i) return { ...a, key: b.key, label: b.label, colour: b.colour, emailTrigger: b.emailTrigger };
+      if (k === j) return { ...b, key: a.key, label: a.label, colour: a.colour, emailTrigger: a.emailTrigger };
+      return x;
+    }));
+  };
+
+  // A new band SPLITS the widest existing one, so it arrives valid and visible rather
+  // than as a zero-width row the administrator has to repair before anything will save.
+  const addBand = () => {
+    if (bandsDraft.length >= 10) return;
+    let widest = 0;
+    bandsDraft.forEach((b, i) => { if (b.max - b.min > bandsDraft[widest].max - bandsDraft[widest].min) widest = i; });
+    const w = bandsDraft[widest];
+    if (w.max - w.min < 1) { store.notify("There is no room to split a band — widen one first.", "info"); return; }
+    const cut = Math.floor((w.min + w.max) / 2) + 1;
+    // key left blank: the server derives one from the label and guarantees it is unique.
+    setBands([...bandsDraft, { key: "", label: "New band", min: cut, max: w.max, colour: "#64748b", emailTrigger: false }]);
+  };
+
+  // Removing a band hands its range to the band below (upper bounds are derived, so that
+  // happens on its own). Removing the LOWEST band means the new lowest has to be pinned
+  // back down to 0, or the ladder would no longer cover a student attending nothing.
+  const removeBand = (i) => {
+    if (bandsDraft.length <= 1) { store.notify("At least one band is required.", "info"); return; }
+    const rest = bandsDraft.filter((_, j) => j !== i);
+    if (i === bandsDraft.length - 1) rest[rest.length - 1] = { ...rest[rest.length - 1], min: 0 };
+    setBands(rest);
+  };
+
+  const previewBand = bandForPctClient(previewPct === "" ? null : Number(previewPct), bandsDraft);
+
   const saveConfig = async () => {
     setSaving(true);
     try {
       const saved = await api.saveAttendanceEmailConfig({
         autoEnabled: config.autoEnabled, respondDays: config.respondDays, sendHour: config.sendHour,
-        values: config.values, templates: config.templates,
+        values: config.values, templates: config.templates, bands: config.bands,
       });
       setConfig(saved);
+      // The table's band chips, headcounts and per-student labels are all computed
+      // server-side against the bands that were just saved, so they are stale the moment
+      // a threshold moves. Reloading is the only way the screen agrees with itself.
+      await load(range.from && range.to ? range : undefined);
       store.notify("Attendance email settings saved", "success");
     } catch (e) { store.notify(e.message || "Could not save settings", "error"); }
+    setSaving(false);
+  };
+
+  // Back to the platform defaults — `bands: null` is how the API expresses that, and it
+  // deletes the row rather than writing the six defaults into it, so "this college has
+  // never customised its bands" stays a thing the server can tell.
+  const resetBands = async () => {
+    setSaving(true);
+    try {
+      const saved = await api.saveAttendanceEmailConfig({ bands: null });
+      setConfig(saved);
+      await load(range.from && range.to ? range : undefined);
+      store.notify("Attendance bands reset to the defaults", "success");
+    } catch (e) { store.notify(e.message || "Could not reset the bands", "error"); }
     setSaving(false);
   };
 
@@ -10570,10 +10683,15 @@ function AdminAttendanceEmails({ store }) {
 
           <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {bandsArr.map(b => (
-              <button key={b.key} onClick={() => setBandFilter(f => f === b.key ? "" : b.key)} className={`rounded-xl p-3 text-left ring-1 transition ${bandFilter === b.key ? "ring-2" : "ring-slate-200"} ${BAND_STYLE[b.key] || "bg-slate-50 text-slate-600 ring-slate-200"}`}>
+              <button key={b.key} onClick={() => setBandFilter(f => f === b.key ? "" : b.key)}
+                style={{ ...bandTint(b.colour), ...(bandFilter === b.key ? { boxShadow: `inset 0 0 0 2px ${b.colour || "#94a3b8"}` } : null) }}
+                className="rounded-xl p-3 text-left transition">
                 <p className="text-2xl font-extrabold leading-none">{b.count}</p>
                 <p className="mt-1 text-[11px] font-bold leading-tight">{b.label}</p>
-                <p className="text-[10px] opacity-70">{b.min}–{b.max}%</p>
+                {/* Says outright which bands the month-end run writes to. A college that
+                    emails only its bottom two bands would otherwise read the other four
+                    counts as students who were written to and were not. */}
+                <p className="text-[10px] opacity-70">{b.min}–{b.max}%{b.emailTrigger ? "" : " · no email"}</p>
               </button>
             ))}
           </div>
@@ -10595,7 +10713,7 @@ function AdminAttendanceEmails({ store }) {
                       <td className="px-3 py-2"><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-400">{s.email}</p></td>
                       <td className="px-3 py-2 text-slate-500">{s.programme || "—"}</td>
                       <td className="px-3 py-2 text-right font-bold text-slate-700">{s.pct}%</td>
-                      <td className="px-3 py-2"><span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ${BAND_STYLE[s.bandKey] || ""}`}>{bandLabel(s.bandKey)}</span></td>
+                      <td className="px-3 py-2"><span style={bandTint(s.bandColour)} className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold">{bandLabel(s.bandKey)}</span>{s.bandKey && !s.bandTriggers && <span className="mt-0.5 block text-[10px] text-slate-400">not emailed automatically</span>}</td>
                       <td className="px-3 py-2 text-[11px] text-slate-500">{s.modules?.length ? s.modules.map(m => `${m.code} ${m.pct}%`).join(" · ") : "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <button onClick={() => sendOne(s)} disabled={sendingId === s.id || !s.email || !s.bandKey}
@@ -10615,7 +10733,10 @@ function AdminAttendanceEmails({ store }) {
           {runResult && runResult.ok && (
             <div className="mt-4 rounded-2xl bg-white p-4 text-sm ring-1 ring-slate-200">
               <p className="font-bold text-slate-700">Last send · {runResult.term || runResult.period}</p>
-              <p className="mt-1 text-slate-500">{runResult.sent} sent, {runResult.failed} failed, {runResult.skipped} skipped</p>
+              {/* `notTriggered` is shown apart from `skipped`: a college that emails only
+                  its bottom bands would otherwise read a healthy run as hundreds of
+                  students mysteriously passed over. */}
+              <p className="mt-1 text-slate-500">{runResult.sent} sent, {runResult.failed} failed, {runResult.skipped} skipped{runResult.notTriggered ? `, ${runResult.notTriggered} in bands that don't send email` : ""}</p>
               {runResult.errors?.length > 0 && <ul className="mt-2 list-disc pl-4 text-xs text-rose-600">{runResult.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
             </div>
           )}
@@ -10637,6 +10758,77 @@ function AdminAttendanceEmails({ store }) {
             <p className="mt-2 text-[11px] text-slate-400">Scoped to the current semester and sent to every enrolled student, using the template for their attendance band.</p>
           </div>
 
+          {/* ---- Attendance bands ------------------------------------------------
+              Every college monitors against its own thresholds, so this is where they
+              are set: how many bands, where each one starts, its colour, and — the part
+              that actually sends mail — whether landing in it triggers the automated
+              month-end letter. */}
+          <div className="mt-5 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-sm font-extrabold" style={{ color: NAVY_DARK }}>Attendance bands</p>
+              <p className="mt-0.5 max-w-lg text-[11px] leading-relaxed text-slate-400">
+                Each band runs from its start percentage up to the next band's. Only bands with <b>Sends email</b> ticked are written to by the monthly run — the others are for monitoring only. Up to 10 bands.
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button onClick={resetBands} disabled={saving} className="press rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-500 hover:bg-slate-50">Reset to defaults</button>
+              <button onClick={addBand} disabled={bandsDraft.length >= 10} className="press inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-40" style={{ background: NAVY }}><Plus size={13} /> Add band</button>
+            </div>
+          </div>
+
+          <div className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-200">
+            <table className="w-full text-sm">
+              <thead><tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-400">
+                <th className="px-2 py-2 w-14">Order</th>
+                <th className="px-2 py-2">Band name</th>
+                <th className="px-2 py-2 w-24">Starts at</th>
+                <th className="px-2 py-2 w-24">Range</th>
+                <th className="px-2 py-2 w-16">Colour</th>
+                <th className="px-2 py-2 w-24 text-center">Sends email</th>
+                <th className="px-2 py-2 w-10" />
+              </tr></thead>
+              <tbody>
+                {bandsDraft.map((b, i) => (
+                  <tr key={b.key || `new-${i}`} className="border-t border-slate-100">
+                    <td className="px-2 py-1.5">
+                      <div className="flex gap-0.5">
+                        <button onClick={() => moveBand(i, -1)} disabled={i === 0} title="Move up" className="press rounded border border-slate-200 p-0.5 text-slate-500 disabled:opacity-25"><ChevronDown size={13} className="rotate-180" /></button>
+                        <button onClick={() => moveBand(i, 1)} disabled={i === bandsDraft.length - 1} title="Move down" className="press rounded border border-slate-200 p-0.5 text-slate-500 disabled:opacity-25"><ChevronDown size={13} /></button>
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5"><input value={b.label} onChange={e => setBandField(i, { label: e.target.value })} maxLength={60} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-400" /></td>
+                    <td className="px-2 py-1.5">
+                      {/* The floor is fixed at 0: bands must cover a student attending nothing. */}
+                      {i === bandsDraft.length - 1
+                        ? <span className="inline-block px-2 py-1.5 text-xs font-bold text-slate-400">0% (floor)</span>
+                        : <input type="number" min={0} max={100} value={b.min} onChange={e => setBandMin(i, e.target.value)} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-400" />}
+                    </td>
+                    {/* Derived, never entered — see the ladder comment above. */}
+                    <td className="px-2 py-1.5"><span style={bandTint(b.colour)} className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold">{b.min}–{b.max}%</span></td>
+                    <td className="px-2 py-1.5"><input type="color" value={/^#[0-9a-f]{6}$/i.test(b.colour || "") ? b.colour : "#64748b"} onChange={e => setBandField(i, { colour: e.target.value })} className="h-8 w-10 cursor-pointer rounded border border-slate-200 bg-white p-0.5" /></td>
+                    <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={!!b.emailTrigger} onChange={e => setBandField(i, { emailTrigger: e.target.checked })} className="h-4 w-4 accent-blue-600" /></td>
+                    <td className="px-2 py-1.5"><button onClick={() => removeBand(i)} disabled={bandsDraft.length <= 1} title="Remove this band" className="press rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-25"><Trash2 size={14} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Live preview — the question an administrator is actually asking while moving
+              a threshold is "so where does a student on 68% end up?". Answered here with
+              the same top-down rule the server sends by, decimals included. */}
+          <div className="mt-2 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">A student on</span>
+            <input type="number" min={0} max={100} step="0.1" value={previewPct} onChange={e => setPreviewPct(e.target.value)} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-400" />
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">% lands in</span>
+            {previewBand
+              ? <>
+                  <span style={bandTint(previewBand.colour)} className="rounded-full px-2.5 py-1 text-xs font-bold">{previewBand.label} · {previewBand.min}–{previewBand.max}%</span>
+                  <span className="text-[11px] font-semibold text-slate-500">{previewBand.emailTrigger ? "and is emailed automatically" : "and is not emailed automatically"}</span>
+                </>
+              : <span className="text-xs font-bold text-rose-600">no band — this student would be skipped entirely</span>}
+          </div>
+
           <p className="mb-2 mt-5 text-sm font-extrabold" style={{ color: NAVY_DARK }}>Signature &amp; contacts</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {ATTENDANCE_VALUE_FIELDS.map(f => (
@@ -10646,13 +10838,25 @@ function AdminAttendanceEmails({ store }) {
 
           <p className="mb-2 mt-5 text-sm font-extrabold" style={{ color: NAVY_DARK }}>Band templates</p>
           <p className="mb-3 text-[11px] leading-relaxed text-slate-400">Placeholders: <b>{"{firstName}"}</b> <b>{"{pct}"}</b> <b>{"{period}"}</b> <b>{"{programme}"}</b> <b>{"{missedRate}"}</b> <b>{"{modules}"}</b> plus the signature/contact fields above. <b>{"{modules}"}</b> becomes the per-module table.</p>
+          {/* Driven by the EDITED band list, not the loaded one: a band added a moment
+              ago needs its letter now, and a band just deleted must stop asking for one.
+              The headcount still comes from the loaded data, and is simply absent for a
+              band the server has not classified anyone against yet. */}
           <div className="flex flex-col gap-3">
-            {bandsArr.map(b => {
+            {bandsDraft.map((draft, di) => {
+              const loaded = bandsArr.find(x => x.key === draft.key);
+              const b = { ...draft, count: loaded ? loaded.count : null };
               const sample = students.find(s => s.bandKey === b.key);
               return (
-                <details key={b.key} className="rounded-xl ring-1 ring-slate-200">
-                  <summary className="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700"><span className={`rounded-full px-2 py-0.5 text-[10px] ring-1 ${BAND_STYLE[b.key]}`}>{b.min}–{b.max}%</span> {b.label} <span className="ml-auto text-[11px] font-normal text-slate-400">{b.count} student{b.count === 1 ? "" : "s"}</span></summary>
+                <details key={b.key || `new-${di}`} className="rounded-xl ring-1 ring-slate-200">
+                  <summary className="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700"><span style={bandTint(b.colour)} className="rounded-full px-2 py-0.5 text-[10px]">{b.min}–{b.max}%</span> {b.label} <span className="ml-auto text-[11px] font-normal text-slate-400">{b.count == null ? "" : `${b.count} student${b.count === 1 ? "" : "s"}`}</span></summary>
                   <div className="border-t border-slate-100 p-4">
+                    {/* A band added in this session has no key yet — the server derives one
+                        from its label on save. Editing a letter before then would file it
+                        under a key that is about to change, so the letter would be lost. */}
+                    {!b.key ? (
+                      <p className="rounded-lg bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-700 ring-1 ring-amber-200">Save these settings first, then come back to write this band's letter. It starts from a neutral template you can edit.</p>
+                    ) : (<>
                     <Field label="Subject"><input value={config?.templates?.[b.key]?.subject ?? ""} onChange={e => setTemplate(b.key, "subject", e.target.value)} className={inputCls} /></Field>
                     <div className="mt-3"><Field label="Body"><textarea rows={10} value={config?.templates?.[b.key]?.body ?? ""} onChange={e => setTemplate(b.key, "body", e.target.value)} className={`${inputCls} resize-y font-mono text-xs`} /></Field></div>
                     {sample && (
@@ -10662,6 +10866,7 @@ function AdminAttendanceEmails({ store }) {
                         <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{previewAttendance(config?.templates?.[b.key]?.body, config?.values, sample, data?.period)}</p>
                       </div>
                     )}
+                    </>)}
                   </div>
                 </details>
               );

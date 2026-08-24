@@ -9,9 +9,11 @@
 // matches the register views, the student's own app and the executive dashboard —
 // one student, one attendance number, everywhere.
 //
-// The attendance bands (which % lands in which template) and the default templates
-// live in ./attendanceBands, which is loaded here and used as the defensive
-// fallback whenever the caller passes a partial config.
+// Which % lands in which template is a PER-COLLEGE decision: the bands are resolved
+// through ./attendanceBandConfig, which serves that institution's own ladder and
+// falls back to the defaults in ./attendanceBands for a college that has set none.
+// ./attendanceBands also holds the default templates, used as the defensive fallback
+// whenever the caller passes a partial config.
 
 const prisma = require("./db");
 // Raw SQL sits outside the isolation extension (which hooks $allModels only), so the
@@ -25,6 +27,9 @@ function tenantForSql() {
 const { summariseCounts } = require("./attendance");
 const email = require("./email");
 const bands = require("./attendanceBands");
+// This college's OWN bands — the code defaults are only what an unconfigured college
+// resolves to. See attendanceBandConfig.js.
+const bandConfig = require("./attendanceBandConfig");
 const mailFrom = require("./mailFrom");
 const mailAssets = require("./mailAssets");
 const branding = require("./branding");
@@ -60,7 +65,13 @@ const monthYearLabel = (d = new Date()) => `${MONTHS[d.getMonth()]} ${d.getFullY
 
 // Per-band visual theme for the HTML email — the whole email (header, hero, bullets,
 // module table, signature) is tinted to the student's band, so a top attender gets a
-// green, celebratory email and a high-risk one a serious, red email. Keyed by band key.
+// green, celebratory email and a high-risk one a serious, red email.
+//
+// These six are PRESETS for the built-in band keys, not the only themes possible: a
+// college can invent bands, and every band carries its own colour, so themeForBand()
+// below derives the whole palette from that colour for anything not listed here. The
+// presets survive because they also carry a hand-written `note` line, which is prose
+// about that specific band and cannot be computed from a hex value.
 const BAND_THEME = {
   excellent: { grad: ["#0f7a4f", "#15803d"], accent: "#15803d", bar: "#22c55e", soft: "#ecfdf5", border: "#bbf7d0", note: "🌟 You're among the most consistent students in your cohort — keep it up!" },
   great:     { grad: ["#0e7490", "#0f766e"], accent: "#0f766e", bar: "#14b8a6", soft: "#ecfeff", border: "#a5f3fc", note: "👏 A strong, consistent record — you're almost at the top band." },
@@ -70,6 +81,56 @@ const BAND_THEME = {
   highrisk:  { grad: ["#b91c1c", "#9f1239"], accent: "#b91c1c", bar: "#ef4444", soft: "#fef2f2", border: "#fecaca", note: "🚨 Urgent: your place on the programme is at risk — please respond." },
 };
 const DEFAULT_THEME = BAND_THEME.good;
+
+// --- deriving a theme from a band's own colour ---------------------------------
+//
+// A college's own band ("Borderline", "Amber", a hard 80% visa line) has a colour and
+// nothing else. Rather than fall back to the blue "good" theme — which would send a
+// college's most serious letter looking identical to its most encouraging one — the
+// six tints the email needs are computed from that one colour: a darker head for the
+// gradient, a lighter bar, and two very pale mixes for the bullet card.
+
+const clamp255 = (n) => Math.max(0, Math.min(255, Math.round(n)));
+const toHex = (r, g, b) => "#" + [r, g, b].map((v) => clamp255(v).toString(16).padStart(2, "0")).join("");
+
+// "#abc" and "#aabbcc" both parse; anything else returns null and the caller keeps
+// the default theme rather than emitting a broken colour into a style attribute.
+function hexToRgb(hex) {
+  const s = String(hex || "").trim().replace(/^#/, "");
+  const full = s.length === 3 ? s.split("").map((c) => c + c).join("") : s;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+}
+// Mix towards white (t=1 is white) or towards black (t negative).
+function mix(rgb, t) {
+  const target = t >= 0 ? 255 : 0;
+  const amount = Math.abs(t);
+  return toHex(...rgb.map((c) => c + (target - c) * amount));
+}
+
+/**
+ * The email palette for one band. A built-in band whose colour is still the built-in
+ * colour keeps its preset verbatim — that is what makes "a college that configured
+ * nothing looks exactly as it did" literally true, byte for byte. Everything else is
+ * derived from the band's own colour, keeping the preset's note line if there is one.
+ */
+function themeForBand(band) {
+  const b = band || {};
+  const preset = BAND_THEME[b.key];
+  if (preset && (!b.colour || String(b.colour).toLowerCase() === preset.accent)) return preset;
+  const rgb = hexToRgb(b.colour);
+  if (!rgb) return preset || DEFAULT_THEME;
+  return {
+    grad: [mix(rgb, -0.22), mix(rgb, -0.02)],
+    accent: toHex(...rgb),
+    bar: mix(rgb, 0.22),
+    soft: mix(rgb, 0.94),
+    border: mix(rgb, 0.74),
+    // Prose about a specific band cannot be derived. A college's own band simply has
+    // none, and htmlShell leaves the note card out rather than printing an empty one.
+    note: preset ? preset.note : "",
+  };
+}
 
 // The three-colour foreground palette for the per-module percentage cell:
 // green >= 60, amber 40–59, red < 40.
@@ -169,8 +230,12 @@ function termFromRange(from, to) {
 // this term, so a figure can't be dragged by a unit the student has left or that isn't part
 // of this term. A student with no marks this term is still returned, but with pct null,
 // modules [] and bandKey null, so the caller can simply skip them.
-async function computeCurrentTermAttendance(term) {
+async function computeCurrentTermAttendance(term, bandList) {
   const semester = term; // same shape { start, end, name }; term.unitIds may restrict units
+  // THIS college's bands. Passed in by a caller that already resolved them (the route
+  // resolves them once to label its headcounts), otherwise looked up here — never the
+  // code defaults, unless that is genuinely what this college uses.
+  const tenantBands = Array.isArray(bandList) && bandList.length ? bandList : await bandConfig.get();
   const unitFilter = term.unitIds ? new Set(term.unitIds) : null;
   // Active students, with their programme (cohort → course) and current enrolments.
   const students = await prisma.student.findMany({
@@ -231,7 +296,7 @@ async function computeCurrentTermAttendance(term) {
 
     const overall = summariseCounts(acc.P, acc.L, acc.E, acc.A);
     const pct = overall.pct; // 0..100 (one decimal) or null when no marks this term
-    const band = pct == null ? null : bands.bandForPct(pct);
+    const band = pct == null ? null : bands.bandForPct(pct, tenantBands);
 
     return {
       id: s.id,
@@ -245,6 +310,14 @@ async function computeCurrentTermAttendance(term) {
       pct,
       bandKey: band ? band.key : null,
       bandLabel: band ? band.label : null,
+      // Carried on the student so the admin table and the email can colour themselves
+      // without a second lookup — and, more importantly, so neither has to keep its
+      // own map from band key to colour. A college inventing a band would otherwise
+      // get a grey, unstyled row on one screen and a themed email on another.
+      bandColour: band ? band.colour : null,
+      // Whether landing here sends the automated letter. Surfaced per student so the
+      // table can say plainly which students the month-end run will actually email.
+      bandTriggers: band ? !!band.emailTrigger : false,
       modules,
     };
   });
@@ -252,6 +325,9 @@ async function computeCurrentTermAttendance(term) {
   return {
     term: { name: term.name, start: term.start, end: term.end },
     period: term.name || monthYearLabel(),
+    // The bands these figures were classified against, returned WITH the figures so a
+    // caller cannot pair one college's percentages with another list's labels.
+    bands: tenantBands,
     students: outStudents,
   };
 }
@@ -361,8 +437,11 @@ function htmlShell(bodyHtml, meta) {
           <td style="height:12px;background:#e9edf4;border-radius:999px;padding:0">
             <table role="presentation" width="${barW}%" cellpadding="0" cellspacing="0"><tr><td style="height:12px;background:${t.bar};border-radius:999px;font-size:0;line-height:0">&nbsp;</td></tr></table>
           </td></tr></table>
-      </div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 20px"><tr><td style="background:${t.soft};border:1px solid ${t.border};border-radius:12px;padding:12px 16px;font-size:13px;line-height:1.5;color:${t.accent};text-align:center">${esc(t.note)}</td></tr></table>`;
+      </div>` +
+      // Only when the band HAS a note. A college's own band has none (see
+      // themeForBand), and an empty tinted card reads as a rendering fault.
+      (t.note ? `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0 20px"><tr><td style="background:${t.soft};border:1px solid ${t.border};border-radius:12px;padding:12px 16px;font-size:13px;line-height:1.5;color:${t.accent};text-align:center">${esc(t.note)}</td></tr></table>` : "");
   // Empty for a college that has filled in neither an address nor a contact detail; the
   // paragraph is then left out rather than printed as a bare separator.
   const footerHtml = mailAssets.footerHtml(brand);
@@ -401,8 +480,12 @@ function buildEmailFor(student, config = {}, opts = {}) {
   // No band → no attendance figure this term → nothing to send.
   if (!student || student.bandKey == null) return null;
 
-  const defTemplates = bands.DEFAULT_TEMPLATES || {};
-  const template = (config.templates && config.templates[student.bandKey]) || defTemplates[student.bandKey];
+  // The college's saved letter for this band, else the starting letter for that band
+  // key — the built-in one for a built-in band, the neutral generic one for a band the
+  // college invented. templateForKey never returns undefined, so a new band cannot
+  // silently swallow every student in it (a null template here means "skipped", with
+  // nothing anywhere to say why).
+  const template = (config.templates && config.templates[student.bandKey]) || bands.templateForKey(student.bandKey);
   if (!template) return null; // no template defined for this band
 
   // Institution tokens first, then the per-student tokens (which win on any clash).
@@ -441,7 +524,7 @@ function buildEmailFor(student, config = {}, opts = {}) {
   // --- HTML body ---
   // Render the prose before {modules} as structured HTML, drop in the module table, then
   // render the sign-off after {modules} as a signature block — all tinted to the band.
-  const theme = BAND_THEME[student.bandKey] || DEFAULT_THEME;
+  const theme = themeForBand({ key: student.bandKey, colour: student.bandColour });
   const slot = bodyTemplate.indexOf("{modules}");
   const beforeRaw = slot >= 0 ? bodyTemplate.slice(0, slot) : bodyTemplate;
   const afterRaw = slot >= 0 ? bodyTemplate.slice(slot + "{modules}".length) : "";
@@ -481,6 +564,11 @@ async function sendToStudents(students, config = {}, opts = {}) {
   const list = students || [];
   const result = {
     sent: 0, failed: 0, skipped: 0, stubbed: 0, noAddress: 0,
+    // Students whose band exists and is populated, but which this college has told us
+    // NOT to email. Counted apart from `skipped` for the same reason `stubbed` is: a
+    // college that only emails its bottom two bands would otherwise read a run as
+    // "700 skipped" and reasonably conclude the run was broken.
+    notTriggered: 0,
     total: list.length, errors: [],
     // Reported even on a run with nothing to send, so "is email switched on?" is
     // answerable from the response on its own.
@@ -500,6 +588,11 @@ async function sendToStudents(students, config = {}, opts = {}) {
     // but counted separately too, so "nobody got one" can be told from "email is off".
     if (!student.email) { result.skipped++; result.noAddress++; continue; }
     if (student.bandKey == null) { result.skipped++; continue; }
+    // This college's band says no letter. Not every band is a letter: a college may
+    // band its whole cohort for the dashboard and only write to the two bands that
+    // need intervention. Emailing a well-attending student a monthly note they never
+    // asked for is the failure this flag exists to prevent.
+    if (!student.bandTriggers) { result.notTriggered++; continue; }
 
     const built = buildEmailFor(student, withBrand, opts);
     if (!built) { result.skipped++; continue; }

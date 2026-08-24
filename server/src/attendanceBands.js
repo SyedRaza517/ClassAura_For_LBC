@@ -3,15 +3,24 @@
 /**
  * attendanceBands.js
  *
- * Pure CommonJS module (no external dependencies) for the automated
- * student-attendance email system.
+ * Pure CommonJS module (no external dependencies, and deliberately no Prisma) for
+ * the automated student-attendance email system.
  *
  * It defines:
- *   - BANDS:             the attendance percentage bands (best -> worst)
- *   - bandForPct:        resolve a percentage to its band
+ *   - DEFAULT_BANDS:     the attendance percentage bands EVERY college starts with
+ *   - bandForPct:        resolve a percentage to its band, against any band list
+ *   - normaliseBands:    validate + tidy a college's own band list before storing it
  *   - DEFAULT_TEMPLATES: default subject/body email templates per band
+ *   - GENERIC_TEMPLATE:  the letter a college's OWN, newly-invented band starts with
  *   - DEFAULT_VALUES:    institution/tutor placeholder values (admin editable)
  *   - fillTemplate:      substitute {token} placeholders with real values
+ *
+ * Bands are PER COLLEGE. Every college monitors attendance against its own
+ * thresholds, so the list below is only the starting point: the stored, per-tenant
+ * list lives in attendanceBandConfig.js, which resolves to exactly this array for a
+ * college that has configured nothing. That is why the six bands here are ordinary
+ * DEFAULTS and not a hardcoded special case — a college that never opens the band
+ * editor is served the same array through the same code path as one that has.
  *
  * Email bodies are PLAIN TEXT. Line breaks use "\n"; paragraphs are
  * separated by "\n\n"; bullet lines start with "• ".
@@ -28,26 +37,173 @@
  */
 
 /* -------------------------------------------------------------------------- */
-/* 1) Attendance bands, ordered best -> worst. min/max are inclusive (0-100). */
+/* 1) The DEFAULT attendance bands, ordered best -> worst.                    */
+/*                                                                            */
+/*    A band is: a stable `key`, a `label`, an inclusive whole-number window  */
+/*    [min, max] in 0-100, a `colour` (hex — it tints the email and the admin */
+/*    table), and `emailTrigger`, which says whether landing in this band     */
+/*    causes the automated month-end letter to be sent.                       */
+/*                                                                            */
+/*    `key` is what a saved email template is filed under, so it must survive */
+/*    a college renaming a band. Rename "Risk Student" to "Amber" and the     */
+/*    letter that college spent an afternoon writing is still attached to it. */
+/*                                                                            */
+/*    Every default band triggers an email, because that is what the system   */
+/*    did before bands were configurable: today's behaviour has to be exactly */
+/*    what a college that configures nothing still gets.                      */
 /* -------------------------------------------------------------------------- */
 
-const BANDS = [
-  { key: "excellent", label: "Excellent Attendance", min: 85, max: 100 },
-  { key: "great",     label: "Great Attendance",     min: 70, max: 84  },
-  { key: "good",      label: "Good Attendance",       min: 60, max: 69  },
-  { key: "average",   label: "Average / Monitor",     min: 50, max: 59  },
-  { key: "risk",      label: "Risk Student",          min: 40, max: 49  },
-  { key: "highrisk",  label: "High Risk",             min: 0,  max: 39  },
+const MAX_BANDS = 10;
+
+const DEFAULT_BANDS = [
+  { key: "excellent", label: "Excellent Attendance", min: 85, max: 100, colour: "#15803d", emailTrigger: true },
+  { key: "great",     label: "Great Attendance",     min: 70, max: 84,  colour: "#0f766e", emailTrigger: true },
+  { key: "good",      label: "Good Attendance",      min: 60, max: 69,  colour: "#2563eb", emailTrigger: true },
+  { key: "average",   label: "Average / Monitor",    min: 50, max: 59,  colour: "#b45309", emailTrigger: true },
+  { key: "risk",      label: "Risk Student",         min: 40, max: 49,  colour: "#c2410c", emailTrigger: true },
+  { key: "highrisk",  label: "High Risk",            min: 0,  max: 39,  colour: "#b91c1c", emailTrigger: true },
 ];
 
 /* -------------------------------------------------------------------------- */
-/* 2) Resolve a percentage (0..100) to its band.                              */
-/*    Returns null when pct is null/undefined (or falls outside every band).  */
+/* 2) Resolve a percentage to its band, against a college's own band list.    */
 /* -------------------------------------------------------------------------- */
 
-function bandForPct(pct) {
+/**
+ * The band a percentage falls in. `list` defaults to the built-in bands so a caller
+ * with no tenant context still classifies exactly as before.
+ *
+ * MATCHED ON THE LOWER BOUND ONLY, walking best -> worst. That is not a shortcut,
+ * it is a bug fix. Attendance percentages carry ONE DECIMAL — summariseCounts()
+ * returns Math.round(x * 1000) / 10 — so a student on 69.5% satisfied NEITHER
+ * `>= 70 && <= 84` NOR `>= 60 && <= 69` under the old inclusive test. They came back
+ * with bandKey null, which every caller reads as "no attendance data": no band on
+ * the admin table, and silently skipped by the month-end send. A student who is
+ * halfway between two bands is exactly the student an attendance letter is for.
+ *
+ * normaliseBands guarantees the list is sorted, gap-free and starts at 0, so "the
+ * first band whose lower bound this figure reaches" is total: every value in 0..100
+ * lands in exactly one band, decimals included. A band's `max` is therefore purely
+ * what a human is shown; the boundary that decides is the next band's `min`.
+ */
+function bandForPct(pct, list) {
   if (pct == null) return null; // == also catches undefined
-  return BANDS.find((b) => pct >= b.min && pct <= b.max) || null;
+  const bands = Array.isArray(list) && list.length ? list : DEFAULT_BANDS;
+  return bands.find((b) => pct >= b.min) || null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 2b) Validating a college's own band list.                                  */
+/* -------------------------------------------------------------------------- */
+
+// #abc or #aabbcc, nothing else. Same rule as branding.isHex, deliberately
+// re-stated here rather than imported: branding.js pulls in Prisma, and this module
+// is the one piece of the attendance system that stays dependency-free so it can be
+// required from a script or a test without a database.
+const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+const isHexColour = (v) => typeof v === "string" && HEX.test(v.trim());
+
+// A label -> a key: lowercase, alphanumerics and dashes, capped. Only used for a
+// band the college has just invented; an existing band always sends its key back so
+// its saved template follows it through a rename.
+function slugify(label) {
+  return String(label || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+}
+
+const isWholePct = (n) => Number.isInteger(n) && n >= 0 && n <= 100;
+
+/**
+ * Validate and tidy a proposed band list. Returns { ok: true, bands } or
+ * { ok: false, error }, where `error` NAMES the offending band and says what a
+ * student would experience — an administrator cannot act on "invalid".
+ *
+ * The rules exist because a bad band list is not a cosmetic problem: bands decide
+ * who receives a letter warning them their place is at risk.
+ *   - a gap    -> a student in it is classified as having no attendance data and is
+ *                 skipped by the send entirely. Silent, and worst at the low end.
+ *   - an overlap -> which of two letters they get depends on array order, so the
+ *                 same student can move band because someone dragged a row.
+ *   - not reaching 0 or 100 -> the same silent skip, for the two figures most
+ *                 likely to matter (a student attending nothing, or everything).
+ */
+function normaliseBands(input) {
+  if (!Array.isArray(input)) {
+    return { ok: false, error: "Attendance bands must be sent as a list." };
+  }
+  if (input.length === 0) {
+    return { ok: false, error: "At least one attendance band is required — without one, no student can be classified or emailed." };
+  }
+  if (input.length > MAX_BANDS) {
+    return { ok: false, error: `A maximum of ${MAX_BANDS} attendance bands is allowed; you sent ${input.length}. Each band needs its own letter, and past ten nobody can keep them distinct.` };
+  }
+
+  const cleaned = [];
+  const seenKeys = new Set();
+
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] || {};
+    const position = `Band ${i + 1}`;
+
+    const label = typeof raw.label === "string" ? raw.label.trim() : "";
+    if (!label) return { ok: false, error: `${position} has no name. Every band needs a label — it is what students see at the top of their email.` };
+    if (label.length > 60) return { ok: false, error: `${position} ("${label.slice(0, 20)}…") has a name of ${label.length} characters; the limit is 60.` };
+
+    // Numbers arrive from a form, so "85" has to mean 85. Number("") is 0, which
+    // would silently turn a blank box into a valid bound — so blanks are rejected.
+    const min = raw.min === "" || raw.min == null ? NaN : Number(raw.min);
+    const max = raw.max === "" || raw.max == null ? NaN : Number(raw.max);
+    if (!isWholePct(min)) return { ok: false, error: `"${label}" has a lower bound of ${raw.min == null || raw.min === "" ? "(blank)" : raw.min}. Bounds must be whole numbers between 0 and 100.` };
+    if (!isWholePct(max)) return { ok: false, error: `"${label}" has an upper bound of ${raw.max == null || raw.max === "" ? "(blank)" : raw.max}. Bounds must be whole numbers between 0 and 100.` };
+    if (min > max) return { ok: false, error: `"${label}" runs from ${min}% down to ${max}% — its lower bound is above its upper bound.` };
+
+    const colour = typeof raw.colour === "string" ? raw.colour.trim().toLowerCase() : "";
+    if (!colour) return { ok: false, error: `"${label}" has no colour. Pick one — it tints that band's email and its row in the table.` };
+    if (!isHexColour(colour)) return { ok: false, error: `"${label}" has the colour "${raw.colour}". Use a hex colour such as #15803d.` };
+
+    // A key the caller supplied is kept as-is (that is how a template survives a
+    // rename); anything else is derived from the label and de-duplicated.
+    let key = typeof raw.key === "string" ? slugify(raw.key) : "";
+    if (!key) key = slugify(label);
+    if (!key) key = `band-${i + 1}`; // a label of pure punctuation still needs a key
+    if (seenKeys.has(key)) {
+      let n = 2;
+      while (seenKeys.has(`${key}-${n}`)) n++;
+      key = `${key}-${n}`;
+    }
+    seenKeys.add(key);
+
+    cleaned.push({ key, label, min, max, colour, emailTrigger: !!raw.emailTrigger });
+  }
+
+  // Sorted best -> worst here rather than trusting the caller: the ladder's order is
+  // a property of the bounds, and bandForPct walks the list top-down. A list that
+  // arrived in the wrong order would otherwise classify against the wrong band.
+  cleaned.sort((a, b) => b.min - a.min);
+
+  const lowest = cleaned[cleaned.length - 1];
+  const highest = cleaned[0];
+  if (lowest.min !== 0) {
+    return { ok: false, error: `The lowest band, "${lowest.label}", starts at ${lowest.min}%. Bands must cover 0% — a student on ${Math.max(0, lowest.min - 1)}% would fall in no band at all and be skipped by the send.` };
+  }
+  if (highest.max !== 100) {
+    return { ok: false, error: `The highest band, "${highest.label}", stops at ${highest.max}%. Bands must cover 100% — a student with full attendance would fall in no band at all.` };
+  }
+
+  for (let i = 0; i < cleaned.length - 1; i++) {
+    const upper = cleaned[i];       // the better band
+    const lower = cleaned[i + 1];   // the one directly below it
+    if (lower.max + 1 < upper.min) {
+      return { ok: false, error: `There is a gap between "${lower.label}" (${lower.min}–${lower.max}%) and "${upper.label}" (${upper.min}–${upper.max}%). A student on ${lower.max + 1}% would fall in no band and receive nothing.` };
+    }
+    if (lower.max >= upper.min) {
+      return { ok: false, error: `"${lower.label}" (${lower.min}–${lower.max}%) overlaps "${upper.label}" (${upper.min}–${upper.max}%). A student on ${upper.min}% would match two bands, and which letter they got would depend on the order of the list.` };
+    }
+  }
+
+  return { ok: true, bands: cleaned };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -280,13 +436,61 @@ Regards,
 };
 
 /* -------------------------------------------------------------------------- */
+/* 6) The starting letter for a band a COLLEGE invented.                      */
+/*                                                                            */
+/*    DEFAULT_TEMPLATES above is keyed by the six built-in band keys. A band a */
+/*    college adds itself ("Borderline", "Amber") has no entry there, and an   */
+/*    empty template is not a neutral outcome: buildEmailFor returns null for  */
+/*    a band with no template, so every student in that band is counted as     */
+/*    "skipped" and quietly receives nothing. The college would see a new band */
+/*    filling up on the dashboard and no letters going out, with no error      */
+/*    anywhere to explain it.                                                  */
+/*                                                                            */
+/*    So a new band starts with a real, sendable, deliberately neutral letter  */
+/*    that states the facts and invites a conversation. It says nothing that   */
+/*    is only true of a good record or only true of a poor one, because the    */
+/*    same text is the starting point for a band at either end of the ladder.  */
+/* -------------------------------------------------------------------------- */
+
+const GENERIC_TEMPLATE = {
+  subject: "Your attendance on {programme} — {period}",
+  body: `Dear {firstName},
+
+I am writing with an update on your attendance for {programme}.
+
+Your attendance for {period} currently stands at {pct}%.
+
+If there is anything affecting your ability to attend — timetabling, travel, work, health, or anything personal — please do let me know. It is much easier to look at now than after an assessment has been affected.
+
+You can review the materials for any sessions you have missed on {vle}, and you are welcome to come to {officeHours} if you would like to talk anything through.
+
+{modules}
+
+Kind regards,
+{tutorName}
+{jobTitle}
+{department}
+{institution}`,
+};
+
+/** The starting template for a band key: the built-in letter, or the generic one. */
+function templateForKey(key) {
+  return DEFAULT_TEMPLATES[key] || GENERIC_TEMPLATE;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Exports                                                                    */
 /* -------------------------------------------------------------------------- */
 
 module.exports = {
-  BANDS,
+  DEFAULT_BANDS,
+  MAX_BANDS,
   bandForPct,
+  normaliseBands,
+  isHexColour,
   DEFAULT_TEMPLATES,
+  GENERIC_TEMPLATE,
+  templateForKey,
   DEFAULT_VALUES,
   fillTemplate,
 };
