@@ -9,7 +9,7 @@ import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
   LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound, LifeBuoy,
-  ClipboardList, Menu as MenuIcon,
+  ClipboardList, Menu as MenuIcon, Copy, Check, Link2,
 } from "lucide-react";
 
 // Black and white, deliberately and completely.
@@ -881,6 +881,59 @@ function RescueCollege({ tenant, onClose }) {
   );
 }
 
+
+/* ------------------------------------------------------- a college's link ---- */
+
+// Where a college signs in.
+//
+// Several institutions share one hostname, so a bare link resolves to whichever
+// institution the server treats as its default — and the college is told "invalid email
+// or password" when their password was perfectly right and only the college was missing.
+// That is the worst message at the worst moment, so the address is never assumed: it is
+// generated here, shown wherever an operator might need to send it, and copyable in one
+// click.
+//
+// Built from window.location, so it is correct on staging, on production and on a custom
+// domain without anything being configured per environment. If subdomain routing is ever
+// switched on (TENANT_BASE_DOMAIN), this is the one place that has to change.
+export function tenantSignInUrl(slug) {
+  if (typeof window === "undefined" || !slug) return "";
+  return `${window.location.origin}${window.location.pathname}?tenant=${encodeURIComponent(slug)}`;
+}
+
+// Copy-to-clipboard that admits when it cannot. The clipboard API is blocked in some
+// embedded and insecure contexts, and a button that silently does nothing is worse than
+// one that says so — the address is on screen either way, so it can always be copied by
+// hand.
+function CopyLink({ url, label = "Copy link", compact = false }) {
+  const [state, setState] = useState("idle"); // idle | done | failed
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setState("done");
+    } catch {
+      setState("failed");
+    }
+    setTimeout(() => setState("idle"), 2200);
+  };
+  const text = state === "done" ? "Copied" : state === "failed" ? "Copy by hand" : label;
+  const Icon = state === "done" ? Check : Copy;
+  if (compact) {
+    return (
+      <button type="button" onClick={copy} title={url}
+        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700 ring-1 ring-neutral-300 transition hover:bg-neutral-100">
+        <Icon size={11} /> {text}
+      </button>
+    );
+  }
+  return (
+    <button type="button" onClick={copy}
+      className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-neutral-800 ring-1 ring-neutral-400 transition hover:bg-white">
+      <Icon size={13} /> {text}
+    </button>
+  );
+}
+
 /* ------------------------------------------------------- registrations ------ */
 
 // Organisations asking to join, and the two decisions an operator makes about them.
@@ -983,6 +1036,9 @@ function RegistrationsPage({ onError, onNotice }) {
                     {r.requestedSlug ? <> · wants <span className="font-mono">{r.requestedSlug}</span></> : null}
                   </p>
                 </div>
+                {r.status === "activated" && r.tenantSlug && (
+                  <CopyLink url={tenantSignInUrl(r.tenantSlug)} label="Copy their sign-in link" compact />
+                )}
                 {r.status === "approved" && r.accessCodeHint && (
                   <span className="text-[11px] text-neutral-600">
                     code ends <span className="font-mono font-bold">{r.accessCodeHint}</span>
@@ -1076,6 +1132,19 @@ function RegistrationsPage({ onError, onNotice }) {
               They redeem it at <span className="font-mono">?register</span> on the public site, choose their own
               password, and their institution is created at that moment.
             </p>
+
+            {/* Sent together, deliberately. The code and the address are useless apart:
+                a code with no address leaves them on the default institution being told
+                their password is wrong. */}
+            <div className="rounded-lg bg-neutral-100 p-3 ring-1 ring-neutral-300">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-neutral-600">Send this with the code</p>
+              <p className="mt-1 break-all font-mono text-[12px] text-neutral-800">
+                {`${window.location.origin}${window.location.pathname}?register`}
+              </p>
+              <div className="mt-2">
+                <CopyLink url={`${window.location.origin}${window.location.pathname}?register`} label="Copy registration link" />
+              </div>
+            </div>
             <Btn onClick={() => setIssued(null)}>Done</Btn>
           </div>
         )}
@@ -1202,6 +1271,17 @@ export default function PlatformDashboard({ onBack }) {
                   <td className="px-4 py-3">
                     <p className="font-semibold text-neutral-900">{t.name}</p>
                     <p className="font-mono text-[11px] text-neutral-500">{t.slug}</p>
+                    {/* The address to send them. Shown on the row rather than hidden behind
+                        a dialog, because "what is their link" is the question an operator
+                        answers most often and it should never need a click. */}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <Link2 size={11} className="flex-none text-neutral-400" />
+                      <a href={tenantSignInUrl(t.slug)} target="_blank" rel="noopener noreferrer"
+                        className="max-w-[240px] truncate font-mono text-[11px] text-neutral-600 underline underline-offset-2 hover:text-black">
+                        {tenantSignInUrl(t.slug).replace(/^https?:\/\//, "")}
+                      </a>
+                      <CopyLink url={tenantSignInUrl(t.slug)} compact />
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${t.active ? "bg-black text-white" : "bg-neutral-200 text-neutral-700"}`}>

@@ -247,6 +247,10 @@ const present = (r) => ({
   codeAttempts: r.codeAttempts,
   reviewedAt: r.reviewedAt, reviewedBy: r.reviewedBy, decisionNote: r.decisionNote,
   tenantId: r.tenantId,
+  // Attached by the listing below, so an operator can copy the college's own
+  // sign-in link straight from the queue. Resolved rather than stored: a tenant
+  // can be renamed, and a stale copy of its address would send somebody nowhere.
+  tenantSlug: r.tenantSlug || null,
 });
 
 // GET /api/registrations — the review queue.
@@ -258,8 +262,17 @@ router.get("/", requirePlatformAdmin, async (req, res) => {
     take: 200,
   }));
   const counts = await crossTenant(() => prisma.collegeRegistration.groupBy({ by: ["status"], _count: { _all: true } }));
+
+  // One query for every institution referenced, rather than one per row.
+  const ids = [...new Set(rows.map((r) => r.tenantId).filter(Boolean))];
+  const slugs = ids.length
+    ? Object.fromEntries((await crossTenant(() => prisma.tenant.findMany({
+        where: { id: { in: ids } }, select: { id: true, slug: true },
+      }))).map((t) => [t.id, t.slug]))
+    : {};
+
   res.json({
-    registrations: rows.map(present),
+    registrations: rows.map((r) => present({ ...r, tenantSlug: r.tenantId ? slugs[r.tenantId] || null : null })),
     counts: Object.fromEntries(counts.map((c) => [c.status, c._count._all])),
   });
 });
