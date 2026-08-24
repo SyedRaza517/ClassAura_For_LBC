@@ -99,10 +99,12 @@ export default function BrandingSettings() {
   const set = (k, v) => {
     setForm((s) => {
       const next = { ...s, [k]: v };
-      if (k === "primaryColor" || k === "accentColor") {
+      if (["primaryColor", "accentColor", "buttonColor", "buttonTextColor"].includes(k)) {
         applyBranding({
           primaryColor: next.primaryColor || state?.resolved?.primaryColor,
           accentColor: next.accentColor || state?.resolved?.accentColor,
+          buttonColor: next.buttonColor || state?.resolved?.buttonColor,
+          buttonTextColor: next.buttonTextColor || state?.resolved?.buttonTextColor,
         });
       }
       return next;
@@ -140,6 +142,8 @@ export default function BrandingSettings() {
       for (const f of [...TEXT_FIELDS, ...LETTER_FIELDS]) body[f.key] = form[f.key] ?? "";
       body.primaryColor = form.primaryColor ?? "";
       body.accentColor = form.accentColor ?? "";
+      body.buttonColor = form.buttonColor ?? "";
+      body.buttonTextColor = form.buttonTextColor ?? "";
       if (form.logoDataUri !== undefined) body.logoDataUri = form.logoDataUri ?? "";
       const r = await api.saveBranding(body);
       setBranding(r.resolved);                 // apply everywhere, including the header above
@@ -170,6 +174,34 @@ export default function BrandingSettings() {
 
   const r = state.resolved || {};
   const logo = form.logoDataUri !== undefined ? form.logoDataUri : r.logoDataUri;
+
+  // What a button will ACTUALLY be, following the same fallbacks the app uses: an unset
+  // button colour follows the primary, and unset text is chosen by luminance.
+  const btnBg = form.buttonColor || r.buttonColor || form.primaryColor || r.primaryColor;
+  const btnFg = form.buttonTextColor || r.buttonTextColor || readableOn(btnBg);
+
+  // Relative luminance contrast, the WCAG ratio. Warned about rather than blocked: a
+  // college may have a brand guideline we do not get to overrule, but nobody should be
+  // able to save an invisible button without being told.
+  const contrastWarning = (() => {
+    const lum = (hex) => {
+      const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
+      if (!m) return null;
+      let h = m[1];
+      if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+      const n = parseInt(h, 16);
+      const [rr, gg, bb] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+    };
+    const a = lum(btnBg), b = lum(btnFg);
+    if (a === null || b === null) return "";
+    const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    if (ratio >= 4.5) return "";
+    return `Contrast is ${ratio.toFixed(1)}:1 — text on these buttons will be hard to read. 4.5:1 is the usual minimum.`;
+  })();
 
   return (
     <div className="rounded-xl bg-white ring-1 ring-slate-200">
@@ -209,8 +241,29 @@ export default function BrandingSettings() {
           <div>
             <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Colours</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              <ColourField label="Primary" value={form.primaryColor ?? ""} onChange={(v) => set("primaryColor", v)} disabled={busy} hint="Headers, buttons and links." />
+              <ColourField label="Primary" value={form.primaryColor ?? ""} onChange={(v) => set("primaryColor", v)} disabled={busy} hint="Headers, navigation and links." />
               <ColourField label="Accent" value={form.accentColor ?? ""} onChange={(v) => set("accentColor", v)} disabled={busy} hint="The second colour in gradients and highlights." />
+              <ColourField label="Buttons" value={form.buttonColor ?? ""} onChange={(v) => set("buttonColor", v)} disabled={busy} hint="Leave blank to follow your primary colour." />
+              <ColourField label="Text on buttons" value={form.buttonTextColor ?? ""} onChange={(v) => set("buttonTextColor", v)} disabled={busy} hint="Leave blank and we pick black or white, whichever is readable." />
+            </div>
+
+            {/* Shown at the size a button actually is, on the surface it actually sits on.
+                A colour pair that looks fine as two swatches can still be unreadable as a
+                control, and this is where a college finds that out — not their staff. */}
+            <div className="mt-3 rounded-lg bg-slate-50 p-3 ring-1 ring-slate-200">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">How your buttons will look</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-md"
+                  style={{ background: btnBg, color: btnFg }}>Save changes</span>
+                <span className="inline-flex items-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-md"
+                  style={{ background: btnBg, color: btnFg }}>Approve</span>
+              </div>
+              {contrastWarning && (
+                <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
+                  <AlertTriangle size={12} className="mt-0.5 flex-none" />
+                  {contrastWarning}
+                </p>
+              )}
             </div>
             <p className="mt-2 text-[11px] text-slate-400">
               Chart and category colours stay fixed — they have to remain distinguishable from one another,

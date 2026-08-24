@@ -44,6 +44,8 @@ const DEFAULTS = {
   wordmarkSub: null,
   primaryColor: "#334155", // slate-700: neutral, legible, nobody's brand
   accentColor: "#475569",  // slate-600
+  buttonColor: null,       // falls back to primaryColor
+  buttonTextColor: null,   // falls back to a luminance-chosen black or white
   logoDataUri: null,
   addressLines: null,
   contactEmail: null,
@@ -97,8 +99,9 @@ function present(row) {
   if (row.logoDataUri) out.logoDataUri = row.logoDataUri;
   // Colours that somehow got into the database malformed are ignored rather than
   // emitted — this value ends up inside a style attribute in the client.
-  if (out.primaryColor && !isHex(out.primaryColor)) delete out.primaryColor;
-  if (out.accentColor && !isHex(out.accentColor)) delete out.accentColor;
+  for (const k of ["primaryColor", "accentColor", "buttonColor", "buttonTextColor"]) {
+    if (out[k] && !isHex(out[k])) delete out[k];
+  }
   return out;
 }
 

@@ -9,6 +9,8 @@
   --brand-accent-dark:#334155;
   --brand-on-primary:#ffffff;
   --brand-on-accent:#ffffff;
+  --brand-button:#334155;
+  --brand-button-text:#ffffff;
 }
 
 @tailwind base;

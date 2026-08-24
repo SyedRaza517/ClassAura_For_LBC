@@ -13,6 +13,7 @@ import AdmissionOffer from "./AdmissionOffer";
 import AdmissionApply from "./AdmissionApply";
 import { useIsHandset, isNativeApp } from "./PhoneShell";
 import { BrandMark } from "./Brand";
+import { getBranding, onBranding } from "./branding";
 import StudentApp from "./StudentApp";
 import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
 import PlatformDashboard from "./PlatformDashboard";
@@ -382,6 +383,15 @@ export default function App() {
 }
 
 function Shell({ user, logout, entry }) {
+  // The institution's own name, live. Two forms: the short one sits beside the mark
+  // where space is tight, the full one runs across the centre of the bar. Both were
+  // hardcoded to the platform's own name, so a college that set its name still saw ours
+  // at the top of every page — the most visible place it could possibly have been wrong.
+  const [brand, setBrand] = useState(getBranding);
+  useEffect(() => onBranding(setBrand), []);
+  const brandShort = brand.shortName || brand.displayName || "";
+  const brandName = brand.displayName || "";
+
   const { applySession } = useAuth();
   const handset = useIsHandset();
   const isAdmin = user.accountRole === "ADMIN";
@@ -465,13 +475,13 @@ function Shell({ user, logout, entry }) {
       <div className={`animated-gradient slide-down z-50 flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-white shadow-lg ${handset ? "" : "sticky top-0"}`} style={{ background: `linear-gradient(90deg, #0f172a 0%, ${NAVY_DARK} 50%, #0f172a 100%)`, backgroundSize: "220% 220%", ...(handset ? { paddingTop: "max(env(safe-area-inset-top), 8px)" } : {}) }}>
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-8 items-center justify-center rounded-lg bg-white/95 ring-1 ring-white/15"><BrandMark size={20} /></div>
-          <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>EdTech</span>
+          <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>{brandShort}</span>
         </div>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
           {/* The Staff-App / Admin-Dashboard view toggle used to live here. It's
               gone now: the front-door Landing screen already asks which one to
               open, so switching again from the header was redundant. */}
-          <span className="min-w-0 truncate font-semibold tracking-wide text-slate-200">EdTech · Staff Hub</span>
+          <span className="min-w-0 truncate font-semibold tracking-wide text-slate-200">{brandName}</span>
         </div>
         <div className="flex items-center gap-2.5">
           <LiveClock />

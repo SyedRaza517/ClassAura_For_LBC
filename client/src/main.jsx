@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import { AuthProvider } from "./auth";
 import { loadBranding } from "./branding";
-import { API_BASE } from "./api";
+import { API_BASE, currentTenant } from "./api";
 import App from "./App";
 
 // Ask the server which institution this is and what it looks like. Started here
@@ -11,7 +11,7 @@ import App from "./App";
 // not awaited — the app renders in the neutral palette and repaints when the answer
 // arrives. Blocking first paint on a decorative fetch would trade a colour for a
 // blank screen on a slow connection.
-loadBranding(API_BASE);
+loadBranding(API_BASE, currentTenant);
 
 // Catches any render/runtime error in the tree so a single crashing component
 // shows a friendly, recoverable screen instead of a blank white page.

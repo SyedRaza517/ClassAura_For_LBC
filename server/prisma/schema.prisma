@@ -181,10 +181,21 @@ model TenantBranding {
   wordmarkSub String?
 
   // --- colour ---
-  /// Hex, validated server-side. primary drives headers, buttons and links;
-  /// accent is the second colour in gradients and destructive-adjacent highlights.
+  /// Hex, validated server-side. primary drives headers and links; accent is the second
+  /// colour in gradients and highlights.
   primaryColor String?
   accentColor  String?
+
+  /// Buttons, set separately from primary ON PURPOSE.
+  ///
+  /// A colour that reads well as a wide header band is often wrong as a small solid
+  /// button — a pale brand colour gives a button nobody can see, and a very dark one
+  /// swallows its own label. Deriving the button from primary therefore produced
+  /// unreadable controls for perfectly reasonable palettes. A college can now set the
+  /// button fill and the text on it directly, and both fall back to primary and to a
+  /// luminance-chosen black or white when they are not set.
+  buttonColor     String?
+  buttonTextColor String?
 
   // --- logo ---
   /// A data: URI. Deliberately NOT a file in object storage: branding is small, is
@@ -405,6 +416,7 @@ model Tenant {
   admissionCourse        AdmissionCourse[]
   admissionIntake        AdmissionIntake[]
   attendanceEmailConfig  AttendanceEmailConfig[]
+  attendanceBandConfig   AttendanceBandConfig?
   sentNotification       SentNotification[]
   slcApplication         SlcApplication[]
   integrations           TenantIntegration[]
@@ -1578,6 +1590,38 @@ model AttendanceEmailConfig {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@id([tenantId, id])
   @@index([tenantId])
+}
+
+/// The attendance bands ONE institution monitors its students against.
+///
+/// These were six values in the code — 85+, 70–84, 60–69, 50–59, 40–49, 0–39 — which
+/// is one college's attendance policy, applied to every college on the platform.
+/// Thresholds differ, the NUMBER of bands differs, and which bands warrant an
+/// automatic letter differs. See attendanceBandConfig.js.
+///
+/// At most one row per institution, and no row at all until a college edits its
+/// bands: "no row" means "running on the platform defaults", which is exactly how
+/// the system behaved before this existed.
+model AttendanceBandConfig {
+  id String @id @default(cuid())
+
+  /// The whole ladder, best -> worst, as a JSON array of
+  /// { key, label, min, max, colour, emailTrigger }.
+  ///
+  /// One column rather than a row per band, because a band list is only ever valid
+  /// as a SET — it must tile 0–100 with no gap and no overlap — and one column
+  /// replaces the set atomically. A reader can never catch a half-written ladder and
+  /// classify a student against a hole in it.
+  ///
+  /// `key` is the stable identity a saved email template is filed under, so renaming
+  /// a band keeps the letter that belongs to it.
+  bands Json
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 // A ledger of one-off automated emails already sent, used purely to de-duplicate the

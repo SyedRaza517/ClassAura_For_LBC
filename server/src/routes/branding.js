@@ -23,7 +23,7 @@ const router = express.Router();
 // belong on letters, not on a public endpoint.
 const PUBLIC_FIELDS = [
   "displayName", "shortName", "wordmarkTop", "wordmarkSub",
-  "primaryColor", "accentColor", "logoDataUri",
+  "primaryColor", "accentColor", "buttonColor", "buttonTextColor", "logoDataUri",
 ];
 
 // Free-text fields an administrator may set, with the cap each is stored under.
@@ -32,7 +32,7 @@ const TEXT_FIELDS = {
   addressLines: 400, contactEmail: 160, contactPhone: 40, website: 160,
   legalFooter: 600, signatoryName: 120, signatoryTitle: 120,
 };
-const COLOUR_FIELDS = ["primaryColor", "accentColor"];
+const COLOUR_FIELDS = ["primaryColor", "accentColor", "buttonColor", "buttonTextColor"];
 
 // A logo is inlined into every page load, so it has to stay small. 256KB of base64 is
 // roughly a 190KB image — ample for a crest or wordmark, and small enough that it

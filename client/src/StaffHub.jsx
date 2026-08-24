@@ -41,13 +41,13 @@ import DocumentSettings from "./DocumentSettings";
    colour cannot guarantee, and they carry no brand meaning.
    ============================================================ */
 
-import { NAVY, NAVY_DARK, MAROON } from "./branding";
+import { NAVY, NAVY_DARK, MAROON, BUTTON, BUTTON_TEXT, alpha } from "./branding";
 // The brand royal blue (matches the new fanlight logo). Used for vibrant gradients
 // across the admin dashboard.
 const BLUE = "#1e40af";
 const BLUE_LT = "#3b82f6";
 // A tone's soft gradient (for icon badges, accents) and a translucent tint.
-const grad = (c) => `linear-gradient(135deg, ${c}, ${c}cc)`;
+const grad = (c) => `linear-gradient(135deg, ${c}, ${alpha(c, 80)})`;
 
 // Today as YYYY-MM-DD in the college's own timezone (Europe/London), matching the
 // server's localDate(). Using the browser's UTC date instead put the client a day
@@ -355,8 +355,8 @@ const initialsOf = (name) => name.split(" ").map(w => w[0]).slice(0, 2).join("")
 function Card({ children, className = "", style }) { return <div style={style} className={`rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 ${className}`}>{children}</div>; }
 const inputCls = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
 function Field({ label, children }) { return <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</label><div className="mt-1">{children}</div></div>; }
-function PrimaryBtn({ children, onClick, disabled, colour = NAVY, className = "" }) {
-  return <button onClick={onClick} disabled={disabled} className={`shine press flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-slate-900/10 transition-all duration-200 hover:opacity-95 hover:shadow-lg hover:shadow-slate-900/15 active:scale-95 disabled:opacity-40 disabled:shadow-none ${className}`} style={{ background: `linear-gradient(135deg, ${colour} 0%, ${colour}e6 100%)` }}>{children}</button>;
+function PrimaryBtn({ children, onClick, disabled, colour = BUTTON, className = "" }) {
+  return <button onClick={onClick} disabled={disabled} className={`shine press flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-md shadow-slate-900/10 transition-all duration-200 hover:opacity-95 hover:shadow-lg hover:shadow-slate-900/15 active:scale-95 disabled:opacity-40 disabled:shadow-none ${className}`} style={{ background: `linear-gradient(135deg, ${colour} 0%, ${alpha(colour, 90)} 100%)`, color: BUTTON_TEXT }}>{children}</button>;
 }
 function Modal({ open, onClose, title, children, width = 460 }) {
   // Android back closes an open modal instead of leaving the screen.
@@ -687,7 +687,7 @@ function Screen({ children }) { return <div className="p-4 fade-up">{children}</
 function EmptyState({ Icon = Inbox, title = "Nothing here yet", msg = "", className = "", tone = BLUE }) {
   return (
     <div className={`flex flex-col items-center justify-center px-4 py-10 text-center fade-up ${className}`}>
-      <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm" style={{ background: tone + "12", color: tone, boxShadow: `inset 0 0 0 1px ${tone}22` }}><Icon size={26} /></span>
+      <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm" style={{ background: tone + "12", color: tone, boxShadow: `inset 0 0 0 1px ${alpha(tone, 13)}` }}><Icon size={26} /></span>
       <p className="text-sm font-bold text-slate-600">{title}</p>
       {msg && <p className="mt-1 max-w-[240px] text-xs text-slate-400">{msg}</p>}
     </div>
@@ -2278,19 +2278,19 @@ function ExecHero({ attPct, passRate, students, courses, marks }) {
 function ExecKpi({ label, value, tone = NAVY, sub, Icon }) {
   return (
     <div className="group relative overflow-hidden rounded-2xl p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:ring-transparent fade-up"
-      style={{ background: `linear-gradient(150deg, #ffffff 0%, #ffffff 55%, ${tone}0f 100%)` }}>
+      style={{ background: `linear-gradient(150deg, #ffffff 0%, #ffffff 55%, ${alpha(tone, 6)} 100%)` }}>
       {/* A wash of the tile's own colour in the corner, and a watermark of its icon.
           Enough colour to make a row of tiles scannable at a glance without turning
           the number into decoration. */}
       <span className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-[0.07] transition-transform duration-500 group-hover:scale-125" style={{ background: tone }} />
       {Icon && <Icon size={72} className="pointer-events-none absolute -bottom-3 -right-2 opacity-[0.05] transition-transform duration-500 group-hover:rotate-6" style={{ color: tone }} />}
-      <span className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${tone}, ${tone}55)` }} />
+      <span className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${tone}, ${alpha(tone, 33)})` }} />
 
       <div className="relative flex items-start justify-between gap-2">
         <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
         {Icon && (
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white shadow-sm transition-transform duration-300 group-hover:scale-110"
-            style={{ background: `linear-gradient(135deg, ${tone}, ${tone}bb)` }}>
+            style={{ background: `linear-gradient(135deg, ${tone}, ${alpha(tone, 73)})` }}>
             <Icon size={15} />
           </span>
         )}
@@ -2629,7 +2629,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         </div>
         <nav className="flex-1 space-y-1">
           {nav.map((n, i) => (
-            <button key={n.key} onClick={() => setTab(n.key)} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${activeKey === n.key ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${BLUE}99`, animationDelay: `${i * 35}ms` } : { animationDelay: `${i * 35}ms` }}>
+            <button key={n.key} onClick={() => setTab(n.key)} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${activeKey === n.key ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${alpha(BLUE, 60)}`, animationDelay: `${i * 35}ms` } : { animationDelay: `${i * 35}ms` }}>
               <n.I size={18} className="transition-transform duration-200 group-hover:scale-110" /><span className="flex-1 text-left">{n.label}</span>
               {(n.key === "requests" || n.key === "approvals") && pendingCount > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingCount}</span>}
               {n.key === "signups" && pendingSignups > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingSignups}</span>}
@@ -2648,7 +2648,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
           {/* On a phone, a way back to the staff app — admins (incl. limited admins
               who registered on the app) keep both their staff view and the console. */}
           {onExitToStaffApp && <button onClick={onExitToStaffApp} className="flex shrink-0 items-center gap-1.5 rounded-full border-2 border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 active:scale-95"><ChevronLeft size={14} /> Staff App</button>}
-          {nav.map(n => <button key={n.key} onClick={() => setTab(n.key)} className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 ${activeKey === n.key ? "text-white" : "bg-white text-slate-500 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 6px 16px -6px ${BLUE}99` } : {}}><n.I size={14} /> {n.label}</button>)}
+          {nav.map(n => <button key={n.key} onClick={() => setTab(n.key)} className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 ${activeKey === n.key ? "text-white" : "bg-white text-slate-500 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 6px 16px -6px ${alpha(BLUE, 60)}` } : {}}><n.I size={14} /> {n.label}</button>)}
         </div>
         {/* An admin granted no pages: show a friendly note rather than an empty console. */}
         {nav.length === 0 && <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70"><EmptyState Icon={ShieldCheck} title="No admin pages yet" msg="You don't have access to any admin pages — ask a super admin to grant access." /></div>}
@@ -2962,7 +2962,7 @@ function AdminHeader({ title, subtitle, action, Icon, tone = BLUE }) {
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3 fade-up">
       <div className="flex items-center gap-3">
         <span className="h-10 w-1.5 shrink-0 rounded-full" style={{ background: `linear-gradient(180deg, ${tone}, ${NAVY_DARK})` }} />
-        {Icon && <span className="hidden h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg transition-transform duration-300 hover:scale-105 hover:-rotate-3 sm:flex" style={{ background: grad(tone), boxShadow: `0 10px 22px -8px ${tone}90` }}><Icon size={24} /></span>}
+        {Icon && <span className="hidden h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg transition-transform duration-300 hover:scale-105 hover:-rotate-3 sm:flex" style={{ background: grad(tone), boxShadow: `0 10px 22px -8px ${alpha(tone, 56)}` }}><Icon size={24} /></span>}
         <div>
           <h2 className="text-2xl font-extrabold tracking-tight" style={{ color: NAVY_DARK }}>{title}</h2>
           {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
@@ -2991,7 +2991,7 @@ function StatCard({ label, value, sub, Icon, tone = NAVY, delay = 0, animate, tr
           {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
           {trend && <span className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold" style={{ background: tc + "1a", color: tc }}>{trend.up ? "▲" : "▼"} {trend.text}</span>}
         </div>
-        <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${tone}80` }}><Icon size={22} /></span>
+        <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${alpha(tone, 50)}` }}><Icon size={22} /></span>
       </div>
     </div>
   );
@@ -7852,7 +7852,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
                     "no dates set" — which is the one people most need to see. */}
                 <p className="mb-1 flex flex-wrap items-center gap-1 text-[10px] font-bold">
                     {/* Where the unit sits in the course structure — from Moodle. */}
-                    {isPlaced(m) && <span className="rounded px-1.5 py-0.5" style={{ background: `${NAVY}14`, color: NAVY }}>{placeLabel(m)}</span>}
+                    {isPlaced(m) && <span className="rounded px-1.5 py-0.5" style={{ background: `${alpha(NAVY, 8)}`, color: NAVY }}>{placeLabel(m)}</span>}
                     {/* Whether it is being taught now — from its own dates. */}
                     {(() => { const s = STATUS_META[unitStatus(m, today)]; return <span className={`rounded px-1.5 py-0.5 ${s.bg} ${s.text}`}>{s.label}</span>; })()}
                     {fmtWindow(m) && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-500">{fmtWindow(m)}</span>}
@@ -8359,7 +8359,7 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
                   <p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }} title={u.name}>{u.name}</p>
                   <UnitFacts unit={u} className="mt-1" />
                   <p className="truncate text-[11px] text-slate-400">
-                    {isPlaced(u) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: `${NAVY}14`, color: NAVY }}>{placeShort(u)}</span>}
+                    {isPlaced(u) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: `${alpha(NAVY, 8)}`, color: NAVY }}>{placeShort(u)}</span>}
                     {u.unitNumber ? `Unit ${u.unitNumber} · ` : ""}{course ? course.name : "No course"} · {u.studentCount ?? 0} students
                   </p>
                 </div>

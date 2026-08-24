@@ -22,10 +22,27 @@
 // data to match a palette. Those stay as fixed literals where they are, and this file
 // governs identity only: headers, primary buttons, links, gradients, the wordmark.
 
+
+/**
+ * A translucent version of a colour.
+ *
+ * The obvious trick — appending "cc" to a hex string — silently breaks the moment the
+ * colour is a CSS variable: "var(--brand-primary)e6" is not a colour, the declaration is
+ * dropped, and the element renders with no background at all. That is exactly how every
+ * primary button in the app turned white and unreadable when a college changed its
+ * palette. color-mix works for both a hex literal and a variable, so it cannot regress
+ * the same way.
+ */
+export const alpha = (colour, percent) => `color-mix(in srgb, ${colour} ${percent}%, transparent)`;
+
 // --- the tokens every component uses ---
 export const NAVY = "var(--brand-primary)";
 export const NAVY_DARK = "var(--brand-primary-dark)";
 export const MAROON = "var(--brand-accent)";
+// Buttons read their own tokens, so a college can make a control legible without having
+// to compromise the colour of its header.
+export const BUTTON = "var(--brand-button)";
+export const BUTTON_TEXT = "var(--brand-button-text)";
 // Kept under their old names too, since Brand.jsx exported these.
 export const BRAND_BLUE = "var(--brand-primary)";
 export const BRAND_NAVY = "var(--brand-primary)";
@@ -39,7 +56,7 @@ const FALLBACK = { primaryColor: "#334155", accentColor: "#475569" };
 /** Darken a hex colour by `amount` (0-1). Used for the gradient's deep end, which was
  *  a separately-hardcoded navy and is now derived, so a college sets ONE colour and
  *  the gradients follow rather than clashing. */
-function darken(hex, amount = 0.28) {
+function darken(hex, amount = 0.12) {
   const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
   if (!m) return FALLBACK.primaryColor;
   let h = m[1];
@@ -73,13 +90,25 @@ export function applyBranding(b) {
   if (typeof document === "undefined") return;
   const primary = b?.primaryColor || FALLBACK.primaryColor;
   const accent = b?.accentColor || FALLBACK.accentColor;
+  // A button may be set outright; otherwise it follows the primary colour, and its label
+  // is chosen by luminance so it is legible on whatever was picked.
+  const button = b?.buttonColor || primary;
+  const buttonText = b?.buttonTextColor || readableOn(button);
   const root = document.documentElement.style;
   root.setProperty("--brand-primary", primary);
-  root.setProperty("--brand-primary-dark", darken(primary));
+  // A GENTLE step, not a different colour.
+  //
+  // This darkened by 28%, which is fine for the far end of a gradient and quite wrong for
+  // a header: a college that chose a light green saw a dark green bar and reasonably
+  // concluded the palette had been ignored. 12% keeps the gradient from looking flat
+  // while leaving the colour recognisably the one they picked.
+  root.setProperty("--brand-primary-dark", darken(primary, 0.12));
   root.setProperty("--brand-accent", accent);
-  root.setProperty("--brand-accent-dark", darken(accent));
+  root.setProperty("--brand-accent-dark", darken(accent, 0.12));
   root.setProperty("--brand-on-primary", readableOn(primary));
   root.setProperty("--brand-on-accent", readableOn(accent));
+  root.setProperty("--brand-button", button);
+  root.setProperty("--brand-button-text", buttonText);
   // The browser tab colour on mobile, so the chrome matches the header.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", primary);
@@ -90,7 +119,7 @@ export function applyBranding(b) {
 // A plain module-level store rather than context: it is written once, read from
 // nineteen files, and never changes during a session. Context here would mean
 // wrapping the tree and re-rendering it for a value that has already settled.
-let current = { ...FALLBACK, displayName: null, shortName: null, wordmarkTop: null, wordmarkSub: null, logoDataUri: null };
+let current = { ...FALLBACK, displayName: null, shortName: null, wordmarkTop: null, wordmarkSub: null, logoDataUri: null, buttonColor: null, buttonTextColor: null };
 const listeners = new Set();
 
 export const getBranding = () => current;
@@ -117,10 +146,18 @@ export function onBranding(fn) {
  * An app that refuses to open because it does not know its own colours is worse than
  * an app that opens looking plain.
  */
-export async function loadBranding(apiBase) {
+export async function loadBranding(apiBase, currentTenant = () => null) {
   try {
+    // WHICH college. Without this the request resolves to the server's default
+    // institution, so every browser was served the default's colours and name no matter
+    // whose college it was actually looking at — a college could save its branding and
+    // never see it, and the banner kept the platform's own name. The header is the only
+    // thing that distinguishes institutions on a shared hostname.
+    const headers = { "Content-Type": "application/json" };
+    const tenant = currentTenant();
+    if (tenant) headers["X-Tenant"] = tenant;
     const res = await fetch(apiBase.replace(/\/$/, "") + "/branding", {
-      headers: { "Content-Type": "application/json" },
+      headers,
       cache: "no-store",
     });
     if (!res.ok) return current;
