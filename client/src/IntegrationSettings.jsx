@@ -37,6 +37,32 @@ const FORMS = {
       ] },
     ],
   },
+  // Canvas LMS. A separate provider from Moodle rather than one "VLE" with a type,
+  // because a college part-way through a migration runs both and needs both sets of
+  // credentials live at once.
+  canvas: {
+    label: "Canvas",
+    blurb: "Reads courses, enrolments, assignments, submissions and grades from Canvas. Read-only — nothing is written back.",
+    secret: {
+      key: "token",
+      label: "Access token",
+      hint: "Canvas → Account → Settings → Approved Integrations → “+ New Access Token”. Generate it from an account that can read courses, rosters and grades — a tutor's token only sees that tutor's own courses. Canvas shows it once and never again.",
+    },
+    fields: [
+      { key: "url", label: "Canvas site address", placeholder: "https://yourcollege.instructure.com", hint: "The address you sign in at. Pasting a page URL is fine — it is trimmed back to the site." },
+      { key: "accountId", label: "Sub-account ID (optional)", placeholder: "e.g. 42", hint: "Limits the import to one sub-account. Leave blank for everything the token can see — but most institutions keep sandbox and training courses in a separate sub-account, which you probably do not want imported." },
+      { key: "termId", label: "Term ID (optional)", placeholder: "e.g. 7", hint: "Limits the import to one enrolment term, so previous years are not pulled in on the first run." },
+    ],
+    choices: [
+      { key: "autoSync", label: "Nightly import at 02:00", options: [
+        { value: "", label: "Use the server default" },
+        { value: "on", label: "On - import every night" },
+        { value: "off", label: "Off - only when I press Sync" },
+      ] },
+    ],
+    // Said on the setup screen rather than discovered after a term of empty columns.
+    note: "Canvas has no API for its Roll Call attendance tool, so attendance cannot be imported from Canvas. Everything else — including whether work was actually handed in, and whether it was late — does come across.",
+  },
   // Outbound email. Listed first because it is the one that affects every applicant
   // and student a college has: offers, interview invitations, password resets and
   // attendance notices all leave from here, under this college's name.
@@ -173,6 +199,15 @@ function ProviderCard({ item, onSaved, onRemoved }) {
       {open && (
         <form onSubmit={save} className="flex flex-col gap-3 border-t border-slate-200 p-4">
           <p className="text-[12px] leading-relaxed text-slate-500">{form.blurb}</p>
+
+          {/* A limitation of the provider itself, stated at SET-UP time rather than
+              discovered after a term of empty columns. It is not an error and not a
+              warning about anything the college has done, so it reads as neither. */}
+          {form.note && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+              {form.note}
+            </p>
+          )}
 
           {form.fields.map((f) => (
             <Row key={f.key} label={f.label} hint={f.hint}>

@@ -146,6 +146,7 @@ router.post("/:provider/test", requireAuth, requirePage("settings"), async (req,
   if (!spec) return res.status(404).json({ error: "Unknown integration" });
 
   const mod = provider === "moodle" ? require("./../moodle")
+    : provider === "canvas" ? require("./../vle/canvas")
     : provider === "email" ? require("./../email")
     : require("./../sharepoint");
   // A provider's own failure is a RESULT here, not a 500 — "your client secret is

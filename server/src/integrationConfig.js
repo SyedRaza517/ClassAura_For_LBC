@@ -28,6 +28,22 @@ const PROVIDERS = {
     env: { token: "MOODLE_TOKEN", url: "MOODLE_URL", autoSync: "MOODLE_AUTO_SYNC" },
     describe: (s) => (s.url ? s.url : "no URL set"),
   },
+  // Canvas LMS. Same job as Moodle for a college that runs Canvas instead — and some
+  // run both during a migration, which is why these are separate providers rather
+  // than one "VLE" row with a type field: a college mid-migration needs both sets of
+  // credentials live at once, and a type field would force it to choose.
+  //
+  // The secret is a manual access token (Bearer). `accountId` and `termId` are
+  // optional filters: most institutions park sandbox and training courses under a
+  // sub-account, and without a filter the first sync pulls every shell on the
+  // instance. Blank means "everything the token can see".
+  canvas: {
+    label: "Canvas",
+    secretField: "token",
+    settingFields: ["url", "accountId", "termId", "autoSync"],
+    env: { token: "CANVAS_TOKEN", url: "CANVAS_URL", autoSync: "CANVAS_AUTO_SYNC" },
+    describe: (s) => (s.url ? s.url : "no site address set"),
+  },
   // Outbound email. The one that made this whole exercise urgent: it lived as
   // process-wide SMTP_* and MAIL_FROM, so every institution on the platform sent its
   // applicants mail from whichever college the server happened to be configured for.
