@@ -565,6 +565,190 @@ router.get("/usage", requirePlatformAdmin, async (_req, res) => {
 });
 
 
+/* ------------------------------------------------------------- monitoring ---- */
+
+// GET /monitoring — is each college actually USING the product, and is anything
+// quietly broken for them?
+//
+// /overview already answers "how big is each college". This answers the two questions
+// an operator has that headcounts cannot: is anybody there, and is anything failing.
+// Both are invisible from a row count. A college that signed up, was provisioned, and
+// has not been touched since looks identical to a thriving one if all you count is
+// students — and the failures that matter most (no mailbox configured, so not one
+// offer letter has ever left the building) produce no error anywhere an operator can
+// see, because nothing went wrong: nothing was attempted.
+//
+// EVERY FIGURE HERE IS MEASURED, and where it cannot be measured the answer is null
+// and the screen says "never", not "0". The distinction is the whole point: a college
+// with zero check-ins this month and a college that has never taken one are different
+// customers needing different conversations.
+//
+// COST. One grouped query per signal rather than one per college, so this is a fixed
+// ~10 queries whether the platform has three institutions or three hundred.
+const VLE_PROVIDERS = ["moodle", "canvas", "blackboard"];
+
+// How long without a single audited action before a college is worth asking about.
+// Audit rows are written by every administrative action, so silence here is real
+// silence — not merely a quiet week for one feature.
+const DORMANT_DAYS = 30;
+
+router.get("/monitoring", requirePlatformAdmin, async (_req, res) => {
+  const now = Date.now();
+  const dormantBefore = new Date(now - DORMANT_DAYS * 86_400_000);
+
+  const data = await crossTenant(async () => {
+    const tenants = await prisma.tenant.findMany({ orderBy: { name: "asc" } });
+
+    const [
+      staff, admins, students, activeStudents, admissions,
+      lastAudit, lastCheckIn, lastSession, lastAdmission,
+      integrations, syncs,
+    ] = await Promise.all([
+      prisma.staff.groupBy({ by: ["tenantId"], _count: { _all: true } }),
+      // Administrators specifically. A college with staff but no administrator cannot
+      // approve a sign-up, decide a leave request or send an offer — it is locked out
+      // of its own product, and nothing in a headcount shows it.
+      // Staff has no `active` column — an account that cannot be used is one still
+      // awaiting activation (invited, never accepted), which cannot sign in at all.
+      // Counting those would report an administrator the college does not yet have.
+      prisma.staff.groupBy({ by: ["tenantId"], where: { accountRole: "ADMIN", pendingActivation: false }, _count: { _all: true } }),
+      prisma.student.groupBy({ by: ["tenantId"], _count: { _all: true } }),
+      prisma.student.groupBy({ by: ["tenantId"], where: { active: true }, _count: { _all: true } }),
+      prisma.admission.groupBy({ by: ["tenantId"], _count: { _all: true } }),
+
+      // The activity signals. Audit is the broadest — it records every administrative
+      // action — so it is the one that answers "is anybody there at all".
+      prisma.auditLog.groupBy({ by: ["tenantId"], _max: { at: true } }),
+      prisma.checkIn.groupBy({ by: ["tenantId"], _max: { date: true } }),
+      prisma.hndSession.groupBy({ by: ["tenantId"], _max: { date: true } }),
+      prisma.admission.groupBy({ by: ["tenantId"], _max: { createdAt: true } }),
+
+      prisma.tenantIntegration.findMany({
+        select: {
+          tenantId: true, provider: true, enabled: true,
+          lastTestOk: true, lastTestedAt: true, lastTestNote: true, updatedAt: true,
+        },
+      }),
+      // The most recent VLE import per college, and whether it worked. A sync that
+      // has been failing every night for a fortnight is the definition of a fault
+      // nobody has noticed.
+      prisma.moodleSync.groupBy({
+        by: ["tenantId", "status"],
+        _max: { startedAt: true },
+        where: { status: { in: ["ok", "failed"] } },
+      }),
+    ]);
+
+    const byTenant = (rows, read) => Object.fromEntries(rows.map((r) => [r.tenantId, read(r)]));
+    const count = (rows) => byTenant(rows, (r) => r._count._all);
+
+    const nStaff = count(staff), nAdmins = count(admins), nStudents = count(students);
+    const nActive = count(activeStudents), nAdmissions = count(admissions);
+    const audit = byTenant(lastAudit, (r) => r._max.at);
+    const checkin = byTenant(lastCheckIn, (r) => r._max.date);
+    const session = byTenant(lastSession, (r) => r._max.date);
+    const admission = byTenant(lastAdmission, (r) => r._max.createdAt);
+
+    return tenants.map((t) => {
+      const mine = integrations.filter((i) => i.tenantId === t.id);
+      const configured = new Set(mine.map((i) => i.provider));
+      const failing = mine.filter((i) => i.enabled && i.lastTestOk === false);
+      const untested = mine.filter((i) => i.enabled && i.lastTestedAt == null);
+
+      const okSync = syncs.find((s) => s.tenantId === t.id && s.status === "ok");
+      const failedSync = syncs.find((s) => s.tenantId === t.id && s.status === "failed");
+
+      const lastAuditAt = audit[t.id] || null;
+      const vles = VLE_PROVIDERS.filter((p) => configured.has(p));
+
+      // Ordered worst first, because this list is read from the top.
+      const warnings = [];
+      if (!t.active) warnings.push("SUSPENDED");
+      if (!lastAuditAt) warnings.push("NEVER_USED");
+      else if (new Date(lastAuditAt) < dormantBefore) warnings.push("DORMANT");
+      if (!(nAdmins[t.id] > 0)) warnings.push("NO_ADMIN");
+      // Email is the one integration whose absence is silent by construction: nothing
+      // errors, letters simply never go. Offers, password resets and attendance
+      // warnings all depend on it.
+      if (!configured.has("email")) warnings.push("NO_EMAIL");
+      if (!vles.length) warnings.push("NO_VLE");
+      if (failing.length) warnings.push("INTEGRATION_FAILING");
+      if (untested.length) warnings.push("INTEGRATION_UNTESTED");
+      // A VLE whose last successful run is older than its last failure is currently
+      // broken, whatever the counters said the night it last worked.
+      if (failedSync && (!okSync || new Date(failedSync._max.startedAt) > new Date(okSync._max.startedAt))) {
+        warnings.push("VLE_SYNC_FAILING");
+      }
+
+      return {
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        active: t.active,
+        createdAt: t.createdAt,
+
+        counts: {
+          staff: nStaff[t.id] || 0,
+          admins: nAdmins[t.id] || 0,
+          students: nStudents[t.id] || 0,
+          activeStudents: nActive[t.id] || 0,
+          admissions: nAdmissions[t.id] || 0,
+        },
+
+        // null everywhere means "never", and the client must render it as such.
+        activity: {
+          lastAction: lastAuditAt,
+          lastCheckIn: checkin[t.id] || null,
+          lastRegister: session[t.id] || null,
+          lastAdmission: admission[t.id] || null,
+          dormantDays: DORMANT_DAYS,
+        },
+
+        integrations: mine.map((i) => ({
+          provider: i.provider,
+          enabled: i.enabled,
+          lastTestOk: i.lastTestOk,
+          lastTestedAt: i.lastTestedAt,
+          // The note can name a host or a mailbox, which is configuration rather than
+          // a secret — audit.js already redacts anything that is not. Trimmed because
+          // this is a status column, not a log.
+          lastTestNote: i.lastTestNote ? String(i.lastTestNote).slice(0, 200) : null,
+          updatedAt: i.updatedAt,
+        })),
+
+        vle: {
+          configured: vles,
+          lastSuccessfulSync: okSync ? okSync._max.startedAt : null,
+          lastFailedSync: failedSync ? failedSync._max.startedAt : null,
+        },
+
+        warnings,
+      };
+    });
+  });
+
+  // A rollup, so an operator can see at a glance whether anything needs them today
+  // without reading every row.
+  const tally = {};
+  for (const c of data) for (const w of c.warnings) tally[w] = (tally[w] || 0) + 1;
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    dormantDays: DORMANT_DAYS,
+    colleges: data,
+    totals: {
+      institutions: data.length,
+      active: data.filter((c) => c.active).length,
+      neverUsed: data.filter((c) => c.warnings.includes("NEVER_USED")).length,
+      dormant: data.filter((c) => c.warnings.includes("DORMANT")).length,
+      needingAttention: data.filter((c) => c.warnings.length > 0).length,
+      students: data.reduce((n, c) => n + c.counts.activeStudents, 0),
+      staff: data.reduce((n, c) => n + c.counts.staff, 0),
+    },
+    warningTally: tally,
+  });
+});
+
 /* ------------------------------------------------------------ server health -- */
 
 // GET /api/platform/health — is this SERVER configured correctly?

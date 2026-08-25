@@ -67,6 +67,9 @@ export const platformApi = {
   login: (email, password) => request("/login", { method: "POST", body: { email, password } }),
   me: () => request("/me"),
   overview: () => request("/overview"),
+  // Per-college health: usage signals, integration state and computed warnings.
+  // Longer timeout than /overview because it aggregates across every tenant.
+  monitoring: () => request("/monitoring", { timeoutMs: 45000 }),
   // Deliberately not loaded with the dashboard: it reads pg_class and counts every
   // tenanted table, so it is asked for on demand rather than on open.
   usage: () => request("/usage", { timeoutMs: 60000 }),

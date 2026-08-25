@@ -466,6 +466,64 @@ try {
   // the worst incident this codebase could have.
   const seededStaff = await db.staff.count({ where: { tenant: { slug: "default" } } });
   check("the seeded institution is untouched by that cascade", seededStaff >= 6, `${seededStaff} staff rows remain`);
+
+  /* ------------------------------------------------ monitoring --------------- */
+  //
+  // The screen an operator opens to find out whether anything needs them today. Its
+  // value rests entirely on NOT rounding up: a college that has never been used and a
+  // college that was quiet this month are different customers, and a zero would merge
+  // them. So the assertions below are mostly about honesty rather than arithmetic.
+
+  const monAnon = await call("/platform/monitoring");
+  check("monitoring refuses an anonymous caller", monAnon.status === 401, `HTTP ${monAnon.status}`);
+
+  const monStaff = await call("/platform/monitoring", { token: staffToken });
+  check("monitoring refuses a college admin — it describes every customer at once",
+    monStaff.status === 401 || monStaff.status === 403, `HTTP ${monStaff.status}`);
+
+  const mon = await call("/platform/monitoring", { token: tokenA });
+  check("an operator can read monitoring", mon.status === 200, `HTTP ${mon.status}`);
+
+  if (mon.status === 200) {
+    const body = mon.data || {};
+    const colleges = body.colleges || [];
+
+    check("every institution appears, not only the ones with problems",
+      colleges.length === (body.totals?.institutions ?? -1),
+      `${colleges.length} colleges vs totals.institutions ${body.totals?.institutions}`);
+
+    // The distinction the whole screen exists to preserve. A college that has never
+    // recorded an action must report null, never a date and never a zero.
+    const dated = colleges.every((c) =>
+      c.activity && (c.activity.lastAction === null || typeof c.activity.lastAction === "string"));
+    check("an activity that never happened is null, not a fabricated date", dated);
+
+    check("a college with no recorded action is flagged NEVER_USED rather than shown as idle",
+      colleges.every((c) => (c.activity.lastAction === null) === c.warnings.includes("NEVER_USED")));
+
+    // Warnings drive the operator's day, so the rollup must agree with the rows it
+    // summarises — a tally that overcounts sends somebody chasing a college that is fine.
+    const counted = {};
+    for (const c of colleges) for (const w of c.warnings) counted[w] = (counted[w] || 0) + 1;
+    check("the warning tally matches the colleges it summarises",
+      JSON.stringify(counted) === JSON.stringify(body.warningTally || {}),
+      `rows ${JSON.stringify(counted)} vs tally ${JSON.stringify(body.warningTally)}`);
+
+    check("needingAttention counts exactly the colleges carrying a warning",
+      body.totals.needingAttention === colleges.filter((c) => c.warnings.length).length);
+
+    // Not a secret, but worth pinning: this endpoint reports whether a credential
+    // works, never the credential.
+    check("no integration secret is echoed by monitoring",
+      !/secretEnc|passwordHash|totpSecret|"secret"/.test(JSON.stringify(body)));
+
+    // The suspended institution created earlier in this suite must read as suspended
+    // here too, or the two screens disagree about the same college.
+    const anySuspended = colleges.filter((c) => !c.active);
+    check("a suspended college is flagged as suspended",
+      anySuspended.every((c) => c.warnings.includes("SUSPENDED")),
+      `${anySuspended.length} suspended college(s)`);
+  }
 } finally {
   await cleanup();
   await db.$disconnect();

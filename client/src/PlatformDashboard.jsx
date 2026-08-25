@@ -9,7 +9,7 @@ import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
   LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound, LifeBuoy,
-  ClipboardList, Menu as MenuIcon, Copy, Check, Link2,
+  ClipboardList, Menu as MenuIcon, Copy, Check, Link2, Activity,
 } from "lucide-react";
 
 // Black and white, deliberately and completely.
@@ -1153,6 +1153,245 @@ function RegistrationsPage({ onError, onNotice }) {
   );
 }
 
+/* ------------------------------------------------------- college monitoring --- */
+
+// Is each college actually USING the product, and is anything quietly broken?
+//
+// Institutions answers "how big is each customer". This answers the two questions a
+// headcount cannot: is anybody there, and is anything failing. Both are invisible in a
+// row count — a college that was provisioned and never touched looks identical to a
+// thriving one if all you count is students, and the worst failures produce no error
+// anywhere, because nothing went wrong: nothing was attempted.
+//
+// NOTHING HERE IS ROUNDED UP. Where a figure was never recorded the screen says
+// "Never", not "0". A college with no check-ins this month and a college that has
+// never taken one are different customers needing different conversations, and a zero
+// would merge them.
+
+// Worst first — the order an operator reads them in. Each says what it MEANS for the
+// college, not what the flag is called, because "NO_EMAIL" is a fact about a database
+// row and "cannot send offer letters" is the thing somebody has to act on.
+const WARNINGS = {
+  SUSPENDED:             { tone: "rose",  label: "Suspended",            detail: "Nobody at this college can sign in." },
+  NEVER_USED:            { tone: "rose",  label: "Never used",           detail: "Provisioned, but no one has ever done anything here." },
+  NO_ADMIN:              { tone: "rose",  label: "No administrator",     detail: "Nobody can approve a sign-up, decide leave, or send an offer." },
+  VLE_SYNC_FAILING:      { tone: "rose",  label: "VLE import failing",   detail: "The last import failed more recently than the last one that worked." },
+  INTEGRATION_FAILING:   { tone: "amber", label: "Integration failing",  detail: "A connection test failed the last time it ran." },
+  NO_EMAIL:              { tone: "amber", label: "No mailbox",           detail: "Offers, password resets and attendance letters cannot be sent at all." },
+  DORMANT:               { tone: "amber", label: "Dormant",             detail: "No recorded activity for a month." },
+  NO_VLE:                { tone: "slate", label: "No VLE",              detail: "No Moodle, Canvas or Blackboard configured." },
+  INTEGRATION_UNTESTED:  { tone: "slate", label: "Untested integration", detail: "Switched on, but the connection has never been tested." },
+};
+
+const TONES = {
+  rose:  { chip: "bg-rose-50 text-rose-700 ring-rose-200", dot: "#e11d48" },
+  amber: { chip: "bg-amber-50 text-amber-800 ring-amber-200", dot: "#d97706" },
+  slate: { chip: "bg-slate-100 text-slate-600 ring-slate-300", dot: "#64748b" },
+};
+
+/** A date, or the honest absence of one. Never a zero, never a dash without meaning. */
+function When({ value, never = "Never" }) {
+  if (!value) return <span className="text-slate-400">{never}</span>;
+  const d = new Date(value.length === 10 ? value + "T00:00:00" : value);
+  if (isNaN(d)) return <span className="text-slate-400">{never}</span>;
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  const ago = days <= 0 ? "today" : days === 1 ? "yesterday" : days < 31 ? days + " days ago" : days < 365 ? Math.floor(days / 30) + " months ago" : Math.floor(days / 365) + "y ago";
+  return (
+    <span title={d.toLocaleString("en-GB")} className={days > 30 ? "text-amber-700" : "text-slate-700"}>
+      {ago}
+    </span>
+  );
+}
+
+function WarningChip({ code }) {
+  const w = WARNINGS[code] || { tone: "slate", label: code, detail: "" };
+  const t = TONES[w.tone];
+  return (
+    <span title={w.detail} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${t.chip}`}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: t.dot }} />
+      {w.label}
+    </span>
+  );
+}
+
+function MonitoringPanel() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [only, setOnly] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try { setData(await platformApi.monitoring()); setError(""); }
+    catch (e) { setError(e.message || "Could not load."); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !data) {
+    return <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-slate-400" /></div>;
+  }
+  if (error) {
+    return <div className="rounded-xl bg-rose-50 p-4 text-sm font-semibold text-rose-700 ring-1 ring-rose-200">{error}</div>;
+  }
+  if (!data) return null;
+
+  const colleges = only ? data.colleges.filter((c) => c.warnings.length) : data.colleges;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">College monitoring</h2>
+          <p className="text-xs text-slate-500">
+            Whether each college is being used, and whether anything is quietly failing for them.
+          </p>
+        </div>
+        <button onClick={load} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-50 disabled:opacity-40">
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[
+          ["Institutions", data.totals.institutions, null],
+          ["Active", data.totals.active, null],
+          ["Need attention", data.totals.needingAttention, data.totals.needingAttention ? "#d97706" : null],
+          ["Never used", data.totals.neverUsed, data.totals.neverUsed ? "#e11d48" : null],
+          ["Dormant", data.totals.dormant, data.totals.dormant ? "#d97706" : null],
+          ["Students", data.totals.students, null],
+        ].map(([label, value, tone]) => (
+          <div key={label} className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+            <p className="mt-0.5 text-2xl font-extrabold tabular-nums" style={{ color: tone || "#0f172a" }}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {Object.keys(data.warningTally || {}).length > 0 && (
+        <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">What needs looking at</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(data.warningTally)
+              .sort((a, b) => b[1] - a[1])
+              .map(([code, n]) => (
+                <span key={code} className="inline-flex items-center gap-1.5">
+                  <WarningChip code={code} />
+                  <span className="text-[11px] font-bold tabular-nums text-slate-500">x{n}</span>
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+        <input type="checkbox" checked={only} onChange={(e) => setOnly(e.target.checked)} className="h-4 w-4 rounded" />
+        Show only colleges needing attention
+      </label>
+
+      {colleges.length === 0 ? (
+        <div className="rounded-xl bg-white p-8 text-center ring-1 ring-slate-200">
+          <CheckCircle2 size={26} className="mx-auto mb-2 text-emerald-600" />
+          <p className="text-sm font-bold text-slate-700">Nothing needs attention</p>
+          <p className="mt-1 text-xs text-slate-500">Every college is active, configured and in use.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {colleges.map((c) => (
+            <div key={c.id} className="rounded-xl bg-white p-3 ring-1 ring-slate-200">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-slate-900">
+                    {c.name}
+                    {!c.active && <span className="ml-2 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-200">suspended</span>}
+                  </p>
+                  <p className="truncate font-mono text-[11px] text-slate-400">{c.slug}</p>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {c.warnings.length === 0
+                    ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200"><CheckCircle2 size={11} /> Healthy</span>
+                    : c.warnings.map((w) => <WarningChip key={w} code={w} />)}
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                  <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">People</p>
+                  <p className="text-slate-600">
+                    {c.counts.activeStudents} student{c.counts.activeStudents === 1 ? "" : "s"} · {c.counts.staff} staff
+                  </p>
+                  <p className={c.counts.admins ? "text-slate-500" : "font-bold text-rose-600"}>
+                    {c.counts.admins} administrator{c.counts.admins === 1 ? "" : "s"}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">Last activity</p>
+                  <p className="text-slate-600">Anything: <When value={c.activity.lastAction} /></p>
+                  <p className="text-slate-600">Register: <When value={c.activity.lastRegister} /></p>
+                  <p className="text-slate-600">Check-in: <When value={c.activity.lastCheckIn} /></p>
+                </div>
+
+                <div>
+                  <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">VLE</p>
+                  {c.vle.configured.length === 0 ? (
+                    <p className="text-slate-400">None configured</p>
+                  ) : (
+                    <>
+                      <p className="text-slate-600 capitalize">{c.vle.configured.join(", ")}</p>
+                      <p className="text-slate-600">Last good import: <When value={c.vle.lastSuccessfulSync} /></p>
+                      {c.vle.lastFailedSync && (
+                        <p className="text-rose-600">Last failure: <When value={c.vle.lastFailedSync} /></p>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <div>
+                  <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">Integrations</p>
+                  {c.integrations.length === 0 ? (
+                    <p className="text-slate-400">None configured</p>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {c.integrations.map((i) => (
+                        <li key={i.provider} className="flex items-center gap-1.5">
+                          <span
+                            className="h-1.5 w-1.5 shrink-0 rounded-full"
+                            style={{ background: i.lastTestOk === true ? "#059669" : i.lastTestOk === false ? "#e11d48" : "#94a3b8" }}
+                          />
+                          <span className="capitalize text-slate-600">{i.provider}</span>
+                          <span className="text-slate-400">
+                            {i.lastTestOk === true ? "working" : i.lastTestOk === false ? "failing" : "never tested"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              {/* The reason a test failed, in the college's own words from the
+                  provider. Shown rather than hidden behind a click: an operator ringing
+                  a college needs to know WHAT failed before they dial. */}
+              {c.integrations.filter((i) => i.lastTestOk === false && i.lastTestNote).map((i) => (
+                <p key={i.provider} className="mt-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-800 ring-1 ring-rose-200">
+                  <b className="capitalize">{i.provider}:</b> {i.lastTestNote}
+                </p>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[11px] text-slate-400">
+        Read {new Date(data.generatedAt).toLocaleString("en-GB")}. "Dormant" means no recorded
+        action for {data.dormantDays} days. Every figure is measured — where nothing was ever
+        recorded this screen says "Never" rather than showing a zero.
+      </p>
+    </div>
+  );
+}
+
 /* --------------------------------------------------------------- the shell --- */
 
 // The menu. Same idea as the college admin dashboard's sidebar: one place listing
@@ -1160,6 +1399,7 @@ function RegistrationsPage({ onError, onNotice }) {
 // panel somebody has to scroll past.
 const PAGES = [
   { key: "institutions", label: "Institutions", Icon: Building2, sub: "Customers on this system" },
+  { key: "monitoring", label: "Monitoring", Icon: Activity, sub: "Who is using it, and what is failing" },
   { key: "registrations", label: "Registrations", Icon: ClipboardList, sub: "Organisations applying to join" },
   { key: "usage", label: "Storage & usage", Icon: HardDrive, sub: "What each college is holding" },
   { key: "operators", label: "Operators", Icon: Users, sub: "Who can run the platform" },
@@ -1348,6 +1588,7 @@ export default function PlatformDashboard({ onBack }) {
 
   const Body = () => {
     if (page === "registrations") return <RegistrationsPage onError={setError} onNotice={setNotice} />;
+    if (page === "monitoring") return <MonitoringPanel />;
     if (page === "usage") return <UsagePanel />;
     if (page === "operators") return <OperatorsPanel me={admin} onError={setError} onNotice={setNotice} />;
     if (page === "server") return <ServerHealth />;
