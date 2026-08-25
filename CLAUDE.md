@@ -1,0 +1,174 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A multi-tenant college management platform, not a single-college app. One deployment
+serves many institutions, with a supplier-facing operator tier above them. Four
+identity kinds exist and are enforced separately: **staff**, **student**, **applicant**
+and **platform operator**.
+
+npm workspaces monorepo: `server/` (Express + Prisma + PostgreSQL), `client/` (React 18
++ Vite SPA, wrapped by Capacitor for iOS/Android), `scripts/` (test runner and suites).
+
+Read `STATUS.md` first for what is actually built and what is not — it is maintained as
+the honest map and is explicit about which claims are demonstrated versus code-read.
+`API.md` is the endpoint reference.
+
+## Commands
+
+```bash
+npm run dev                        # server + client together
+npm test                           # unit tests, then every smoke suite (see below)
+npm test -- smoke-invite           # one suite, matched on name
+
+npm run --workspace client build   # the client build; also what Vercel runs
+npm --workspace server run migrate:deploy   # forward-only migrations
+npm --workspace server run generate         # prisma generate
+```
+
+Unit tests, from `server/`:
+
+```bash
+node --test "src/**/*.test.js"          # all of them
+node --test src/prediction/engine.test.js  # one file
+```
+
+**Use the glob, not `node --test src/`.** Given a bare directory the runner walks into
+`src/index.js`, which binds a port and starts the schedulers, and the run never
+terminates.
+
+`npm test` applies migrations, seeds fixtures, boots its own API on port 4010, runs
+every `scripts/smoke-*.mjs` against it, and exits non-zero if any failed. `SKIP` reads
+differently from `PASS` on purpose, so a switched-off feature stays visible instead of
+counting as coverage.
+
+## The database is the sharpest edge here
+
+**`DATABASE_URL` in `server/.env` points at a live database, not a scratch copy.** The
+smoke suites create, mutate and delete real rows, and `npm test` seeds fixtures. Check
+where it points before running anything that migrates, seeds or tests.
+
+`prisma/assertDisposable.js` guards this, but read its rules before relying on it — it
+allows any database whose *name* looks disposable, which has not always matched the
+database that actually was.
+
+There are **two databases, in two Supabase projects**: staging and production. They
+drift. When you fix one by hand, check the other.
+
+To run the suites safely without a scratch database, use an isolated **schema** in the
+same database — Prisma scopes everything to it, `_prisma_migrations` included:
+
+```bash
+DATABASE_URL="postgresql://…/postgres?schema=smoketest" npm test
+```
+
+Snapshot row counts in `public` before and after, and drop the schema afterwards.
+
+**Never rename a migration directory once it has been applied anywhere.** Prisma
+identifies a migration by directory name; a rename makes an applied migration look new,
+it re-runs, hits "already exists", and is recorded as failed — after which Prisma
+refuses *every* later migration with P3009. Since `migrate:deploy` runs in the deploy
+build command, every deploy then fails while the old build keeps serving happily. This
+has happened twice. `server/tools/resolve-failed-migration.js` is the guarded remedy:
+it verifies every object the failed migration creates already exists before marking it
+applied, and refuses otherwise.
+
+## Tenant isolation is central, and it fails loudly
+
+`server/src/db.js` extends the Prisma client so every query is filtered and stamped by
+the current tenant. **A query with no tenant context throws** (`TenantScopeError`)
+rather than returning everything. Consequences:
+
+- A new route is isolated without its author doing anything.
+- Code outside a request — schedulers, scripts, tools — must say which tenant it means
+  with `runInTenant(tenantId, fn)`, or say `crossTenant(fn)` explicitly. Both are
+  deliberately conspicuous so cross-institution reads show up in a diff.
+- Only `Tenant` and `PlatformAdmin` are exempt (`UNSCOPED_MODELS`).
+
+Request order in `server/src/index.js` matters and is deliberate:
+
+1. `/api/platform` and `/api/registrations` mount **above** the tenant middleware — an
+   operator and a prospective customer are not yet an institution.
+2. `tenantMiddleware` resolves `X-Tenant` header → subdomain → `DEFAULT_TENANT_SLUG`.
+   It runs **before** authentication, because `Staff.email` is unique *per tenant*, so
+   a login cannot find an account from an email address alone.
+3. Everything after that runs inside that tenant's scope.
+
+An unknown tenant gets a 404 without confirming existence; a suspended one gets 403.
+
+## Access control
+
+- Staff sessions carry a `tid` claim; a token from one college is refused by another.
+- `requirePage("…")` gates admin pages. The grantable list is `ADMIN_PAGES` in
+  `server/src/validate.js` and **must stay in sync with `ADMIN_PAGES` in
+  `client/src/StaffHub.jsx`** — two hand-maintained copies.
+- Student and applicant tokens are confined by router allowlists (`STUDENT_ROUTERS`,
+  `APPLICANT_ROUTERS` in `auth.js`), not by per-route checks.
+- Platform operators are a separate tier with their own token kind and guard.
+
+## Per-tenant configuration, not hardcoded identity
+
+A college supplies its own integrations, branding, letters, email wording and academic
+thresholds. The recurring pattern, worth matching when adding more:
+
+> platform defaults in code → one JSON column per tenant merged over them → no row
+> until a college edits something → an allowlist on the way out → a short cache
+> invalidated on save.
+
+`attendanceBandConfig.js` and `prediction/settings.js` are the reference
+implementations. Integration secrets are AES-256-GCM encrypted at rest via
+`secrets.js`; the secret is never returned to any client.
+
+`integrationConfig.js` holds the provider registry (`moodle`, `canvas`, `blackboard`,
+`email`, `sharepoint`). Host-level env values (`MOODLE_*`, `SMTP_*`) are inherited by
+**exactly one** tenant — the one named by `DEFAULT_TENANT_SLUG`. Every other college
+resolves to "not configured", which fails safe rather than sending mail as somebody
+else.
+
+## Conventions that are load-bearing
+
+**Null means "not measurable"; zero means zero.** Throughout the academic and
+prediction code, a figure that could not be measured is `null` and is excluded from
+denominators — never coerced to 0. A student whose register was never taken has no
+attendance percentage, and scoring that as 0 puts them top of a risk list for something
+nobody measured. Match this when adding columns: make them nullable.
+
+**Serialise through allowlists, never blocklists.** `sAdmission` once stripped a fixed
+list of secrets, so every column added afterwards shipped to the browser by default.
+
+**Rate limiters and locks are in-process** module-level `Map`s. Correct for one Node
+process; a clustered deployment needs Redis. Each one says so in a comment.
+
+**Dates are strings.** `YYYY-MM-DD` for academic dates, compared as strings.
+`src/clock.js` pins `APP_TIMEZONE` — never use the host clock for a user-facing date.
+
+**Comments explain WHY**, often at length, including why an alternative was rejected.
+Match that density; it is the house style and it is load-bearing.
+
+## Testing approach
+
+Pure logic lives in its own file with tests beside it and no database — see
+`src/prediction/` and `src/vle/*Normalise.js`. Everything else is covered by HTTP smoke
+suites in `scripts/`, which are deliberately weighted toward **negative** assertions:
+who is refused, what never leaves the building, which decisions cannot be made twice.
+
+There is **no client-side test framework at all**. `StaffHub.jsx` (~12k lines) and the
+platform dashboard are verified only by building.
+
+When adding a regression test, prove it can fail: reintroduce the bug and confirm the
+test catches it. Twice in recent work a test passed while discriminating nothing.
+
+## Deployment
+
+`main` → staging, `production` branch → production. Both auto-deploy: Render for the
+API, Vercel for the client. The two frontends and two APIs are separate services with
+separate databases.
+
+`/api/health` answers 200 on *any* build and proves nothing about which code is
+running. To tell whether a deploy landed, probe a route only the new code has: **401
+means mounted, 404 means not deployed**, with an existing route as the control.
+
+`render.yaml` declares the API service; note that a Blueprint only applies its settings
+when a service is **created**, so editing it does not move an existing service.
