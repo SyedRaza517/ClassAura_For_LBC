@@ -44,6 +44,18 @@ const PROVIDERS = {
     env: { token: "CANVAS_TOKEN", url: "CANVAS_URL", autoSync: "CANVAS_AUTO_SYNC" },
     describe: (s) => (s.url ? s.url : "no site address set"),
   },
+  // Blackboard Learn. The secret is the Application Secret from the developer
+  // registration; applicationKey and applicationId sit beside it as settings because
+  // neither is secret on its own — the college's Learn administrator has to be TOLD
+  // the Application ID in order to create the REST API Integration that makes any of
+  // this work, so hiding it would be actively unhelpful.
+  blackboard: {
+    label: "Blackboard",
+    secretField: "secret",
+    settingFields: ["url", "applicationKey", "applicationId", "autoSync"],
+    env: { secret: "BB_APP_SECRET", url: "BB_URL", applicationKey: "BB_APP_KEY", applicationId: "BB_APP_ID", autoSync: "BB_AUTO_SYNC" },
+    describe: (s) => (s.url ? s.url : "no site address set"),
+  },
   // Outbound email. The one that made this whole exercise urgent: it lived as
   // process-wide SMTP_* and MAIL_FROM, so every institution on the platform sent its
   // applicants mail from whichever college the server happened to be configured for.

@@ -63,6 +63,33 @@ const FORMS = {
     // Said on the setup screen rather than discovered after a term of empty columns.
     note: "Canvas has no API for its Roll Call attendance tool, so attendance cannot be imported from Canvas. Everything else — including whether work was actually handed in, and whether it was late — does come across.",
   },
+  // Blackboard Learn. The only integration on this screen that cannot be completed by
+  // the person looking at it: their Blackboard administrator has to create a REST API
+  // Integration on the Learn site before any of these credentials will be accepted.
+  // The form says so up front, because the failure mode otherwise is a 401 that reads
+  // as "your key is wrong" when the key is fine.
+  blackboard: {
+    label: "Blackboard",
+    blurb: "Reads courses, enrolments, gradebook columns, attempts, grades and attendance from Blackboard Learn. Read-only — nothing is written back.",
+    secret: {
+      key: "secret",
+      label: "Application Secret",
+      hint: "From the application registered at developer.anthology.com. Anthology keeps no copy — if it is lost it cannot be recovered, only replaced.",
+    },
+    fields: [
+      { key: "url", label: "Blackboard address", placeholder: "https://blackboard.yourcollege.ac.uk", hint: "The address staff and students sign in at." },
+      { key: "applicationKey", label: "Application Key", placeholder: "e.g. 9f3c1b2a-…", hint: "Issued with the Secret when the application was registered." },
+      { key: "applicationId", label: "Application ID", placeholder: "e.g. 4d2e…", hint: "Not secret — this is the value your Blackboard administrator needs in order to create the REST API Integration." },
+    ],
+    choices: [
+      { key: "autoSync", label: "Nightly import at 02:00", options: [
+        { value: "", label: "Use the server default" },
+        { value: "on", label: "On - import every night" },
+        { value: "off", label: "Off - only when I press Sync" },
+      ] },
+    ],
+    note: "Your Blackboard administrator must also create a REST API Integration on the Learn site (System Admin → Building Blocks → REST API Integrations), quoting the Application ID above and nominating the Learn account the import acts as. Until they do, these credentials will be refused however correct they are. That account needs permission to read courses, rosters and grades — and, to read submissions, the course.gradebook.MODIFY entitlement, which despite its name is what Blackboard uses to gate reading them.",
+  },
   // Outbound email. Listed first because it is the one that affects every applicant
   // and student a college has: offers, interview invitations, password resets and
   // attendance notices all leave from here, under this college's name.
