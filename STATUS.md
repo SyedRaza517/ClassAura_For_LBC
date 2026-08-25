@@ -265,11 +265,21 @@ records of what the college knew and when, which is what an appeal turns on.
 | A test in `settings.test.js` failed on its own premise: it asserted the default weights do **not** sum to exactly 1 (they do), so the floating-point tolerance it existed to guard was never exercised | Carries its own weight set that genuinely misses 1 by one ulp |
 | `npm test` only ever discovered `scripts/smoke-*.mjs`, so unit tests beside the code were decoration — 71 assertions no push ever ran | `scripts/test.mjs` runs `node --test` over `server/src` first. (An explicit glob: a bare directory makes the runner walk into `src/index.js`, which binds a port, and the run never terminates) |
 
-**Verification status.** The 71 unit tests pass locally and the client builds.
-`scripts/smoke-prediction.mjs` (24 checks) has **never been run on this machine** —
-there is no local Postgres or Docker here, and `server/.env` points at the live staging
-database. Its first execution is CI. Treat every claim about the HTTP surface as
-code-reading until that run is green.
+**Verification status.** Everything below was demonstrated on 25 Aug 2026, not
+inferred:
+
+| | |
+|---|---|
+| 75 unit tests | pass — pure arithmetic, no database |
+| `smoke-prediction.mjs`, 25 checks | **passed**, in an isolated schema (see §5) |
+| Whole suite, 24 files | **24 passed, 0 failed, 1 skipped** — nothing else broke |
+| Scoring against real data | 10 students scored, 0 errors, **0 score/band disagreements** |
+| Invalidation loop | flag → rescore only that student → cleared |
+| Migration chain from nothing | all 13 applied cleanly into an empty schema |
+
+The one thing still unproven end-to-end is the **client**, which has no test framework
+at all (§5) — the Predictive Analysis tab has been built and deployed but not driven by
+anything except a person.
 
 ### 3.7 Business rules that are actually enforced
 
@@ -379,7 +389,7 @@ before the tests start), and runs `npm audit` advisory-only.
 | `smoke-push-transport` | The FCM transport, standing in for Google — no server or network needed |
 | `smoke-fixes` | Role scoping on `/staff`, adjustment validation, re-decision guard |
 | `smoke-signup-2fa` | **SKIPPED** — see D2 |
-| `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. **Never yet run — see the note below the table** |
+| `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. 25 checks; **passed on 25 Aug 2026** |
 
 **What still has no automated coverage** — checked by grepping every suite for each
 mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
@@ -389,12 +399,32 @@ mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
 escaping checks in `smoke-branding`. Neither router is covered on its own terms.
 There is still no unit or component test framework and no client-side tests.
 
-**`smoke-prediction.mjs` has never been executed.** It was written on 25 Aug 2026
-alongside the feature, and there is no local Postgres or Docker on this machine while
-`server/.env` points at the live staging database — so its first run is CI, and until
-that run is green every claim in this file about the prediction HTTP surface rests on
-reading the code. The prediction *arithmetic* is a different matter: 71 unit tests in
-`server/src/prediction/*.test.js` do run locally, need no database, and pass.
+**The whole suite was run on 25 Aug 2026 and passed: 24 passed, 0 failed, 1 skipped**
+— every smoke suite plus the unit tests, including `smoke-prediction.mjs` on its first
+ever execution. That run is also what makes the rest of this file's claims about the
+prediction HTTP surface demonstrations rather than code-reading.
+
+**How, given there is no local Postgres or Docker and `server/.env` points at the live
+database.** Not by pointing the suite at it. `assertDisposable` *would* have allowed
+that — `edtech_staging` matches its disposable-name rule — which is worth knowing,
+because it means a plain `npm test` on this machine seeds over live data and the guard
+does not stop you.
+
+Instead the suite ran in an isolated **Postgres schema** in the same database:
+
+```bash
+DATABASE_URL="postgresql://…/edtech_staging?schema=smoketest" npm test
+```
+
+Prisma scopes everything to the named schema, `_prisma_migrations` included, so
+`migrate deploy` built all 51 tables there from nothing — which independently proves
+the migration chain applies cleanly from scratch, the thing CI does on every push.
+Row counts in `public` were snapshotted before and compared after: **zero drift**. The
+schema was then dropped.
+
+This is the pattern to reuse on any machine with no scratch database. It is not a
+substitute for CI — same server, same connection limits — but it is a great deal
+better than not running them.
 
 **A 22nd suite, `scripts/smoke-registrations.mjs`, was written while this review was
 in progress** and is not counted above or described in the table — it appeared in
