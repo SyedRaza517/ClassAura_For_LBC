@@ -517,6 +517,29 @@ export const api = {
   addInteraction: (data) => request("/interactions", { method: "POST", body: data }),
   updateInteraction: (id, data) => request(`/interactions/${id}`, { method: "PUT", body: data }),
   removeInteraction: (id) => request(`/interactions/${id}`, { method: "DELETE" }),
+  // Predictive analysis — progression risk.
+  //
+  // recalculate() is bounded server-side and may leave students outstanding, so its
+  // response carries `remaining`; the screen re-runs until that reaches zero rather
+  // than assuming one press did the whole college. It gets a long timeout because it
+  // scores up to 500 students synchronously.
+  predictionSettings: () => request("/prediction/settings"),
+  savePredictionSettings: (config) => request("/prediction/settings", { method: "PUT", body: { config } }),
+  resetPredictionSettings: () => request("/prediction/settings", { method: "DELETE" }),
+  predictionSummary: () => request("/prediction/summary"),
+  predictionStudents: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
+    return request(`/prediction/students${q ? `?${q}` : ""}`);
+  },
+  predictionStudent: (id) => request(`/prediction/students/${id}`),
+  predictionRecalculate: (body = {}) => request("/prediction/recalculate", { method: "POST", body, timeoutMs: 120000 }),
+  listInterventions: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
+    return request(`/prediction/interventions${q ? `?${q}` : ""}`);
+  },
+  addIntervention: (body) => request("/prediction/interventions", { method: "POST", body }),
+  updateIntervention: (id, body) => request(`/prediction/interventions/${id}`, { method: "PUT", body }),
+
   // assessments (gradebook)
   listAssessments: (unitId) => request(`/assessments${unitId ? `?unitId=${unitId}` : ""}`),
   addAssessment: (data) => request("/assessments", { method: "POST", body: data }),

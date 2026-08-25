@@ -421,6 +421,11 @@ model Tenant {
   slcApplication         SlcApplication[]
   integrations           TenantIntegration[]
   auditLogs              AuditLog[]
+  predictionSettings       PredictionModelSettings?
+  assessmentSubmission     AssessmentSubmission[]
+  studentPredictionCurrent StudentPredictionCurrent[]
+  studentPredictionHistory StudentPredictionHistory[]
+  intervention             Intervention[]
 
   @@index([active])
 }
@@ -963,6 +968,9 @@ model Assessment {
   createdAt DateTime @default(now())
 
   grades AssessmentGrade[]
+  // Whether the work was handed in, which a grade row cannot answer — a grade only
+  // exists once the work has been MARKED. See AssessmentSubmission.
+  submissions AssessmentSubmission[]
 
   @@index([unitId])
 
@@ -1035,6 +1043,12 @@ model Student {
   grades       AssessmentGrade[]
   queries      StudentQuery[]
   reviews      StudentReview[]
+  submissions  AssessmentSubmission[]
+  // Progression risk. `prediction` is at most one row — the latest score — while
+  // predictionHistory keeps every score ever calculated (see those models).
+  prediction        StudentPredictionCurrent?
+  predictionHistory StudentPredictionHistory[]
+  interventions     Intervention[]
 
   @@index([cohortId])
 
@@ -1303,6 +1317,10 @@ model StudentReview {
   followUpDate  String?  // YYYY-MM-DD, only when followUp is true
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // Interventions raised off the back of this conversation, if any. Set-null on
+  // the other side, so deleting a review keeps its interventions.
+  interventions Intervention[]
 
   @@index([studentId])
   @@index([staffId])
@@ -1666,6 +1684,352 @@ model SlcApplication {
   updatedAt       DateTime @updatedAt
 
   @@index([status])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// ---------------------------------------------------------------------------
+// Progression risk (predictive analysis)
+//
+// Everything below feeds one number per student — the Progression Score — and the
+// R1..R5 band it lands in. Deliberately NOT called a probability of graduating:
+// nothing here has been validated against real outcomes yet, so the UI may only
+// ever say "progression risk". Every component is stored, current and historic,
+// precisely so a model CAN be trained against real outcomes later without anyone
+// having to redesign these tables.
+// ---------------------------------------------------------------------------
+
+/// How ONE institution weights and bands the progression score.
+///
+/// Same shape as AttendanceBandConfig and for the same reason: the weights (20%
+/// attendance, 25% average grade, and the rest), the pass threshold, the
+/// recent-attendance window and the R1..R5 boundaries are one college's academic
+/// policy. A college running a Student-visa cohort cares about attendance far more
+/// than one running a part-time evening course, and a score built on the wrong
+/// weights tells staff to intervene on the wrong students.
+///
+/// At most one row per institution, and no row at all until a college edits its
+/// settings: "no row" means "running on the platform defaults", which live in code
+/// and are merged UNDER whatever this column holds.
+model PredictionModelSettings {
+  id String @id @default(cuid())
+
+  /// The whole configuration as one JSON object — weights, band boundaries, pass
+  /// threshold, recent-attendance window, attendance mode, override toggles.
+  ///
+  /// One column rather than a row per setting, for the same reason the attendance
+  /// bands are one column: the weights are only valid as a SET (they must total
+  /// 100) and the bands are only valid as a SET (they must tile 0-100 with no gap).
+  /// One column replaces both atomically, so a batch recalculation running during a
+  /// save can never score half a cohort against weights summing to 85.
+  config Json
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+/// Whether a student HANDED WORK IN — which nothing in this database records today.
+///
+/// AssessmentGrade is not that record. A grade row exists only once the work has
+/// been MARKED: moodle.js skips any grade item with an empty graderaw, because an
+/// unmarked item there cannot be told apart from a genuine zero. So a student who
+/// submitted on time and is sitting in a marking backlog has no AssessmentGrade
+/// row, exactly like a student who submitted nothing at all. Scoring submission
+/// rate off grades would therefore punish a whole cohort for its lecturer being
+/// behind, which is the one failure mode that would destroy staff trust in the
+/// score on day one.
+///
+/// Hence three states and not two. Most assessments here are LTI/Turnitin grade
+/// items rather than mod_assign assignments (see the header of moodle.js), and
+/// mod_assign_get_submissions returns nothing for those — so for many rows the
+/// honest answer is "unknown". Unknown is excluded from the submission-rate
+/// denominator: it must never push a student toward risk and must never be
+/// rendered as "missing". A "manual" row is what a member of staff asserted and is
+/// never overwritten by a sync, matching AssessmentGrade.source.
+model AssessmentSubmission {
+  id           String     @id @default(cuid())
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessmentId String
+  student      Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId    String
+
+  /// "submitted" | "not_submitted" | "unknown". Validated in the route layer; a
+  /// string rather than a Prisma enum, matching the rest of this schema.
+  status      String  @default("unknown")
+  /// YYYY-MM-DD. Compared against Assessment.dueDate for the on-time rate, so it is
+  /// a plain date string like every other date the academic side stores.
+  submittedOn String?
+  /// "moodle" (synced) or "manual" (a person said so).
+  source      String  @default("moodle")
+
+  recordedBy String?
+  recordedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([assessmentId, studentId])
+  @@index([studentId])
+  @@index([assessmentId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// The latest progression score for one student — one row, overwritten in place.
+///
+/// Every component that went into the score is stored beside it, not just the
+/// total. Staff will not act on a number they cannot explain, and "why is this
+/// student R4?" has to be answerable from the row itself, without re-running the
+/// engine against data that has since moved on.
+model StudentPredictionCurrent {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  /// One row per student, replaced on each recalculation.
+  studentId String  @unique
+
+  /// WHAT THIS SCORE COVERS.
+  ///
+  /// Scoped to the student's CURRENT TERM, not their whole course. A student who
+  /// struggled in Year 1 and has since recovered must not carry that forever, and — the
+  /// more dangerous direction — a strong first year must not mask a collapse happening
+  /// now. Grade TREND is the one deliberate exception and looks across term boundaries,
+  /// because a trend that resets every September cannot see the September collapse.
+  ///
+  /// Stored rather than inferred: terms roll over, and a history row has to still mean
+  /// what it meant on the day it was written.
+  ///
+  /// A null scopeTermId means no Term row covered the calculation date and a documented
+  /// fallback was used instead. scopeLabel always says which, so the interface can show
+  /// "Year 1 · Term 2" or "all units — no terms configured" rather than an unexplained
+  /// number.
+  scopeTermId String?
+  scopeLabel  String  @default("")
+  scopeFrom   String? // YYYY-MM-DD, inclusive
+  scopeTo     String? // YYYY-MM-DD, inclusive
+
+  // --- Components, all 0-100 unless noted ---
+  overallAttendance Float?
+  /// Rolling window, 28 days by default and configurable per college.
+  recentAttendance  Float?
+  /// submitted / due, counting ONLY assessments whose dueDate has passed. An
+  /// assessment due next month must never reduce a student's score.
+  submissionRate    Float?
+  onTimeRate        Float?
+  /// dueDate passed AND no valid submission. Drives OVR-001 and a red indicator,
+  /// so it is a count rather than a rate.
+  missingAssessmentCount Int
+  /// marks / maxMarks * 100, averaged. Normalised because assessments here are
+  /// marked out of anything from 20 to 100.
+  averageGrade      Float?
+
+  /// "IMPROVING" | "STABLE" | "DECLINING" | "INSUFFICIENT_DATA". The sentinel is
+  /// the point: fewer than four valid grades is not the same thing as a flat trend,
+  /// and keeping it as a stored string keeps the two distinguishable in history
+  /// forever rather than only while the engine remembers to say so.
+  gradeTrend      String
+  /// Float rather than Int, even though today's values are 100/70/30, because these
+  /// are inputs to a weighted sum a college can retune — awarding 72.5 for a stable
+  /// trend should be a settings edit and not a migration.
+  gradeTrendScore Float
+
+  /// "IMPROVED" | "STABLE" | "DETERIORATED" | "NONE" — NONE meaning no intervention
+  /// has been reviewed yet, which scores neutral rather than badly.
+  interventionResponse      String
+  interventionResponseScore Float
+
+  /// The weighted sum BEFORE the override engine runs, kept next to the final
+  /// figure so "the maths said R2 and a rule pulled it to R3" is visible instead of
+  /// being something a reader has to reconstruct from the codes.
+  baseProgressionScore Float
+  progressionScore     Float
+  baseRiskLevel        String
+  riskLevel            String
+
+  /// "IMPROVING" | "STABLE" | "DECLINING" | "INSUFFICIENT_DATA" — this score minus
+  /// the score 28 days ago, read out of StudentPredictionHistory.
+  directionOfTravel String
+
+  redIndicatorCount Int     @default(0)
+  overrideApplied   Boolean @default(false)
+  /// JSON arrays of STRUCTURED CODES ("OVR-001", "LOW_SUBMISSION_RATE"), never
+  /// display text. The text is generated from the code at render time, so rewording
+  /// a driver does not orphan every row already written, and a future model can
+  /// count codes without parsing English.
+  overrideCodes       Json
+  riskDriverCodes     Json
+  positiveDriverCodes Json
+  /// The single worst driver, for the one-line summary in a list view.
+  primaryRiskDriver   String?
+
+  interventionRequired Boolean @default(false)
+  /// The open Intervention this student's flag currently refers to. Deliberately a
+  /// plain id and not a foreign key: this row is rewritten on every recalculation
+  /// while the intervention it points at outlives several of those, so a constraint
+  /// here would only ever turn a stale pointer into a failed batch run.
+  currentInterventionId String?
+
+  /// Which version of the engine produced these numbers. Two rows scored by
+  /// different versions are not comparable, and without this nobody can tell which
+  /// is which after a weighting change ships.
+  modelVersion   String
+  lastCalculated DateTime
+
+  /// Recalculation is BATCHED, not synchronous — taking a register must not wait on
+  /// a cohort's worth of scoring. Anything that invalidates a student's score sets
+  /// this flag and returns; the batch picks up whatever is flagged. New rows default
+  /// to stale so a student created between runs is scored at the next one.
+  stale Boolean @default(true)
+
+  @@index([stale])
+  @@index([riskLevel])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// Every score ever calculated for a student. APPEND ONLY.
+///
+/// Rows here are NEVER updated and NEVER deleted. Two things depend on that:
+/// direction of travel is literally "this score minus the row nearest 28 days ago",
+/// so editing history rewrites the past; and the reason every component is stored
+/// rather than just the total is that a model trained on real progression outcomes
+/// will train on these rows. Trimming them starts that clock again from zero.
+///
+/// The single exception is the student themselves being erased, which cascades — a
+/// GDPR erasure that left a full behavioural profile behind would not be one.
+model StudentPredictionHistory {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  calculationDateTime DateTime @default(now())
+
+  /// WHAT THIS SCORE COVERS.
+  ///
+  /// Scoped to the student's CURRENT TERM, not their whole course. A student who
+  /// struggled in Year 1 and has since recovered must not carry that forever, and — the
+  /// more dangerous direction — a strong first year must not mask a collapse happening
+  /// now. Grade TREND is the one deliberate exception and looks across term boundaries,
+  /// because a trend that resets every September cannot see the September collapse.
+  ///
+  /// Stored rather than inferred: terms roll over, and a history row has to still mean
+  /// what it meant on the day it was written.
+  ///
+  /// A null scopeTermId means no Term row covered the calculation date and a documented
+  /// fallback was used instead. scopeLabel always says which, so the interface can show
+  /// "Year 1 · Term 2" or "all units — no terms configured" rather than an unexplained
+  /// number.
+  scopeTermId String?
+  scopeLabel  String  @default("")
+  scopeFrom   String? // YYYY-MM-DD, inclusive
+  scopeTo     String? // YYYY-MM-DD, inclusive
+
+  // The same components as StudentPredictionCurrent, frozen at the moment of scoring.
+  overallAttendance      Float?
+  recentAttendance       Float?
+  submissionRate         Float?
+  onTimeRate             Float?
+  missingAssessmentCount Int
+  averageGrade           Float?
+
+  gradeTrend      String
+  gradeTrendScore Float
+
+  interventionResponse      String
+  interventionResponseScore Float
+
+  baseProgressionScore Float
+  progressionScore     Float
+  baseRiskLevel        String
+  riskLevel            String
+
+  directionOfTravel String
+
+  redIndicatorCount   Int     @default(0)
+  overrideApplied     Boolean @default(false)
+  overrideCodes       Json
+  riskDriverCodes     Json
+  positiveDriverCodes Json
+  primaryRiskDriver   String?
+
+  interventionRequired Boolean @default(false)
+
+  modelVersion String
+
+  /// The lookup is always "this student, nearest this date", so the pair is the
+  /// index and studentId on its own is not.
+  @@index([studentId, calculationDateTime])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// Something a college DID about a student's risk, and what happened next.
+///
+/// The metrics are snapshotted onto the row rather than read back out of the
+/// student's current figures, because the question this table answers is "were they
+/// worse when we stepped in than they are now?" — which is unanswerable if the
+/// numbers move underneath it. It is also what InterventionResponse scores against:
+/// improvement means progression score +5, or recent attendance +10 percentage
+/// points, or outstanding assessments reduced, each measured from these frozen
+/// values.
+model Intervention {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  interventionDate String // YYYY-MM-DD
+  /// What was done — monitoring flag, staff notification, formal review,
+  /// escalation. The band decides which: R1/R2 monitor only, R3 flag and notify,
+  /// R4 a record with a review date, R5 urgent escalation and a priority review.
+  interventionType String
+
+  // --- The snapshot. Frozen deliberately; see the note above. ---
+  riskLevelAtIntervention        String
+  progressionScoreAtIntervention Float
+  attendanceAtIntervention       Float
+  recentAttendanceAtIntervention Float
+  submissionRateAtIntervention   Float
+  averageGradeAtIntervention     Float
+  missingAtIntervention          Int
+
+  reviewDate String? // YYYY-MM-DD — when someone agreed to look again
+  /// "open" | "reviewed" | "closed".
+  status     String  @default("open")
+  /// "improved" | "stable" | "deteriorated". Null until the review actually
+  /// happens, and that null is what tells the engine "no response measured yet".
+  outcome    String?
+  reviewedAt DateTime?
+  reviewedBy String?
+
+  notes     String   @default("")
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  /// The pastoral conversation this intervention belongs to, when there was one.
+  /// Optional and set-null on delete, matching StudentReview's own links:
+  /// reorganising pastoral records must never destroy the record of an
+  /// intervention, and an intervention raised automatically by the engine has no
+  /// review behind it at all. The link exists so a student has ONE story rather
+  /// than a risk score, a review and an intervention on three separate screens.
+  studentReview   StudentReview? @relation(fields: [studentReviewId], references: [id], onDelete: SetNull)
+  studentReviewId String?
+
+  @@index([studentId])
+  @@index([status])
+  @@index([interventionDate])
+  @@index([studentReviewId])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String

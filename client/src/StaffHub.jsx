@@ -11,7 +11,7 @@ import {
   Sun, Sunrise, Sunset, TrendingUp, Timer, Info, Phone,
   CalendarCheck, UserCheck, Layers, Activity, Award, ShieldCheck,
   BookOpen, Percent, PlayCircle, RefreshCw, MoreHorizontal, MessageSquare, ChevronDown, Loader2, KeyRound, Send, Wallet,
-  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen
+  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -2124,7 +2124,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "students", "attendance-emails", "assessments", "pat", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "students", "attendance-emails", "assessments", "pat", "prediction", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
 const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
 // Can this user see/use a given admin page? The Super Admin gets everything,
@@ -2571,6 +2571,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "slc", label: "SLC", I: Wallet },
     { key: "assessments", label: "Assessments", I: Award },
     { key: "pat", label: "PAT", I: MessageSquare },
+    { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "staffreviews", label: "Staff Reviews", I: ClipboardList },
     { key: "studentreviews", label: "Student Reviews", I: MessageSquare },
     { key: "studentqueries", label: "Student Queries", I: Inbox },
@@ -2668,6 +2669,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}
         {activeKey === "pat" && <AdminPAT store={store} />}
+        {activeKey === "prediction" && <AdminPrediction store={store} />}
         {activeKey === "staffreviews" && <AdminStaffReviews store={store} />}
         {activeKey === "studentreviews" && <AdminStudentReviews store={store} />}
         {activeKey === "passwords" && <AdminPasswords />}
@@ -2682,6 +2684,699 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "audit" && <AuditTrail />}
         {activeKey === "access" && <AdminAccess store={store} />}
       </main>
+    </div>
+  );
+}
+
+/* ----- Dashboard: Predictive Analysis (progression risk) -----------------
+   Three screens behind one tab: the register (who the college should worry
+   about), the interventions raised off the back of it, and the model itself.
+
+   TWO THINGS THIS SCREEN DELIBERATELY DOES.
+
+   It shows a dash, never a zero, for anything the college could not measure. A
+   student whose register has never been taken has no attendance percentage, and
+   rendering that as "0%" would put them at the top of a risk list for something
+   nobody has measured.
+
+   It shows the arithmetic next to the answer. Every score can be opened to see the
+   seven components that produced it, and any override that moved it. Staff will not
+   act on a number they cannot explain to the student sitting in front of them, and
+   "why is this student R4?" has to be answerable from the screen.
+   ---------------------------------------------------------------------- */
+
+// Codes, never display text, are what the server stores — so the English lives here
+// and rewording a driver cannot orphan a single stored row.
+const RISK_TONES = ["#059669", "#65a30d", "#d97706", "#ea580c", "#dc2626"];
+const toneForBand = (bands, key) => {
+  const i = (bands || []).findIndex(b => b.key === key);
+  return i < 0 ? "#64748b" : RISK_TONES[Math.min(i, RISK_TONES.length - 1)];
+};
+
+const DRIVER_LABELS = {
+  RED_LOW_OVERALL_ATTENDANCE: "Low overall attendance",
+  RED_LOW_RECENT_ATTENDANCE: "Low attendance recently",
+  RED_LOW_SUBMISSION_RATE: "Low submission rate",
+  RED_MISSING_ASSESSMENTS: "Assessments missing",
+  RED_LOW_AVERAGE_GRADE: "Average below the pass mark",
+  RED_DECLINING_GRADE_TREND: "Grades declining",
+  LIMITED_EVIDENCE: "Limited evidence — scored on part of the model",
+  NO_EVIDENCE: "Nothing measurable yet",
+};
+
+const OVERRIDE_LABELS = {
+  "OVR-001": "Missing assessments cap this student's band",
+  "OVR-002": "Recent attendance is critically low",
+  "OVR-003": "Average grade is below the pass mark",
+  "OVR-004": "Enough separate warning signs to worsen the band",
+};
+
+const POSITIVE_LABELS = {
+  GOOD_OVERALL_ATTENDANCE: "Good overall attendance",
+  GOOD_RECENT_ATTENDANCE: "Attending well recently",
+  GOOD_SUBMISSION_RATE: "Handing work in",
+  GOOD_ON_TIME_RATE: "Handing work in on time",
+  GOOD_AVERAGE_GRADE: "Strong average grade",
+  GOOD_GRADE_TREND: "Grades holding up",
+  GOOD_INTERVENTION_RESPONSE: "Responding to support",
+  GOOD_IMPROVING_GRADES: "Grades improving",
+  GOOD_RESPONDED_TO_SUPPORT: "Improved since we stepped in",
+};
+
+const COMPONENT_LABELS = {
+  overallAttendance: "Overall attendance",
+  recentAttendance: "Recent attendance",
+  submissionRate: "Submission rate",
+  onTimeRate: "On-time rate",
+  averageGrade: "Average grade",
+  gradeTrend: "Grade trend",
+  interventionResponse: "Response to support",
+};
+
+const TREND_LABELS = {
+  IMPROVING: "Improving", STABLE: "Stable", DECLINING: "Declining", INSUFFICIENT_DATA: "Not enough marks yet",
+};
+const RESPONSE_LABELS = {
+  IMPROVED: "Improved", NO_CHANGE: "No change", DECLINED: "Declined",
+  TOO_EARLY: "Too early to tell", NONE: "No intervention",
+};
+const DIRECTION_LABELS = { IMPROVING: "Improving", STABLE: "Stable", DECLINING: "Declining", NEW: "No history yet" };
+
+const INTERVENTION_TYPE_LABELS = {
+  tutorial: "Tutorial", pastoral_meeting: "Pastoral meeting", attendance_warning: "Attendance warning",
+  academic_support: "Academic support", welfare_referral: "Welfare referral",
+  parent_guardian_contact: "Parent / guardian contact", attendance_contract: "Attendance contract", other: "Other",
+};
+const OUTCOME_LABELS = {
+  improved: "Improved", no_change: "No change", declined: "Declined", withdrawn: "Withdrawn", other: "Other",
+};
+
+/** A measured percentage, or an em dash. NEVER a zero — see the note at the top. */
+const pctOrDash = (v) => (v == null ? "—" : `${v}%`);
+
+function DirectionChip({ value }) {
+  if (!value || value === "NEW") return <span className="text-[11px] text-slate-400">{DIRECTION_LABELS.NEW}</span>;
+  const up = value === "IMPROVING", down = value === "DECLINING";
+  const tone = up ? "#059669" : down ? "#dc2626" : "#64748b";
+  const I = up ? TrendingUp : down ? TrendingDown : MoreHorizontal;
+  return <span className="inline-flex items-center gap-1 text-[11px] font-bold" style={{ color: tone }}><I size={13} />{DIRECTION_LABELS[value]}</span>;
+}
+
+function RiskPill({ bands, level, score }) {
+  const band = (bands || []).find(b => b.key === level);
+  const tone = toneForBand(bands, level);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ background: alpha(tone, 10), color: tone, boxShadow: `inset 0 0 0 1px ${alpha(tone, 25)}` }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone }} />
+      {level}{band ? ` · ${band.label}` : ""}{score != null ? ` · ${score}` : ""}
+    </span>
+  );
+}
+
+function AdminPrediction({ store }) {
+  const [view, setView] = useState("register");
+  const [summary, setSummary] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [err, setErr] = useState("");
+
+  const loadHeader = async () => {
+    try {
+      const [s, cfg] = await Promise.all([api.predictionSummary(), api.predictionSettings()]);
+      setSummary(s); setConfig(cfg); setErr("");
+    } catch (e) { setErr(e.message); }
+  };
+  useEffect(() => { loadHeader(); }, []);
+
+  const bands = config ? config.config.bands : [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-extrabold text-slate-800">Predictive Analysis</h2>
+          <p className="text-xs text-slate-400">
+            Progression risk from attendance, submissions and grades.{summary ? ` Model ${summary.modelVersion}.` : ""}
+          </p>
+        </div>
+        <div className="flex gap-1.5">
+          {[["register", "Risk register", ClipboardList], ["interventions", "Interventions", LifeBuoy], ["model", "Model", SlidersHorizontal]].map(([k, label, I]) => (
+            <button key={k} onClick={() => setView(k)} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition active:scale-95 ${view === k ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50"}`} style={view === k ? { background: grad(BLUE) } : {}}>
+              <I size={14} /> {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+
+      {view === "register" && <PredictionRegister bands={bands} summary={summary} onChanged={loadHeader} />}
+      {view === "interventions" && <PredictionInterventions onChanged={loadHeader} />}
+      {view === "model" && <PredictionModel data={config} onSaved={loadHeader} />}
+    </div>
+  );
+}
+
+/* ----- The register ---------------------------------------------------- */
+
+function PredictionRegister({ bands, summary, onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [level, setLevel] = useState("");
+  const [q, setQ] = useState("");
+  const [needing, setNeeding] = useState(false);
+  const [openId, setOpenId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api.predictionStudents({ riskLevel: level, q, interventionRequired: needing ? "true" : "" });
+      setRows(r.students || []);
+    } catch (e) { setNote(e.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [level, needing]);
+
+  // Recalculation is bounded server-side, so one press may not finish the college.
+  // This keeps going while the server reports students still outstanding, and stops
+  // on a pass that scored nobody so a permanently-stuck row cannot spin forever.
+  const recalc = async () => {
+    setBusy(true); setNote("");
+    try {
+      let scored = 0, short = 0, passes = 0, last = null;
+      for (;;) {
+        last = await api.predictionRecalculate({});
+        scored += last.scored; short += last.insufficientData; passes += 1;
+        if (!last.remaining || last.scored === 0 || passes >= 10) break;
+      }
+      setNote(`Scored ${scored} student${scored === 1 ? "" : "s"}.` +
+        (short ? ` ${short} had too little data to score.` : "") +
+        (last && last.remaining ? ` ${last.remaining} still outstanding — press again.` : ""));
+      await Promise.all([load(), onChanged()]);
+    } catch (e) { setNote(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {summary && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {summary.bands.map(b => (
+              <button key={b.key} onClick={() => setLevel(level === b.key ? "" : b.key)} className="rounded-2xl bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md" style={level === b.key ? { boxShadow: `0 0 0 2px ${toneForBand(bands, b.key)}` } : {}}>
+                <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: toneForBand(bands, b.key) }}>{b.key}</p>
+                <p className="mt-0.5 text-2xl font-extrabold tabular-nums text-slate-800">{b.count}</p>
+                <p className="mt-0.5 text-[10px] leading-tight text-slate-400">{b.label}</p>
+              </button>
+            ))}
+          </div>
+
+          <Card className="!p-3">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px]">
+              <span className="text-slate-500"><b className="text-slate-800">{summary.scored}</b> of {summary.activeStudents} active students scored</span>
+              {summary.notScored > 0 && (
+                <span className="text-slate-500" title="A student with no score is not a student at no risk — there was not enough attendance or assessment data to score them.">
+                  <b className="text-slate-800">{summary.notScored}</b> not scored
+                </span>
+              )}
+              <span className="text-slate-500"><b style={{ color: "#dc2626" }}>{summary.interventionRequired}</b> need an intervention</span>
+              {summary.staleCount > 0 && <span className="font-bold text-amber-600">{summary.staleCount} out of date</span>}
+              <span className="text-slate-400">{summary.lastCalculated ? `Last run ${new Date(summary.lastCalculated).toLocaleString("en-GB")}` : "Never run"}</span>
+            </div>
+          </Card>
+        </>
+      )}
+
+      <Card>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[180px] flex-1">
+            <Field label="Search">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && load()} placeholder="Name or student number" className={inputCls + " pl-8"} />
+              </div>
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 pb-2.5 text-xs font-semibold text-slate-600">
+            <input type="checkbox" checked={needing} onChange={e => setNeeding(e.target.checked)} className="h-4 w-4 rounded" />
+            Needs an intervention
+          </label>
+          <PrimaryBtn colour={BLUE} onClick={load} disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Filter</PrimaryBtn>
+          <PrimaryBtn colour={MAROON} onClick={recalc} disabled={busy}>
+            {busy ? <><Loader2 size={16} className="animate-spin" /> Scoring…</> : <><RefreshCw size={16} /> Recalculate</>}
+          </PrimaryBtn>
+        </div>
+        {note && <p className="mt-2 text-[11px] font-semibold text-slate-500">{note}</p>}
+        <p className="mt-2 text-[11px] text-slate-400">
+          Recalculating scores the students whose data has changed. Use it after taking registers or entering
+          marks — nothing is scored automatically, and no student is ever emailed by this feature.
+        </p>
+      </Card>
+
+      {loading ? (
+        <Card><div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-slate-300" /></div></Card>
+      ) : rows.length === 0 ? (
+        <Card><EmptyState Icon={TrendingUp} title="No scored students" msg="Press Recalculate to score the students you hold attendance or assessment data for." /></Card>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(r => (
+            <PredictionRow key={r.student.id} row={r} bands={bands} open={openId === r.student.id}
+              onToggle={() => setOpenId(openId === r.student.id ? null : r.student.id)}
+              onChanged={() => { load(); onChanged(); }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PredictionRow({ row, bands, open, onToggle, onChanged }) {
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const s = row.student;
+
+  useEffect(() => {
+    if (!open || detail) return;
+    setLoading(true);
+    api.predictionStudent(s.id).then(setDetail).catch(() => {}).finally(() => setLoading(false));
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [open]);
+
+  return (
+    <Card className="!p-0 overflow-hidden">
+      <button onClick={onToggle} className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-slate-50">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-extrabold text-white" style={{ background: grad(s.colour || toneForBand(bands, row.riskLevel)) }}>{s.initials}</span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-slate-800">{s.firstName} {s.lastName}</p>
+          <p className="truncate text-[11px] text-slate-400">{s.studentRef}{s.cohortName ? ` · ${s.cohortName}` : ""}{row.scopeLabel ? ` · ${row.scopeLabel}` : ""}</p>
+        </div>
+        <div className="hidden shrink-0 sm:block"><DirectionChip value={row.directionOfTravel} /></div>
+        <RiskPill bands={bands} level={row.riskLevel} score={row.progressionScore} />
+        {row.interventionRequired && <span className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-[10px] font-bold text-rose-600 ring-1 ring-rose-200">Act</span>}
+        <ChevronDown size={16} className={`shrink-0 text-slate-300 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 bg-slate-50/60 p-3">
+          {loading || !detail
+            ? <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-300" /></div>
+            : <PredictionDetail detail={detail} bands={bands} onChanged={onChanged} />}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PredictionDetail({ detail, bands, onChanged }) {
+  const p = detail.prediction;
+  const [raising, setRaising] = useState(false);
+
+  if (!p) {
+    return (
+      <div>
+        <p className="text-xs text-slate-500">{detail.reason}</p>
+        <button onClick={() => setRaising(true)} className="mt-2 flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: grad(MAROON) }}><PlusCircle size={13} /> Record an intervention</button>
+        <InterventionModal open={raising} onClose={() => setRaising(false)} student={detail.student} onSaved={() => { setRaising(false); onChanged(); }} />
+      </div>
+    );
+  }
+
+  const metricRows = [
+    ["Overall attendance", pctOrDash(p.overallAttendance)],
+    ["Recent attendance", pctOrDash(p.recentAttendance)],
+    ["Submission rate", pctOrDash(p.submissionRate)],
+    ["On-time rate", pctOrDash(p.onTimeRate)],
+    ["Average grade", pctOrDash(p.averageGrade)],
+    ["Assessments missing", p.missingAssessmentCount],
+    ["Grade trend", TREND_LABELS[p.gradeTrend] || p.gradeTrend],
+    ["Response to support", RESPONSE_LABELS[p.interventionResponse] || p.interventionResponse],
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">The measurements</p>
+          <dl className="space-y-1">
+            {metricRows.map(([k, v]) => (
+              <div key={k} className="flex items-baseline justify-between gap-3 text-xs">
+                <dt className="text-slate-500">{k}</dt>
+                <dd className="font-bold tabular-nums text-slate-800">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] leading-relaxed text-slate-400">
+            A dash means the college holds no data for that measure. It is left out of the score entirely
+            rather than counted as zero.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">How the score was reached</p>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">The maths said</span>
+              <span className="font-bold tabular-nums text-slate-800">{p.baseProgressionScore} · {p.baseRiskLevel}</span>
+            </div>
+            {p.overrideApplied && (
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className="text-slate-500">After the rules below</span>
+                <span className="font-bold tabular-nums" style={{ color: toneForBand(bands, p.riskLevel) }}>{p.progressionScore} · {p.riskLevel}</span>
+              </div>
+            )}
+            {(p.overrideCodes || []).length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {p.overrideCodes.map(c => (
+                  <li key={c} className="flex items-start gap-1.5 text-[11px] text-amber-700">
+                    <AlertCircle size={12} className="mt-0.5 shrink-0" />{OVERRIDE_LABELS[c] || c}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {p.primaryRiskDriver && (
+              <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
+                Biggest single factor: <b className="text-slate-700">{COMPONENT_LABELS[p.primaryRiskDriver] || p.primaryRiskDriver}</b>
+              </p>
+            )}
+          </div>
+
+          {((p.riskDriverCodes || []).length > 0 || (p.positiveDriverCodes || []).length > 0) && (
+            <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+              <div className="flex flex-wrap gap-1.5">
+                {(p.riskDriverCodes || []).map(c => (
+                  <span key={c} className="rounded-full bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200">{DRIVER_LABELS[c] || c}</span>
+                ))}
+                {(p.positiveDriverCodes || []).map(c => (
+                  <span key={c} className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">{POSITIVE_LABELS[c] || c}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {detail.history.length > 1 && (
+        <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Score over time</p>
+          <ResponsiveContainer width="100%" height={120}>
+            <AreaChart data={[...detail.history].reverse().map(h => ({ d: new Date(h.calculationDateTime).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), score: h.progressionScore }))}>
+              <defs><linearGradient id="predGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={BLUE} stopOpacity={0.35} /><stop offset="100%" stopColor={BLUE} stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+              <XAxis dataKey="d" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} width={28} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 10 }} />
+              <Area type="monotone" dataKey="score" stroke={BLUE} strokeWidth={2} fill="url(#predGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Interventions</p>
+          <button onClick={() => setRaising(true)} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: grad(MAROON) }}><PlusCircle size={13} /> Record one</button>
+        </div>
+        {detail.interventions.length === 0 ? (
+          <p className="text-[11px] text-slate-400">Nothing recorded for this student.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {detail.interventions.map(i => (
+              <li key={i.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
+                <b className="text-slate-700">{INTERVENTION_TYPE_LABELS[i.interventionType] || i.interventionType}</b>
+                <span className="text-slate-400">{fmtDate(i.interventionDate)}</span>
+                <span className="rounded-full bg-white px-1.5 py-0.5 font-bold text-slate-500 ring-1 ring-slate-200">{i.status}</span>
+                {i.outcome && <span className="text-slate-500">→ {OUTCOME_LABELS[i.outcome] || i.outcome}</span>}
+                <span className="text-slate-400">was {i.riskLevelAtIntervention}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <InterventionModal open={raising} onClose={() => setRaising(false)} student={detail.student} onSaved={() => { setRaising(false); onChanged(); }} />
+    </div>
+  );
+}
+
+function InterventionModal({ open, onClose, student, onSaved }) {
+  const [type, setType] = useState("tutorial");
+  const [date, setDate] = useState(todayISO());
+  const [reviewDate, setReviewDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.addIntervention({ studentId: student.id, interventionType: type, interventionDate: date, reviewDate: reviewDate || null, notes });
+      onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Record an intervention — ${student.firstName} ${student.lastName}`}>
+      <div className="space-y-3">
+        <Field label="What was done">
+          <select value={type} onChange={e => setType(e.target.value)} className={inputCls}>
+            {Object.entries(INTERVENTION_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} /></Field>
+          <Field label="Review on (optional)"><input type="date" value={reviewDate} onChange={e => setReviewDate(e.target.value)} className={inputCls} /></Field>
+        </div>
+        <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={inputCls} placeholder="What was discussed, and what was agreed." /></Field>
+        <p className="text-[11px] text-slate-400">
+          The student's current figures are stored on this record, so that "were they worse when we stepped
+          in?" stays answerable later even after their score moves.
+        </p>
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+        <PrimaryBtn colour={MAROON} onClick={save} disabled={busy} className="w-full">
+          {busy ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : <><Save size={16} /> Record it</>}
+        </PrimaryBtn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ----- The interventions caseload -------------------------------------- */
+
+function PredictionInterventions({ onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [status, setStatus] = useState("open");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try { setRows((await api.listInterventions({ status })).interventions || []); setErr(""); }
+    catch (e) { setErr(e.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
+
+  const review = async (id, outcome) => {
+    try { await api.updateIntervention(id, { outcome, status: "reviewed" }); await Promise.all([load(), onChanged()]); }
+    catch (e) { setErr(e.message); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card className="!p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {[["open", "Open"], ["reviewed", "Reviewed"], ["closed", "Closed"], ["", "All"]].map(([k, label]) => (
+            <button key={k} onClick={() => setStatus(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${status === k ? "text-white" : "bg-slate-50 text-slate-500 ring-1 ring-slate-200"}`} style={status === k ? { background: grad(BLUE) } : {}}>{label}</button>
+          ))}
+        </div>
+      </Card>
+
+      {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+
+      {loading ? (
+        <Card><div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-slate-300" /></div></Card>
+      ) : rows.length === 0 ? (
+        <Card><EmptyState Icon={LifeBuoy} title="Nothing here" msg="Interventions are recorded from a student's row in the risk register." /></Card>
+      ) : rows.map(i => (
+        <Card key={i.id} className="!p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-slate-800">{i.student.firstName} {i.student.lastName}</p>
+              <p className="truncate text-[11px] text-slate-400">
+                {INTERVENTION_TYPE_LABELS[i.interventionType] || i.interventionType} · {fmtDate(i.interventionDate)}
+                {i.reviewDate ? ` · review ${fmtDate(i.reviewDate)}` : ""} · was {i.riskLevelAtIntervention} at {i.progressionScoreAtIntervention}
+              </p>
+            </div>
+            {i.status === "open" ? (
+              <div className="flex gap-1.5">
+                {[["improved", "Improved", "#059669"], ["no_change", "No change", "#64748b"], ["declined", "Declined", "#dc2626"]].map(([k, label, tone]) => (
+                  <button key={k} onClick={() => review(i.id, k)} className="rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition hover:opacity-80" style={{ color: tone, background: alpha(tone, 8), boxShadow: `inset 0 0 0 1px ${alpha(tone, 25)}` }}>{label}</button>
+                ))}
+              </div>
+            ) : (
+              <span className="rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-bold text-slate-500 ring-1 ring-slate-200">
+                {i.outcome ? OUTCOME_LABELS[i.outcome] || i.outcome : i.status}
+              </span>
+            )}
+          </div>
+          {i.notes && <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] text-slate-500">{i.notes}</p>}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+/* ----- The model ------------------------------------------------------- */
+
+function PredictionModel({ data, onSaved }) {
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => { if (data) setDraft(JSON.parse(JSON.stringify(data.config))); }, [data]);
+  if (!draft || !data) return <Card><div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-slate-300" /></div></Card>;
+
+  const weightTotal = Object.values(draft.weights).reduce((t, n) => t + Number(n || 0), 0);
+  const totalOk = Math.abs(weightTotal - 1) < 1e-6;
+
+  const setWeight = (k, v) => setDraft({ ...draft, weights: { ...draft.weights, [k]: v === "" ? "" : Number(v) } });
+  const setScalar = (k, v) => setDraft({ ...draft, [k]: v === "" ? "" : Number(v) });
+  const setBand = (i, patch) => { const bands = [...draft.bands]; bands[i] = { ...bands[i], ...patch }; setDraft({ ...draft, bands }); };
+
+  const save = async () => {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      const r = await api.savePredictionSettings(draft);
+      setMsg(`Saved. ${r.staleCount} student score${r.staleCount === 1 ? "" : "s"} marked for recalculation — run it from the risk register.`);
+      await onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const reset = async () => {
+    setBusy(true); setErr(""); setMsg("");
+    try { await api.resetPredictionSettings(); setMsg("Reset to the platform defaults."); await onSaved(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card className="!bg-blue-50/60 !ring-blue-200">
+        <div className="flex gap-2">
+          <Info size={16} className="mt-0.5 shrink-0 text-blue-600" />
+          <p className="text-[11px] leading-relaxed text-blue-900">
+            These numbers are this college's academic policy, not a preference. They decide who gets flagged
+            for intervention. {data.customised ? "You have saved your own." : "You are running on the platform defaults."}
+            {" "}Changing anything marks every stored score for recalculation, because a score produced under
+            the old policy is not comparable with one produced under the new.
+          </p>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Component weights</p>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${totalOk ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-1 ring-rose-200"}`}>
+            Total {Math.round(weightTotal * 1000) / 10}%
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Object.keys(data.defaults.weights).map(k => (
+            <Field key={k} label={COMPONENT_LABELS[k] || k}>
+              <div className="flex items-center gap-1.5">
+                <input type="number" step="0.05" min="0" max="1" value={draft.weights[k]} onChange={e => setWeight(k, e.target.value)} className={inputCls} />
+                <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-400">{Math.round(Number(draft.weights[k] || 0) * 100)}%</span>
+              </div>
+            </Field>
+          ))}
+        </div>
+        {!totalOk && (
+          <p className="mt-2 text-[11px] font-semibold text-rose-600">
+            The weights must total 100%. At {Math.round(weightTotal * 1000) / 10}% every student in the college would be
+            scored {weightTotal < 1 ? "lower" : "higher"} than they should be — by the same amount, invisibly, for everybody.
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Risk bands</p>
+        <div className="space-y-1.5">
+          {draft.bands.map((b, i) => (
+            <div key={b.key} className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2">
+              <span className="w-9 shrink-0 text-xs font-extrabold" style={{ color: RISK_TONES[i] || "#64748b" }}>{b.key}</span>
+              <input value={b.label} onChange={e => setBand(i, { label: e.target.value })} className="min-w-[140px] flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs" />
+              <div className="flex items-center gap-1 text-xs text-slate-500">
+                <input type="number" step="0.01" value={b.min} onChange={e => setBand(i, { min: e.target.value === "" ? "" : Number(e.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-xs tabular-nums" />
+                <span>to</span>
+                <input type="number" step="0.01" value={b.max} onChange={e => setBand(i, { max: e.target.value === "" ? "" : Number(e.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-xs tabular-nums" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">
+          The bands must cover 0 to 100 with no gap and no overlap. A gap means a student whose score lands in
+          it is given no risk level at all, and is silently skipped by everything the score is meant to trigger.
+        </p>
+      </Card>
+
+      <Card>
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Thresholds and rules</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            ["passThreshold", "Pass mark (%)"],
+            ["recentAttendanceDays", "Recent-attendance window (days)"],
+            ["criticalRecentAttendance", "Critical recent attendance (%) — OVR-002"],
+            ["missingOverrideCount", "Missing assessments before OVR-001"],
+            ["redIndicatorThreshold", "Red indicators before OVR-004"],
+            ["redAttendanceThreshold", "Attendance red below (%)"],
+            ["redSubmissionThreshold", "Submission red below (%)"],
+            ["gradeTrendAssessmentCount", "Marks each side of a trend"],
+            ["gradeTrendThreshold", "Trend threshold (points)"],
+            ["directionOfTravelDays", "Direction-of-travel window (days)"],
+            ["directionOfTravelThreshold", "Direction-of-travel threshold (points)"],
+            ["interventionReviewDays", "Days before an intervention is judged"],
+          ].map(([k, label]) => (
+            <Field key={k} label={label}>
+              <input type="number" value={draft[k]} onChange={e => setScalar(k, e.target.value)} className={inputCls} />
+            </Field>
+          ))}
+          {[
+            ["missingOverrideBand", "OVR-001 caps at"],
+            ["criticalAttendanceBand", "OVR-002 caps at"],
+            ["lowGradeBand", "OVR-003 caps at"],
+            ["interventionBand", "Flag for intervention at and below"],
+          ].map(([k, label]) => (
+            <Field key={k} label={label}>
+              <select value={draft[k]} onChange={e => setDraft({ ...draft, [k]: e.target.value })} className={inputCls}>
+                {draft.bands.map(b => <option key={b.key} value={b.key}>{b.key} — {b.label}</option>)}
+              </select>
+            </Field>
+          ))}
+          <Field label="Attendance model">
+            <select value={draft.attendanceMode} onChange={e => setDraft({ ...draft, attendanceMode: e.target.value })} className={inputCls}>
+              <option value="points">Points (P=2, L=1, E=1, A=0)</option>
+              <option value="binary">Present or not</option>
+            </select>
+          </Field>
+          <Field label="What each score covers">
+            <select value={draft.scope} onChange={e => setDraft({ ...draft, scope: e.target.value })} className={inputCls}>
+              <option value="current-term">The current term</option>
+              <option value="current-year">The current year</option>
+              <option value="all">The whole record</option>
+            </select>
+          </Field>
+        </div>
+      </Card>
+
+      {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+      {msg && <Card className="!bg-emerald-50 !ring-emerald-200"><p className="text-xs font-semibold text-emerald-700">{msg}</p></Card>}
+
+      <div className="flex flex-wrap gap-2">
+        <PrimaryBtn colour={MAROON} onClick={save} disabled={busy || !totalOk}>
+          {busy ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : <><Save size={16} /> Save the model</>}
+        </PrimaryBtn>
+        <button onClick={reset} disabled={busy} className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-500 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-40">
+          Reset to platform defaults
+        </button>
+      </div>
     </div>
   );
 }
@@ -11199,7 +11894,7 @@ function AdmissionOfferPanel({ r, store, onChanged }) {
               <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} placeholder="e.g. Swaroop Arja" className={inputCls} />
             </Field>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-400">Report time 09:45 am · session starts 10:00 am (as per the standard letter). The PDF is generated with the applicant's name and course, signed with your name (page 2), and emailed with an Accept link.</p>
+          <p className="mt-1.5 text-[11px] text-slate-400">The letter carries the induction date you pick above, arrival 09:45 am and a 10:00 am start. The PDF is generated with the applicant's name and course, signed with your name, and emailed with an Accept link.</p>
           <PrimaryBtn colour={MAROON} onClick={send} disabled={busy} className="mt-3 w-full">{busy ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <><Send size={16} /> Generate & send offer letter</>}</PrimaryBtn>
         </div>
       )}

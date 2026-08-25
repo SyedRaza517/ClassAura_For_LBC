@@ -128,6 +128,28 @@ if (!external) {
 }
 
 const results = [];
+
+// UNIT TESTS FIRST, and before anything that needs the API.
+//
+// `node --test` over server/src picks up every *.test.js beside the code it covers.
+// These need no database, no server and no fixtures — they are the pure arithmetic
+// (progression scoring, settings validation, attendance models), which is exactly the
+// part a college would be asked to defend at an appeal. Running them here rather than
+// leaving them to be run by hand is the difference between coverage and decoration:
+// until this ran in CI, 71 assertions existed that no push ever executed.
+//
+// They run first because they are the fastest thing in the suite and they fail on the
+// kind of mistake that would otherwise take the whole HTTP run to surface.
+if (!filter.length || filter.some((q) => "unit".includes(q))) {
+  console.log(`${"─".repeat(64)}\n▶ unit tests (server/src)\n${"─".repeat(64)}`);
+  // An explicit glob, NOT `node --test src/`. Given a bare directory the runner walks
+  // into every file under it, including src/index.js — which binds a port and starts
+  // the schedulers, so the run never terminates.
+  const r = spawnSync("node", ["--test", "src/**/*.test.js"], { cwd: server, stdio: "inherit", shell: false, env: { ...process.env } });
+  results.push({ suite: "unit tests (node --test)", status: r.status === 0 ? "passed" : "failed", code: r.status });
+  console.log("");
+}
+
 for (const suite of suites) {
   const standalone = STANDALONE.has(suite);
   if (standalone && external) { results.push({ suite, status: "skipped", note: "needs no API" }); continue; }

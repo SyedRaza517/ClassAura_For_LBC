@@ -98,6 +98,7 @@ app.use("/api/devices", wrapAsync(require("./routes/devices")));
 app.use("/api/hnd", wrapAsync(require("./routes/hnd")));
 app.use("/api/interactions", wrapAsync(require("./routes/interactions")));
 app.use("/api/assessments", wrapAsync(require("./routes/assessments")));
+app.use("/api/prediction", wrapAsync(require("./routes/prediction")));
 app.use("/api/timesheets", wrapAsync(require("./routes/timesheets")));
 app.use("/api/student", wrapAsync(require("./routes/student")));
 app.use("/api/student-queries", wrapAsync(require("./routes/studentQueries")));
