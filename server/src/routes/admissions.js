@@ -482,7 +482,7 @@ router.post("/:id/send-offer", async (req, res) => {
   const inductionDate = str(req.body?.inductionDate) ? formatOfferDate(str(req.body.inductionDate)) : "";
   const letterDate = formatLetterDate(new Date());
   const b = await branding.get();
-  // Whoever is sending types their own name in the dialog; it signs page 2 of the PDF.
+  // Whoever is sending types their own name in the dialog; it signs the PDF.
   // The fallback is the institution's own configured signatory — never a person's name
   // written into this file, which is what it used to be: one college's Admissions Officer
   // signing every other college's offer letters. Empty is a legitimate answer here;
@@ -514,7 +514,7 @@ router.post("/:id/send-offer", async (req, res) => {
   // The applicant-facing wording is the college's own "offer" template, so a college that
   // has reworded it gets its words here rather than the ones this file happened to ship
   // with. The signature block that used to close this email has gone with it: the offer
-  // is signed on page 2 of the attached PDF, and repeating a named signatory under a body
+  // is signed at the foot of the attached PDF, and repeating a named signatory under a body
   // the college wrote produced two sign-offs, one of which was not theirs.
   const tpl = await et.render("offer", {
     firstName: a.firstName || name,

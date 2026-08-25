@@ -19,6 +19,37 @@ const sqlTenant = () => "'" + String(requireTenant()).replace(/'/g, "''") + "'";
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage } = require("../auth");
 const audit = require("../audit");
+const predictionRunner = require("../prediction/runner");
+
+/**
+ * Flag students whose progression score a change here has invalidated.
+ *
+ * Attendance, enrolment, term dates and unit structure all feed the score, and none
+ * of them is written by the prediction feature itself — so every route in this file
+ * that touches one has to say so. Flagging is cheap (one statement per 200 ids) and
+ * deliberately does NOT rescore: taking a register must not wait on a cohort's worth
+ * of arithmetic.
+ *
+ * Never throws into a request that has already written. The register is saved; a
+ * failure to invalidate a cache must not tell a member of staff otherwise.
+ */
+async function flagStale(studentIds, what) {
+  try { await predictionRunner.markStale(studentIds); }
+  catch (e) { console.error(`[prediction] could not flag scores after ${what}:`, e.message); }
+}
+
+/** Every student in a cohort — the affected set whenever a TERM's dates move, since
+ *  term dates are the window each score is calculated over. */
+async function studentsOfCohort(cohortId) {
+  if (!cohortId) return [];
+  return (await prisma.student.findMany({ where: { cohortId }, select: { id: true } })).map((s) => s.id);
+}
+
+/** Every student enrolled on a unit. */
+async function studentsOfUnit(unitId) {
+  if (!unitId) return [];
+  return (await prisma.enrolment.findMany({ where: { unitId }, select: { studentId: true } })).map((e) => e.studentId);
+}
 
 // A student named for a log line: the identifiers a registry needs to find the
 // person, and nothing else off the record.
@@ -292,7 +323,15 @@ router.put("/cohorts/:id", requireAuth, requireRegisters, async (req, res) => {
 });
 
 router.delete("/cohorts/:id", requireAuth, requireRegisters, async (req, res) => {
-  try { await prisma.cohort.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  // Read the students BEFORE the delete. Student.cohortId is set to null by the
+  // cascade, so afterwards there is nothing left connecting these students to the
+  // cohort whose term dates their scores were calculated over.
+  const affected = await studentsOfCohort(req.params.id);
+  try {
+    await prisma.cohort.delete({ where: { id: req.params.id } });
+    await flagStale(affected, "a cohort being deleted");
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Cohort not found" }); }
 });
 
@@ -360,6 +399,11 @@ router.put("/terms/:id", requireAuth, requireRegisters, async (req, res) => {
   // A gap between terms leaves days covered by no term at all, which silently locks
   // every register in that window. Not an error (the college may intend a break), but
   // report it so the UI can warn instead of leaving the admin to guess.
+  // A term's dates are the window every score in that cohort is calculated over, so
+  // moving them re-scopes every student in it — without writing a single student row.
+  if (data.start !== undefined || data.end !== undefined) {
+    await flagStale(await studentsOfCohort(existing.cohortId), "a term's dates changing");
+  }
   const all = [...siblings, t].sort((a, b) => a.start.localeCompare(b.start));
   const gaps = [];
   for (let i = 1; i < all.length; i++) {
@@ -369,7 +413,14 @@ router.put("/terms/:id", requireAuth, requireRegisters, async (req, res) => {
 });
 
 router.delete("/terms/:id", requireAuth, requireRegisters, async (req, res) => {
-  try { await prisma.term.delete({ where: { id: req.params.id } }); res.json({ ok: true }); }
+  // Read the term BEFORE deleting it: its cohort is the only route to the students
+  // whose scoring window this removes, and after the delete that link is gone.
+  const existing = await prisma.term.findUnique({ where: { id: req.params.id }, select: { cohortId: true } });
+  try {
+    await prisma.term.delete({ where: { id: req.params.id } });
+    if (existing) await flagStale(await studentsOfCohort(existing.cohortId), "a term being deleted");
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Term not found" }); }
 });
 
@@ -499,6 +550,11 @@ router.put("/units/:id", requireAuth, requireRegisters, async (req, res) => {
   }
   try {
     const m = await prisma.unit.update({ where: { id: existing.id }, data });
+    // A unit's term and dates decide which of its assessments and sessions fall inside
+    // a student's scoring window, so moving them re-scopes everyone enrolled.
+    if (data.termId !== undefined || data.cohortId !== undefined || data.startDate !== undefined || data.endDate !== undefined || data.courseId !== undefined) {
+      await flagStale(await studentsOfUnit(existing.id), "a unit being re-scheduled");
+    }
     res.json(sUnit(m));
   } catch (e) {
     if (e?.code === "P2002") return res.status(409).json({ error: `Unit code "${data.code || existing.code}" already exists in ${targetCourseId ? "this course" : "the no-course group"}` });
@@ -515,8 +571,19 @@ router.delete("/units/:id", requireAuth, requireRegisters, async (req, res) => {
     include: { _count: { select: { sessions: true, enrolments: true, assessments: true } } },
   });
   if (!existing) return res.status(404).json({ error: "Unit not found" });
+
+  // Read the affected students BEFORE the cascade. Enrolments AND mark-holders: a
+  // student un-enrolled from the unit keeps the marks they were given (see the note on
+  // PUT /units/:id/enrolments), so the two sets are not the same and neither survives
+  // the delete.
+  const enrolled = await studentsOfUnit(existing.id);
+  const marked = (await prisma.attendanceMark.findMany({
+    where: { session: { unitId: existing.id } }, select: { studentId: true }, distinct: ["studentId"],
+  })).map((m) => m.studentId);
+
   try {
     await prisma.unit.delete({ where: { id: existing.id } });
+    await flagStale([...new Set([...enrolled, ...marked])], "a unit being deleted");
     audit.record(req, {
       action: "unit.deleted", entity: "Unit", entityId: existing.id,
       summary: `Unit ${existing.code} "${existing.name}" deleted, taking ${existing._count.sessions} session(s) and their attendance marks, ${existing._count.enrolments} enrolment(s) and ${existing._count.assessments} assessment(s) with it`,
@@ -554,6 +621,12 @@ router.put("/units/:id/enrolments", requireAuth, requireHndWrite, async (req, re
       update: {},
     })),
   ]);
+  // The UNION of who was on and who is on now. A student taken OFF a unit loses that
+  // unit's assessments from their score, which moves it just as much as being added —
+  // so flagging only the new set would leave everybody removed frozen at a score
+  // computed from work they are no longer doing.
+  await flagStale([...new Set([...before, ...studentIds])], "a unit's enrolment being replaced");
+
   const m = await prisma.unit.findUnique({ where: { id: mod.id }, include: { _count: { select: { sessions: true, enrolments: true } } } });
   // Enrolment decides whose name appears on a register and whose attendance is
   // reported. This call replaces the whole set, so a mistake here silently removes
@@ -695,6 +768,11 @@ router.put("/students/:id", requireAuth, requireStudentAdmin, async (req, res) =
     where: { id: existing.id }, data,
     include: { enrolments: { select: { unitId: true } } },
   });
+  // Moving a student to another cohort moves their scoring window to that cohort's
+  // term calendar; deactivating them takes them out of the register entirely.
+  if (data.cohortId !== undefined || data.active !== undefined) {
+    await flagStale([existing.id], "a student's cohort or active state changing");
+  }
   // The student number and the email are the two identifiers everything else keys
   // off — a register, a Moodle sync and a sign-in all resolve through them — so a
   // change to either is an identity change, not a typo fix.
@@ -758,6 +836,10 @@ router.put("/students/:id/enrolments", requireAuth, requireHndWrite, async (req,
       update: {},
     })),
   ]);
+  // One student, whose set of units — and therefore whose assessments and registers —
+  // has just been replaced wholesale.
+  await flagStale([student.id], "a student's enrolments being replaced");
+
   const s = await prisma.student.findUnique({ where: { id: student.id }, include: { enrolments: { select: { unitId: true } } } });
   audit.record(req, {
     action: "student.enrolments.replaced", entity: "Student", entityId: student.id,
@@ -843,6 +925,12 @@ router.put("/sessions/:id", requireAuth, requireRegisters, async (req, res) => {
     if (e?.code === "P2002") return res.status(409).json({ error: "There is already a register for this unit at that date and time." });
     throw e;
   }
+  // The session's DATE is what places its marks inside or outside a student's scoring
+  // window, so moving a register moves everyone on it — without touching a mark.
+  if (data.date !== undefined) {
+    const onIt = (await prisma.attendanceMark.findMany({ where: { sessionId: existing.id }, select: { studentId: true } })).map((m) => m.studentId);
+    await flagStale(onIt, "a register being moved to another date");
+  }
   res.json(sSession(s));
 });
 
@@ -863,7 +951,14 @@ router.delete("/sessions/:id", requireAuth, requireRegisters, async (req, res) =
       return res.status(423).json({ error: `${term.name} is ${today > term.end ? "over" : "not open yet"} — this register holds ${existing._count.marks} mark${existing._count.marks === 1 ? "" : "s"} and can't be deleted while the term is closed.`, locked: true });
     }
   }
-  try { await prisma.hndSession.delete({ where: { id: existing.id } }); res.json({ ok: true }); }
+  // Read who was on the register BEFORE deleting it — the marks cascade away with the
+  // session, and with them any way of knowing whose attendance figure just changed.
+  const onIt = (await prisma.attendanceMark.findMany({ where: { sessionId: existing.id }, select: { studentId: true } })).map((m) => m.studentId);
+  try {
+    await prisma.hndSession.delete({ where: { id: existing.id } });
+    await flagStale(onIt, "a register being deleted");
+    res.json({ ok: true });
+  }
   catch (_e) { res.status(404).json({ error: "Session not found" }); }
 });
 
@@ -1087,6 +1182,10 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
     after[r.studentId] = r.status;
   }
   const moved = Object.keys(after).length;
+  // Only the marks that actually MOVED. A register save re-sends the whole class, so
+  // flagging every student on it would rescore the cohort every time a register is
+  // opened and closed unchanged.
+  if (moved) await flagStale(Object.keys(after), "a register save");
   if (moved) {
     audit.record(req, {
       action: outOfTerm ? "attendance.register.corrected" : "attendance.register.saved",

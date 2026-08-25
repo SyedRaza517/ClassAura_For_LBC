@@ -97,7 +97,7 @@ const TUTORIAL_NAME = "Tutorial / Seminar";
  * @param call   the Moodle web-service caller from moodle.js
  * @param dryRun report what would change, write nothing
  * @param note   collect a human-readable issue
- * @returns counts folded into the sync summary
+ * @returns counts folded into the sync summary, plus `studentIds` — see below
  */
 async function importAttendance({ call, dryRun = false, note = () => {} } = {}) {
   const out = {
@@ -105,7 +105,13 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
     attendanceMarksCreated: 0,
     attendanceSkippedConflict: 0,
     attendanceSkippedNoStudent: 0,
+    // Whose attendance or enrolment this import actually changed. Attendance feeds the
+    // progression score, so those students' cached scores are now out of date — but the
+    // flagging belongs to the caller, which is already collecting the students the
+    // grade sync touched and can flag the lot in one go rather than twice over.
+    studentIds: [],
   };
+  const touched = new Set();
 
   // Which attendance activities exist, and in which Moodle course.
   const moodleCourses = await call("core_course_get_courses");
@@ -235,6 +241,10 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
           data: rows.map((r) => ({ studentId: r.studentId, unitId: unit.id })),
           skipDuplicates: true,
         });
+        // skipDuplicates means most of these already existed, and there is no cheap way
+        // to learn which. Flagging the whole row set is the safe side of that: an extra
+        // flag costs one rescore, a missed one leaves a wrong score on screen.
+        for (const r of rows) touched.add(r.studentId);
       }
 
       if (reused) {
@@ -253,6 +263,9 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
             await prisma.attendanceMark.createMany({
               data: fresh.map((r) => ({ ...r, sessionId: session.id, takenBy: IMPORT_STAMP })), skipDuplicates: true,
             });
+            // Only the fresh marks: a student whose mark was already on file and kept
+            // has had nothing about them change.
+            for (const r of fresh) touched.add(r.studentId);
           }
           out.attendanceMarksCreated += fresh.length;
         }
@@ -261,6 +274,7 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
           await prisma.attendanceMark.createMany({
             data: rows.map((r) => ({ ...r, sessionId: session.id, takenBy: IMPORT_STAMP })), skipDuplicates: true,
           });
+          for (const r of rows) touched.add(r.studentId);
         }
         out.attendanceMarksCreated += rows.length;
       }
@@ -273,6 +287,7 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
   if (out.attendanceSkippedConflict) {
     note(`Attendance: ${out.attendanceSkippedConflict} mark(s) differ from a register already taken in Staff Hub — the Staff Hub value was kept`);
   }
+  out.studentIds = [...touched];
   return out;
 }
 

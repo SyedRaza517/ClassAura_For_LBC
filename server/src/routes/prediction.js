@@ -182,12 +182,22 @@ router.delete("/settings", async (req, res) => {
 router.get("/summary", async (_req, res) => {
   const config = await settings.get();
 
-  const [byLevel, needing, staleCount, total, lastRow] = await Promise.all([
+  const [byLevel, needing, staleCount, total, lastRow, submissionRows] = await Promise.all([
     prisma.studentPredictionCurrent.groupBy({ by: ["riskLevel"], _count: { _all: true } }),
     prisma.studentPredictionCurrent.count({ where: { interventionRequired: true } }),
     prisma.studentPredictionCurrent.count({ where: { stale: true } }),
     prisma.student.count({ where: { active: true } }),
     prisma.studentPredictionCurrent.findFirst({ orderBy: { lastCalculated: "desc" }, select: { lastCalculated: true } }),
+    // Whether this college holds ANY record of work being handed in. Nothing writes
+    // AssessmentSubmission yet — an AssessmentGrade appears only once work has been
+    // MARKED, so a marking backlog is indistinguishable from a cohort that submitted
+    // nothing, and the engine correctly refuses to guess. The consequence is that two
+    // of the seven components (submission rate, on-time rate) and one override
+    // (OVR-001) can measure nothing at all. That is safe — an unmeasurable component
+    // is renormalised out rather than scored as zero — but it is NOT obvious, and a
+    // college left to discover it would spend its time tuning weights that cannot
+    // move anybody. So the screen is told, and says so.
+    prisma.assessmentSubmission.count(),
   ]);
 
   const counts = Object.fromEntries(byLevel.map((r) => [r.riskLevel, r._count._all]));
@@ -206,6 +216,9 @@ router.get("/summary", async (_req, res) => {
     staleCount,
     lastCalculated: lastRow ? lastRow.lastCalculated : null,
     modelVersion: config.modelVersion,
+    // See the note above the count.
+    submissionDataAvailable: submissionRows > 0,
+    componentsUnmeasurable: submissionRows > 0 ? [] : ["submissionRate", "onTimeRate"],
   });
 });
 

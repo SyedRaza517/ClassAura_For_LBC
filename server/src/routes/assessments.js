@@ -6,6 +6,39 @@ const { sAssessment, sGrade, sStudent, sUnit } = require("../serializers");
 const { requireAuth, requireAdmin, requirePage, requireAnyPage } = require("../auth");
 const { isRealDate } = require("../validate");
 const audit = require("../audit");
+const predictionRunner = require("../prediction/runner");
+
+/**
+ * Flag every student whose progression score an assessment-level change invalidates.
+ *
+ * NOT just the students who hold a grade. `maxMarks` is the denominator under every
+ * mark already awarded, so moving it moves every percentage derived from this
+ * assessment without touching a single grade row — and a new or deleted assessment
+ * changes the missing-work and submission denominators for everyone enrolled,
+ * including students who have never been marked for it. So the affected set is the
+ * unit's enrolment, plus anyone holding a grade who has since been un-enrolled.
+ *
+ * `unitIds` is a list because this router lets an assessment MOVE between units, and
+ * both the unit it left and the unit it joined change.
+ *
+ * Never allowed to throw into a request that has already written: the change is made,
+ * and a failure to invalidate a cache must not report otherwise.
+ */
+async function flagAssessmentChange(unitIds, assessmentId) {
+  try {
+    const units = [...new Set((unitIds || []).filter(Boolean))];
+    const ids = new Set();
+    if (units.length) {
+      for (const e of await prisma.enrolment.findMany({ where: { unitId: { in: units } }, select: { studentId: true } })) ids.add(e.studentId);
+    }
+    if (assessmentId) {
+      for (const g of await prisma.assessmentGrade.findMany({ where: { assessmentId }, select: { studentId: true } })) ids.add(g.studentId);
+    }
+    await predictionRunner.markStale([...ids]);
+  } catch (e) {
+    console.error("[prediction] could not flag scores after an assessment change:", e.message);
+  }
+}
 
 // The Executive Dashboard is its own admin page, so its summary endpoint accepts
 // EITHER "executive" or "assessments". Registered before the router-wide gate below,
@@ -94,6 +127,7 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
   const v = await validateAssessment(req.body, false);
   if (v.error) return res.status(400).json({ error: v.error });
   const a = await prisma.assessment.create({ data: { type: "Assignment", maxMarks: 100, ...v.data }, include: { unit: { select: { code: true, name: true } }, _count: { select: { grades: true } } } });
+  await flagAssessmentChange([a.unitId], null);
   audit.record(req, {
     action: "assessment.created", entity: "Assessment", entityId: a.id,
     summary: `Assessment "${a.title}" created on ${a.unit?.code || "a unit"} — ${a.type}, out of ${a.maxMarks}`,
@@ -129,6 +163,7 @@ router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
   // wrote before/after as null, and a re-filing of a whole gradebook was indis-
   // tinguishable from a save that changed nothing at all.
   const movedUnit = v.data.unitId != null && v.data.unitId !== existing.unitId;
+  await flagAssessmentChange([existing.unitId, a.unitId], a.id);
   audit.record(req, {
     action: "assessment.updated", entity: "Assessment", entityId: a.id,
     summary: `Assessment "${a.title}" updated`
@@ -145,8 +180,18 @@ router.delete("/:id", requireAuth, requireAdmin, async (req, res) => {
   // awarded under it, which is student academic record, not scaffolding.
   const existing = await prisma.assessment.findUnique({ where: { id: req.params.id }, include: { unit: { select: { code: true } }, _count: { select: { grades: true } } } });
   if (!existing) return res.status(404).json({ error: "Assessment not found" });
+
+  // Read the affected students BEFORE the delete. The grade rows cascade away with
+  // the assessment, so after this statement there is no way left to discover whose
+  // progression score just changed — their averages would sit stale until somebody
+  // happened to rescore the whole college by hand.
+  const gradeHolders = (await prisma.assessmentGrade.findMany({ where: { assessmentId: existing.id }, select: { studentId: true } })).map((g) => g.studentId);
+
   try {
     await prisma.assessment.delete({ where: { id: existing.id } });
+    await flagAssessmentChange([existing.unitId], null);
+    try { await predictionRunner.markStale(gradeHolders); }
+    catch (e) { console.error("[prediction] could not flag scores after an assessment delete:", e.message); }
     audit.record(req, {
       action: "assessment.deleted", entity: "Assessment", entityId: existing.id,
       summary: `Assessment "${existing.title}" on ${existing.unit?.code || "a unit"} deleted, taking ${existing._count.grades} awarded mark(s) with it`,
@@ -322,6 +367,20 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
       summary: `${moved} mark(s) changed on "${a.title}" (out of ${a.maxMarks}) by ${gradedBy || "an administrator"}` + (cleared ? `, ${cleared} of them cleared` : ""),
       before, after,
     });
+  }
+
+  // A changed mark changes the student's average, their grade trend and therefore
+  // their progression score. Flag rather than rescore: this route is the marking
+  // screen, and a member of staff saving forty marks must not wait on a cohort's
+  // worth of arithmetic. Only the marks that actually MOVED are flagged — the screen
+  // re-submits every student on the unit whether or not anything changed, and
+  // flagging all of them would rescore the whole unit on every save.
+  //
+  // Deliberately not allowed to fail the save: the marks are in, and a hiccup in
+  // cache invalidation must not report that they are not.
+  if (moved) {
+    try { await predictionRunner.markStale(Object.keys(after)); }
+    catch (e) { console.error("[prediction] could not flag scores after a grade save:", e.message); }
   }
 
   const saved = await prisma.assessmentGrade.findMany({ where: { assessmentId: a.id } });

@@ -1,12 +1,21 @@
 // Builds the "unconditional offer" letter that Admissions sends to a successful HND
-// applicant, rendered as a two-page A4 PDF and returned as an in-memory Buffer.
+// applicant, rendered as an A4 PDF and returned as an in-memory Buffer.
 //
-// The letter is a faithful copy of the printed EdTech offer template:
-// page 1 carries the branded letterhead, the "Congratulations" headline, the offer
-// body (First Day + Accept Your Place), and the "Your journey starts here." line;
-// page 2 carries the sign-off. The letterhead logo is the college's fanlight emblem,
-// recreated here as vector paths (the same geometry as the app's <BrandMark>) so there
-// are no image files to ship or resolve at runtime.
+// The letter is a faithful copy of the printed EdTech offer template: the branded
+// letterhead, the "Congratulations" headline, the offer body (First Day + Accept Your
+// Place), the "Your journey starts here." line, and the sign-off.
+//
+// PAGE COUNT IS NOT FIXED. Everything flows, and the footer's own height is reserved as
+// the bottom margin on every page, so the body can never run through the small print —
+// which it previously did: a full BTEC qualification title pushed the closing line to
+// y=767 while the footer rule sat at y=743. Most letters come out as a single page; a
+// long qualification title or a long institution address spills to a second, carrying
+// the same letterhead and footer. The sign-off moves as one block rather than leaving a
+// name on one page and its job title on the next.
+//
+// The letterhead logo is the college's fanlight emblem, recreated here as vector paths
+// (the same geometry as the app's <BrandMark>) so there are no image files to ship or
+// resolve at runtime.
 //
 // Everything that varies per applicant (name, course, intake) comes from the
 // `admission` record; everything that varies per send (induction date, arrival/start
@@ -44,7 +53,8 @@ const BODY_SIZE = 11;
  *        firstName, surname, course, intake, intakeYear.
  * @param {object} opts - per-send overrides: inductionDate, reportTime, sessionTime,
  *        signatoryName, signatoryTitle. Missing values fall back to the defaults below.
- * @returns {Promise<Buffer>} the finished two-page A4 PDF.
+ * @returns {Promise<Buffer>} the finished A4 PDF — one page, or two when the
+ *          content does not fit.
  */
 async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
   // Resolved BEFORE the Promise: the body below is synchronous (pdfkit draws in one
@@ -78,7 +88,9 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
       const signatoryTitle = String(o.signatoryTitle || brand.signatoryTitle || "");
 
       // ---- Set up the document and capture its bytes into a Buffer --------------
-      const doc = new PDFDocument({ size: "A4", margin: MARGIN });
+      // bufferPages, because the footer is drawn on every page AFTER the body has been
+      // laid out — we cannot know how many pages there are until the text has flowed.
+      const doc = new PDFDocument({ size: "A4", margin: MARGIN, bufferPages: true });
       const chunks = [];
       doc.on("data", (c) => chunks.push(c));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -125,21 +137,32 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
 
       // The company small-print footer, with a hairline rule above it, pinned near the
       // foot of the current page. Drawn identically on every page.
+      const FOOTER_LINES = [
+        brand.legalFooter || "",
+        "Tel: 0208 202 2007 | Fax: 0208 202 2047",
+        [brand.contactEmail ? "email: " + brand.contactEmail : "", brand.website ? "website: " + brand.website : ""].filter(Boolean).join(" | "),
+        "ISI No: 482 - Dfes No: 23278- SLN No: GNVKF0HT9",
+      ];
+      const FOOTER_OPTS = { width: CONTENT_WIDTH, align: "center", lineGap: 1.5 };
+
+      // Where the footer's hairline rule sits — and therefore the lowest the body may go.
+      //
+      // Measured rather than assumed, because the height depends on the institution: a
+      // long legal footer wraps to two lines and pushes the rule up. Body text must stop
+      // above this, which is why it becomes the bottom margin below.
+      const footerRuleY = () => {
+        doc.font("Helvetica").fontSize(8);
+        const h = FOOTER_LINES.reduce((acc, t) => acc + doc.heightOfString(t, FOOTER_OPTS), 0);
+        return A4_HEIGHT - 44 - h - 12;
+      };
+
       const drawFooter = () => {
         doc.page.margins.bottom = 0; // stop pdfkit spilling this low block onto a new page
-        const lines = [
-          brand.legalFooter || "",
-          "Tel: 0208 202 2007 | Fax: 0208 202 2047",
-          [brand.contactEmail ? "email: " + brand.contactEmail : "", brand.website ? "website: " + brand.website : ""].filter(Boolean).join(" | "),
-          "ISI No: 482 - Dfes No: 23278- SLN No: GNVKF0HT9",
-        ];
-        const fopts = { width: CONTENT_WIDTH, align: "center", lineGap: 1.5 };
+        const ruleY = footerRuleY();
+        doc.moveTo(MARGIN, ruleY).lineTo(RIGHT, ruleY).lineWidth(0.8).strokeColor("#c7ccd6").stroke();
         doc.font("Helvetica").fontSize(8).fillColor(GREY);
-        const h = lines.reduce((acc, t) => acc + doc.heightOfString(t, fopts), 0);
-        let fy = A4_HEIGHT - 44 - h;
-        doc.moveTo(MARGIN, fy - 12).lineTo(RIGHT, fy - 12).lineWidth(0.8).strokeColor("#c7ccd6").stroke();
-        doc.font("Helvetica").fontSize(8).fillColor(GREY);
-        lines.forEach((t) => { doc.text(t, MARGIN, fy, fopts); fy = doc.y + 1.5; });
+        let fy = ruleY + 12;
+        FOOTER_LINES.forEach((t) => { doc.text(t, MARGIN, fy, FOOTER_OPTS); fy = doc.y + 1.5; });
       };
 
       // ===== Text helpers =======================================================
@@ -168,36 +191,52 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
       const head = (text, size, opts2 = {}) =>
         para([[text, opts2.font || "Times-Bold", { color: opts2.color || INK }]], { size, gapAfter: opts2.gapAfter, lineGap: 1 });
 
-      // ===== PAGE 1 =============================================================
-      drawHeader();
-      doc.x = MARGIN;
-      doc.y = 128;
+      // ===== The letter =========================================================
+      // Reserve the footer's own space at the foot of every page. pdfkit breaks a page
+      // when text would cross the bottom margin, so a long qualification title can no
+      // longer push body text down through the small print — which is what happened
+      // before: with a full BTEC title the body ran to y=767 while the footer rule sat
+      // at y=743, and the closing line overprinted the footer.
+      const RESERVE_BOTTOM = A4_HEIGHT - footerRuleY() + 10;
+
+      // Every page carries the same letterhead and starts the body at the same height,
+      // including a page pdfkit adds by itself mid-paragraph. Margins are re-applied
+      // per page because a new page inherits the document's original options, not the
+      // margins we set on the page before it.
+      const startPage = () => {
+        doc.page.margins.bottom = RESERVE_BOTTOM;
+        drawHeader();
+        doc.x = MARGIN;
+        doc.y = 128;
+      };
+      doc.on("pageAdded", startPage);
+      startPage();
 
       // Headline + offer type.
-      head(firstName ? `CONGRATULATIONS, ${firstName.toUpperCase()}!` : "CONGRATULATIONS!", 25, { gapAfter: 8 });
-      head("UNCONDITIONAL OFFER", 19, { gapAfter: 14 });
+      head(firstName ? `CONGRATULATIONS, ${firstName.toUpperCase()}!` : "CONGRATULATIONS!", 22, { gapAfter: 6 });
+      head("UNCONDITIONAL OFFER", 16, { gapAfter: 10 });
 
       // Qualification title + intake (bold), each omitted if unknown.
       if (course) head(course, 11.5, { gapAfter: intakeLine ? 3 : 14 });
-      if (intakeLine) head(intakeLine, 11.5, { gapAfter: 16 });
+      if (intakeLine) head(intakeLine, 11.5, { gapAfter: 12 });
 
       // Salutation.
-      para([[`Dear ${firstName || "Applicant"},`]], { gapAfter: 12 });
+      para([[`Dear ${firstName || "Applicant"},`]], { gapAfter: 10 });
 
       // Opening two paragraphs.
       para([
         ["We are delighted to confirm that your application to "],
         [(brand.displayName || "the College") + " has been successful", "Times-Bold"],
         ["."],
-      ], { gapAfter: 10 });
+      ], { gapAfter: 8 });
       para([
         ["Following a review of your application, you have met the required entry criteria and we are pleased to offer you an "],
         ["unconditional place", "Times-Bold"],
         [" on the programme above."],
-      ], { gapAfter: 18 });
+      ], { gapAfter: 12 });
 
       // ---- Your First Day ----
-      head("YOUR FIRST DAY", 13.5, { gapAfter: 8 });
+      head("YOUR FIRST DAY", 12.5, { gapAfter: 6 });
       // Only show the Induction line when a date was set. An empty final run leaves the
       // line un-finalised in pdfkit, so the next line (Arrival/Start) overprints it.
       if (inductionDate) para([["Induction: ", "Times-Bold"], [inductionDate, "Times-Roman"]], { gapAfter: 3 });
@@ -209,46 +248,56 @@ async function buildBuiltInOfferLetter(admission = {}, opts = {}) {
       // The venue line is the institution's own address when it has one; without it the
       // line would read "Location:" followed by nothing, so it is omitted entirely.
       if (brand.displayName || brand.addressLines) {
-        para([["Location: ", "Times-Bold"], [[brand.displayName, brand.addressLines].filter(Boolean).join(", "), "Times-Roman"]], { gapAfter: 10 });
+        para([["Location: ", "Times-Bold"], [[brand.displayName, brand.addressLines].filter(Boolean).join(", "), "Times-Roman"]], { gapAfter: 8 });
       }
       para([
         ["Attendance at induction is required to complete your enrolment. During the session, you will receive your "],
         ["timetable, student ID card, programme information", "Times-Bold"],
         [" and guidance on the resources and support available to you."],
-      ], { gapAfter: 18 });
+      ], { gapAfter: 12 });
 
       // ---- Accept Your Place ----
-      head("ACCEPT YOUR PLACE", 13.5, { gapAfter: 8 });
+      head("ACCEPT YOUR PLACE", 12.5, { gapAfter: 6 });
       para([
         ["To confirm your place, simply "],
         ["reply to the email containing this offer and confirm that you accept your offer of admission", "Times-Bold"],
         ["."],
-      ], { gapAfter: 10 });
-      para([["If you have any questions before joining us, please contact our Admissions Team:"]], { gapAfter: 6 });
+      ], { gapAfter: 8 });
+      para([["If you have any questions before joining us, please contact our Admissions Team:"]], { gapAfter: 5 });
       para([
         [brand.contactEmail || "", "Times-Bold", { color: NAVY, underline: true }],
         ["  |  ", "Times-Roman"],
         [brand.contactPhone || "", "Times-Bold"],
-      ], { gapAfter: 12 });
-      para([["We are excited to welcome you to " + (brand.displayName || "the College") + " and look forward to supporting you throughout your studies."]], { gapAfter: 22 });
+      ], { gapAfter: 10 });
+      para([["We are excited to welcome you to " + (brand.displayName || "the College") + " and look forward to supporting you throughout your studies."]], { gapAfter: 14 });
 
       // Closing line.
-      head("YOUR JOURNEY STARTS HERE.", 19, { gapAfter: 0 });
+      head("YOUR JOURNEY STARTS HERE.", 16, { gapAfter: 16 });
 
-      drawFooter();
-
-      // ===== PAGE 2 =============================================================
-      doc.addPage({ size: "A4", margin: MARGIN });
-      drawHeader();
-      doc.x = MARGIN;
-      doc.y = 134;
+      // ---- Sign-off ----
+      // It travels as one block: a name on one page with its job title on the next
+      // reads as a mistake, so it is measured first and moved whole if it will not fit.
+      // Most letters therefore come out as a single page, and only a long qualification
+      // title or a long institution address pushes it to two.
+      doc.font("Times-Roman").fontSize(BODY_SIZE);
+      const lineH = doc.heightOfString("Ag", { width: CONTENT_WIDTH, lineGap: 3 });
+      const signOffHeight = 26 + lineH * (brand.displayName ? 4 : 3) + 4;
+      if (doc.y + signOffHeight > footerRuleY() - 10) doc.addPage();
 
       para([["Yours sincerely,"]], { gapAfter: 26 });
       para([[signatoryName, "Times-Bold"]], { gapAfter: 2 });
       para([[signatoryTitle, "Times-Roman"]], { gapAfter: 2 });
       if (brand.displayName) para([[brand.displayName, "Times-Bold"]], { gapAfter: 0 });
 
-      drawFooter();
+
+      // The footer goes on every page — drawn only now, because until the body has
+      // finished flowing we do not know how many pages there are.
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        drawFooter();
+      }
+      doc.flushPages();
 
       // Finalise — flushes the last chunk and triggers the "end" event above.
       doc.end();

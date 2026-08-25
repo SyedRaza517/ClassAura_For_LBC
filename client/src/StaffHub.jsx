@@ -2831,7 +2831,7 @@ function AdminPrediction({ store }) {
 
       {view === "register" && <PredictionRegister bands={bands} summary={summary} onChanged={loadHeader} />}
       {view === "interventions" && <PredictionInterventions onChanged={loadHeader} />}
-      {view === "model" && <PredictionModel data={config} onSaved={loadHeader} />}
+      {view === "model" && <PredictionModel data={config} summary={summary} onSaved={loadHeader} />}
     </div>
   );
 }
@@ -2860,12 +2860,18 @@ function PredictionRegister({ bands, summary, onChanged }) {
   // Recalculation is bounded server-side, so one press may not finish the college.
   // This keeps going while the server reports students still outstanding, and stops
   // on a pass that scored nobody so a permanently-stuck row cannot spin forever.
-  const recalc = async () => {
+  // `full` rescores EVERY active student rather than only the ones flagged as out of
+  // date. Both exist because they answer different questions: the flagged run is the
+  // cheap one you press after taking registers, and the full one is what you press
+  // when you have changed the model — or when you suspect something upstream changed
+  // a score's inputs without flagging it, which is a failure mode worth being able to
+  // recover from by hand rather than by a database edit.
+  const recalc = async (full = false) => {
     setBusy(true); setNote("");
     try {
       let scored = 0, short = 0, passes = 0, last = null;
       for (;;) {
-        last = await api.predictionRecalculate({});
+        last = await api.predictionRecalculate({ all: full && passes === 0 });
         scored += last.scored; short += last.insufficientData; passes += 1;
         if (!last.remaining || last.scored === 0 || passes >= 10) break;
       }
@@ -2921,14 +2927,19 @@ function PredictionRegister({ bands, summary, onChanged }) {
             Needs an intervention
           </label>
           <PrimaryBtn colour={BLUE} onClick={load} disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Filter</PrimaryBtn>
-          <PrimaryBtn colour={MAROON} onClick={recalc} disabled={busy}>
+          <PrimaryBtn colour={MAROON} onClick={() => recalc(false)} disabled={busy}>
             {busy ? <><Loader2 size={16} className="animate-spin" /> Scoring…</> : <><RefreshCw size={16} /> Recalculate</>}
           </PrimaryBtn>
+          <button onClick={() => recalc(true)} disabled={busy} className="rounded-xl bg-white px-3 py-2.5 text-xs font-bold text-slate-500 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-40">
+            Rescore everyone
+          </button>
         </div>
         {note && <p className="mt-2 text-[11px] font-semibold text-slate-500">{note}</p>}
         <p className="mt-2 text-[11px] text-slate-400">
-          Recalculating scores the students whose data has changed. Use it after taking registers or entering
-          marks — nothing is scored automatically, and no student is ever emailed by this feature.
+          <b>Recalculate</b> scores the students whose data has changed, plus anyone never scored before.
+          <b> Rescore everyone</b> rebuilds every active student's score from scratch — use it after changing
+          the model, or if a score looks out of date when it should not be. Nothing is scored automatically,
+          and no student is ever emailed by this feature.
         </p>
       </Card>
 
@@ -3226,7 +3237,7 @@ function PredictionInterventions({ onChanged }) {
 
 /* ----- The model ------------------------------------------------------- */
 
-function PredictionModel({ data, onSaved }) {
+function PredictionModel({ data, summary, onSaved }) {
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -3271,6 +3282,22 @@ function PredictionModel({ data, onSaved }) {
         </div>
       </Card>
 
+      {summary && summary.submissionDataAvailable === false && (
+        <Card className="!bg-amber-50/70 !ring-amber-200">
+          <div className="flex gap-2">
+            <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            <p className="text-[11px] leading-relaxed text-amber-900">
+              <b>Nothing is recording whether work was handed in yet.</b> A grade only appears once work has been
+              <i> marked</i>, so a marking backlog looks identical to a cohort that submitted nothing — and the
+              score refuses to guess. Until submission data is imported, <b>Submission rate</b> and <b>On-time rate</b>
+              measure nothing and are left out of every student's score entirely (their weight is redistributed
+              across the components that <i>can</i> be measured, so no one is penalised). The
+              missing-assessment rule OVR-001 cannot fire either. Changing those two weights will have no effect.
+            </p>
+          </div>
+        </Card>
+      )}
+
       <Card>
         <div className="mb-2 flex items-center justify-between">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Component weights</p>
@@ -3279,14 +3306,21 @@ function PredictionModel({ data, onSaved }) {
           </span>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {Object.keys(data.defaults.weights).map(k => (
-            <Field key={k} label={COMPONENT_LABELS[k] || k}>
-              <div className="flex items-center gap-1.5">
-                <input type="number" step="0.05" min="0" max="1" value={draft.weights[k]} onChange={e => setWeight(k, e.target.value)} className={inputCls} />
-                <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-400">{Math.round(Number(draft.weights[k] || 0) * 100)}%</span>
-              </div>
-            </Field>
-          ))}
+          {Object.keys(data.defaults.weights).map(k => {
+            // A weight that cannot currently move anybody is still editable — the data
+            // may arrive tomorrow and the college's policy is its own — but it is
+            // labelled, so nobody spends an afternoon tuning a number with no effect.
+            const dead = summary && Array.isArray(summary.componentsUnmeasurable) && summary.componentsUnmeasurable.includes(k);
+            return (
+              <Field key={k} label={COMPONENT_LABELS[k] || k}>
+                <div className="flex items-center gap-1.5">
+                  <input type="number" step="0.05" min="0" max="1" value={draft.weights[k]} onChange={e => setWeight(k, e.target.value)} className={inputCls} />
+                  <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-400">{Math.round(Number(draft.weights[k] || 0) * 100)}%</span>
+                </div>
+                {dead && <p className="mt-1 text-[10px] font-semibold text-amber-600">No data — not currently scored</p>}
+              </Field>
+            );
+          })}
         </div>
         {!totalOk && (
           <p className="mt-2 text-[11px] font-semibold text-rose-600">

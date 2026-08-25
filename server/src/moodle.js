@@ -17,6 +17,11 @@
 // the course-total item.
 const prisma = require("./db");
 const { importAttendance } = require("./moodleAttendance");
+// A student's progression score is cached and recomputed by a background runner, never
+// in the request path. This sync rewrites the very things it is computed from — marks,
+// enrolments, attendance — so whoever it touched has to be flagged for rescoring, or
+// the dashboard goes on showing last night's score against tonight's data.
+const predictionRunner = require("./prediction/runner");
 
 // Prefer what THIS institution saved over the server-wide environment. Primed once
 // per request in call() below; integrationConfig.peek() falls back to process.env, so
@@ -173,6 +178,20 @@ async function syncFromMoodle({ dryRun = false } = {}) {
   const issues = [];
   const note = (m) => { if (issues.length < 300) issues.push(m); };
 
+  // Every student whose cached progression score this run has invalidated, gathered as
+  // the sync goes and flagged ONCE at the end. Flagging per write would be a query per
+  // mark; one flush is a query per 200 students. A Set because a student picked up by a
+  // grade, an enrolment and an attendance mark is still one student to flag.
+  const touched = new Set();
+  // Adds everyone enrolled on a unit. Used where a change moves a DENOMINATOR rather
+  // than one person's mark — the whole cohort's derived percentages shift, including
+  // students who have submitted nothing at all and so appear in no grade row.
+  const touchUnitCohort = async (unitId) => {
+    if (!unitId) return;
+    const rows = await prisma.enrolment.findMany({ where: { unitId }, select: { studentId: true } });
+    for (const r of rows) touched.add(r.studentId);
+  };
+
   for (const { course, sections, users, usergrades } of await readMoodle()) {
     const label = clean(course.shortname) || `course ${course.id}`;
 
@@ -268,7 +287,17 @@ async function syncFromMoodle({ dryRun = false } = {}) {
       if (!place && !(unit && unit.year != null)) unplaced.push(parsed.code);
       if (unit) {
         summary.unitsUpdated++;
-        if (!dryRun) unit = await prisma.unit.update({ where: { id: unit.id }, data });
+        if (!dryRun) {
+          // A unit that changes course, year or term changes which units a student is
+          // measured across, so everyone on it needs rescoring. Read the register
+          // BEFORE the update — afterwards the unit belongs somewhere else, and the
+          // question is who was on it when it moved.
+          const moved = data.courseId !== unit.courseId
+            || (data.year !== undefined && data.year !== unit.year)
+            || (data.termNumber !== undefined && data.termNumber !== unit.termNumber);
+          if (moved) await touchUnitCohort(unit.id);
+          unit = await prisma.unit.update({ where: { id: unit.id }, data });
+        }
       } else {
         summary.unitsCreated++;
         if (!dryRun) {
@@ -393,10 +422,16 @@ async function syncFromMoodle({ dryRun = false } = {}) {
               note(`${unit.code} · ${title}: Moodle lowered the maximum to ${max}, but ${top._max.marks} has already been awarded — kept the maximum at ${row.maxMarks}. Change that mark first, then re-sync.`);
             }
           }
+          // The maximum is the denominator of every percentage derived from this
+          // assessment, so rescaling it moves the score of everyone on the unit — not
+          // only those with a mark on file. A retitle changes nothing anybody is
+          // measured on, hence the comparison.
+          const rescaled = safeMax !== row.maxMarks;
           row = await prisma.assessment.update({
             where: { id: row.id },
             data: { title, maxMarks: safeMax, moodleItemId: itemId, moodleCmid: item.cmid || null },
           });
+          if (rescaled) await touchUnitCohort(unit.id);
         }
       } else {
         summary.assessmentsCreated++;
@@ -406,6 +441,12 @@ async function syncFromMoodle({ dryRun = false } = {}) {
               data: { unitId: unit.id, title, type: "Assignment", maxMarks: max, moodleItemId: itemId, moodleCmid: item.cmid || null },
             });
           } catch (e) { note(`${label} / ${unit.code}: could not create the assessment "${title}" — ${e.message}`); continue; }
+          // A brand-new assessment is work nobody has done yet, so it enlarges the
+          // missing-work denominator for the whole cohort the moment it appears —
+          // again, regardless of who has a mark. Outside the try: a failure to read the
+          // register is not a failure to create the assessment, and must not be
+          // reported as one.
+          await touchUnitCohort(unit.id);
         }
       }
       assessByItem.set(itemId, { row, unit, max });
@@ -438,6 +479,9 @@ async function syncFromMoodle({ dryRun = false } = {}) {
         data: toEnrol.map((k) => { const [studentId, unitId] = k.split("|"); return { studentId, unitId }; }),
         skipDuplicates: true,
       });
+      // Being enrolled on another unit adds a unit's worth of work to what the student
+      // is measured on, so the cached score no longer covers their actual programme.
+      for (const k of toEnrol) touched.add(k.split("|")[0]);
     }
 
     // ---------- Grades ----------
@@ -473,6 +517,9 @@ async function syncFromMoodle({ dryRun = false } = {}) {
                   feedback: clean(item.feedback).slice(0, 2000), ...stamps,
                 },
               });
+              // A mark that did not exist a moment ago is exactly what a progression
+              // score is built from.
+              touched.add(st.id);
             } catch (_) { /* created by a concurrent run */ }
           }
         } else if (existing.source === "manual") {
@@ -488,7 +535,12 @@ async function syncFromMoodle({ dryRun = false } = {}) {
         // a mark with an empty comment for ever.
         } else if (existing.marks !== marks || existing.submittedAt !== stamps.submittedAt || existing.gradedOn !== stamps.gradedOn || existing.feedback !== clean(item.feedback).slice(0, 2000)) {
           summary.gradesUpdated++;
-          if (!dryRun) await prisma.assessmentGrade.update({ where: { id: existing.id }, data: { marks, source: "moodle", feedback: clean(item.feedback).slice(0, 2000), gradedAt: new Date(), ...stamps } });
+          if (!dryRun) {
+            await prisma.assessmentGrade.update({ where: { id: existing.id }, data: { marks, source: "moodle", feedback: clean(item.feedback).slice(0, 2000), gradedAt: new Date(), ...stamps } });
+            // Flagged even when only the dates or the feedback moved: a submission date
+            // is what tells a score whether work was late, not merely what it scored.
+            touched.add(existing.studentId);
+          }
         }
       }
     }
@@ -504,9 +556,26 @@ async function syncFromMoodle({ dryRun = false } = {}) {
   // token's external service, which is a separate Moodle setting from the rest of the
   // sync; if it is missing, the grades and enrolments above must still land.
   try {
-    Object.assign(summary, await importAttendance({ call, dryRun, note }));
+    // `studentIds` is who the attendance import wrote for; it is kept out of `summary`
+    // because that object is counters, stored as JSON on the run and shown to an admin.
+    const { studentIds = [], ...counts } = await importAttendance({ call, dryRun, note });
+    Object.assign(summary, counts);
+    for (const id of studentIds) touched.add(id);
   } catch (e) {
     note(`Attendance import failed: ${e.message}`);
+  }
+
+  // One flush for the whole run, and deliberately swallowed. Invalidation is
+  // bookkeeping for a background job: a sync that imported the night's marks correctly
+  // must not be reported as failed because a flag could not be written. The cost of it
+  // failing is a score that refreshes late, which is why it is reported rather than
+  // silenced. A preview writes nothing, so there is nothing to invalidate.
+  if (!dryRun && touched.size) {
+    try {
+      await predictionRunner.markStale([...touched]);
+    } catch (e) {
+      note(`Progression scores could not be marked out of date (${e.message}) — they will refresh after the next sync.`);
+    }
   }
 
   return { summary, issues };
