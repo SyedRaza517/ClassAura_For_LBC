@@ -443,6 +443,65 @@ longer does the thing described and, where relevant, a comment or a suite says w
 | S3 | `schema.prisma` header still says SQLite | **Fixed.** The header now explains why the SQLite-locally arrangement was abandoned — the two disagree on typing and case-sensitivity in ways that hid real bugs |
 | S4 | `render.yaml` and `DEPLOY.md` predate tenancy | **Still true** — see T9 |
 
+### The 24–25 Aug deploy stoppage — a renamed migration
+
+**Staging's API had not deployed for a day, and nothing said so.** Found on 25 Aug 2026
+while deploying predictive analysis; fixed the same day. It is written down here
+because the failure was silent in the one place that matters: the API went on serving
+happily, `/api/health` answered 200, and the only symptom was that new code never
+appeared.
+
+**What happened.** `20260824090000_attendance_bands` was applied to staging, then
+renamed on disk to `20260824093000_attendance_bands` so the `090000` slot could go to
+`_branding_button_colours`. Prisma identifies a migration by its **directory name**, so
+the rename made an already-applied migration look like a brand new one. The next
+`migrate deploy` re-ran its `CREATE TABLE "AttendanceBandConfig"`, hit *already exists*,
+and left a row in `_prisma_migrations` with `finished_at = NULL`.
+
+Prisma then refuses **every** subsequent migration while a failed one sits in the
+history. `render.yaml` runs `npm run migrate:deploy` in `buildCommand`, and a failing
+build command fails the build — which is the correct design (better than an API running
+against a schema it does not match) and is why nothing broke. But it meant every Render
+build from 24 Aug onward failed at the same step, and `58f7151` — the attendance-bands
+feature itself — was never live on staging either.
+
+**How it was diagnosed.** Not from the Render dashboard, which was not reachable. From
+the database:
+
+```sql
+SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY started_at;
+```
+
+One row with a null `finished_at` is the whole story. Before resolving it, every object
+the failed migration creates was checked to exist already — the table and all five
+columns, `AttendanceBandConfig_pkey`, `AttendanceBandConfig_tenantId_key` and
+`AttendanceBandConfig_tenantId_fkey` — because marking a migration applied when it was
+*not* would skip a real schema change and leave the database silently short of a column.
+
+**The fix**, which changes no schema and touches no application data:
+
+```
+cd server && npx prisma migrate resolve --applied 20260824093000_attendance_bands
+```
+
+**Two things this leaves behind.** `20260824090000_attendance_bands` is still recorded
+in staging's `_prisma_migrations` and no longer exists in the repo, so `migrate status`
+reports the history as divergent on every run. `migrate deploy` tolerates a DB-only
+migration and proceeds, so this is noise — but it is noise that looks exactly like a
+real problem, and the next person to read it will lose the same twenty minutes.
+
+**The rule that follows: never rename a migration directory once it has been applied
+anywhere.** Ordering against a migration created later is not worth a stopped pipeline.
+If two migrations need reordering, the honest options are to leave the timestamps alone
+or to write a new migration.
+
+**Worth checking on production.** The same commits reached the `production` branch, so
+production's `_prisma_migrations` may hold the same unfinished row. It could not be
+checked from this machine — there is no production `DATABASE_URL` here, and the Supabase
+MCP connection available in that session was authenticated to a **different** account
+(LBC and one unrelated project), not EdTech's. Run the `SELECT` above against production
+before assuming it deployed.
+
 ### Open defects
 
 | # | Severity | Item |
