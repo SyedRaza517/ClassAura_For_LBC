@@ -46,15 +46,33 @@ test("an attempt waiting to be marked is still a submission", () => {
   assert.equal(submissionOf({ status: "NeedsGradingAgain", attemptDate: "2026-04-28T10:00:00.000Z" }, column).status, "submitted");
 });
 
-test("work still in progress has NOT been submitted", () => {
+// A clock past the column's due date, so un-submitted work is genuinely overdue.
+// Before the due date the answer is "unknown" — see the test below.
+const PAST_DUE = Date.parse("2026-06-01T00:00:00.000Z");
+
+test("work still in progress, past its deadline, has NOT been submitted", () => {
   // Started and saved is not handed in. Counting it would credit a student for a
   // draft they never sent.
-  assert.equal(submissionOf({ status: "InProgress" }, column).status, "not_submitted");
-  assert.equal(submissionOf({ status: "InProgressAgain" }, column).status, "not_submitted");
+  assert.equal(submissionOf({ status: "InProgress" }, column, PAST_DUE).status, "not_submitted");
+  assert.equal(submissionOf({ status: "InProgressAgain" }, column, PAST_DUE).status, "not_submitted");
 });
 
-test("an attempt never started is not submitted", () => {
-  assert.equal(submissionOf({ status: "NotAttempted" }, column).status, "not_submitted");
+test("an attempt never started, past its deadline, is not submitted", () => {
+  assert.equal(submissionOf({ status: "NotAttempted" }, column, PAST_DUE).status, "not_submitted");
+});
+
+test("un-submitted work that is NOT YET DUE is unknown, never 'not submitted'", () => {
+  // Blackboard reports NotAttempted from the moment a column is created, so without
+  // the due-date gate every assessment set for next month would report its whole
+  // cohort as having failed to hand work in — driving the missing-work count and
+  // chasing students over work that is not due. Canvas gets this from its own
+  // `missing` flag; Blackboard has no equivalent, so the gate lives here.
+  const notYetDue = Date.parse("2026-04-01T00:00:00.000Z");
+  assert.equal(submissionOf({ status: "NotAttempted" }, column, notYetDue).status, "unknown");
+  assert.equal(submissionOf({ status: "InProgress" }, column, notYetDue).status, "unknown");
+
+  // And a column with no due date at all cannot establish overdue-ness either way.
+  assert.equal(submissionOf({ status: "NotAttempted" }, {}, notYetDue).status, "unknown");
 });
 
 test("a status Blackboard adds later is unknown, not a guess in either direction", () => {
@@ -99,10 +117,12 @@ test("a column with no due date cannot make anything late", () => {
   assert.equal(submissionOf({ status: "Completed", attemptDate: "2026-05-02T09:00:00.000Z" }, {}).onTime, true);
 });
 
-test("work that was never submitted is not also reported late", () => {
-  // It is missing, which is counted separately. Reporting it late as well would
-  // charge the student twice for the same thing.
-  assert.equal(submissionOf({ status: "NotAttempted" }, column).onTime, true);
+test("work that was never submitted is neither on time nor late", () => {
+  // It is missing, which is counted separately. Reporting it late as well would charge
+  // the student twice for the same thing — and reporting it ON TIME is no better,
+  // because an on-time rate would count that as a success. null is excluded from the
+  // denominator, which is the only honest answer.
+  assert.equal(submissionOf({ status: "NotAttempted" }, column).onTime, null);
 });
 
 /* -------------------------------------------------------------------------- */

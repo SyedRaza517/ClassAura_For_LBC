@@ -14,12 +14,9 @@
 // KNOW, WE DO NOT GUESS. Unknown is a real answer here, and it is excluded from the
 // denominators downstream rather than counted against anybody.
 
-/** An ISO timestamp reduced to the YYYY-MM-DD the academic side stores, or null. */
-function isoDate(v) {
-  if (!v || typeof v !== "string") return null;
-  const d = new Date(v);
-  return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : null;
-}
+// Shared with blackboardNormalise, and timezone-aware. Slicing the UTC ISO string
+// dates a 00:30 BST hand-in to the previous day — see isoDate.js.
+const { isoDate } = require("./isoDate");
 
 /**
  * Did this student hand the work in, when, and was it on time?
@@ -43,7 +40,7 @@ function submissionOf(sub) {
   // submission nor a failure to submit, and counting it either way misrepresents a
   // student who was released from the work.
   if (s.excused === true) {
-    return { status: "unknown", submittedOn, onTime: true };
+    return { status: "unknown", submittedOn, onTime: null };
   }
 
   let status;
@@ -65,10 +62,19 @@ function submissionOf(sub) {
   // already done that arithmetic per student. A teacher's `late_policy_status`
   // outranks it: marking a submission "extended" leaves `late: true` on the row, and
   // their decision is the one that counts.
-  let onTime = true;
-  if (s.late_policy_status === "late" || s.late_policy_status === "missing") onTime = false;
-  else if (s.late_policy_status === "extended" || s.late_policy_status === "none") onTime = true;
-  else if (s.late === true) onTime = false;
+  //
+  // NULL WHEN NOTHING WAS SUBMITTED. You cannot be on time or late for work that was
+  // never handed in — and either boolean is a value an on-time rate would count, which
+  // is the same mistake as scoring an unmeasured student zero. Work that is missing is
+  // counted as missing, once. blackboardNormalise agrees, and normaliseContract.test.js
+  // holds the two together.
+  let onTime = null;
+  if (status === "submitted") {
+    onTime = true;
+    if (s.late_policy_status === "late" || s.late_policy_status === "missing") onTime = false;
+    else if (s.late_policy_status === "extended" || s.late_policy_status === "none") onTime = true;
+    else if (s.late === true) onTime = false;
+  }
 
   return { status, submittedOn, onTime };
 }
@@ -131,11 +137,19 @@ function studentRefOf(user) {
  *   access_restricted_by_date — Canvas returns a STUB carrying only that flag in place
  *   of the real object. Importing it creates a student with no name.
  */
+// WHAT THIS CANNOT CATCH, and the sync must handle instead: a user object embedded in
+// a submission (`/submissions?include[]=user`) carries only id, name, display_name and
+// avatar — no type, no enrollments. So Test Student IS detectable on the enrolment and
+// user endpoints and IS NOT on the submissions endpoint. The sync must therefore build
+// its student set from enrolments and reject submission rows whose user id is not in
+// it, rather than relying on this function alone.
 function isTestStudent(row) {
   const r = row || {};
   if (r.access_restricted_by_date === true) return true;
   if (r.type === "StudentViewEnrollment") return true;
   if (r.enrollment_type === "StudentViewEnrollment") return true;
+  // `?include[]=enrollments` nests them, so the flat checks above miss it entirely.
+  if (Array.isArray(r.enrollments) && r.enrollments.some((e) => e && e.type === "StudentViewEnrollment")) return true;
   return false;
 }
 

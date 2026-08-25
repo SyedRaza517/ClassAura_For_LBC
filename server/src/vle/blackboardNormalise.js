@@ -23,12 +23,9 @@
 /* Dates                                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** An ISO timestamp reduced to YYYY-MM-DD, or null. */
-function isoDate(v) {
-  if (!v || typeof v !== "string") return null;
-  const d = new Date(v);
-  return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : null;
-}
+// Shared with canvasNormalise, and timezone-aware — see isoDate.js for why slicing
+// the UTC ISO string dates a 00:30 BST hand-in to the previous day.
+const { isoDate } = require("./isoDate");
 
 /**
  * Was this attempt late?
@@ -65,30 +62,60 @@ const NOT_SUBMITTED = new Set(["NotAttempted", "InProgress", "InProgressAgain", 
  *
  * InProgress does NOT count. Started and saved is not handed in, and crediting it
  * would give a student a submission for a draft they never sent.
+ *
+ * `now` is injected rather than read from the clock so the function stays deterministic
+ * under test; it decides only whether un-submitted work is overdue yet.
  */
-function submissionOf(attempt, column) {
+function submissionOf(attempt, column, now = Date.now()) {
   const a = attempt || {};
 
-  // The receipt is what Blackboard timestamps the actual hand-in with. attemptDate can
-  // move when an attempt is reopened, and `created` is only the row's own birthday —
-  // so they are tried in that order of authority.
-  const submittedOn =
-    isoDate(a.attemptReceipt && a.attemptReceipt.submissionDate) ||
-    isoDate(a.attemptDate) ||
-    isoDate(a.created);
-
-  let status = "unknown";
-  if (SUBMITTED.has(a.status)) status = "submitted";
-  else if (NOT_SUBMITTED.has(a.status)) status = "not_submitted";
+  // ONE resolved date, used for BOTH the date recorded and the lateness judged.
+  //
+  // These were separate, with opposite precedence: submittedOn preferred the receipt
+  // while lateness read attemptDate. A reopened attempt then produced a row saying
+  // "submitted 28 April" and "late" against a 1 May deadline — simultaneously, in the
+  // same row. That is the same class as a score disagreeing with its own band: nobody
+  // can act on it and everybody stops believing both halves.
+  //
+  // The receipt is what Blackboard timestamps the actual hand-in with; attemptDate
+  // moves when an attempt is reopened, and `created` is only the row's own birthday.
+  // So they are tried in that order of authority — once.
+  const when =
+    (a.attemptReceipt && a.attemptReceipt.submissionDate) ||
+    a.attemptDate ||
+    a.created ||
+    null;
 
   const due = column && column.grading ? column.grading.due : null;
 
-  // Work that was never handed in is not ALSO reported late. It is missing, which is
-  // counted separately, and charging the student for both is charging them twice for
-  // one thing.
-  const onTime = status === "submitted" ? !isLate(a.attemptDate || (a.attemptReceipt || {}).submissionDate, due) : true;
+  let status = "unknown";
+  if (SUBMITTED.has(a.status)) {
+    status = "submitted";
+  } else if (NOT_SUBMITTED.has(a.status)) {
+    // NOT-YET-DUE IS "UNKNOWN", NOT "NOT SUBMITTED".
+    //
+    // Canvas hands us its own `missing` flag, which is already gated on the due date.
+    // Blackboard has no equivalent — NotAttempted is true from the moment a column is
+    // created — so the gate has to be applied here, from the column's due date.
+    //
+    // Without it, every assessment a college sets for next month reports its whole
+    // cohort as having failed to hand work in, which drives the missing-work count and
+    // chases students over work that is not due. That is the same failure canvasNormalise
+    // guards against, and the two must agree; normaliseContract.test.js holds them to it.
+    //
+    // No due date at all means overdue-ness cannot be established, so the honest answer
+    // is unknown — which is excluded from the denominator rather than counted.
+    const overdue = Boolean(due) && Date.parse(due) < now;
+    status = overdue ? "not_submitted" : "unknown";
+  }
 
-  return { status, submittedOn: status === "submitted" ? submittedOn : null, onTime };
+  // NULL when nothing was submitted. You cannot be on time or late for work never
+  // handed in, and either boolean is a value an on-time rate would count — the same
+  // mistake as scoring an unmeasured student zero. canvasNormalise agrees, and
+  // normaliseContract.test.js holds the two together.
+  const onTime = status === "submitted" ? !isLate(when, due) : null;
+
+  return { status, submittedOn: status === "submitted" ? isoDate(when) : null, onTime };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -109,6 +136,13 @@ function markOf(grade) {
 
   const dg = grade.displayGrade || null;
   const possible = dg && typeof dg.possible === "number" ? dg.possible : null;
+
+  // NO USABLE DENOMINATOR, NO MARK — matching canvasNormalise, which refuses the same
+  // case. `possible` of 0 makes every percentage derived from it a division by zero,
+  // and null makes it NaN; both are numbers that look reasonable downstream. This
+  // file's own docstring says "null wherever a number would be a lie", and a score
+  // with nothing to divide it by is one.
+  if (!possible || possible <= 0) return null;
 
   // An instructor's manual override is the authoritative mark where one exists — and
   // is the ONLY thing `grade.score` ever holds.

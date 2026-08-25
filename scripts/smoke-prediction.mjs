@@ -260,6 +260,32 @@ await check("an intervention snapshots the student's figures as they are now", a
   return `snapshotted at ${subject.riskLevel} / ${subject.progressionScore}`;
 });
 
+/**
+ * Assert nothing in the audit trail names the student or carries their notes.
+ *
+ * A FUNCTION, because it has to run TWICE. The first version ran only after the
+ * create, and at that point the update row does not exist yet — so restoring
+ * `before: existing, after: updated` would have left this suite green, and that was
+ * the more severe half of the leak: up to 500 characters of pastoral free text per
+ * side, against a surname in a summary.
+ */
+async function assertAuditCarriesNoCaseload(when) {
+  const r = await call("/audit?entity=Intervention&take=50", { token });
+  assert.equal(r.status, 200, `the audit trail should be readable by the seeded admin; got HTTP ${r.status}`);
+
+  const rows = (r.body.entries || []).filter((e) => e.entityId === createdInterventionId);
+  assert.ok(rows.length, `${when}: the intervention should appear in the trail`);
+
+  const blob = JSON.stringify(rows);
+  assert.equal(blob.includes("smoke-prediction test"), false,
+    `${when}: an intervention's free-text notes must not reach the audit trail`);
+  if (subjectSurname) {
+    assert.equal(blob.includes(subjectSurname), false,
+      `${when}: the trail names "${subjectSurname}" beside an intervention type, which is exactly the disclosure requirePage("prediction") withholds`);
+  }
+  return rows.length;
+}
+
 await check("the audit trail does not become a less-guarded copy of the caseload", async () => {
   // The disclosure this router exists to control is "which named students is the
   // college worried about". It is gated on requirePage("prediction") for that reason.
@@ -272,27 +298,8 @@ await check("the audit trail does not become a less-guarded copy of the caseload
   //
   // Found by a security review on 25 Aug 2026: both were happening.
   if (!createdInterventionId) return "skipped — nothing was created";
-
-  const r = await call("/audit?entity=Intervention&take=50", { token });
-  if (r.status !== 200) return `skipped — audit not readable by this account (HTTP ${r.status})`;
-
-  const rows = (r.body.entries || []).filter((e) => e.entityId === createdInterventionId);
-  assert.ok(rows.length, "the interventions raised above should appear in the trail");
-
-  const blob = JSON.stringify(rows);
-
-  // The suite writes a distinctive note; if THAT reaches the log, so would a real
-  // safeguarding note written by a member of staff.
-  assert.equal(blob.includes("smoke-prediction test"), false,
-    "an intervention's free-text notes must not reach the audit trail");
-
-  // And the student must not be named beside the intervention type.
-  if (subjectSurname) {
-    assert.equal(blob.includes(subjectSurname), false,
-      `the trail names "${subjectSurname}" beside an intervention type, which is exactly the disclosure requirePage("prediction") withholds`);
-  }
-
-  return `${rows.length} audit row(s): no notes, no student name`;
+  const n = await assertAuditCarriesNoCaseload("after create");
+  return `${n} audit row(s) after create: no notes, no student name`;
 });
 
 await check("an intervention type nobody implemented is refused", async () => {
@@ -399,6 +406,17 @@ if (createdInterventionId) {
     method: "PUT", token, body: { status: "closed", notes: "smoke-prediction test — closed by the suite" },
   });
   console.log(`  (left one closed intervention on ${subjectRef}; there is no delete route by design)`);
+
+  // AND CHECK THE TRAIL AGAIN, now that an UPDATE has rewritten `notes`.
+  //
+  // This is the half that matters. The earlier check runs before any PUT exists, so
+  // restoring `before: existing, after: updated` on the update route would have left
+  // it green — while leaking up to 500 characters of pastoral free text per side,
+  // which is worse than the surname the first check catches.
+  await check("the audit trail carries no notes after an intervention is EDITED", async () => {
+    const n = await assertAuditCarriesNoCaseload("after update");
+    return `${n} audit row(s) after update: no notes, no student name`;
+  });
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
