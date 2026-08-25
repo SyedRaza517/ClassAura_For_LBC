@@ -20,6 +20,13 @@ services:
     startCommand: npm start    # node src/index.js  (binds to Render's $PORT automatically)
     healthCheckPath: /api/health
     autoDeploy: true
+    # WHICH BRANCH. Stated explicitly, because leaving it out means "whatever the
+    # repo's default branch happens to be" — and this repo has two deploy branches
+    # (main = staging, production = live), so the default is exactly the thing you do
+    # not want decided by accident. A Blueprint only sets this when the service is
+    # CREATED; if the live service disagrees, change it in the Render dashboard, as
+    # editing this file will not move it.
+    branch: production
     envVars:
       - key: NODE_ENV
         value: production        # forces the JWT_SECRET check on; enables prod behaviour
@@ -37,7 +44,33 @@ services:
       - key: APP_TIMEZONE
         value: Europe/London     # the organisation's wall clock; drives dates, the term
                                  # gate and the 02:00 Moodle sync
+      # --- multi-tenancy ---
+      # This file predated tenancy and never mentioned these, which is defect T9/S4 in
+      # STATUS.md. Without them a multi-college deployment is quietly misconfigured.
+      - key: CREDENTIALS_KEY
+        sync: false              # 64 hex chars. AES-256-GCM key that encrypts every college's
+                                 # own Moodle/SharePoint/SMTP credentials at rest. WITHOUT IT
+                                 # no college can save an integration at all, and the failure
+                                 # surfaces only when one tries. Generate:
+                                 #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+                                 # NEVER rotate it casually — every stored secret is encrypted
+                                 # under it and becomes unreadable if it changes.
+      - key: DEFAULT_TENANT_SLUG
+        sync: false              # which college a request with no X-Tenant and no subdomain
+                                 # resolves to. ALSO the only tenant permitted to inherit the
+                                 # host-level MOODLE_*/SMTP_* values below — see
+                                 # integrationConfig.js. Every other college resolves to "not
+                                 # configured", which fails safe rather than sending mail as
+                                 # somebody else.
+      - key: TENANT_BASE_DOMAIN
+        sync: false              # e.g. edtech-hub.example.com — lets "lbc.edtech-hub.example.com"
+                                 # resolve the college from the subdomain. Leave unset for a
+                                 # single-college deployment.
       # --- Moodle (VLE) import ---
+      # NOTE: these are HOST-level values and now serve exactly ONE college — the one
+      # named by DEFAULT_TENANT_SLUG above. Every other institution enters its own in
+      # Settings → Integrations. They are no longer dangerous, but on a multi-college
+      # deployment they are simply the wrong place to configure anything.
       # WITHOUT these the whole VLE feature silently does nothing in production: the
       # "Sync now" button reports "not set up" and the nightly job never runs. They
       # live in server/.env locally, which is gitignored and never reaches Render, so

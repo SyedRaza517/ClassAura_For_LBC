@@ -106,7 +106,7 @@ precise about what is and is not done.
 | T5b | **Three literals of EdTech's identity survive in the client** | `client/src/StaffHub.jsx:2068` and `:12337` render "EdTech · 42 The Burroughs, London NW4 4AP · 020 8202 2007" in the staff app's App-info card and the admin console's identity card; `:11622` hard-codes the same address in the Admissions help text. The server side is clean — `grep Burroughs server/src` finds only the comment in `branding.js` explaining why it used to be there. A second college sees another college's address on two screens. |
 | T6b | **Operators can be created and switched off, but not reset** | `POST /platform/admins` and `PUT /platform/admins/:id/active` exist, with guards against deactivating yourself or the last operator. There is still no password reset for an operator and no self-service bootstrap — `create-platform-admin.js` on the server command line is the only way to make the first one, and `PlatformDashboard.jsx:552` says so on screen. Deletion is deliberately absent, and the reasoning is written into `routes/platform.js:435`. |
 | T8b | **One script still bypasses isolation** | `server/prisma/seed-admissions.js` constructs a bare `PrismaClient`, so it would write unscoped or fail the NOT NULL constraint. `create-admin.js`, `prisma/seed.js` and 6 of the 12 files in `server/tools/` now use the extended client; of those 6, only `seed-demo.js` wraps its work in `runInTenant`, so the other five (`audit-courses.js`, `delete-seeded-courses.js`, the three `moodle-attendance-*` ones) will **throw** rather than write unscoped. That is failing closed, which is the right failure, but it means those tools do not currently run. The remaining 6 tools never touch Prisma. |
-| T9 | **Deployment config predates tenancy** | Verified still true. Neither `render.yaml` nor `DEPLOY.md` mentions `CREDENTIALS_KEY`, `DEFAULT_TENANT_SLUG` or `TENANT_BASE_DOMAIN`, and `render.yaml:45–47` still passes `MOODLE_URL` / `MOODLE_TOKEN` as process-wide env vars. Since `integrationConfig.js` now scopes those to one tenant, they are no longer *dangerous* — they are just wrong for anything but a single-college deployment. |
+| ~~T9~~ | ~~Deployment config predates tenancy~~ | **RESOLVED 25 Aug 2026.** `render.yaml` now declares `CREDENTIALS_KEY`, `DEFAULT_TENANT_SLUG` and `TENANT_BASE_DOMAIN` with the reason each exists, states `branch: production` explicitly rather than inheriting the repo default (this repo has two deploy branches, so the default is the last thing that should be decided by accident), and says plainly that the host-level `MOODLE_*` / `SMTP_*` values now serve exactly one college. `DEPLOY.md` gains a troubleshooting section for the two ways an API deploy fails silently. |
 
 **T1, T2, T3, T4 and T7 are resolved.** See §6 for what was checked in each case.
 
@@ -441,7 +441,7 @@ longer does the thing described and, where relevant, a comment or a suite says w
 | S1 | `npm run setup` does not work out of the box | **Fixed.** `server/.env.example` now ships a PostgreSQL `DATABASE_URL` and documents `DEFAULT_TENANT_SLUG`, `TENANT_BASE_DOMAIN`, `TENANT_CACHE_MS`, `CREDENTIALS_KEY` and `APP_TIMEZONE`, with the reason each exists. `prisma/assertDisposable.js` now refuses to seed a remote database whose name does not mark it disposable |
 | S2 | `setup.mjs` prints a password that no longer exists | **Fixed.** `scripts/setup.mjs:50–51` names the account and says the password is the `SEED_PASSWORD` you set, which is never printed |
 | S3 | `schema.prisma` header still says SQLite | **Fixed.** The header now explains why the SQLite-locally arrangement was abandoned — the two disagree on typing and case-sensitivity in ways that hid real bugs |
-| S4 | `render.yaml` and `DEPLOY.md` predate tenancy | **Still true** — see T9 |
+| S4 | `render.yaml` and `DEPLOY.md` predate tenancy | **Fixed** — see T9 |
 
 ### The 24–25 Aug deploy stoppage — a renamed migration
 
@@ -513,7 +513,7 @@ before assuming it deployed.
 | D15 | medium | **A student is never told their query was answered.** `routes/studentQueries.js` contains no notification or email call of any kind. The answer sits in the portal until they happen to look |
 | T5b | medium | Three EdTech literals in `StaffHub.jsx` (above) |
 | T8b | low | `seed-admissions.js` on a bare client; five tools now fail closed rather than running |
-| T9 | low | Deployment config predates tenancy |
+| ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026** |
 | 6 | low | `GET /student-reviews/roster` is open to any authenticated staff member with no page gate — a documented widening (a `pat`-only admin cannot call `/hnd/students`), and still the broadest read surface in that area |
 | 7 | low | `admissionDocs.js` says its document-type list is duplicated in `client/src/StaffHub.jsx` and must be kept in sync by hand |
 | 5 | — | "Personal template" documents (`scope:"personal"` with no assignee) are invisible to everyone. Still needs a product decision |

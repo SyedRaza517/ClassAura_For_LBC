@@ -69,6 +69,87 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
 
 ---
 
+---
+
+## When the API "deploys" but nothing changes
+
+Both of the failures below are silent in the same way: the API keeps serving,
+`/api/health` keeps answering `200`, and the only symptom is that new code never
+appears. Between them they stopped every API deploy for a full day in August 2026
+before anyone noticed.
+
+### First: prove whether the API actually deployed
+
+`/api/health` answers `200` on **any** build, so it tells you nothing about *which*
+one. Probe a route that only the new code has, and compare it against one that has
+always existed:
+
+```bash
+API=https://<your-api>.onrender.com/api
+curl -s -o /dev/null -w '%{http_code}\n' $API/assessments      # control: expect 401
+curl -s -o /dev/null -w '%{http_code}\n' $API/<new-route>      # expect 401 if deployed
+```
+
+- **401** — the route is mounted and asking for a token. The build is live.
+- **404** — the route does not exist in the running build. It has not deployed.
+
+A `404` where you expect `401` is the whole diagnosis. Do not read it as a routing bug.
+
+### Cause 1 — a renamed migration directory
+
+**Prisma identifies a migration by its DIRECTORY NAME.** Rename a directory that has
+already been applied and Prisma sees an unfamiliar name, re-runs its SQL, hits
+`already exists`, and records the migration as failed. From that point it refuses
+**every** later migration. `render.yaml` runs `migrate:deploy` in `buildCommand`, and a
+failing build command fails the build — correctly, because an API running against a
+schema it does not match is worse. But the deploy silently stops happening.
+
+Diagnose from the database, not the dashboard:
+
+```sql
+SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY started_at;
+```
+
+One row with a null `finished_at` is the answer.
+
+Before fixing it, **check that every object the failed migration creates already
+exists** — table, columns, indexes, constraints. Marking a migration applied when it
+was not skips a real schema change and leaves the database quietly short of a column,
+which is a far worse problem than the one you are solving. Once verified:
+
+```bash
+cd server && npx prisma migrate resolve --applied <migration_name>
+```
+
+That writes one row in `_prisma_migrations`. It changes no schema and touches no
+application data.
+
+**The rule: never rename a migration directory once it has been applied anywhere.**
+Tidy timestamp ordering is not worth a stopped pipeline. If two migrations need
+reordering, leave them alone or write a new one.
+
+### Cause 2 — the service is watching a different branch
+
+This repo has two deploy branches: **`main`** (staging) and **`production`** (live).
+`render.yaml` now names `branch: production` explicitly, but a Blueprint only applies
+that when the service is **created** — editing this file does not move an existing
+service. If pushes produce Vercel builds within seconds and no Render build at all,
+check in the Render dashboard:
+
+- **Settings → Build & Deploy → Branch** — is it the branch you are pushing?
+- **Auto-Deploy** — is it still `Yes`?
+- **Events** — did the last build fail, or was one never triggered?
+
+A build that fails and a build that never starts look identical from outside.
+
+### Cause 3 — the free plan is asleep
+
+Render's free plan sleeps after 15 minutes idle and cold-starts in ~30s. That delays a
+response; it does not prevent a deploy. If a route 404s consistently after several
+minutes, it is one of the two causes above, not the cold start.
+
+---
+
 ## Pre-launch checklist (before it's public)
 
 - [ ] Change admin + staff passwords off the test values (in-app **Change password**, ≥8 chars).
