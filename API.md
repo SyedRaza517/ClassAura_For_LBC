@@ -321,6 +321,86 @@ The response's `scope: { semesterId, sessionCount }` echoes what was counted, an
 `GET /hnd/semesters` flags sessions no semester covers — otherwise they'd be
 invisible in every scoped view.
 
+## Predictive analysis (progression risk)
+
+All of these sit behind `requireAuth` + `requirePage("prediction")`. A college that has
+granted that page to nobody has an inert feature: no score exists until somebody calls
+`POST /prediction/recalculate`, nothing runs on a schedule, and no student is ever
+emailed. The student and applicant apps cannot reach this router at all.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/prediction/settings` | This college's model, the platform defaults beside it, `customised`, and the code vocabulary the screen renders (so adding a red indicator needs no client edit) |
+| PUT | `/prediction/settings` | Replace the model. Body `{ config }`. **A missing or non-object `config` is a 400**, not a reset — see below. Marks every score in the college stale and returns `staleCount` |
+| DELETE | `/prediction/settings` | Back to the platform defaults. This is the *only* way to reset |
+| GET | `/prediction/summary` | Headcount per band (including empty bands), `scored`, `notScored`, `interventionRequired`, `staleCount`, `lastCalculated` |
+| GET | `/prediction/students` | The register, worst first. `?riskLevel=&cohortId=&q=&interventionRequired=true`. Capped at 500 with `truncated` |
+| GET | `/prediction/students/:id` | One student: current score, up to 60 history rows, every intervention. A student who exists but has no score returns `prediction: null` with a `reason`, **not** a 404 |
+| POST | `/prediction/recalculate` | Body `{ all?, limit? }`. Bounded (default 500, max 2000) and synchronous within that bound; the response carries `remaining` so the caller can go again |
+| GET | `/prediction/interventions` | `?status=&studentId=&due=true` |
+| POST | `/prediction/interventions` | Records that somebody stepped in. Snapshots the student's current figures onto the row |
+| PUT | `/prediction/interventions/:id` | Review one. **Never rewrites the snapshot** |
+
+### The score
+
+Seven components, each 0–100, weighted (defaults: overall attendance 0.20, recent
+attendance 0.15, submission rate 0.15, on-time rate 0.10, average grade 0.25, grade
+trend 0.10, intervention response 0.05 — they must total 1). The weighted mean is taken
+over **only the components that could be measured**, so both the numerator and the
+denominator skip an unmeasurable one:
+
+```
+progressionScore = Σ(weight × score) / Σ(weight)     over available components only
+```
+
+`null` in any of `overallAttendance`, `recentAttendance`, `submissionRate`,
+`onTimeRate`, `averageGrade` means *not measurable*, never zero — the columns are
+nullable for exactly this reason. A student with **nothing** measurable is not scored
+and has no row at all. `availableWeight` below 0.5 adds `LIMITED_EVIDENCE` to
+`riskDriverCodes`.
+
+### The overrides
+
+Applied to the *band*, in order, and they can only ever move a student to a worse one.
+Which band each caps at is configurable **by key** and validated against the college's
+own ladder at save time.
+
+| Code | Fires when | Effect |
+|---|---|---|
+| `OVR-001` | `missingAssessmentCount >= missingOverrideCount` (2) | Cannot be better than `missingOverrideBand` (R3) |
+| `OVR-002` | `recentAttendance < criticalRecentAttendance` (50) | Cannot be better than `criticalAttendanceBand` (R4) |
+| `OVR-003` | `averageGrade < passThreshold` (40) | Cannot be better than `lowGradeBand` (R3) |
+| `OVR-004` | `redIndicatorCount >= redIndicatorThreshold` (3) | Worsens the band by one, clamped at the worst |
+
+A code is recorded whenever its **condition** is met, not only when it moved the
+student — otherwise the reason a student is where they are disappears the moment a
+second rule agrees with the first. `overrideApplied` says whether the band actually
+changed. When it did, `progressionScore` is pulled down to the capped band's ceiling
+(floored to one decimal, so an R3 cap of 69.99 does not round up into R2) while
+`baseProgressionScore` / `baseRiskLevel` keep the untouched arithmetic.
+
+There are exactly **six** red indicators, which is why `redIndicatorThreshold` is capped
+at 6: a threshold above six could never fire and the override would be silently dead.
+
+### Why a bad configuration is a 400 rather than a stored row
+
+Each of these fails *silently* and *for a whole cohort at once*, which is why
+`PUT /prediction/settings` refuses rather than tidies:
+
+- **Weights that do not total 1** deflate (or inflate) every student in the college by
+  the same amount, invisibly. At 0.9 the whole cohort walks one rung down the ladder and
+  staff see a wave of "High Risk" that nothing in the students' behaviour explains.
+- **A gap in the bands** means a student whose score lands in it is classified against
+  nothing — no band, no flag, silently skipped by everything the score should trigger.
+- **An overlap** means which band a student lands in depends on the order of an array,
+  so dragging a row changes somebody's risk level.
+- **An unknown key** stored verbatim is a setting somebody believes they changed and
+  nothing reads.
+- **An override naming a band that does not exist** is a rule that appears on the
+  settings screen, reads as protection, and never fires for anybody.
+- **A `config` that is missing entirely** would otherwise resolve to "the platform
+  defaults" and silently discard the college's own model. Resetting is `DELETE`.
+
 ## Data shapes (client-facing)
 ```
 Staff    { id, name, role, dept, email, allowance, initials, colour, accountRole,

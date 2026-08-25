@@ -165,6 +165,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | **Student queries** | `/api/student-queries` | ✅ Two states (open/answered). No threading, no close/reopen, and **still no notification to the student on reply** — `routes/studentQueries.js` contains no notify or email call at all |
 | **Attendance Emails** | `/api/attendance-emails` | ⚠️ Built and complete, but the automation still ships switched off (`autoEnabled` defaults false) and the default template contact details ship blank for an admin to fill |
 | **Moodle / VLE sync** | `/api/moodle` | ✅ One-way and non-destructive, with a dry-run preview. Unit matching is heuristic by design. Now reads the institution's own URL, token and auto-sync switch |
+| **Predictive Analysis** (progression risk) | `/api/prediction` | ✅ Added 25 Aug 2026. Seven weighted components → a 0–100 progression score → R1–R5, with four override rules on top. Per-college weights, bands and thresholds (`PredictionModelSettings`), an append-only history, and an intervention record. Behind the new `prediction` page grant, so it is inert until a college grants it. **Nothing runs on a schedule and no student is ever emailed.** See §3.8 |
 
 ### 3.4 Admissions
 
@@ -205,6 +206,70 @@ describe. None of it appeared in the previous edition of this file.
 | **Per-tenant email configuration** | `src/email.js`, `integrationConfig.js` (`PROVIDERS.email`), `client/src/IntegrationSettings.jsx` | Email now sits alongside Moodle and SharePoint as a third per-tenant integration: provider, host, port, secure, user, from-name, from-address, with the SMTP password (or Resend key) encrypted at rest. `FROM` is resolved **per send**, not once at require time — it was a module-level constant, which meant whichever college the server was configured for became the sender for every other one. The last-resort address is deliberately undeliverable: a bounce nobody owns is a better failure than a letter signed by the wrong institution |
 | **College registration** | `CollegeRegistration` model, `routes/registrations.js`, `client/src/CollegeRegistration.jsx` | A public apply/activate flow, mounted **above** the tenant middleware because an applicant is not yet an institution. Two decisions by two different people are required: an operator approves and issues an access code, and the applicant redeems it. The code is stored **hashed**, like a password-reset token, with only its last four characters readable so an operator can identify it over the phone. The public submit route is rate limited (5/hour/IP) with a size-triggered sweep. Four statuses — pending, approved, activated, rejected — and a rejection is kept rather than deleted so a resubmission has history |
 | **Pinned Prisma generator output** | `schema.prisma:11–28` | `output = "../node_modules/.prisma/client"`. npm workspaces installs `@prisma/client` twice — hoisted at the repo root and under `server/` — so `prisma generate` wrote into one copy while `server/src` loaded the other, throwing "@prisma/client did not initialize yet". It survived locally only because an older `node_modules` happened to be in the right state; CI, which always installs fresh, failed on the seed *after* migrations had applied cleanly, which is what made it confusing. The path is relative to `schema.prisma`, so it always lands where `server/src` resolves from |
+
+### 3.8 Predictive Analysis — progression risk (25 Aug 2026)
+
+A progression score out of 100 per student, banded R1–R5, from seven weighted
+components. It is deliberately **not** called a probability of graduating: nothing here
+has been validated against real outcomes, so the screen may only ever say "progression
+risk". Every component is stored, current and historic, so a model *can* be trained
+against real outcomes later without redesigning the tables.
+
+| Piece | Where | What it does |
+|---|---|---|
+| **The engine** | `server/src/prediction/engine.js` | Pure — no database, no clock, no tenant. Raw measurements in, a scored row out. That seam is why the arithmetic has 40 tests that run in milliseconds with no Postgres: these rules are what a college is asked to defend when a student appeals a decision taken off the back of a risk level |
+| **The gather** | `src/prediction/metrics.js` | The only part that touches Prisma. Batched (a fixed number of queries per 200 students, grouped in Node) — the per-student shape would be ~3,000 round trips for a 500-student college |
+| **The batch** | `src/prediction/runner.js` | `markStale()` is cheap and safe in a request path; scoring happens later. Taking a register must not wait on a cohort's worth of arithmetic — hence the indexed `stale` column |
+| **Per-college policy** | `src/prediction/settings.js`, `PredictionModelSettings` | Weights, bands, thresholds and which band each override caps at. Same shape as `attendanceBandConfig`: defaults in code, one JSON column merged over them, no row until a college edits something |
+| **The API** | `routes/prediction.js` | 11 endpoints behind the new `prediction` page grant |
+| **The screen** | `client/src/StaffHub.jsx` → `AdminPrediction` | Three views: the register, the interventions caseload, and the model |
+
+**The three decisions worth knowing about.**
+
+*Unmeasurable is not zero.* A student whose register has never been taken has no
+attendance percentage. Scoring that as 0 would put every newly-enrolled student at the
+top of the Critical Risk list, and staff would go and intervene with students who are
+fine. An unmeasurable component is dropped from **both sides** of the weighted mean, so
+a score reads "70 of the 95 points that were actually available". A student with
+nothing measurable at all is **not scored and gets no row**. The five rate columns are
+nullable for the same reason and the screen renders a dash, never a zero. A score
+resting on less than half the model carries a `LIMITED_EVIDENCE` flag.
+
+*An override can only ever make things worse.* Each of OVR-001…004 is a floor on
+concern, not a verdict, so a student the arithmetic already places in the worst band
+stays there. Which band each caps at is named **by key** and validated against the
+college's own ladder at save time — "cannot be better than R3" is meaningless at a
+college that replaced R3, and a rule pointing at a band that does not exist would sit
+on the settings screen looking like protection and never fire for anybody.
+
+*The score and the band never disagree.* An override that moves a student down pulls
+the reported score with it, **floored** rather than rounded — R3's ceiling is 69.99, and
+rounding that to one decimal gives 70.0, which is R2's opening score, so the student
+would be handed back the exact band the override had just taken off them.
+`baseProgressionScore` / `baseRiskLevel` keep the untouched arithmetic, so "the maths
+said R1 and a rule pulled it to R3" stays visible.
+
+**What it deliberately does not do.** No student-facing route (the student app cannot
+reach the router). No automatic email — compare Attendance Emails, which *does* write to
+students, but with a template a human wrote and a band a human set; this one would be a
+machine telling somebody they are likely to fail. No schedule: scores exist only once
+somebody presses Recalculate. No delete for a history row or an intervention — both are
+records of what the college knew and when, which is what an appeal turns on.
+
+**Defects it found on the way in**, all fixed in the same commit:
+
+| Was | Now |
+|---|---|
+| `PUT /prediction/settings` with a truncated body silently replaced a college's model with the platform defaults and marked every score in the institution stale, answering 200. `validate(undefined)` legitimately means "the defaults" inside the resolver — over HTTP it must not | 400, and resetting has its own route (`DELETE`) |
+| `attendanceMode` was offered in the settings and read by nothing, so a college choosing "binary" was silently scored on the points model | Implemented, with tests that assert the two models genuinely disagree — otherwise the setting should not be offered |
+| A test in `settings.test.js` failed on its own premise: it asserted the default weights do **not** sum to exactly 1 (they do), so the floating-point tolerance it existed to guard was never exercised | Carries its own weight set that genuinely misses 1 by one ulp |
+| `npm test` only ever discovered `scripts/smoke-*.mjs`, so unit tests beside the code were decoration — 71 assertions no push ever ran | `scripts/test.mjs` runs `node --test` over `server/src` first. (An explicit glob: a bare directory makes the runner walk into `src/index.js`, which binds a port, and the run never terminates) |
+
+**Verification status.** The 71 unit tests pass locally and the client builds.
+`scripts/smoke-prediction.mjs` (24 checks) has **never been run on this machine** —
+there is no local Postgres or Docker here, and `server/.env` points at the live staging
+database. Its first execution is CI. Treat every claim about the HTTP surface as
+code-reading until that run is green.
 
 ### 3.7 Business rules that are actually enforced
 
@@ -314,6 +379,7 @@ before the tests start), and runs `npm audit` advisory-only.
 | `smoke-push-transport` | The FCM transport, standing in for Google — no server or network needed |
 | `smoke-fixes` | Role scoping on `/staff`, adjustment validation, re-decision guard |
 | `smoke-signup-2fa` | **SKIPPED** — see D2 |
+| `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. **Never yet run — see the note below the table** |
 
 **What still has no automated coverage** — checked by grepping every suite for each
 mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
@@ -322,6 +388,13 @@ mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
 `smoke-studentportal`; `/api/email-templates` only through the four placeholder and
 escaping checks in `smoke-branding`. Neither router is covered on its own terms.
 There is still no unit or component test framework and no client-side tests.
+
+**`smoke-prediction.mjs` has never been executed.** It was written on 25 Aug 2026
+alongside the feature, and there is no local Postgres or Docker on this machine while
+`server/.env` points at the live staging database — so its first run is CI, and until
+that run is green every claim in this file about the prediction HTTP surface rests on
+reading the code. The prediction *arithmetic* is a different matter: 71 unit tests in
+`server/src/prediction/*.test.js` do run locally, need no database, and pass.
 
 **A 22nd suite, `scripts/smoke-registrations.mjs`, was written while this review was
 in progress** and is not counted above or described in the table — it appeared in
