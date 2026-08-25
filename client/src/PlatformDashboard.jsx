@@ -9,7 +9,7 @@ import { platformApi, getPlatformToken, setPlatformToken } from "./platformApi";
 import {
   Building2, Users, GraduationCap, Plus, Power, Trash2, Loader2, ShieldCheck,
   LogOut, RefreshCw, AlertTriangle, X, CheckCircle2, Plug, ArrowLeft, HardDrive, FileText, ServerCog, ShieldAlert, KeyRound, LifeBuoy,
-  ClipboardList, Menu as MenuIcon, Copy, Check, Link2, Activity,
+  ClipboardList, Menu as MenuIcon, Copy, Check, Link2, Activity, ChevronDown,
 } from "lucide-react";
 
 // Black and white, deliberately and completely.
@@ -1419,9 +1419,29 @@ const PAGES = [
   { key: "security", label: "My security", Icon: ShieldCheck, sub: "Two-step verification" },
 ];
 
+// The menu's shape. Every key here must exist in PAGES, and every page in PAGES must
+// appear here — a page listed in neither is a feature nobody can reach, which is how
+// a capability quietly disappears from a product.
+const MENU_GROUPS = [
+  { title: "Customers", items: ["institutions", "monitoring", "registrations"] },
+  { title: "Platform", items: ["usage", "operators", "server"] },
+  { title: "Account", items: ["security"] },
+];
+
+// Checked at module load rather than trusted. Cheap, and it fails loudly in
+// development the moment somebody adds a page and forgets to place it.
+if (typeof console !== "undefined") {
+  const placed = MENU_GROUPS.flatMap((g) => g.items);
+  const missing = PAGES.map((p) => p.key).filter((k) => !placed.includes(k));
+  const unknown = placed.filter((k) => !PAGES.some((p) => p.key === k));
+  if (missing.length) console.error("[platform] pages missing from the menu:", missing.join(", "));
+  if (unknown.length) console.error("[platform] menu lists unknown pages:", unknown.join(", "));
+}
+
 export default function PlatformDashboard({ onBack }) {
   const [page, setPage] = useState("institutions");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [admin, setAdmin] = useState(null);
   const [checking, setChecking] = useState(true);
   const [data, setData] = useState(null);
@@ -1612,42 +1632,158 @@ export default function PlatformDashboard({ onBack }) {
     return <Institutions />;
   };
 
+  // The menu, in three named groups.
+  //
+  // Seven flat items read as a list somebody has to scan; grouped, they read as a
+  // surface with a shape — what belongs to CUSTOMERS, what belongs to the PLATFORM
+  // itself, and what belongs to the person signed in. It also makes the menu look
+  // finished, which a flat list of seven never quite does.
   const MenuList = ({ onPick }) => (
-    <nav className="flex flex-col gap-0.5">
-      {PAGES.map((x) => {
-        const on = x.key === page;
-        return (
-          <button
-            key={x.key}
-            onClick={() => { setPage(x.key); onPick?.(); }}
-            className={`flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${
-              on ? "bg-black text-white" : "text-neutral-700 hover:bg-neutral-200"}`}
-          >
-            <x.Icon size={15} className={`mt-0.5 flex-none ${on ? "text-white" : "text-neutral-500"}`} />
-            <span className="min-w-0">
-              <span className="block text-[13px] font-semibold leading-tight">{x.label}</span>
-              <span className={`block text-[11px] leading-tight ${on ? "text-neutral-400" : "text-neutral-500"}`}>{x.sub}</span>
-            </span>
-          </button>
-        );
-      })}
+    <nav className="flex flex-col gap-3">
+      {MENU_GROUPS.map((group) => (
+        <div key={group.title}>
+          <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-neutral-400">
+            {group.title}
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {group.items.map((key) => {
+              const x = PAGES.find((p) => p.key === key);
+              if (!x) return null;
+              const on = x.key === page;
+              return (
+                <button
+                  key={x.key}
+                  onClick={() => { setPage(x.key); onPick?.(); }}
+                  aria-current={on ? "page" : undefined}
+                  className={`group flex items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${
+                    on ? "bg-black text-white shadow-sm" : "text-neutral-700 hover:bg-neutral-200"}`}
+                >
+                  <x.Icon size={15} className={`mt-0.5 flex-none ${on ? "text-white" : "text-neutral-500"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-semibold leading-tight">{x.label}</span>
+                    <span className={`block text-[11px] leading-tight ${on ? "text-neutral-400" : "text-neutral-500"}`}>{x.sub}</span>
+                  </span>
+                  {/* The one number an operator wants without opening anything. */}
+                  {x.key === "institutions" && data?.totals?.institutions != null && (
+                    <span className={`mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${on ? "bg-neutral-700 text-neutral-200" : "bg-neutral-200 text-neutral-600"}`}>
+                      {data.totals.institutions}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 
+  const initials = (admin?.email || "?").slice(0, 2).toUpperCase();
+
   return (
     <div className="min-h-screen bg-neutral-100" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
-      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-black px-4 py-3 text-white sm:px-5">
-        <div className="mx-auto flex max-w-7xl items-center gap-3">
-          <button onClick={() => setMenuOpen((v) => !v)} className="rounded-lg p-2 text-neutral-300 transition hover:bg-neutral-800 lg:hidden" title="Menu">
-            <MenuIcon size={17} />
+      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-black text-white">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-5">
+          <button onClick={() => setMenuOpen((v) => !v)} className="-ml-1 rounded-lg p-2 text-neutral-300 transition hover:bg-neutral-800 lg:hidden" title="Menu" aria-label="Menu">
+            <MenuIcon size={18} />
           </button>
-          <ShieldCheck size={18} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-extrabold leading-tight">Platform operations</p>
-            <p className="truncate text-[11px] text-neutral-400">Signed in as {admin.email}</p>
+
+          {/* THE NAME. A mark plus a wordmark, so the top of the screen says what this
+              is rather than what you are doing in it. "Super Admin" is the words an
+              operator actually uses; "Platform operations" was the words the code
+              used. Kept in white on black — see the note at the top of this file for
+              why this surface is monochrome and must stay that way. */}
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-white text-black">
+              <ShieldCheck size={17} />
+            </span>
+            <span className="min-w-0 leading-none">
+              <span className="block truncate text-[15px] font-extrabold tracking-tight">Super Admin</span>
+              <span className="mt-0.5 hidden truncate text-[11px] text-neutral-400 sm:block">EdTech platform operations</span>
+            </span>
           </div>
-          <button onClick={load} className="rounded-lg p-2 text-neutral-400 transition hover:bg-neutral-800" title="Refresh"><RefreshCw size={15} /></button>
-          <button onClick={signOut} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-neutral-400 transition hover:bg-neutral-800"><LogOut size={14} /> Sign out</button>
+
+          <span className="flex-1" />
+
+          {/* A live count, so the header carries a fact and not only a title. */}
+          {data?.totals && (
+            <span className="mr-1 hidden items-center gap-1.5 rounded-full bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-300 ring-1 ring-neutral-700 md:inline-flex">
+              <Building2 size={12} />
+              {data.totals.institutions} institution{data.totals.institutions === 1 ? "" : "s"}
+              <span className="text-neutral-600">·</span>
+              {data.totals.active} active
+            </span>
+          )}
+
+          <button onClick={load} className="rounded-lg p-2 text-neutral-400 transition hover:bg-neutral-800 hover:text-white" title="Refresh" aria-label="Refresh">
+            <RefreshCw size={15} />
+          </button>
+
+          {/* THE PROFILE BUTTON.
+              Sign out used to sit bare in the header — one click from destroying a
+              session, next to a Refresh that looks much the same. Behind a menu it
+              takes a deliberate second click, and the space it opens up is where the
+              things about YOU belong: which account this is, whether it is protected
+              by a second factor, and the way out. */}
+          <div className="relative">
+            <button
+              onClick={() => setProfileOpen((v) => !v)}
+              className={`flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 transition ${profileOpen ? "bg-neutral-800" : "hover:bg-neutral-800"}`}
+              title={admin?.email}
+              aria-haspopup="menu"
+              aria-expanded={profileOpen}
+            >
+              <span className="grid h-7 w-7 flex-none place-items-center rounded-full bg-white text-[11px] font-extrabold text-black">
+                {initials}
+              </span>
+              <ChevronDown size={14} className={`text-neutral-400 transition ${profileOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {profileOpen && (
+              <>
+                {/* Click anywhere else to close. A menu holding Sign out must not be
+                    something you can leave hanging open behind you. */}
+                <button className="fixed inset-0 z-40 cursor-default" onClick={() => setProfileOpen(false)} aria-hidden tabIndex={-1} />
+                <div role="menu" className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl bg-white text-neutral-900 shadow-xl ring-1 ring-neutral-300">
+                  <div className="border-b border-neutral-200 px-3 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-neutral-400">Signed in as</p>
+                    <p className="mt-0.5 break-all text-[13px] font-semibold leading-tight">{admin?.email}</p>
+                    <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold">
+                      {admin?.totpEnabled
+                        ? <><ShieldCheck size={12} className="text-neutral-700" /> <span className="text-neutral-700">Two-step verification on</span></>
+                        : <><ShieldAlert size={12} className="text-amber-600" /> <span className="text-amber-700">Two-step verification off</span></>}
+                    </p>
+                  </div>
+
+                  <button
+                    role="menuitem"
+                    onClick={() => { setPage("security"); setProfileOpen(false); }}
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-semibold transition hover:bg-neutral-100"
+                  >
+                    <KeyRound size={14} className="text-neutral-500" /> My security
+                  </button>
+
+                  {onBack && (
+                    <button
+                      role="menuitem"
+                      onClick={() => { setProfileOpen(false); onBack(); }}
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] font-semibold transition hover:bg-neutral-100"
+                    >
+                      <ArrowLeft size={14} className="text-neutral-500" /> Leave Super Admin
+                    </button>
+                  )}
+
+                  <button
+                    role="menuitem"
+                    onClick={() => { setProfileOpen(false); signOut(); }}
+                    className="flex w-full items-center gap-2 border-t border-neutral-200 px-3 py-2.5 text-left text-[13px] font-semibold text-neutral-800 transition hover:bg-neutral-100"
+                  >
+                    <LogOut size={14} className="text-neutral-500" /> Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
