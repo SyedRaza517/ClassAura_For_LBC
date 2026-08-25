@@ -328,6 +328,27 @@ test("the reported score always falls inside the band it is reported with", () =
   }
 });
 
+test("a band whose bounds fall between two decimal steps still gets a score inside it", () => {
+  // The capped score is floored to a 0.1 grid, but nothing requires a college's band
+  // bounds to sit on that grid — normaliseBands only probes one point 0.1 above each
+  // band's ceiling, so a band spanning 50.05-50.07 validates. Flooring 50.07 gives
+  // 50.0, which is BELOW that band's own floor and lands two bands lower. The student
+  // is then stored as R3 carrying a score that reads as R5.
+  const bands = [
+    { key: "R1", label: "Top", min: 50.08, max: 100 },
+    { key: "R3", label: "Middle", min: 50.05, max: 50.07 },
+    { key: "R5", label: "Bottom", min: 0, max: 50.04 },
+  ];
+  const config = { ...DEFAULTS, bands, lowGradeBand: "R3", missingOverrideBand: "R3", criticalAttendanceBand: "R3", interventionBand: "R3" };
+
+  const r = score(raw({ assessments: { ...perfect().assessments, graded: [{ pct: 35 }, { pct: 35 }, { pct: 35 }, { pct: 35 }] } }), config);
+
+  assert.equal(r.riskLevel, "R3", "OVR-003 should cap this student at R3");
+  const reads = bands.find((b) => r.progressionScore >= b.min);
+  assert.equal(reads.key, r.riskLevel,
+    `score ${r.progressionScore} reads as ${reads.key} but the student is recorded as ${r.riskLevel}`);
+});
+
 /* -------------------------------------------------------------------------- */
 /* 7) Red indicators                                                           */
 /* -------------------------------------------------------------------------- */

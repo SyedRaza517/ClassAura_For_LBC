@@ -519,7 +519,17 @@ function score(rawIn, config = DEFAULTS) {
   // 69.99, and round1(69.99) is 70.0 — which is R2's opening score, so rounding the
   // capped figure would hand the student back the exact band the override had just
   // taken off them. Flooring keeps the score inside the band it was capped to.
-  const ceiling = Math.floor(finalBand.max * 10) / 10;
+  // CLAMPED INTO the band, not merely down to its ceiling.
+  //
+  // Flooring alone assumes a multiple of 0.1 exists inside every band, and nothing
+  // guarantees that: normaliseBands only checks that no REAL score can fall between
+  // two bands, so a college may legitimately define one spanning 50.05 to 50.07.
+  // Flooring 50.07 gives 50.0, which is below that band's own floor and reads as a
+  // band two rungs lower — the student is stored as R3 carrying a score that reads as
+  // R5, which is precisely the disagreement this whole step exists to prevent. Taking
+  // the max with the band's own minimum keeps the score inside the band it was capped
+  // to, whatever bounds the college chose.
+  const ceiling = Math.max(finalBand.min, Math.floor(finalBand.max * 10) / 10);
   const progressionScore = finalIndex > baseIndex
     ? Math.min(baseProgressionScore, ceiling)
     : baseProgressionScore;

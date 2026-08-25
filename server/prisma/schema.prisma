@@ -1837,12 +1837,12 @@ model StudentPredictionCurrent {
   /// Float rather than Int, even though today's values are 100/70/30, because these
   /// are inputs to a weighted sum a college can retune — awarding 72.5 for a stable
   /// trend should be a settings edit and not a migration.
-  gradeTrendScore Float
+  gradeTrendScore Float?
 
   /// "IMPROVED" | "STABLE" | "DETERIORATED" | "NONE" — NONE meaning no intervention
   /// has been reviewed yet, which scores neutral rather than badly.
   interventionResponse      String
-  interventionResponseScore Float
+  interventionResponseScore Float?
 
   /// The weighted sum BEFORE the override engine runs, kept next to the final
   /// figure so "the maths said R2 and a rule pulled it to R3" is visible instead of
@@ -1942,10 +1942,10 @@ model StudentPredictionHistory {
   averageGrade           Float?
 
   gradeTrend      String
-  gradeTrendScore Float
+  gradeTrendScore Float?
 
   interventionResponse      String
-  interventionResponseScore Float
+  interventionResponseScore Float?
 
   baseProgressionScore Float
   progressionScore     Float
@@ -1997,11 +1997,11 @@ model Intervention {
 
   // --- The snapshot. Frozen deliberately; see the note above. ---
   riskLevelAtIntervention        String
-  progressionScoreAtIntervention Float
-  attendanceAtIntervention       Float
-  recentAttendanceAtIntervention Float
-  submissionRateAtIntervention   Float
-  averageGradeAtIntervention     Float
+  progressionScoreAtIntervention Float?
+  attendanceAtIntervention       Float?
+  recentAttendanceAtIntervention Float?
+  submissionRateAtIntervention   Float?
+  averageGradeAtIntervention     Float?
   missingAtIntervention          Int
 
   reviewDate String? // YYYY-MM-DD — when someone agreed to look again

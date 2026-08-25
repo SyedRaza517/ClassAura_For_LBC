@@ -279,10 +279,19 @@ async function gather(studentIds, config) {
         // rather than silently deflating the component.
         if (!a.dueDate || (s.submittedOn && s.submittedOn <= a.dueDate)) onTime += 1;
       } else if (s.status === "not_submitted") {
-        notSubmitted += 1;
-        // Missing only once the deadline has actually passed. Work not yet handed in
-        // and not yet due is not a problem.
-        if (a.dueDate && a.dueDate < today) missing += 1;
+        // ONLY once the deadline has passed — for the rate as well as for the count.
+        // Moodle reports "not submitted" for every open assignment, so counting work
+        // that is not yet due would deflate the submission rate of a student who has
+        // done nothing wrong, and can push them under the red threshold purely because
+        // the college set an assessment for next month.
+        //
+        // An assessment with no due date cannot be judged late or missing at all, so
+        // it counts as neither — it is left out of the rate rather than held against
+        // anybody.
+        if (a.dueDate && a.dueDate < today) {
+          notSubmitted += 1;
+          missing += 1;
+        }
       } else {
         unknown += 1;
       }
@@ -300,10 +309,27 @@ async function gather(studentIds, config) {
         return { ...g, pct: Math.round((g.marks / max) * 1000) / 10, assessment: a };
       })
       .filter((g) => g.assessment && myUnits.has(g.assessment.unitId))
+      // ORDERED DETERMINISTICALLY, because the grade trend reads the last N against
+      // the N before them and a shuffled list produces a different answer each run.
+      //
+      // A day-resolution key is not enough on its own: a tutor entering one
+      // assessment's marks in a sitting, or a first Moodle import where no grade item
+      // carries a date, gives every row the same day. Equal keys then preserve
+      // Postgres' arbitrary return order, and the same student comes back IMPROVING on
+      // one run and DECLINING on the next with nothing about them having changed —
+      // which also flips a red indicator and can tip OVR-004 into worsening a band.
+      //
+      // So: the graded date, then the full timestamp to separate marks entered on the
+      // same day, then the assessment id as a final tie-break that is stable across
+      // runs even when two rows share a timestamp exactly.
       .sort((a, b) => {
         const ad = a.gradedOn || (a.gradedAt ? a.gradedAt.toISOString().slice(0, 10) : "");
         const bd = b.gradedOn || (b.gradedAt ? b.gradedAt.toISOString().slice(0, 10) : "");
-        return ad < bd ? -1 : ad > bd ? 1 : 0;
+        if (ad !== bd) return ad < bd ? -1 : 1;
+        const at = a.gradedAt ? a.gradedAt.getTime() : 0;
+        const bt = b.gradedAt ? b.gradedAt.getTime() : 0;
+        if (at !== bt) return at - bt;
+        return a.assessmentId < b.assessmentId ? -1 : a.assessmentId > b.assessmentId ? 1 : 0;
       });
 
     const scopedGrades = myGrades.filter((g) => inScopeAssessment(g.assessment));

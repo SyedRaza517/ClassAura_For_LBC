@@ -312,7 +312,18 @@ router.post("/recalculate", async (req, res) => {
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 && limitRaw <= 2000 ? limitRaw : 500;
 
   const summary = await runner.recalculate({ all, limit });
-  const remaining = await prisma.studentPredictionCurrent.count({ where: { stale: true } });
+
+  // Outstanding = flagged stale PLUS never scored at all. Counting only `stale: true`
+  // missed the larger half: on a first run at a big college the students past the
+  // limit have no row of any kind, so they are not stale — they are nothing. The
+  // screen would have been told 0 remaining, stopped asking, and left them off the
+  // risk register entirely.
+  const [staleRemaining, scoredRows, activeTotal] = await Promise.all([
+    prisma.studentPredictionCurrent.count({ where: { stale: true } }),
+    prisma.studentPredictionCurrent.count(),
+    prisma.student.count({ where: { active: true } }),
+  ]);
+  const remaining = staleRemaining + Math.max(0, activeTotal - scoredRows);
 
   audit.record(req, {
     action: "prediction.recalculate",
@@ -367,11 +378,19 @@ router.post("/interventions", async (req, res) => {
       interventionDate,
       interventionType: b.interventionType,
       riskLevelAtIntervention: current ? current.riskLevel : "UNSCORED",
-      progressionScoreAtIntervention: current ? current.progressionScore : 0,
-      attendanceAtIntervention: current && current.overallAttendance != null ? current.overallAttendance : 0,
-      recentAttendanceAtIntervention: current && current.recentAttendance != null ? current.recentAttendance : 0,
-      submissionRateAtIntervention: current && current.submissionRate != null ? current.submissionRate : 0,
-      averageGradeAtIntervention: current && current.averageGrade != null ? current.averageGrade : 0,
+      // NULL, never 0, for anything that was not measured at the time.
+      //
+      // Zero is not a neutral baseline, it is an invention — and a one-directional
+      // one. The engine compares today's figures against these, and against a zero
+      // baseline every student looks enormously improved, so a student nobody had
+      // ever measured would be recorded as having responded well to support. That
+      // bias falls on exactly the students somebody was worried enough to intervene
+      // on. Null means "no figure at the time", and the engine skips the comparison.
+      progressionScoreAtIntervention: current ? current.progressionScore : null,
+      attendanceAtIntervention: current ? current.overallAttendance : null,
+      recentAttendanceAtIntervention: current ? current.recentAttendance : null,
+      submissionRateAtIntervention: current ? current.submissionRate : null,
+      averageGradeAtIntervention: current ? current.averageGrade : null,
       missingAtIntervention: current ? current.missingAssessmentCount : 0,
       reviewDate: b.reviewDate || null,
       notes,
