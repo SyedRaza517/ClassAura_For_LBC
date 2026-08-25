@@ -39,6 +39,11 @@
 // one call per student, `changeIndex` so grades are fetched only when they moved, and
 // one cached token per site rather than one per request.
 const cfg = require("../integrationConfig");
+// The pure mapping decisions live in blackboardNormalise.js and are imported rather
+// than repeated here. They were duplicated for a while, which is exactly how two
+// implementations of "what is this student's mark" drift apart without anyone
+// noticing — and only one of the copies had tests.
+const normalise = require("./blackboardNormalise");
 
 const TIMEOUT_MS = 30_000;
 
@@ -108,76 +113,6 @@ function nextPageUrl(body, host) {
 /* -------------------------------------------------------------------------- */
 /* Interpreting what comes back                                                */
 /* -------------------------------------------------------------------------- */
-
-// Blackboard's four attendance states onto the register's own. Excused is E and not
-// A deliberately: attendance.js scores E as a point earned and A as none, so
-// flattening the two costs a student attendance they were entitled to.
-const ATTENDANCE = { Present: "P", Absent: "A", Late: "L", Excused: "E" };
-
-/** One Blackboard attendance status as a register mark, or null if unrecognised. */
-function attendanceToStatus(bbStatus) {
-  return ATTENDANCE[bbStatus] || null;
-}
-
-/**
- * The student's actual mark for one gradebook cell, or null.
- *
- * THE TRAP: `GradeV2.score` is documented as "the OVERRIDDEN score of this grade …
- * only used for overriding the grade". It is null for every normally-graded student,
- * so reading it as the mark yields a gradebook of nulls with a few outliers. The real
- * mark lives in `displayGrade.score`.
- *
- * Null is returned for every case where a number would be a lie: not graded, exempt
- * (excluded from the average, not a zero), a corrupt calculated column, and any
- * scale that is text rather than a number. A genuine zero is kept.
- */
-function markOf(grade) {
-  if (!grade) return null;
-  if (grade.exempt === true) return null;
-  if (grade.corrupt === true) return null;
-
-  const dg = grade.displayGrade || null;
-  const possible = dg && typeof dg.possible === "number" ? dg.possible : null;
-
-  // An instructor's manual override is the authoritative mark where one exists.
-  if (grade.overridden === true && typeof grade.score === "number") {
-    return { score: grade.score, possible };
-  }
-
-  if (!dg) return null;
-  // Text and complete/incomplete columns carry meaning in `text`, not in a number.
-  if (dg.scaleType === "Text" || dg.scaleType === "CompleteIncomplete") return null;
-  if (typeof dg.score !== "number") return null;
-
-  return { score: dg.score, possible };
-}
-
-/**
- * Was this attempt late?
- *
- * DERIVED, because Blackboard has no `late` field anywhere in the API — the only
- * "Late" in the whole specification is the attendance status. A column with no due
- * date cannot make anything late, which is the common case: treating a missing due
- * date as "everything is late" would mark an entire gradebook late.
- */
-function isLate(attemptDate, due) {
-  if (!attemptDate || !due) return false;
-  const a = Date.parse(attemptDate);
-  const d = Date.parse(due);
-  if (!Number.isFinite(a) || !Number.isFinite(d)) return false;
-  return a > d;
-}
-
-/**
- * Is this course a CHILD of a cross-listed set?
- *
- * Merged and cross-listed courses are one parent plus children. Enrolments are
- * synchronised onto the parent (each membership carrying `childCourseId` to say which
- * section the student is really in), and content, columns, attempts and grades exist
- * ONLY on the parent. So children are skipped when walking courses for grades —
- * iterating them finds nothing, and iterating both duplicates every student.
- */
-const isChildCourse = (course) => Boolean(course && course.parentId);
 
 /* -------------------------------------------------------------------------- */
 /* The wire                                                                    */
@@ -400,10 +335,12 @@ module.exports = {
   apiBase,
   origin,
   nextPageUrl,
-  attendanceToStatus,
-  markOf,
-  isLate,
-  isChildCourse,
-  ATTENDANCE,
   LIMIT,
+  // Re-exported from blackboardNormalise so callers have one place to reach for and
+  // there is only one implementation of each behind it.
+  attendanceToStatus: normalise.attendanceToStatus,
+  markOf: normalise.markOf,
+  isLate: normalise.isLate,
+  isChildCourse: normalise.isChildCourse,
+  ATTENDANCE: normalise.ATTENDANCE,
 };
