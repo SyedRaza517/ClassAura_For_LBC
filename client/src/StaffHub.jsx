@@ -2798,12 +2798,13 @@ function AdminPrediction({ store }) {
   const [summary, setSummary] = useState(null);
   const [config, setConfig] = useState(null);
   const [err, setErr] = useState("");
+  const [stale, setStale] = useState(false);
 
   const loadHeader = async () => {
     try {
       const [s, cfg] = await Promise.all([api.predictionSummary(), api.predictionSettings()]);
-      setSummary(s); setConfig(cfg); setErr("");
-    } catch (e) { setErr(e.message); }
+      setSummary(s); setConfig(cfg); setErr(""); setStale(false);
+    } catch (e) { setErr(e.message); setStale(Boolean(e.staleServer)); }
   };
   useEffect(() => { loadHeader(); }, []);
 
@@ -2827,7 +2828,17 @@ function AdminPrediction({ store }) {
         </div>
       </div>
 
-      {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+      {/* A server older than this build is not a fault in the college's data, and it
+          is not something the person looking at it can fix. Saying so in plain words
+          beats a red error box that invites them to go hunting. */}
+      {err && (
+        <Card className={stale ? "!bg-amber-50/70 !ring-amber-200" : "!bg-rose-50 !ring-rose-200"}>
+          <div className="flex gap-2">
+            <Info size={16} className={`mt-0.5 shrink-0 ${stale ? "text-amber-600" : "text-rose-600"}`} />
+            <p className={`text-xs font-semibold ${stale ? "text-amber-900" : "text-rose-700"}`}>{err}</p>
+          </div>
+        </Card>
+      )}
 
       {view === "register" && <PredictionRegister bands={bands} summary={summary} onChanged={loadHeader} />}
       {view === "interventions" && <PredictionInterventions onChanged={loadHeader} />}

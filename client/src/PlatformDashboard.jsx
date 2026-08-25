@@ -1217,13 +1217,14 @@ function WarningChip({ code }) {
 function MonitoringPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(true);
   const [only, setOnly] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
-    try { setData(await platformApi.monitoring()); setError(""); }
-    catch (e) { setError(e.message || "Could not load."); }
+    try { setData(await platformApi.monitoring()); setError(""); setStale(false); }
+    catch (e) { setError(e.message || "Could not load."); setStale(Boolean(e.staleServer)); }
     finally { setBusy(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -1232,7 +1233,18 @@ function MonitoringPanel() {
     return <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-slate-400" /></div>;
   }
   if (error) {
-    return <div className="rounded-xl bg-rose-50 p-4 text-sm font-semibold text-rose-700 ring-1 ring-rose-200">{error}</div>;
+    // "The API has not been redeployed yet" is not a failure of this screen, and an
+    // operator seeing a red box would reasonably start looking for one.
+    return (
+      <div className={`rounded-xl p-4 text-sm font-semibold ring-1 ${stale ? "bg-amber-50 text-amber-900 ring-amber-200" : "bg-rose-50 text-rose-700 ring-rose-200"}`}>
+        {error}
+        {stale && (
+          <p className="mt-1 text-xs font-normal">
+            This screen was added after the version of the API currently running. It will work as soon as the server is redeployed.
+          </p>
+        )}
+      </div>
+    );
   }
   if (!data) return null;
 

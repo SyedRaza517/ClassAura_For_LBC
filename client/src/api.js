@@ -162,8 +162,27 @@ async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT
     // Carry the status on the error. A network-level failure makes fetch itself
     // reject, so that error has no `status` — which is how callers tell "the
     // server rejected me" apart from "I never reached the server".
-    const err = new Error(data?.error || `Request failed (${res.status})`);
+    // A 404 on a route the SERVER does not have is a different thing from a 404 on a
+    // record that does not exist, and only one of them is the user's problem.
+    //
+    // The client and the API deploy separately — a browser can be running a build
+    // hours newer than the server. When that happens every call to a newly-added
+    // route 404s, and the bare message ("Request failed (404)") sends whoever is
+    // looking at it hunting for a fault in a feature that is simply not deployed yet.
+    //
+    // The server answers a route it HAS but is not authorised for with 401/403, so a
+    // 404 carrying no error body of its own is the signature of a route it does not
+    // know about at all.
+    const missingRoute = res.status === 404 && !data?.error;
+    const err = new Error(
+      missingRoute
+        ? "This part of the app is newer than the server it is talking to. The page will work once the API has been redeployed — nothing is wrong with your data."
+        : (data?.error || `Request failed (${res.status})`)
+    );
     err.status = res.status;
+    // Lets a screen tell "the server is behind" apart from a genuine failure, and say
+    // so in its own words rather than rendering a generic error box.
+    if (missingRoute) err.staleServer = true;
     // Carry the whole body. The server sends flags alongside the message — notably
     // `locked: true` on a 423 term-locked register — and discarding them meant no
     // caller could react to one even if it wanted to.
