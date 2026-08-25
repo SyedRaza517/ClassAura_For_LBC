@@ -403,11 +403,22 @@ router.post("/interventions", async (req, res) => {
   // score is now out of date.
   await runner.markStale([student.id]);
 
+  // THE AUDIT LINE NAMES NO STUDENT, and that is deliberate.
+  //
+  // This router is gated on requirePage("prediction") precisely because a risk level
+  // is a judgement about a named student. The audit trail is read on the Settings,
+  // Access and Staff pages — AUDIT_PAGES in routes/audit.js — which is a DIFFERENT
+  // and disjoint grant. Putting "welfare_referral for Jane Smith" in the summary
+  // hands the whole safeguarding caseload to an administrator this page refuses.
+  //
+  // entityId is recorded, so anyone who legitimately holds the page can still resolve
+  // the row. The trail keeps its purpose — who did what, when — without becoming a
+  // second, less-guarded copy of the thing it describes.
   audit.record(req, {
     action: "prediction.intervention.create",
     entity: "Intervention",
     entityId: created.id,
-    summary: `Raised a ${b.interventionType} intervention for ${student.firstName} ${student.lastName}`,
+    summary: `Raised a ${b.interventionType} intervention`,
   });
 
   res.status(201).json({ intervention: sIntervention(created) });
@@ -474,12 +485,21 @@ router.put("/interventions/:id", async (req, res) => {
   // changes even though nothing about the student did.
   await runner.markStale([existing.studentId]);
 
+  // WHICH fields moved is recorded; what they now SAY is not.
+  //
+  // before/after here were whole Intervention rows, and `notes` is free-text pastoral
+  // commentary. audit.js redacts SECRET_FIELDS, which is a list of credential names —
+  // none of this is a secret, it is simply personal, so nothing there caught it and
+  // up to 500 characters per side reached a log read under a different grant.
+  //
+  // changedKeys() exists for exactly this, and studentReviews.js, admissions.js,
+  // ism.js and interactions.js all use it the same way.
   audit.record(req, {
     action: "prediction.intervention.update",
     entity: "Intervention",
     entityId: existing.id,
     summary: `Updated an intervention (${Object.keys(data).join(", ")})`,
-    before: existing, after: updated,
+    after: { fieldsChanged: audit.changedKeys(existing, updated) },
   });
 
   res.json({ intervention: sIntervention(updated) });

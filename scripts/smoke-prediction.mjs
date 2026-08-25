@@ -238,12 +238,14 @@ await check("a band with nobody in it is still reported, so the ladder does not 
 
 let createdInterventionId = null;
 let subjectRef = null;
+let subjectSurname = null;
 
 await check("an intervention snapshots the student's figures as they are now", async () => {
   const list = await call("/prediction/students", { token });
   const subject = list.body.students[0];
   if (!subject) return "skipped — no scored students in the fixtures";
   subjectRef = subject.student.studentRef;
+  subjectSurname = subject.student.lastName;
 
   const r = await call("/prediction/interventions", {
     method: "POST", token,
@@ -256,6 +258,41 @@ await check("an intervention snapshots the student's figures as they are now", a
     "the risk level at the time must be copied onto the record, not read back later");
   assert.equal(r.body.intervention.progressionScoreAtIntervention, subject.progressionScore);
   return `snapshotted at ${subject.riskLevel} / ${subject.progressionScore}`;
+});
+
+await check("the audit trail does not become a less-guarded copy of the caseload", async () => {
+  // The disclosure this router exists to control is "which named students is the
+  // college worried about". It is gated on requirePage("prediction") for that reason.
+  //
+  // The audit trail is read under AUDIT_PAGES — settings, access, staff — which is a
+  // DIFFERENT and disjoint grant. So anything written there is readable by an
+  // administrator this page refuses, and a summary naming a student beside
+  // "welfare_referral", or a before/after carrying free-text pastoral notes, hands
+  // over exactly what the gate withholds.
+  //
+  // Found by a security review on 25 Aug 2026: both were happening.
+  if (!createdInterventionId) return "skipped — nothing was created";
+
+  const r = await call("/audit?entity=Intervention&take=50", { token });
+  if (r.status !== 200) return `skipped — audit not readable by this account (HTTP ${r.status})`;
+
+  const rows = (r.body.entries || []).filter((e) => e.entityId === createdInterventionId);
+  assert.ok(rows.length, "the interventions raised above should appear in the trail");
+
+  const blob = JSON.stringify(rows);
+
+  // The suite writes a distinctive note; if THAT reaches the log, so would a real
+  // safeguarding note written by a member of staff.
+  assert.equal(blob.includes("smoke-prediction test"), false,
+    "an intervention's free-text notes must not reach the audit trail");
+
+  // And the student must not be named beside the intervention type.
+  if (subjectSurname) {
+    assert.equal(blob.includes(subjectSurname), false,
+      `the trail names "${subjectSurname}" beside an intervention type, which is exactly the disclosure requirePage("prediction") withholds`);
+  }
+
+  return `${rows.length} audit row(s): no notes, no student name`;
 });
 
 await check("an intervention type nobody implemented is refused", async () => {
