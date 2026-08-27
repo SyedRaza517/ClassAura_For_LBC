@@ -410,6 +410,7 @@ model Tenant {
   moodleSync             MoodleSync[]
   staffReview            StaffReview[]
   studentReview          StudentReview[]
+  studentOutcome         StudentOutcome[]
   admission              Admission[]
   ism                    Ism[]
   admissionDocument      AdmissionDocument[]
@@ -1048,6 +1049,7 @@ model Student {
   // predictionHistory keeps every score ever calculated (see those models).
   prediction        StudentPredictionCurrent?
   predictionHistory StudentPredictionHistory[]
+  outcomes          StudentOutcome[]
   interventions     Intervention[]
 
   @@index([cohortId])
@@ -1865,6 +1867,63 @@ model StudentPredictionCurrent {
   overrideCodes       Json
   riskDriverCodes     Json
   positiveDriverCodes Json
+
+  /// --- Tripwires -----------------------------------------------------------
+  /// Conditions that ride ALONGSIDE the score and never inside it. None of these
+  /// can move a progression score or a band; they exist so a member of staff can
+  /// see a fact the weighted mean structurally cannot express.
+  ///
+  /// DATES, NOT DAY-COUNTS. Nothing in this feature runs on a schedule — a score
+  /// exists once somebody presses Recalculate, and markStale fires on data events.
+  /// A day passing is not an event, so a stored "days since last attended" would be
+  /// wrong by the next morning with nothing to correct it. The date is true forever
+  /// and the screen derives the age from it.
+  ///
+  /// All nullable, because every one of them is unmeasurable for a real student: a
+  /// register nobody has taken gives no streak, and a zero would read as "we checked
+  /// and they are fine".
+  /// Consecutive unexplained absences at the end of the record. Excused absence
+  /// breaks the run — the student told somebody, so contact was not lost.
+  absenceStreak          Int?
+  /// The last date the student was marked present or late. Null if never.
+  lastAttendedOn         String?
+  /// The oldest piece of work past its deadline carrying no answer either way.
+  /// Distinct from missingAssessmentCount, which counts positive "not submitted".
+  oldestUnmarkedDueDate  String?
+  /// Percentage-point change between the rolling attendance window and the equal
+  /// window before it. Null when either window had too little in it to compare.
+  attendanceSlope        Float?
+  /// The most recent date this student did ANYTHING the college can see — attended,
+  /// had work marked, or spoke to somebody. Attendance alone is not engagement: a
+  /// student who is not in class but is submitting work is engaged, and a sponsoring
+  /// provider must now evidence academic engagement rather than attendance.
+  lastEngagedOn          String?
+  /// Share of this student's absence that carries no explanation, 0-100. Null when
+  /// they have no absences at all — there is nothing to characterise, and 0 would
+  /// read as "all authorised", a claim about absences that do not exist.
+  unexplainedShare       Float?
+  /// How often the student arrives late, 0-100. Null when the COLLEGE does not record
+  /// lateness at all, because a rate of 0 there means "not recorded", not "never late".
+  latenessRate           Float?
+  /// Marks below the college's pass threshold, and marks that only just cleared it.
+  /// Null when nothing has been marked — which is not a clean record.
+  failCount              Int?
+  nearFailCount          Int?
+  /// Spread of this student's marks. Distinguishes a steady 60 from a 95 and a 25,
+  /// which the average grade reports identically. Null below two marks.
+  gradeVolatility        Float?
+  /// Which unit this student attends least, and how far it sits below their best.
+  /// The overall percentage is the number that HIDES a quietly abandoned unit; this
+  /// is the pair that finds it and names it.
+  worstUnitId            String?
+  unitAttendanceSpread   Float?
+  /// Units with marked work, none of which reached the pass mark. Null when nothing
+  /// has been marked anywhere — a unit nobody has marked is unmeasurable, not failed.
+  unpassedUnitCount      Int?
+  /// Week-to-week spread of attendance. Distinguishes steady attendance from full
+  /// weeks alternating with empty ones at the same overall figure. Null below three
+  /// weeks of register.
+  attendanceRegularity   Float?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -1959,6 +2018,63 @@ model StudentPredictionHistory {
   overrideCodes       Json
   riskDriverCodes     Json
   positiveDriverCodes Json
+
+  /// --- Tripwires -----------------------------------------------------------
+  /// Conditions that ride ALONGSIDE the score and never inside it. None of these
+  /// can move a progression score or a band; they exist so a member of staff can
+  /// see a fact the weighted mean structurally cannot express.
+  ///
+  /// DATES, NOT DAY-COUNTS. Nothing in this feature runs on a schedule — a score
+  /// exists once somebody presses Recalculate, and markStale fires on data events.
+  /// A day passing is not an event, so a stored "days since last attended" would be
+  /// wrong by the next morning with nothing to correct it. The date is true forever
+  /// and the screen derives the age from it.
+  ///
+  /// All nullable, because every one of them is unmeasurable for a real student: a
+  /// register nobody has taken gives no streak, and a zero would read as "we checked
+  /// and they are fine".
+  /// Consecutive unexplained absences at the end of the record. Excused absence
+  /// breaks the run — the student told somebody, so contact was not lost.
+  absenceStreak          Int?
+  /// The last date the student was marked present or late. Null if never.
+  lastAttendedOn         String?
+  /// The oldest piece of work past its deadline carrying no answer either way.
+  /// Distinct from missingAssessmentCount, which counts positive "not submitted".
+  oldestUnmarkedDueDate  String?
+  /// Percentage-point change between the rolling attendance window and the equal
+  /// window before it. Null when either window had too little in it to compare.
+  attendanceSlope        Float?
+  /// The most recent date this student did ANYTHING the college can see — attended,
+  /// had work marked, or spoke to somebody. Attendance alone is not engagement: a
+  /// student who is not in class but is submitting work is engaged, and a sponsoring
+  /// provider must now evidence academic engagement rather than attendance.
+  lastEngagedOn          String?
+  /// Share of this student's absence that carries no explanation, 0-100. Null when
+  /// they have no absences at all — there is nothing to characterise, and 0 would
+  /// read as "all authorised", a claim about absences that do not exist.
+  unexplainedShare       Float?
+  /// How often the student arrives late, 0-100. Null when the COLLEGE does not record
+  /// lateness at all, because a rate of 0 there means "not recorded", not "never late".
+  latenessRate           Float?
+  /// Marks below the college's pass threshold, and marks that only just cleared it.
+  /// Null when nothing has been marked — which is not a clean record.
+  failCount              Int?
+  nearFailCount          Int?
+  /// Spread of this student's marks. Distinguishes a steady 60 from a 95 and a 25,
+  /// which the average grade reports identically. Null below two marks.
+  gradeVolatility        Float?
+  /// Which unit this student attends least, and how far it sits below their best.
+  /// The overall percentage is the number that HIDES a quietly abandoned unit; this
+  /// is the pair that finds it and names it.
+  worstUnitId            String?
+  unitAttendanceSpread   Float?
+  /// Units with marked work, none of which reached the pass mark. Null when nothing
+  /// has been marked anywhere — a unit nobody has marked is unmeasurable, not failed.
+  unpassedUnitCount      Int?
+  /// Week-to-week spread of attendance. Distinguishes steady attendance from full
+  /// weeks alternating with empty ones at the same overall figure. Null below three
+  /// weeks of register.
+  attendanceRegularity   Float?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
@@ -2030,6 +2146,68 @@ model Intervention {
   @@index([status])
   @@index([interventionDate])
   @@index([studentReviewId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// What actually happened to a student.
+///
+/// NOTHING ELSE IN THIS SCHEMA RECORDS THIS, and its absence is the single largest
+/// gap in the predictive-analysis feature. Every weight in PredictionModelSettings is
+/// currently somebody's opinion, because there is no way to check whether a student
+/// the model called R5 actually withdrew. Until these rows exist and accumulate, the
+/// score cannot be validated, no weight can be defended at an appeal on anything but
+/// reasoning, and the supervised model the original specification promises has no
+/// labels to train against.
+///
+/// WHY THE TYPE MATTERS AS MUCH AS THE EVENT. Voluntary withdrawal and required
+/// academic withdrawal have DIFFERENT predictors in the literature — one is about
+/// belonging and circumstances, the other about attainment — so a model trained on
+/// the two mixed together learns neither well. A transfer to another provider is a
+/// success for the student and a failure in any metric that cannot tell it from
+/// dropping out. An agreed interruption is neither.
+///
+/// APPEND-ONLY IN SPIRIT: one row per student per outcome event, never deleted, for
+/// the same reason StudentPredictionHistory is never deleted — this is the record of
+/// what the college knew and when, and it is what an appeal turns on.
+model StudentOutcome {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  /// "withdrawn" | "progressed" | "completed" | "interrupted" | "transferred"
+  /// Validated in the route layer rather than by a Prisma enum, matching the rest of
+  /// this schema.
+  outcome   String
+  /// For a withdrawal only: "voluntary" | "academic" | "financial" | "personal" |
+  /// "visa" | "unknown". Null for every other outcome. Deliberately nullable and
+  /// deliberately including "unknown" — a college that does not know why a student
+  /// left should record that it does not know, not guess.
+  reason    String?
+  /// YYYY-MM-DD, the date the outcome took effect — NOT the date somebody typed it in.
+  /// Those differ by weeks in practice, and a model trained on the typing date learns
+  /// when administrators do paperwork.
+  effectiveOn String
+  /// Which academic stage they were at. Continuation is measured stage to stage, so
+  /// "withdrew" means nothing without knowing from where.
+  stage     String?
+  notes     String  @default("")
+
+  /// The score this student carried when the outcome was recorded, frozen. The live
+  /// prediction moves; this must not, or the comparison the whole table exists for
+  /// becomes circular.
+  scoreAtOutcome     Float?
+  riskLevelAtOutcome String?
+
+  recordedBy String?
+  createdAt  DateTime @default(now())
+
+  @@index([studentId])
+  @@index([outcome])
+  @@index([effectiveOn])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String

@@ -79,6 +79,16 @@ const ENGINE_TO_COLUMN = {
   modelVersion: (r) => r.modelVersion,
 };
 
+/** The tripwire figures runner.js writes from the gather rather than from an engine
+ *  result. Listed separately because they do not come off `score()` — but they are
+ *  columns on both prediction tables and must obey the same nullability contract. */
+const TRIPWIRE_COLUMNS = [
+  "absenceStreak", "lastAttendedOn", "oldestUnmarkedDueDate", "attendanceSlope",
+  "lastEngagedOn", "unexplainedShare", "latenessRate", "failCount", "nearFailCount",
+  "gradeVolatility", "worstUnitId", "unitAttendanceSpread", "unpassedUnitCount",
+  "attendanceRegularity",
+];
+
 /**
  * Students in the states that actually occur, especially the unglamorous ones. The
  * first is the case that broke the feature: on day one it describes every student in
@@ -147,6 +157,22 @@ test("the two tables agree with each other, so a score and its history cannot di
       `"${column}" is ${current.get(column) ? "nullable" : "NOT NULL"} on StudentPredictionCurrent but ` +
       `${history.get(column) ? "nullable" : "NOT NULL"} on StudentPredictionHistory — a row that can be written ` +
       `as the current score but not as history would half-succeed and lose the audit trail`);
+  }
+});
+
+test("every tripwire column exists on both tables and accepts null", () => {
+  // Each of these is genuinely unmeasurable for a real student — a register nobody
+  // has taken gives no streak and no last-attended date. A NOT NULL column would
+  // force runner.js to write a zero, and a zero here does not mean "no absences", it
+  // means "we never looked": exactly the inversion this feature is built to avoid.
+  const current = nullableFields("StudentPredictionCurrent");
+  const history = nullableFields("StudentPredictionHistory");
+
+  for (const column of TRIPWIRE_COLUMNS) {
+    assert.equal(current.has(column), true, `StudentPredictionCurrent is missing "${column}"`);
+    assert.equal(history.has(column), true, `StudentPredictionHistory is missing "${column}"`);
+    assert.equal(current.get(column), true, `StudentPredictionCurrent.${column} is NOT NULL`);
+    assert.equal(history.get(column), true, `StudentPredictionHistory.${column} is NOT NULL`);
   }
 });
 

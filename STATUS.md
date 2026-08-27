@@ -221,7 +221,7 @@ against real outcomes later without redesigning the tables.
 | **The gather** | `src/prediction/metrics.js` | The only part that touches Prisma. Batched (a fixed number of queries per 200 students, grouped in Node) — the per-student shape would be ~3,000 round trips for a 500-student college |
 | **The batch** | `src/prediction/runner.js` | `markStale()` is cheap and safe in a request path; scoring happens later. Taking a register must not wait on a cohort's worth of arithmetic — hence the indexed `stale` column |
 | **Per-college policy** | `src/prediction/settings.js`, `PredictionModelSettings` | Weights, bands, thresholds and which band each override caps at. Same shape as `attendanceBandConfig`: defaults in code, one JSON column merged over them, no row until a college edits something |
-| **The API** | `routes/prediction.js` | 11 endpoints behind the new `prediction` page grant |
+| **The API** | `routes/prediction.js` | 13 endpoints behind the `prediction` page grant. (This line said 11 from 25 Aug until 26 Aug; there were 10. Counted with `grep -n "^router\.\(get\|post\|put\|delete\|patch\)"`) |
 | **The screen** | `client/src/StaffHub.jsx` → `AdminPrediction` | Three views: the register, the interventions caseload, and the model |
 
 **The three decisions worth knowing about.**
@@ -248,6 +248,76 @@ rounding that to one decimal gives 70.0, which is R2's opening score, so the stu
 would be handed back the exact band the override had just taken off them.
 `baseProgressionScore` / `baseRiskLevel` keep the untouched arithmetic, so "the maths
 said R1 and a rule pulled it to R3" stays visible.
+
+### 3.8.1 Tripwires and outcomes (26 Aug 2026)
+
+A second layer beside the score, and the table that will eventually let anybody check
+whether the score was ever right.
+
+**The tripwires.** `server/src/prediction/tripwires.js` — pure, no database, 63 tests.
+Eleven `TRIP_*` codes and fourteen stored figures covering things a weighted mean
+structurally cannot express: an absence streak, the date last attended, work past its
+deadline with no record either way, an attendance slope, a grade trend resting on marks
+all entered the same day, marks under the pass mark, missed arranged meetings, a
+tutor's own "At Risk", nobody having spoken to the student, one unit abandoned while
+the rest are attended, and units with nothing banked.
+
+None of it moves the score. That is the point: an early-warning system that predicted
+accurately still changed no outcomes in a randomised trial, because prediction without
+a named next step is not an intervention. The codes ride `riskDriverCodes` alongside
+the engine's six reds — provably unable to reach OVR-004, because `redIndicatorCount`
+is derived from the internal `reds` array and `riskDriverCodes` is a copy of it.
+
+**Three decisions worth knowing about.**
+
+*Dates are stored; day-counts are not.* Nothing here runs on a schedule — `markStale`
+fires on data events and a day passing is not an event. A stored "19 days since last
+attended" is wrong by the next morning with nothing to correct it, so the column holds
+`lastAttendedOn` and the screen derives the age at render time.
+
+*A zero can be a lie.* The lateness rate is `null`, never `0`, when the college does not
+record lateness at all — the Moodle importer maps statuses by acronym, so a college
+whose plugin has no "L" produces zero late marks for everybody, and a clean 0.0% there
+means "not recorded". Decided once per batch, because one student having no late marks
+is ordinary. The same guard covers unexplained-absence share (null with no absences),
+volatility (null below two marks), per-unit spread (null below two comparable units)
+and weekly regularity (null below three weeks).
+
+*A unit nobody has marked is not a unit the student failed.* It comes out of both sides
+of the count, or every student on a new unit reads as failing it.
+
+**Outcomes.** `StudentOutcome` plus `GET/POST /prediction/outcomes` and
+`GET /prediction/outcomes/calibration`. Nothing anywhere recorded what actually
+happened to a student, which meant every weight in the model was reasoning rather than
+evidence and any future trained model had no labels. Withdrawal carries a separate
+reason because voluntary and academic withdrawal have different predictors; `"unknown"`
+is a first-class reason so nobody is forced to guess by a required field; and
+`effectiveOn` is the date the outcome took effect, never the date it was typed, because
+those differ by weeks and a model trained on the latter learns when administrators do
+paperwork. The calibration endpoint buckets outcomes by the band the student carried at
+the time — the only screen in the feature that can show the model to be wrong.
+
+**Verification status.** Demonstrated on 26 Aug 2026:
+
+| | |
+|---|---|
+| 237 unit tests | pass — the whole server, no database |
+| 63 tripwire tests | pass; **13 mutants** introduced and each caught by the intended test |
+| Client | **builds**; no test framework exists, so that is the whole claim |
+| Migrations | **three written, none applied.** `server/.env` points at the live database |
+| Smoke suites | **not run** — they need a live API and database |
+
+Two bugs found in this work and fixed: `OUTCOMES` collided with the existing
+intervention-review vocabulary on both server and client, and the first fix silently
+repointed the intervention review at the wrong allowlist. Neither was caught by a test —
+the review route has none.
+
+**What it still does not do.** No VLE engagement (the connectors carry grades and
+submissions only), no equity or algorithmic-governance surface, no safeguarding
+triggers, and nothing on a schedule. Roughly 37 of the 138 catalogued signals are
+implemented or unblocked; 7 are provably impossible without upstream data-quality
+fixes — `idDateOfExpiry` has no format validation, follow-ups have no completion field,
+and `SentNotification` is a dedupe ledger that never records an attendance letter.
 
 **What it deliberately does not do.** No student-facing route (the student app cannot
 reach the router). No automatic email — compare Attendance Emails, which *does* write to

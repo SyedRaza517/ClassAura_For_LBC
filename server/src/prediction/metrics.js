@@ -21,6 +21,7 @@
 const prisma = require("../db");
 const { localDate } = require("../clock");
 const attendance = require("../attendance");
+const tripwires = require("./tripwires");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -135,6 +136,11 @@ async function gather(studentIds, config) {
   const recentFrom = shiftDays(today, -config.recentAttendanceDays);
   const directionCutoff = shiftDays(today, -config.directionOfTravelDays);
 
+  // The window before the recent one, the same length and not overlapping it, so a
+  // slope compares two equal periods rather than a period against itself.
+  const priorTo = shiftDays(recentFrom, -1);
+  const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays + 1);
+
   /* --- students and their term calendars -------------------------------- */
 
   const students = await prisma.student.findMany({
@@ -156,13 +162,30 @@ async function gather(studentIds, config) {
   // on their own calendars) and one SQL window cannot express that.
   const marks = await prisma.attendanceMark.findMany({
     where: { studentId: { in: studentIds } },
-    select: { studentId: true, status: true, session: { select: { date: true } } },
+    // startTime is carried for the tripwire layer, which needs to order two registers
+    // on the same day (a six-hour day is Teaching then Seminar) to tell "attended the
+    // morning, missed the afternoon" from the reverse. Widening this select costs
+    // nothing — it is the same row, already being read.
+    select: { studentId: true, status: true, session: { select: { date: true, startTime: true, unitId: true } } },
   });
+
+  // Does this college record lateness AT ALL? Decided once for the batch, because it
+  // is a property of the institution's register, not of a student. The Moodle importer
+  // maps statuses by acronym, so a college whose plugin has no "L" produces zero L rows
+  // for everybody — and a per-student lateness rate of 0.0% there means "not recorded",
+  // not "never late". Reporting that as a clean sheet would be a lie told about every
+  // student at once. One student having no L marks is, by contrast, entirely ordinary.
+  const lateRecorded = marks.some((m) => m.status === "L");
 
   const marksByStudent = new Map();
   for (const m of marks) {
     if (!marksByStudent.has(m.studentId)) marksByStudent.set(m.studentId, []);
-    marksByStudent.get(m.studentId).push({ status: m.status, date: m.session ? m.session.date : null });
+    marksByStudent.get(m.studentId).push({
+      status: m.status,
+      date: m.session ? m.session.date : null,
+      startTime: m.session ? m.session.startTime : null,
+      unitId: m.session ? m.session.unitId : null,
+    });
   }
 
   /* --- assessments, grades and submissions ------------------------------ */
@@ -190,6 +213,15 @@ async function gather(studentIds, config) {
 
   const assessmentById = new Map(assessments.map((a) => [a.id, a]));
   const assessmentIds = assessments.map((a) => a.id);
+
+  // Indexed by unit so a student's own assessments can be walked without scanning
+  // every assessment in the chunk once per student. Built from rows already fetched;
+  // no extra round trip.
+  const assessmentsByUnit = new Map();
+  for (const a of assessments) {
+    if (!assessmentsByUnit.has(a.unitId)) assessmentsByUnit.set(a.unitId, []);
+    assessmentsByUnit.get(a.unitId).push(a);
+  }
 
   const grades = assessmentIds.length
     ? await prisma.assessmentGrade.findMany({
@@ -231,6 +263,55 @@ async function gather(studentIds, config) {
   const interventionByStudent = new Map();
   for (const i of interventions) if (!interventionByStudent.has(i.studentId)) interventionByStudent.set(i.studentId, i);
 
+  const interventionCount = new Map();
+  for (const i of interventions) interventionCount.set(i.studentId, (interventionCount.get(i.studentId) || 0) + 1);
+
+  /* --- pastoral contact --------------------------------------------------- */
+
+  // TWO NEW QUERIES PER CHUNK, taking the documented budget from eight to ten. They
+  // earn it: low one-to-one contact with staff is directly linked to students
+  // contemplating withdrawal, and neither fact is derivable from anything already
+  // fetched. Both are batched over the whole chunk like everything else here.
+  //
+  // queryType is free text in the schema but allowlisted at routes/interactions.js, so
+  // an exact match is safe for anything created through the API. "Stage 2 - Absence
+  // Concern Meeting" is the college's own escalation step and counts alongside a plain
+  // no-show: a student who misses that meeting has missed the meeting about missing.
+  const NO_SHOW_TYPES = ["No Show", "Stage 2 - Absence Concern Meeting"];
+
+  const contacts = await prisma.interaction.findMany({
+    where: { studentId: { in: studentIds } },
+    select: { studentId: true, date: true, queryType: true },
+  });
+
+  const reviews = await prisma.studentReview.findMany({
+    where: { studentId: { in: studentIds } },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    select: { studentId: true, date: true, progress: true },
+  });
+
+  // Whether the college uses the pastoral module at all. If nothing has ever been
+  // logged for anybody in this chunk, "nobody has spoken to this student" is not a
+  // finding about the student — it is the absence of a feature, and firing it would
+  // put the entire institution on a contact list.
+  const pastoralInUse = contacts.length > 0 || reviews.length > 0;
+
+  const pastoralByStudent = new Map();
+  for (const c of contacts) {
+    const cur = pastoralByStudent.get(c.studentId) || { lastContactOn: null, noShowCount: 0, progress: null };
+    if (c.date && (!cur.lastContactOn || c.date > cur.lastContactOn)) cur.lastContactOn = c.date;
+    if (NO_SHOW_TYPES.includes(c.queryType)) cur.noShowCount += 1;
+    pastoralByStudent.set(c.studentId, cur);
+  }
+  for (const r of reviews) {
+    const cur = pastoralByStudent.get(r.studentId) || { lastContactOn: null, noShowCount: 0, progress: null };
+    if (r.date && (!cur.lastContactOn || r.date > cur.lastContactOn)) cur.lastContactOn = r.date;
+    // Ordered date desc then createdAt desc, so the first review seen per student is
+    // the latest one. Later rows must not overwrite it.
+    if (cur.progress === null) cur.progress = r.progress;
+    pastoralByStudent.set(r.studentId, cur);
+  }
+
   /* --- the score they carried a month ago ------------------------------- */
 
   // The most recent history row at or before the cutoff. A student whose history
@@ -258,6 +339,12 @@ async function gather(studentIds, config) {
     // to catch somebody who has just stopped coming.
     const overallMarks = mine.filter((m) => inWindow(m.date, scope.from, scope.to));
     const recentMarks = mine.filter((m) => inWindow(m.date, recentFrom, today));
+
+    // The window immediately before the recent one, the same length, so the tripwire
+    // layer can compare like with like. Not clipped to the term either, for the same
+    // reason the recent window is not: a fall that straddles a term boundary is the
+    // one most worth catching.
+    const priorMarks = mine.filter((m) => inWindow(m.date, priorFrom, priorTo));
 
     // In scope: dated inside the window, or — for a piece of work with no due date,
     // which cannot be placed on a calendar — belonging to the term being scored.
@@ -334,11 +421,118 @@ async function gather(studentIds, config) {
 
     const scopedGrades = myGrades.filter((g) => inScopeAssessment(g.assessment));
 
+    // Work that is past its deadline and carries no definite answer either way.
+    //
+    // DISTINCT FROM `missing`. `missing` counts rows that positively say the work was
+    // not handed in; this counts work with NO answer — either no submission row at
+    // all, or one Moodle left as "unknown". That silence is not a fact about the
+    // student and never touches the score, which is why it is a tripwire: it says
+    // somebody needs to find out, not that anybody has done anything wrong.
+    const decided = new Set(
+      mySubs.filter((s) => s.status === "submitted" || s.status === "not_submitted")
+        .map((s) => s.assessmentId)
+    );
+
+    const dueUnmarked = [];
+    for (const unitId of myUnits) {
+      for (const a of assessmentsByUnit.get(unitId) || []) {
+        if (!inScopeAssessment(a)) continue;
+        // No due date means nothing can be overdue against it — the same rule the
+        // submission counts above already apply.
+        if (!a.dueDate || a.dueDate >= today) continue;
+        if (decided.has(a.id)) continue;
+        dueUnmarked.push({ dueDate: a.dueDate });
+      }
+    }
+
     const intervention = interventionByStudent.get(id) || null;
     const previous = previousByStudent.get(id) || null;
 
+    // The tripwire layer reads the same in-memory shapes assembled above — it issues
+    // no query of its own and adds nothing to the round-trip budget this file exists
+    // to protect. Its output rides beside `raw` rather than inside it, because none
+    // of it is an input to the score.
+    // Raw status counts, which the two attendance MODELS deliberately discard — the
+    // points model folds L and E into a single percentage. Lateness and unexplained
+    // absence are orthogonal to both models and are reported as their own figures.
+    const counts = attendance.summarise(overallMarks);
+    const quality = tripwires.attendanceQuality(counts, { lateRecorded });
+
+    const attainment = tripwires.attainmentShape(scopedGrades.map((g) => g.pct), config);
+
+    // Attendance per unit, from the marks already in hand. Grouped in Node — the
+    // session's unitId came along on the select that was already being issued.
+    const byUnit = new Map();
+    for (const m of overallMarks) {
+      if (!m.unitId) continue;
+      if (!byUnit.has(m.unitId)) byUnit.set(m.unitId, []);
+      byUnit.get(m.unitId).push(m);
+    }
+    const perUnitAttendance = [...byUnit.entries()].map(([unitId, ms]) => {
+      const sum = summariseAttendance(ms, config.attendanceMode);
+      return { unitId, pct: sum.pct, marked: sum.marked };
+    });
+    const dispersion = tripwires.unitDispersion(perUnitAttendance, config);
+
+    // Marks grouped by the unit they belong to, so "which units have nothing banked"
+    // can be asked. Every unit the student is enrolled on appears, including the ones
+    // with no marks at all — unpassedUnits() needs to see them to drop them.
+    const gradesByUnit = new Map();
+    for (const unitId of myUnits) gradesByUnit.set(unitId, []);
+    for (const g of scopedGrades) {
+      const unitId = g.assessment && g.assessment.unitId;
+      if (unitId && gradesByUnit.has(unitId)) gradesByUnit.get(unitId).push(g.pct);
+    }
+    const banked = tripwires.unpassedUnits(
+      [...gradesByUnit.entries()].map(([unitId, pcts]) => ({ unitId, pcts })), config
+    );
+
+    const regularity = tripwires.weeklyRegularity(overallMarks);
+
+    const lastGradedOn = myGrades.reduce(
+      (max, g) => (g.gradedOn && (!max || g.gradedOn > max) ? g.gradedOn : max), null
+    );
+
+    const pastoral = pastoralInUse
+      ? (pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null })
+      : null;
+
+    const trips = tripwires.evaluate({
+      today,
+      marks: overallMarks,
+      recent: summariseAttendance(recentMarks, config.attendanceMode),
+      prior: summariseAttendance(priorMarks, config.attendanceMode),
+      dueUnmarked,
+      gradeDates: myGrades.map((g) => g.gradedOn || null),
+      attainment,
+      pastoral,
+      dispersion,
+      banked,
+    }, config);
+
+    // The most recent thing this student did that the college can see, of ANY kind.
+    // Attendance alone is not engagement: a student who is not in class but is having
+    // work marked is engaged, and a sponsoring provider is now required to evidence
+    // academic engagement rather than attendance.
+    const lastEngagedOn = tripwires.engagementRecency({
+      lastAttendedOn: trips.lastAttendedOn,
+      lastGradedOn,
+      lastPastoralOn: pastoral ? pastoral.lastContactOn : null,
+    });
+
     out.set(id, {
       scope,
+      tripwires: {
+        ...trips,
+        ...quality,
+        ...attainment,
+        lastEngagedOn,
+        openInterventionCount: interventionCount.get(id) || 0,
+        worstUnitId: dispersion.worstUnitId,
+        unitAttendanceSpread: dispersion.spread,
+        unpassedUnitCount: banked.unpassed,
+        attendanceRegularity: regularity,
+      },
       raw: {
         attendance: {
           overall: summariseAttendance(overallMarks, config.attendanceMode),

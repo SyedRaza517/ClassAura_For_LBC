@@ -154,6 +154,64 @@ const DEFAULTS = {
   // student cannot fairly be marked down for not having recovered in three days.
   interventionReviewDays: 14,
 
+  // --- Tripwires -------------------------------------------------------------
+  //
+  // These govern the conditions that ride ALONGSIDE the score rather than inside it
+  // (see tripwires.js). None of them can move a progression score or a band; they
+  // decide when a fact about a student is worth putting in front of a human.
+  //
+  // Every one is a college's judgement rather than a property of the code, for the
+  // same reason the weights are: a provider running a Student-visa cohort loses
+  // contact with somebody after three sessions, while an evening course that meets
+  // fortnightly would fire this on everybody.
+
+  // A run of unexplained absences, in sessions. Only A counts — an excused absence
+  // breaks the run, because the student told somebody and has not been lost.
+  absenceStreakSessions: 3,
+
+  // Days since the student was last marked present or late. Deliberately not "days
+  // since a register was taken": the question is when this person was last in a room.
+  notSeenDays: 14,
+
+  // How long after a deadline work may sit with no submission record before it is
+  // reported. Marking takes time, and a flag that lights the morning after every
+  // deadline is one staff learn to scroll past.
+  unmarkedGraceDays: 7,
+
+  // A fall in attendance between the rolling window and the one before it, in
+  // percentage points, that counts as deterioration rather than ordinary movement.
+  attendanceSlopeDrop: 10,
+
+  // The fewest marked sessions a window needs before a percentage drawn from it is
+  // allowed to contribute to a slope. A window holding one register reads 0 or 100
+  // and neither is information — without this floor a two-mark student produces the
+  // loudest number on the screen.
+  slopeMinMarks: 3,
+
+  // How far above the pass mark still counts as a near miss. A student sitting two
+  // points clear of failing is not comfortable, and an average grade cannot say so —
+  // it reports the same 45 for somebody scraping through every unit and somebody
+  // alternating firsts with failures.
+  nearFailMargin: 10,
+
+  // How many missed arranged meetings count as a pattern rather than a bad week.
+  noShowLimit: 2,
+
+  // How long a student may go without any logged conversation before that becomes
+  // worth reporting. This one describes the COLLEGE, not the student.
+  staleContactDays: 42,
+
+  // The fewest marked sessions a UNIT needs before its percentage may be compared
+  // against another unit's. A unit holding one register reads 0% or 100%, and left in
+  // the comparison it is always the worst unit — the signal would be pointing at the
+  // register rather than at the student.
+  disperseMinMarks: 4,
+
+  // How far apart the best and worst unit may be, in percentage points, before that
+  // gap is worth reporting on its own. A student at 90% in three units and 20% in a
+  // fourth has an overall figure that looks survivable and a problem that is not.
+  unitSpreadLimit: 40,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -386,6 +444,56 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The intervention review window",
       why: "it is a count of days an intervention must run before its effect is judged. At 0 a student would be marked down for not having recovered the same afternoon somebody spoke to them.",
+    }) ||
+    checkNumber(out, "absenceStreakSessions", pick("absenceStreakSessions"), {
+      min: 1, max: 50, whole: true,
+      label: "The absence-streak threshold",
+      why: "it is a count of consecutive unexplained absences. At 0 every student with a register would be reported as having stopped attending.",
+    }) ||
+    checkNumber(out, "notSeenDays", pick("notSeenDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The not-seen window",
+      why: "it is a count of days since the student was last in a room. At 0 everybody who did not attend today would be flagged as lost.",
+    }) ||
+    checkNumber(out, "unmarkedGraceDays", pick("unmarkedGraceDays"), {
+      min: 0, max: 365, whole: true,
+      label: "The marking grace period",
+      why: "it is how long work may sit unmarked after its deadline before it is reported. At 0 every assessment is reported the morning after it was due, including the ones being marked that week.",
+    }) ||
+    checkNumber(out, "attendanceSlopeDrop", pick("attendanceSlopeDrop"), {
+      min: 1, max: 100,
+      label: "The attendance-fall threshold",
+      why: "it is a fall in percentage points between two windows. At 0 the ordinary movement of a single register would be reported as deterioration.",
+    }) ||
+    checkNumber(out, "slopeMinMarks", pick("slopeMinMarks"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum marks for an attendance slope",
+      why: "it is how many marked sessions a window needs before a percentage from it may be compared. At 1 a single register reads as 0% or 100% and produces the largest fall on the screen from no evidence at all.",
+    }) ||
+    checkNumber(out, "nearFailMargin", pick("nearFailMargin"), {
+      min: 0, max: 100,
+      label: "The near-miss margin",
+      why: "it is how far above the pass mark still counts as a near miss. At 0 nothing is ever a near miss and the figure is dead.",
+    }) ||
+    checkNumber(out, "noShowLimit", pick("noShowLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The no-show limit",
+      why: "it is how many missed arranged meetings count as a pattern. At 0 every student would be reported, including those who have never been offered one.",
+    }) ||
+    checkNumber(out, "staleContactDays", pick("staleContactDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The pastoral-contact window",
+      why: "it is how long a student may go without a logged conversation before that is reported. At 0 every student is reported every day and the list means nothing.",
+    }) ||
+    checkNumber(out, "disperseMinMarks", pick("disperseMinMarks"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum marks for a per-unit comparison",
+      why: "it is how many marked sessions a unit needs before its percentage may be compared with another unit's. At 1 a unit with a single register is always the worst unit.",
+    }) ||
+    checkNumber(out, "unitSpreadLimit", pick("unitSpreadLimit"), {
+      min: 1, max: 100,
+      label: "The per-unit attendance gap",
+      why: "it is how far apart the best and worst unit may be before the gap is reported. At 0 every student with any variation between units is flagged.",
     });
   if (err) return err;
 

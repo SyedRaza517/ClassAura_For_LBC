@@ -551,6 +551,12 @@ export const api = {
     return request(`/prediction/students${q ? `?${q}` : ""}`);
   },
   predictionStudent: (id) => request(`/prediction/students/${id}`),
+  predictionOutcomes: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "")).toString();
+    return request(`/prediction/outcomes${q ? `?${q}` : ""}`);
+  },
+  predictionRecordOutcome: (body) => request("/prediction/outcomes", { method: "POST", body }),
+  predictionCalibration: () => request("/prediction/outcomes/calibration"),
   predictionRecalculate: (body = {}) => request("/prediction/recalculate", { method: "POST", body, timeoutMs: 120000 }),
   listInterventions: (params = {}) => {
     const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
