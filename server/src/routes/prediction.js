@@ -34,6 +34,7 @@ const audit = require("../audit");
 const settings = require("../prediction/settings");
 const runner = require("../prediction/runner");
 const engine = require("../prediction/engine");
+const tripwires = require("../prediction/tripwires");
 
 router.use(requireAuth, requirePage("prediction"));
 
@@ -55,6 +56,14 @@ const PREDICTION_OUT = [
   "overrideCodes", "riskDriverCodes", "positiveDriverCodes",
   "primaryRiskDriver", "interventionRequired",
   "modelVersion", "lastCalculated", "stale",
+  // Tripwire figures. Dates and counts only — the screen derives "not seen for 19
+  // days" from lastAttendedOn at render time, because a day-count computed at score
+  // time is wrong by the next morning and nothing recalculates on a clock.
+  "absenceStreak", "lastAttendedOn", "oldestUnmarkedDueDate", "attendanceSlope",
+  "lastEngagedOn", "unexplainedShare", "latenessRate", "failCount", "nearFailCount",
+  "gradeVolatility", "worstUnitId", "unitAttendanceSpread", "unpassedUnitCount",
+  "attendanceRegularity", "lateSubmissionRate", "meanDaysLate", "weeksIntoProgramme",
+  "assessmentsDueSoon", "gradedWithDates", "oldestOpenQueryOn", "openQueryCount", "overdueFollowUpCount",
 ];
 
 const pick = (row, keys) => {
@@ -107,6 +116,11 @@ router.get("/settings", async (_req, res) => {
       weightKeys: settings.WEIGHT_KEYS,
       componentKeys: engine.COMPONENT_KEYS,
       redCodes: engine.RED_CODES,
+      // Served rather than hardcoded client-side for the same reason the rest of this
+      // block is: the client renders a code it does not recognise as the raw code, so
+      // a screen that shipped before a code existed degrades to something readable
+      // instead of rendering blank.
+      tripwireCodes: tripwires.TRIP_CODES,
       attendanceModes: settings.ATTENDANCE_MODES,
       scopes: settings.SCOPES,
       gradeTrends: Object.values(engine.GRADE_TREND),
@@ -351,6 +365,173 @@ const OUTCOMES = ["improved", "no_change", "declined", "withdrawn", "other"];
 // The student's CURRENT metrics are snapshotted onto the row rather than read back
 // later, because the question this table answers is "were they worse when we stepped
 // in than they are now?", which is unanswerable if the numbers move underneath it.
+/* -------------------------------------------------------------------------- */
+/* Outcomes — what actually happened                                           */
+/* -------------------------------------------------------------------------- */
+
+// WHY THIS EXISTS AT ALL.
+//
+// Every weight in PredictionModelSettings is currently a judgement nobody can check.
+// A college can say "attendance is worth 20% of the score" but not "and students the
+// model called R5 withdrew four times as often as students it called R2", because
+// nothing recorded whether they withdrew. These rows are what turns the first
+// statement into the second — and they are the labels any future supervised model
+// would train against.
+//
+// The outcome vocabulary is deliberately wider than "left or stayed". A transfer to
+// another provider is a success for the student and a failure in any metric that
+// cannot tell it from dropping out; an agreed interruption is neither; and voluntary
+// versus academic withdrawal have different predictors, so a model trained on the two
+// mixed together learns neither well.
+const STUDENT_OUTCOMES = ["withdrawn", "progressed", "completed", "interrupted", "transferred"];
+
+// "unknown" is a first-class member. A college that does not know why a student left
+// should record that it does not know — the alternative is an administrator guessing
+// under the pressure of a required field, and a guess stored as fact is worse than an
+// admitted gap for exactly the training use this table exists to serve.
+const STUDENT_OUTCOME_REASONS = ["voluntary", "academic", "financial", "personal", "visa", "unknown"];
+
+const STUDENT_OUTCOME_OUT = [
+  "id", "studentId", "outcome", "reason", "effectiveOn", "stage", "notes",
+  "scoreAtOutcome", "riskLevelAtOutcome", "recordedBy", "createdAt",
+];
+
+const sOutcome = (row) => (row ? { ...pick(row, STUDENT_OUTCOME_OUT), student: sStudent(row.student) } : null);
+
+// GET /outcomes — the record, newest first. Filterable by outcome so "show me every
+// withdrawal this year" is one request.
+router.get("/outcomes", async (req, res) => {
+  const where = {};
+  // Filtered HERE, not in the browser. The list is capped at 500 newest-first, so a
+  // client-side filter silently loses a student's own outcome once a college passes
+  // that many — and the record page would then say "no outcome recorded" about a
+  // student who has one on file, which is worse than saying nothing.
+  if (isString(req.query.studentId) && req.query.studentId) where.studentId = String(req.query.studentId);
+  // An unrecognised value is refused rather than ignored: silently returning EVERY
+  // outcome under a heading that says "withdrawals" is a wrong answer, not a broad one.
+  if (req.query.outcome != null && req.query.outcome !== "") {
+    if (!STUDENT_OUTCOMES.includes(String(req.query.outcome))) {
+      return res.status(400).json({ error: `outcome must be one of: ${STUDENT_OUTCOMES.join(", ")}` });
+    }
+    where.outcome = String(req.query.outcome);
+  }
+  if (isRealDate(req.query.from)) where.effectiveOn = { ...(where.effectiveOn || {}), gte: String(req.query.from) };
+  if (isRealDate(req.query.to)) where.effectiveOn = { ...(where.effectiveOn || {}), lte: String(req.query.to) };
+
+  const rows = await prisma.studentOutcome.findMany({
+    where,
+    orderBy: [{ effectiveOn: "desc" }, { createdAt: "desc" }],
+    take: 500,
+    include: { student: { select: STUDENT_SELECT } },
+  });
+  res.json({ outcomes: rows.map(sOutcome), vocabulary: { outcomes: STUDENT_OUTCOMES, reasons: STUDENT_OUTCOME_REASONS } });
+});
+
+// POST /outcomes — record what happened.
+router.post("/outcomes", async (req, res) => {
+  const b = req.body || {};
+
+  const student = await prisma.student.findUnique({ where: { id: String(b.studentId || "") } });
+  if (!student) return res.status(404).json({ error: "Student not found" });
+
+  if (!STUDENT_OUTCOMES.includes(b.outcome)) {
+    return res.status(400).json({ error: `outcome must be one of: ${STUDENT_OUTCOMES.join(", ")}` });
+  }
+
+  // A reason belongs to a withdrawal and to nothing else. Accepting one on a
+  // completion would let "completed / academic" into the table, which reads as a
+  // failure and would poison the very comparison this table exists to make.
+  let reason = null;
+  if (b.outcome === "withdrawn") {
+    if (!STUDENT_OUTCOME_REASONS.includes(b.reason)) {
+      return res.status(400).json({ error: `reason must be one of: ${STUDENT_OUTCOME_REASONS.join(", ")}` });
+    }
+    reason = b.reason;
+  } else if (b.reason != null && b.reason !== "") {
+    return res.status(400).json({ error: "reason applies only to a withdrawal." });
+  }
+
+  // The date the outcome TOOK EFFECT, not the date somebody typed it in. Those differ
+  // by weeks in practice, and a model trained on the typing date learns when
+  // administrators do their paperwork rather than when students leave.
+  if (!isRealDate(b.effectiveOn)) {
+    return res.status(400).json({ error: "effectiveOn must be a real date in YYYY-MM-DD form." });
+  }
+  // A mistyped year passes isRealDate and then sorts to the top of the list forever.
+  // Outcomes are recorded after the fact, so a date in the future is always an error.
+  if (b.effectiveOn > localDate()) {
+    return res.status(400).json({ error: "effectiveOn cannot be in the future — record an outcome after it has happened." });
+  }
+
+  // The live score moves every time anything is recalculated. Freezing it here is what
+  // keeps "what did the model say about this student at the time" answerable — without
+  // it, comparing predictions against outcomes compares an outcome with a score that
+  // has since absorbed the outcome's own consequences, which is circular.
+  const current = await prisma.studentPredictionCurrent.findFirst({ where: { studentId: student.id } });
+
+  const row = await prisma.studentOutcome.create({
+    data: {
+      studentId: student.id,
+      outcome: b.outcome,
+      reason,
+      effectiveOn: b.effectiveOn,
+      stage: isString(b.stage) ? b.stage.slice(0, 120) : null,
+      notes: isString(b.notes) ? b.notes.slice(0, MAX_TEXT) : "",
+      scoreAtOutcome: current ? current.progressionScore : null,
+      riskLevelAtOutcome: current ? current.riskLevel : null,
+      recordedBy: req.user ? req.user.name || req.user.email || null : null,
+    },
+    include: { student: { select: STUDENT_SELECT } },
+  });
+
+  // audit.record, NOT audit.log — there is no `log` export, and calling it threw
+  // AFTER the row was created: Express does not catch async rejections here, so the
+  // outcome was written, the client got no 201, and the process died. The summary
+  // deliberately carries no student name, matching the intervention route beside it.
+  audit.record(req, {
+    action: "prediction.outcome.create",
+    entity: "StudentOutcome",
+    entityId: row.id,
+    summary: `Recorded outcome: ${row.outcome}${row.reason ? ` (${row.reason})` : ""}`,
+  });
+
+  res.status(201).json({ outcome: sOutcome(row) });
+});
+
+// GET /outcomes/calibration — does the model actually predict what happened?
+//
+// The one endpoint in this feature that can EMBARRASS the model, which is the point.
+// It buckets recorded outcomes by the risk level the student carried at the time, so
+// a college can see whether its R5 students withdrew more than its R2 students. If
+// they did not, the weights are wrong and this is the only screen that will say so.
+//
+// Deliberately raw counts and no percentage where the denominator is small: a
+// withdrawal rate of "100%" drawn from one student is the kind of number that gets
+// quoted in a meeting.
+router.get("/outcomes/calibration", async (_req, res) => {
+  const rows = await prisma.studentOutcome.findMany({
+    select: { outcome: true, riskLevelAtOutcome: true },
+  });
+
+  const byBand = {};
+  for (const r of rows) {
+    // A student who was never scored has no band to attribute the outcome to. They are
+    // counted separately rather than dropped, because a college whose withdrawals are
+    // mostly unscored students has a coverage problem, and hiding them would hide it.
+    const key = r.riskLevelAtOutcome || "UNSCORED";
+    byBand[key] = byBand[key] || { total: 0, withdrawn: 0, progressed: 0, completed: 0, interrupted: 0, transferred: 0 };
+    byBand[key].total += 1;
+    if (byBand[key][r.outcome] !== undefined) byBand[key][r.outcome] += 1;
+  }
+
+  res.json({
+    byBand,
+    total: rows.length,
+    // Said out loud so nobody reads a thin table as a verdict on the model.
+    caveat: "Counts only. A band with few recorded outcomes says nothing about the model yet.",
+  });
+});
+
 router.post("/interventions", async (req, res) => {
   const b = req.body || {};
 
@@ -460,6 +641,9 @@ router.put("/interventions/:id", async (req, res) => {
   }
 
   if (b.outcome !== undefined && b.outcome !== null && b.outcome !== "") {
+    // The INTERVENTION review vocabulary (improved / no_change / declined / ...), not
+    // the student-outcome one. The two are different questions that happen to share a
+    // word: "how did this student respond to what we did" versus "what became of them".
     if (!OUTCOMES.includes(b.outcome)) {
       return res.status(400).json({ error: `outcome must be one of: ${OUTCOMES.join(", ")}` });
     }

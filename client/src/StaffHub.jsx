@@ -2722,7 +2722,56 @@ const DRIVER_LABELS = {
   RED_DECLINING_GRADE_TREND: "Grades declining",
   LIMITED_EVIDENCE: "Limited evidence — scored on part of the model",
   NO_EVIDENCE: "Nothing measurable yet",
+
+  // Tripwires. These ride the same riskDriverCodes array as the reds above, but they
+  // never moved the score — they are conditions somebody needs to act on. The wording
+  // says what happened, not how bad it is, because the number beside them is already
+  // making that judgement and these are the part a person can do something about.
+  TRIP_ABSENCE_STREAK: "Absent several sessions in a row",
+  TRIP_NOT_SEEN: "Not seen in class recently",
+  TRIP_UNMARKED_WORK: "Work past its deadline with no record either way",
+  TRIP_ATTENDANCE_FALLING: "Attendance has fallen sharply",
+  TRIP_TREND_UNRELIABLE: "Grade trend rests on marks entered the same day",
+  TRIP_RECENT_FAIL: "A mark below the pass threshold",
+  TRIP_NO_SHOW: "Missed arranged meetings",
+  TRIP_TUTOR_AT_RISK: "A tutor has recorded this student as At Risk",
+  TRIP_NO_PASTORAL_CONTACT: "Nobody has spoken to this student recently",
+  TRIP_UNIT_ABANDONED: "Attending most units but not one of them",
+  TRIP_UNITS_UNPASSED: "Units with nothing banked yet",
+  TRIP_CHRONIC_LATE: "Work is regularly handed in late",
+  TRIP_REPEAT_CONCERN: "The same concern raised in more than one review",
+  TRIP_REVIEW_OVERDUE: "An intervention is past its agreed review date",
+  TRIP_QUERY_UNANSWERED: "A question this student asked has gone unanswered",
+  TRIP_CONTACT_DEFICIT: "Flagged as at risk, and nobody has spoken to them",
+  TRIP_FOLLOWUP_MISSED: "A follow-up the college promised has not happened",
 };
+
+/** The tripwires that describe the COLLEGE rather than the student. Shown in the same
+ *  panel, because the person reading it is the person who can act on either — but
+ *  worded so nobody mistakes an institutional failing for a student's. */
+const INSTITUTIONAL_TRIPS = new Set([
+  "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
+  "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT", "TRIP_FOLLOWUP_MISSED",
+]);
+
+/** A code that came from the tripwire layer rather than the engine's own indicators.
+ *  The prefix is the contract — see server/src/prediction/tripwires.js. */
+const isTripCode = (code) => typeof code === "string" && code.startsWith("TRIP_");
+
+/** Whole days from a YYYY-MM-DD to today, or null if there is no date.
+ *
+ *  DERIVED HERE, NOT STORED. The server writes the date the student was last seen and
+ *  never a day-count, because nothing recalculates on a clock — a stored "19 days" is
+ *  wrong tomorrow morning and no event exists to correct it. Computing it at render
+ *  time means the screen is right even when the score behind it is a fortnight old. */
+function daysAgo(iso) {
+  if (!iso) return null;
+  const then = Date.parse(`${iso}T00:00:00Z`);
+  if (!Number.isFinite(then)) return null;
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.max(0, Math.round((todayUTC - then) / 86400000));
+}
 
 const OVERRIDE_LABELS = {
   "OVR-001": "Missing assessments cap this student's band",
@@ -2820,7 +2869,7 @@ function AdminPrediction({ store }) {
           </p>
         </div>
         <div className="flex gap-1.5">
-          {[["register", "Risk register", ClipboardList], ["interventions", "Interventions", LifeBuoy], ["model", "Model", SlidersHorizontal]].map(([k, label, I]) => (
+          {[["register", "Risk register", ClipboardList], ["interventions", "Interventions", LifeBuoy], ["outcomes", "Outcomes", Percent], ["model", "Model", SlidersHorizontal]].map(([k, label, I]) => (
             <button key={k} onClick={() => setView(k)} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition active:scale-95 ${view === k ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50"}`} style={view === k ? { background: grad(BLUE) } : {}}>
               <I size={14} /> {label}
             </button>
@@ -2842,7 +2891,109 @@ function AdminPrediction({ store }) {
 
       {view === "register" && <PredictionRegister bands={bands} summary={summary} onChanged={loadHeader} />}
       {view === "interventions" && <PredictionInterventions onChanged={loadHeader} />}
+      {view === "outcomes" && <PredictionOutcomes bands={bands} />}
       {view === "model" && <PredictionModel data={config} summary={summary} onSaved={loadHeader} />}
+    </div>
+  );
+}
+
+/* ----- Outcomes and calibration ---------------------------------------- */
+
+// THE ONLY SCREEN IN THIS FEATURE THAT CAN EMBARRASS THE MODEL, which is exactly why
+// it exists. Everything else here reports what the model thinks. This reports whether
+// it was right — by bucketing recorded outcomes against the risk band the student was
+// carrying at the time.
+//
+// If a college's R5 students did not withdraw more often than its R2 students, the
+// weights are wrong, and nothing else in the product will ever say so.
+function PredictionOutcomes({ bands }) {
+  const [rows, setRows] = useState(null);
+  const [cal, setCal] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    Promise.all([api.predictionOutcomes({}), api.predictionCalibration()])
+      .then(([o, c]) => { setRows(o.outcomes || []); setCal(c); })
+      .catch(e => setErr(e.message));
+  }, []);
+
+  if (err) return <Card><p className="text-xs font-semibold text-rose-700">{err}</p></Card>;
+  if (!rows) return <Card><p className="text-xs text-slate-400">Loading…</p></Card>;
+
+  const bandLabel = (k) => (k === "UNSCORED" ? "Never scored" : (bands || []).find(b => b.key === k)?.label || k);
+  const order = [...(bands || []).map(b => b.key), "UNSCORED"];
+  const present = order.filter(k => cal?.byBand?.[k]);
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Did the model get it right?</p>
+        <p className="mb-3 max-w-prose text-[11px] text-slate-500">
+          Recorded outcomes, grouped by the risk band each student was carrying when the outcome was
+          recorded. Withdrawals should concentrate in the worse bands. If they do not, the weights on
+          the Model tab are wrong — this is the only screen that will tell you.
+        </p>
+
+        {present.length === 0 ? (
+          <p className="text-[11px] text-slate-500">
+            Nothing recorded yet. Until outcomes are entered, every weight in this model is reasoning
+            rather than evidence, and no future trained model has anything to learn from.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="py-1 pr-3 font-semibold">Band at the time</th>
+                  <th className="py-1 pr-3 font-semibold">Withdrew</th>
+                  <th className="py-1 pr-3 font-semibold">Progressed</th>
+                  <th className="py-1 pr-3 font-semibold">Completed</th>
+                  <th className="py-1 pr-3 font-semibold">Other</th>
+                  <th className="py-1 font-semibold">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {present.map(k => {
+                  const b = cal.byBand[k];
+                  const other = b.interrupted + b.transferred;
+                  return (
+                    <tr key={k} className="border-t border-slate-100">
+                      <td className="py-1.5 pr-3 font-semibold text-slate-700">{bandLabel(k)}</td>
+                      <td className="py-1.5 pr-3 font-bold text-rose-700">{b.withdrawn}</td>
+                      <td className="py-1.5 pr-3 text-emerald-700">{b.progressed}</td>
+                      <td className="py-1.5 pr-3 text-emerald-700">{b.completed}</td>
+                      <td className="py-1.5 pr-3 text-slate-500">{other}</td>
+                      <td className="py-1.5 font-semibold text-slate-600">{b.total}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {/* Counts, never percentages. "100% withdrawal" drawn from one student is
+                the kind of figure that gets quoted in a meeting and believed. */}
+            <p className="mt-2 text-[11px] text-slate-400">{cal.caveat}</p>
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Recorded outcomes · {rows.length}</p>
+        {rows.length === 0 ? (
+          <p className="text-[11px] text-slate-500">Record an outcome from a student's record, under Progression risk.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {rows.map(o => (
+              <div key={o.id} className="flex flex-wrap items-baseline gap-x-2 py-1.5 text-[11px]">
+                <b className="text-slate-700">{o.student ? `${o.student.firstName} ${o.student.lastName}` : o.studentId}</b>
+                <span className="text-slate-600">{STUDENT_OUTCOME_LABELS[o.outcome] || o.outcome}</span>
+                {o.reason && <span className="text-slate-400">· {STUDENT_OUTCOME_REASON_LABELS[o.reason] || o.reason}</span>}
+                <span className="text-slate-400">· {o.effectiveOn}</span>
+                {o.riskLevelAtOutcome && <span className="text-slate-400">· was {o.riskLevelAtOutcome}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -3031,6 +3182,23 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Assessments missing", p.missingAssessmentCount],
     ["Grade trend", TREND_LABELS[p.gradeTrend] || p.gradeTrend],
     ["Response to support", RESPONSE_LABELS[p.interventionResponse] || p.interventionResponse],
+    // Figures that did NOT move the score. Each one answers a question the weighted
+    // mean cannot: how erratic the marks are behind the average, how much of the
+    // absence was ever explained, and whether the student is engaged in any way at
+    // all — which is not the same question as whether they attended.
+    ["Grade spread", p.gradeVolatility == null ? "—" : `±${p.gradeVolatility}`],
+    ["Marks below pass", p.failCount == null ? "—" : p.failCount],
+    ["Absence unexplained", pctOrDash(p.unexplainedShare)],
+    ["Arrives late", pctOrDash(p.latenessRate)],
+    ["Last engaged", p.lastEngagedOn ? `${daysAgo(p.lastEngagedOn)} days ago` : "—"],
+    ["Week-to-week spread", p.attendanceRegularity == null ? "—" : `±${p.attendanceRegularity}`],
+    ["Units with nothing banked", p.unpassedUnitCount == null ? "—" : p.unpassedUnitCount],
+    // The sample, beside the percentage. The column exists precisely so 100% from three
+    // pieces does not render identically to 100% from thirty.
+    ["Handed in late", p.lateSubmissionRate == null ? "—"
+      : `${p.lateSubmissionRate}%${p.gradedWithDates ? ` of ${p.gradedWithDates}` : ""}`],
+    ["Work due soon", p.assessmentsDueSoon == null ? "—" : p.assessmentsDueSoon],
+    ["Weeks on programme", p.weeksIntoProgramme == null ? "—" : p.weeksIntoProgramme],
   ];
 
   return (
@@ -3081,16 +3249,75 @@ function PredictionDetail({ detail, bands, onChanged }) {
             )}
           </div>
 
-          {((p.riskDriverCodes || []).length > 0 || (p.positiveDriverCodes || []).length > 0) && (
+          {/* Reds and positives — the things that moved the number. Tripwires are
+              split out below deliberately: mixing them here would imply they were
+              scored, and a member of staff would reasonably read "not seen for three
+              weeks" as something the 78 beside it already accounts for. It does not. */}
+          {((p.riskDriverCodes || []).filter(c => !isTripCode(c)).length > 0 || (p.positiveDriverCodes || []).length > 0) && (
             <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
               <div className="flex flex-wrap gap-1.5">
-                {(p.riskDriverCodes || []).map(c => (
+                {(p.riskDriverCodes || []).filter(c => !isTripCode(c)).map(c => (
                   <span key={c} className="rounded-full bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200">{DRIVER_LABELS[c] || c}</span>
                 ))}
                 {(p.positiveDriverCodes || []).map(c => (
                   <span key={c} className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">{POSITIVE_LABELS[c] || c}</span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Tripwires: conditions that did NOT move the score and need a person.
+              Each line carries the fact rather than a rating, because the whole
+              reason this panel exists is that an accurate score changes nothing on
+              its own — somebody has to pick up the phone. */}
+          {(p.riskDriverCodes || []).some(isTripCode) && (
+            <div className="rounded-xl bg-amber-50/60 p-3 ring-1 ring-amber-200">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                Needs a person · did not affect the score
+              </p>
+              <ul className="space-y-1.5">
+                {(p.riskDriverCodes || []).filter(isTripCode).map(c => (
+                  <li key={c} className="flex items-start gap-2 text-[11px] text-amber-900">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                    <span>
+                      {DRIVER_LABELS[c] || c}
+                      {c === "TRIP_NOT_SEEN" && p.lastAttendedOn && (
+                        <b className="ml-1 font-semibold">
+                          — last in class {daysAgo(p.lastAttendedOn)} days ago
+                        </b>
+                      )}
+                      {c === "TRIP_ABSENCE_STREAK" && p.absenceStreak != null && (
+                        <b className="ml-1 font-semibold">— {p.absenceStreak} in a row</b>
+                      )}
+                      {c === "TRIP_UNMARKED_WORK" && p.oldestUnmarkedDueDate && (
+                        <b className="ml-1 font-semibold">
+                          — oldest due {daysAgo(p.oldestUnmarkedDueDate)} days ago
+                        </b>
+                      )}
+                      {c === "TRIP_ATTENDANCE_FALLING" && p.attendanceSlope != null && (
+                        <b className="ml-1 font-semibold">— {p.attendanceSlope} points</b>
+                      )}
+                      {c === "TRIP_RECENT_FAIL" && p.failCount != null && (
+                        <b className="ml-1 font-semibold">— {p.failCount} below the pass mark</b>
+                      )}
+                      {c === "TRIP_UNIT_ABANDONED" && p.unitAttendanceSpread != null && (
+                        <b className="ml-1 font-semibold">— {p.unitAttendanceSpread} points apart</b>
+                      )}
+                      {c === "TRIP_UNITS_UNPASSED" && p.unpassedUnitCount != null && (
+                        <b className="ml-1 font-semibold">— {p.unpassedUnitCount}</b>
+                      )}
+                      {c === "TRIP_CHRONIC_LATE" && p.lateSubmissionRate != null && (
+                        <b className="ml-1 font-semibold">
+                          — {p.lateSubmissionRate}% of {p.gradedWithDates ?? "marked"} pieces{p.meanDaysLate ? `, ${p.meanDaysLate} days on average` : ""}
+                        </b>
+                      )}
+                      {INSTITUTIONAL_TRIPS.has(c) && (
+                        <span className="ml-1 rounded bg-amber-200/70 px-1 text-[9px] font-bold uppercase tracking-wide text-amber-900">us, not them</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -3136,6 +3363,111 @@ function PredictionDetail({ detail, bands, onChanged }) {
 
       <InterventionModal open={raising} onClose={() => setRaising(false)} student={detail.student} onSaved={() => { setRaising(false); onChanged(); }} />
     </div>
+  );
+}
+
+// Recording what actually happened to a student.
+//
+// WHY THIS SCREEN MATTERS MORE THAN IT LOOKS. Every weight in the progression model is
+// currently somebody's reasoning — nothing anywhere records whether the students the
+// model called Critical Risk actually withdrew. These rows are the only thing that can
+// ever answer that, and they are the labels any future trained model would learn from.
+// A college that never fills this in has a risk score it can never check.
+const STUDENT_OUTCOME_LABELS = {
+  withdrawn: "Withdrew",
+  progressed: "Progressed to the next stage",
+  completed: "Completed the qualification",
+  interrupted: "Interrupted — agreed break in study",
+  transferred: "Transferred to another course or provider",
+};
+
+// Why they left. Voluntary and academic withdrawal have different causes and different
+// remedies, and a record that cannot tell them apart teaches the wrong lesson to
+// whoever reads it later.
+const STUDENT_OUTCOME_REASON_LABELS = {
+  voluntary: "Chose to leave",
+  academic: "Required to withdraw on academic grounds",
+  financial: "Financial",
+  personal: "Personal or health",
+  visa: "Visa or immigration",
+  unknown: "Not known",
+};
+
+function OutcomeModal({ open, onClose, student, onSaved }) {
+  const [outcome, setOutcome] = useState("withdrawn");
+  const [reason, setReason] = useState("unknown");
+  const [effectiveOn, setEffectiveOn] = useState(todayISO());
+  const [stage, setStage] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.predictionRecordOutcome({
+        studentId: student.id,
+        outcome,
+        // The server refuses a reason on anything but a withdrawal, because
+        // "completed / academic" would read as a failure and poison the comparison
+        // this table exists to make.
+        reason: outcome === "withdrawn" ? reason : null,
+        effectiveOn,
+        stage: stage || null,
+        notes,
+      });
+      onSaved();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Record outcome — ${student.firstName} ${student.lastName}`}>
+      <div className="space-y-3">
+        <Field label="What happened">
+          <select value={outcome} onChange={e => setOutcome(e.target.value)} className={inputCls}>
+            {Object.entries(STUDENT_OUTCOME_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Field>
+
+        {outcome === "withdrawn" && (
+          <Field label="Why">
+            <select value={reason} onChange={e => setReason(e.target.value)} className={inputCls}>
+              {Object.entries(STUDENT_OUTCOME_REASON_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              “Not known” is a real answer. Recording a guess here is worse than recording the gap.
+            </p>
+          </Field>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Took effect on">
+            <input type="date" value={effectiveOn} onChange={e => setEffectiveOn(e.target.value)} className={inputCls} />
+          </Field>
+          <Field label="Stage (optional)">
+            <input value={stage} onChange={e => setStage(e.target.value)} className={inputCls} placeholder="e.g. Year 1" />
+          </Field>
+        </div>
+
+        <Field label="Notes">
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={inputCls} placeholder="Anything that would help somebody reading this in a year." />
+        </Field>
+
+        <p className="text-[11px] text-slate-400">
+          Use the date it actually took effect, not today’s date — they are often weeks apart, and the
+          difference matters when this record is compared against what the model predicted.
+        </p>
+
+        {err && <p className="text-[11px] font-semibold text-rose-600">{err}</p>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200">Cancel</button>
+          <button onClick={save} disabled={busy} className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: grad(MAROON) }}>
+            {busy ? "Saving…" : "Record outcome"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -6184,8 +6516,21 @@ function StudentAttendanceDetail({ student, store }) {
   // admin with Students but not Assessments gets a 403 — we record that so the UI can
   // say "no permission" instead of silently implying the student has no marks.
   const [assessDenied, setAssessDenied] = useState(false);
+
+  // Progression risk. Behind its own page grant, so an admin with Students but not
+  // Predictive Analysis gets a 403 — handled exactly like results above: recorded and
+  // rendered as "no permission", never as "this student has no score". Two different
+  // facts, and conflating them would have staff believe a student was never assessed
+  // when in truth they simply cannot see it.
+  const [pred, setPred] = useState(null);
+  const [predDenied, setPredDenied] = useState(false);
+  const [predBands, setPredBands] = useState(null);
+  const [recordingOutcome, setRecordingOutcome] = useState(false);
+  const [outcomes, setOutcomes] = useState([]);
+
   useEffect(() => {
     let alive = true; setAssess(null); setMonthly(null); setAssessDenied(false);
+    setPred(null); setPredDenied(false);
     // Fetch independently: a 403 on results must not also blank the attendance chart.
     api.adminStudentAssessments(student.id)
       .then(a => { if (alive) setAssess(a); })
@@ -6193,8 +6538,28 @@ function StudentAttendanceDetail({ student, store }) {
     api.attendanceMonthly({ studentId: student.id })
       .then(m => { if (alive) setMonthly(m); })
       .catch(() => { /* chart just stays hidden */ });
+    api.predictionStudent(student.id)
+      .then(d => { if (alive) setPred(d); })
+      .catch(e => { if (alive && e?.status === 403) setPredDenied(true); });
+    // Filtered by the SERVER. The list route caps at 500 newest-first, so filtering in
+    // the browser silently loses this student's outcome once a college passes that many
+    // — and the panel would then say "no outcome recorded" about a student who has one.
+    api.predictionOutcomes({ studentId: student.id })
+      .then(r => { if (alive) setOutcomes(r.outcomes || []); })
+      .catch(() => { /* the section just shows no outcome */ });
     return () => { alive = false; };
   }, [student.id]);
+
+  // The band ladder is a college-level setting, not a per-student one, so it is
+  // fetched once for the modal rather than per student. Without it PredictionDetail
+  // cannot colour a band, and a wrong colour on a risk level is worse than none.
+  useEffect(() => {
+    let alive = true;
+    api.predictionSettings()
+      .then(s => { if (alive) setPredBands(s?.config?.bands || null); })
+      .catch(() => { /* the panel falls back to rendering the band key as text */ });
+    return () => { alive = false; };
+  }, []);
 
   // Computed entirely from data the Students tab already loads — no extra request,
   // so it works instantly and doesn't depend on the API being redeployed.
@@ -6382,6 +6747,82 @@ function StudentAttendanceDetail({ student, store }) {
           </div>
         </div>
       )}
+
+      {/* Progression risk.
+          Placed last, below the attendance and results this student's score was
+          largely computed from, so a member of staff reads the evidence before the
+          verdict rather than the other way round.
+
+          Three states, and they are three DIFFERENT facts that must not be collapsed
+          into one empty message: no permission to see it, a student the model has
+          never been able to score, and a score. */}
+      <div>
+        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Progression risk</p>
+        {predDenied ? (
+          <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500 ring-1 ring-slate-100">
+            Hidden — your account doesn’t have access to Predictive Analysis.
+          </p>
+        ) : pred === null ? (
+          <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-400 ring-1 ring-slate-100">Loading…</p>
+        ) : (
+          /* PredictionDetail handles the unscored student itself — it renders the
+             server's own `reason` and still offers "Record an intervention", because
+             staff notice things the model has no data for. Duplicating that branch
+             here would have quietly removed that button on this screen only. */
+          <PredictionDetail detail={pred} bands={predBands} onChanged={() => {
+            api.predictionStudent(student.id).then(setPred).catch(() => {});
+          }} />
+        )}
+
+        {/* Outcome. Shown whether or not the student has a score, because the whole
+            point is to be able to compare the two — including for students the model
+            never managed to score, whose absence from the register is itself a finding. */}
+        {!predDenied && (
+          <div className="mt-2 rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
+            {outcomes.length > 0 ? (
+              <div className="space-y-1.5">
+                {outcomes.map(o => (
+                  <div key={o.id} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                    <b className="text-slate-700">{STUDENT_OUTCOME_LABELS[o.outcome] || o.outcome}</b>
+                    {o.reason && <span className="text-slate-500">· {STUDENT_OUTCOME_REASON_LABELS[o.reason] || o.reason}</span>}
+                    <span className="text-slate-400">· {o.effectiveOn}</span>
+                    {o.riskLevelAtOutcome && (
+                      <span className="text-slate-400">
+                        · model said <b className="text-slate-600">{o.riskLevelAtOutcome}</b>
+                        {o.scoreAtOutcome != null && ` (${o.scoreAtOutcome})`}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500">
+                No outcome recorded. Until one is, this student’s score can never be checked against
+                what actually happened to them.
+              </p>
+            )}
+            <button
+              onClick={() => setRecordingOutcome(true)}
+              className="mt-2 flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white"
+              style={{ background: grad(MAROON) }}
+            >
+              <PlusCircle size={13} /> Record outcome
+            </button>
+          </div>
+        )}
+
+        <OutcomeModal
+          open={recordingOutcome}
+          onClose={() => setRecordingOutcome(false)}
+          student={student}
+          onSaved={() => {
+            setRecordingOutcome(false);
+            api.predictionOutcomes({ studentId: student.id })
+              .then(r => setOutcomes(r.outcomes || []))
+              .catch(() => {});
+          }}
+        />
+      </div>
 
       <p className="text-[11px] text-slate-400">A unit moves to “previous” automatically once its last session date has passed. “Current units” counts only running units; “All units” is across everything the student has studied. P = Present (2) · L = Late (1) · E = Excused (1) · A = Absent (0). Only marked sessions count.</p>
     </div>
@@ -7340,9 +7781,12 @@ const studentReviewError = (f) => {
   if (f.followUp && !f.followUpDate) return "Enter the date the follow-up is due.";
   return "";
 };
-// followUpDate only means anything alongside a follow-up; clearing it on "No" stops
-// a stale date being sent back after someone changes their mind.
-const studentReviewBody = (f) => ({ ...f, followUpDate: f.followUp ? f.followUpDate : "" });
+// followUpDate is the permanent record that a follow-up WAS arranged, so it is sent as
+// typed and never blanked here. Blanking it on "No" used to be tidiness; it is now a
+// RETRACTION — the server reads an explicit empty date as standing the promise down —
+// so doing it on every ordinary save would erase the evidence a follow-up had ever been
+// due, which is the exact destruction the follow-up work set out to stop.
+const studentReviewBody = (f) => ({ ...f });
 
 /* ----- Student Review (in app) — the lecturer's own reviews ----- */
 function StudentReviewScreen({ store, me }) {
@@ -7747,7 +8191,7 @@ function StudentReviewScreen({ store, me }) {
                 <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                   {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
                     <button key={String(o.v)} type="button" disabled={busy}
-                      onClick={() => setForm(f => ({ ...f, followUp: o.v, followUpDate: o.v ? f.followUpDate : "" }))}
+                      onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
                       className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
                   ))}
                 </div>
@@ -7837,7 +8281,14 @@ function StudentReviewDetail({ r }) {
             ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">Yes</span>
             : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
         </DetailRow>
-        <DetailRow label="Follow-up date">{r.followUpDate ? fmtDate(r.followUpDate) : <span className="text-slate-300">—</span>}</DetailRow>
+        {/* Labelled "was arranged for", because the date now survives the follow-up
+            being closed or stood down — it is the record that one was promised, not a
+            claim that one is outstanding. Rendering it under "Follow-up required: No"
+            without saying so read as a contradiction. */}
+        <DetailRow label="Follow-up was arranged for">{r.followUpDate ? fmtDate(r.followUpDate) : <span className="text-slate-300">—</span>}</DetailRow>
+        <DetailRow label="Follow-up happened">{r.followUpCompletedOn
+          ? <>{fmtDate(r.followUpCompletedOn)}<span className="block text-[11px] text-slate-400">recorded by {r.followUpCompletedBy || "—"}</span></>
+          : <span className="text-slate-300">Not recorded</span>}</DetailRow>
       </div>
       <DetailRow label="Submitted by">{r.staffName || <span className="text-slate-300">—</span>}</DetailRow>
     </div>
@@ -7899,6 +8350,13 @@ function AdminStudentReviews({ store }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const openAdd = () => { setEditing(null); setForm(blankStudentReview()); setFormErr(""); setModal(true); };
+  // One field, and the server derives the rest: recording a completion closes the
+  // follow-up, so the flag is never sent from here and the two cannot disagree.
+  const markFollowUpDone = async (r) => {
+    try { await api.updateStudentReview(r.id, { followUpCompletedOn: todayISO() }); await load(); }
+    catch (e) { setErr(e.message); }
+  };
+
   const openEdit = (r) => { setEditing(r); setForm(studentReviewForm(r)); setFormErr(""); setModal(true); };
 
   const save = async () => {
@@ -7942,12 +8400,14 @@ function AdminStudentReviews({ store }) {
       { key: "unit", label: "Unit" }, { key: "date", label: "Date" }, { key: "progress", label: "Progress" },
       { key: "concerns", label: "Concerns" }, { key: "summary", label: "Summary of discussion" },
       { key: "actions", label: "Agreed actions" }, { key: "followUp", label: "Follow-up required" },
-      { key: "followUpDate", label: "Follow-up date" }, { key: "staff", label: "Submitted by" },
+      { key: "followUpDate", label: "Follow-up arranged for" },
+      { key: "followUpCompletedOn", label: "Follow-up happened" }, { key: "staff", label: "Submitted by" },
     ], list.map(r => ({
       ref: r.student?.studentRef || "", student: r.student?.name || "",
       unit: r.unit ? `${r.unit.code} — ${r.unit.name}` : "", date: r.date, progress: r.progress,
       concerns: (r.concerns || []).join("; "), summary: r.summary || "", actions: r.agreedActions || "",
-      followUp: r.followUp ? "Yes" : "No", followUpDate: r.followUpDate || "", staff: r.staffName || "",
+      followUp: r.followUp ? "Yes" : "No", followUpDate: r.followUpDate || "",
+      followUpCompletedOn: r.followUpCompletedOn || "", staff: r.staffName || "",
     })));
     store.notify(`Exported ${list.length} review${list.length === 1 ? "" : "s"}`);
   };
@@ -8011,9 +8471,23 @@ function AdminStudentReviews({ store }) {
                         </td>
                         <td className="px-5 py-3 text-slate-500">{r.staffName || <span className="text-slate-300">—</span>}</td>
                         <td className="px-5 py-3 text-center">
-                          {r.followUp
-                            ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">{r.followUpDate ? fmtDate(r.followUpDate) : "Yes"}</span>
-                            : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
+                          {/* WITHOUT THIS CONTROL THE WHOLE SIGNAL IS UNREACHABLE. The
+                              overdue-follow-up tripwire reads followUpCompletedOn, and
+                              until a college records its first completion the watermark
+                              stays null and the signal is silent for everybody. The
+                              lecturer who promised the follow-up is the person who holds
+                              it, so the button has to be where they already work. */}
+                          {r.followUpCompletedOn
+                            ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700" title={`Arranged for ${fmtDate(r.followUpDate)}`}>Done {fmtDate(r.followUpCompletedOn)}</span>
+                            : r.followUp
+                              ? <span className="inline-flex items-center gap-1.5">
+                                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${r.followUpDate && r.followUpDate < todayISO() ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{r.followUpDate ? fmtDate(r.followUpDate) : "Yes"}</span>
+                                  {r.followUpDate && (
+                                    <button onClick={(e) => { e.stopPropagation(); markFollowUpDone(r); }} title="Record that this follow-up happened"
+                                      className="press rounded-lg bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">Done</button>
+                                  )}
+                                </span>
+                              : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400" title={r.followUpDate ? `Was arranged for ${fmtDate(r.followUpDate)}` : undefined}>No</span>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-1 whitespace-nowrap">
@@ -8082,7 +8556,7 @@ function AdminStudentReviews({ store }) {
             <Field label="Follow-up required?">
               <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                 {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
-                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, followUp: o.v, followUpDate: o.v ? f.followUpDate : "" }))}
+                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
                     className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
                 ))}
               </div>

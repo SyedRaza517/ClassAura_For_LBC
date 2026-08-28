@@ -10,7 +10,7 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, hasPage } = require("../auth");
-const { isRealDate } = require("../validate");
+const { isRealDate, isString } = require("../validate");
 const audit = require("../audit");
 
 // Who the review is about and who wrote it — never what it says. A progress review
@@ -55,6 +55,8 @@ const sReview = (r) => ({
   agreedActions: r.agreedActions,
   followUp: r.followUp,
   followUpDate: r.followUpDate,
+  followUpCompletedOn: r.followUpCompletedOn ?? null,
+  followUpCompletedBy: r.followUpCompletedBy ?? null,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
@@ -152,7 +154,7 @@ router.get("/", async (req, res) => {
 });
 
 // Validate a create/update body. `partial` allows omitted fields on update.
-async function validate(body, partial, current) {
+async function validate(body, partial, current, actorName = null) {
   const data = {};
   const need = (k) => !partial || body?.[k] !== undefined;
 
@@ -224,14 +226,61 @@ async function validate(body, partial, current) {
     if (on && d < on) return { error: "The follow-up date can't be before the date of the conversation" };
     data.followUpDate = d;
   } else if (wantsFollowUp === false) {
-    data.followUpDate = null;
+    // Clearing the FLAG no longer clears the DATE. Clearing it was the only way to
+    // close a follow-up and it destroyed the record that one had ever been due, which
+    // is why `followUpDate < today` was true for ever and the overdue signal could not
+    // be built.
+    //
+    // RETRACTION IS STILL A REAL EVENT and needs its own gesture — the student
+    // withdrew, the concern resolved itself. This branch used to be EMPTY, which meant
+    // the explicit `followUpDate: ""` the comment promised did nothing at all: an empty
+    // string arriving while the flag was already false fell through here and the date
+    // survived, so nothing could retract a promise. Two smoke assertions written
+    // against that promise could never have passed.
+    if (body?.followUpDate !== undefined && !str(body.followUpDate)) {
+      data.followUpDate = null;
+      // A retracted promise cannot carry a completion. Leaving one would say the
+      // follow-up that no longer exists was held.
+      data.followUpCompletedOn = null;
+      data.followUpCompletedBy = null;
+    }
+  }
+
+  // RE-PROMISING CLEARS THE OLD COMPLETION. Moving the date to a NEW day is a new
+  // promise, and a completion attached to the old one does not carry over — leaving it
+  // would say the new follow-up was held on a date before it was arranged, and would
+  // make the re-promised follow-up permanently invisible to the overdue count, which
+  // only ever asks whether a completion is ABSENT.
+  if (current && data.followUpDate !== undefined && data.followUpDate !== current.followUpDate
+      && body?.followUpCompletedOn === undefined) {
+    data.followUpCompletedOn = null;
+    data.followUpCompletedBy = null;
+  }
+
+  if (body?.followUpCompletedOn !== undefined) {
+    const done = isString(body.followUpCompletedOn) ? body.followUpCompletedOn.trim() : "";
+    if (done && !isRealDate(done)) {
+      return { error: "Enter a real date for when the follow-up happened (YYYY-MM-DD)." };
+    }
+    // Nothing can be completed that was never promised — see routes/interactions.js.
+    const due = data.followUpDate !== undefined ? data.followUpDate : (current ? current.followUpDate : null);
+    if (done && !due) return { error: "There is no follow-up on this review to mark as done." };
+    const on = data.date !== undefined ? data.date : (current ? current.date : null);
+    if (done && on && done < on) {
+      return { error: "The follow-up can't have happened before the conversation." };
+    }
+    data.followUpCompletedOn = done || null;
+    // From the token, never the body, exactly as staffName is.
+    data.followUpCompletedBy = done ? (actorName || null) : null;
+    // Recording a completion closes it, or the row says both done and outstanding.
+    if (done) data.followUp = false;
   }
   return { data };
 }
 
 router.post("/", async (req, res) => {
   if (req.user?.kind === "student") return res.status(403).json({ error: "Students can't file reviews" });
-  const v = await validate(req.body, false, null);
+  const v = await validate(req.body, false, null, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   const row = await prisma.studentReview.create({
     // staffId always comes from the token — never the body.
@@ -267,7 +316,7 @@ router.put("/:id", async (req, res) => {
   if (req.user?.kind === "student") return res.status(403).json({ error: "Students can't edit reviews" });
   const found = await mayEdit(req, req.params.id);
   if (found.error) return res.status(404).json({ error: "Review not found" });
-  const v = await validate(req.body, true, found.row);
+  const v = await validate(req.body, true, found.row, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   try {
     const row = await prisma.studentReview.update({ where: { id: found.row.id }, data: v.data, include: INCLUDE });

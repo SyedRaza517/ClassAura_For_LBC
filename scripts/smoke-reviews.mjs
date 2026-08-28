@@ -350,12 +350,33 @@ try {
   const reschedule = await call(`/student-reviews/${filedSR.data?.id}`, { method: "PUT", token: s1, body: { followUpDate: "2026-05-08" } });
   check("rescheduling a follow-up on its own actually saves", reschedule.status === 200 && reschedule.data?.followUpDate === "2026-05-08", `HTTP ${reschedule.status} date=${reschedule.data?.followUpDate}`);
 
-  // Answering "no follow-up needed" must not leave the old date behind on the list of
-  // outstanding pastoral actions.
+  // Answering "no follow-up needed" must not leave it on the list of outstanding
+  // pastoral actions — but it must NO LONGER destroy the date.
+  //
+  // This assertion used to require followUpDate === null, and that requirement is why
+  // "overdue follow-ups" could not be built: unticking the flag was the only way to
+  // close a follow-up, and it erased the only record that one had ever been due. A
+  // promise kept on the day then became indistinguishable from a promise never made,
+  // and every follow-up still carrying a date was one nobody had touched.
+  //
+  // The list is filtered on the FLAG, which is what "outstanding" means, so the
+  // original concern is still met. The date is now the permanent record of the promise.
   const clear = await call(`/student-reviews/${filedSR.data?.id}`, { method: "PUT", token: s1, body: { followUp: false } });
-  check("clearing the follow-up clears its date too",
-    clear.status === 200 && clear.data?.followUp === false && clear.data?.followUpDate === null,
+  check("clearing the follow-up flag closes it WITHOUT destroying the promised date",
+    clear.status === 200 && clear.data?.followUp === false && clear.data?.followUpDate === "2026-05-08",
     `followUp=${clear.data?.followUp} followUpDate=${JSON.stringify(clear.data?.followUpDate)}`);
+
+  // Retracting the promise itself is still possible and is still a real event.
+  const retract = await call(`/student-reviews/${filedSR.data?.id}`, { method: "PUT", token: s1, body: { followUpDate: "" } });
+  check("an explicit empty date still retracts the promise",
+    retract.status === 200 && retract.data?.followUpDate === null,
+    `followUpDate=${JSON.stringify(retract.data?.followUpDate)}`);
+
+  // And a completion cannot be invented on a row that never promised anything.
+  const orphan = await call(`/student-reviews/${filedSR.data?.id}`, { method: "PUT", token: s1, body: { followUpCompletedOn: "2026-05-09" } });
+  check("a completion is refused where no follow-up was ever arranged",
+    orphan.status === 400 && /no follow-up/i.test(orphan.data?.error || ""),
+    `HTTP ${orphan.status} ${orphan.data?.error || ""}`);
 
   const longSummary = await call(`/student-reviews/${filedSR.data?.id}`, { method: "PUT", token: s1, body: { summary: "y".repeat(5001) } });
   check("an over-length summary is refused, not silently cut short", longSummary.status === 400 && /too long/i.test(longSummary.data?.error || ""), `HTTP ${longSummary.status}`);

@@ -119,6 +119,8 @@ const sInteraction = (i) => ({
   id: i.id, studentId: i.studentId, date: i.date, time: i.time, queryType: i.queryType,
   summary: i.summary, followUpActions: i.followUpActions, followUpRequired: i.followUpRequired,
   followUpDate: i.followUpDate,
+  followUpCompletedOn: i.followUpCompletedOn ?? null,
+  followUpCompletedBy: i.followUpCompletedBy ?? null,
   tutor: i.tutor, loggedBy: i.loggedBy, createdAt: i.createdAt,
   // When the query includes the student, surface the fields the log table shows.
   ...(i.student ? { student: { id: i.student.id, name: `${i.student.firstName} ${i.student.lastName}`, studentRef: i.student.studentRef, initials: i.student.initials, colour: i.student.colour } } : {}),

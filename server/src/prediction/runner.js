@@ -21,6 +21,7 @@ const { localDate } = require("../clock");
 const settings = require("./settings");
 const { gather } = require("./metrics");
 const { score } = require("./engine");
+const tripwires = require("./tripwires");
 
 // How many students are gathered and scored at a time. The gather issues a fixed
 // number of queries per chunk, each with an `IN (...)` of this size — large enough
@@ -203,11 +204,65 @@ async function recalculate(opts = {}) {
         redIndicatorCount: result.redIndicatorCount,
         overrideApplied: result.overrideApplied,
         overrideCodes: result.overrideCodes,
-        riskDriverCodes: result.riskDriverCodes,
+        // The tripwire codes ride the SAME column as the engine's risk drivers, and
+        // deliberately so: staff read one list of reasons, not two. They are appended
+        // rather than merged in, so the engine's own reds keep their order at the top.
+        //
+        // This cannot reach the override machinery. engine.js derives
+        // redIndicatorCount from its internal `reds` array and takes a COPY of it into
+        // riskDriverCodes, so what is added here is invisible to OVR-004. The TRIP_
+        // prefix keeps that obvious to the next reader; the engine's own test suite
+        // holds the guarantee.
+        // THE CONTACT DEFICIT IS APPENDED HERE, NOT IN gather(), and the position is
+        // the point. It crosses the risk level with the pastoral dates, and the only
+        // risk level that is not stale is the one score() returned two lines above:
+        // StudentPredictionCurrent.riskLevel belongs to the PREVIOUS run for everybody
+        // in this batch, because being stale is why they are in it. Computing it
+        // upstream would measure a student who has just deteriorated against the
+        // comfortable band they held a fortnight ago, and stay silent.
+        riskDriverCodes: [
+          ...result.riskDriverCodes,
+          ...(entry.tripwires ? entry.tripwires.codes : []),
+          ...(entry.tripwires
+            ? tripwires.contactDeficit({
+                riskLevel: result.riskLevel,
+                lastContactOn: entry.tripwires.lastPastoralOn,
+                pastoralRecorded: entry.tripwires.pastoralRecorded,
+                weeksIntoProgramme: entry.tripwires.weeksIntoProgramme,
+                today,
+              }, config).codes
+            : []),
+        ],
         positiveDriverCodes: result.positiveDriverCodes,
         primaryRiskDriver: result.primaryRiskDriver,
         interventionRequired: result.interventionRequired,
         modelVersion: result.modelVersion,
+
+        // Dates, never day-counts. Nothing here runs on a schedule, so a stored
+        // "days since" would be wrong by tomorrow morning with no event to correct
+        // it, while the date itself stays true. The screen derives the age.
+        absenceStreak: entry.tripwires ? entry.tripwires.absenceStreak : null,
+        lastAttendedOn: entry.tripwires ? entry.tripwires.lastAttendedOn : null,
+        oldestUnmarkedDueDate: entry.tripwires ? entry.tripwires.oldestUnmarkedDueDate : null,
+        attendanceSlope: entry.tripwires ? entry.tripwires.attendanceSlope : null,
+        lastEngagedOn: entry.tripwires ? entry.tripwires.lastEngagedOn : null,
+        unexplainedShare: entry.tripwires ? entry.tripwires.unexplainedShare : null,
+        latenessRate: entry.tripwires ? entry.tripwires.latenessRate : null,
+        failCount: entry.tripwires ? entry.tripwires.failCount : null,
+        nearFailCount: entry.tripwires ? entry.tripwires.nearFailCount : null,
+        gradeVolatility: entry.tripwires ? entry.tripwires.volatility : null,
+        worstUnitId: entry.tripwires ? entry.tripwires.worstUnitId : null,
+        unitAttendanceSpread: entry.tripwires ? entry.tripwires.unitAttendanceSpread : null,
+        unpassedUnitCount: entry.tripwires ? entry.tripwires.unpassedUnitCount : null,
+        attendanceRegularity: entry.tripwires ? entry.tripwires.attendanceRegularity : null,
+        lateSubmissionRate: entry.tripwires ? entry.tripwires.lateSubmissionRate : null,
+        meanDaysLate: entry.tripwires ? entry.tripwires.meanDaysLate : null,
+        weeksIntoProgramme: entry.tripwires ? entry.tripwires.weeksIntoProgramme : null,
+        assessmentsDueSoon: entry.tripwires ? entry.tripwires.assessmentsDueSoon : null,
+        gradedWithDates: entry.tripwires ? entry.tripwires.gradedWithDates : null,
+        oldestOpenQueryOn: entry.tripwires ? entry.tripwires.oldestOpenQueryOn : null,
+        openQueryCount: entry.tripwires ? entry.tripwires.openQueryCount : null,
+        overdueFollowUpCount: entry.tripwires ? entry.tripwires.overdueFollowUpCount : null,
       };
 
       const current = existingByStudent.get(studentId);

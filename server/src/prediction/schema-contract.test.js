@@ -79,6 +79,17 @@ const ENGINE_TO_COLUMN = {
   modelVersion: (r) => r.modelVersion,
 };
 
+/** The tripwire figures runner.js writes from the gather rather than from an engine
+ *  result. Listed separately because they do not come off `score()` — but they are
+ *  columns on both prediction tables and must obey the same nullability contract. */
+const TRIPWIRE_COLUMNS = [
+  "absenceStreak", "lastAttendedOn", "oldestUnmarkedDueDate", "attendanceSlope",
+  "lastEngagedOn", "unexplainedShare", "latenessRate", "failCount", "nearFailCount",
+  "gradeVolatility", "worstUnitId", "unitAttendanceSpread", "unpassedUnitCount",
+  "attendanceRegularity", "lateSubmissionRate", "meanDaysLate", "weeksIntoProgramme",
+  "assessmentsDueSoon", "gradedWithDates", "oldestOpenQueryOn", "openQueryCount", "overdueFollowUpCount",
+];
+
 /**
  * Students in the states that actually occur, especially the unglamorous ones. The
  * first is the case that broke the feature: on day one it describes every student in
@@ -150,6 +161,22 @@ test("the two tables agree with each other, so a score and its history cannot di
   }
 });
 
+test("every tripwire column exists on both tables and accepts null", () => {
+  // Each of these is genuinely unmeasurable for a real student — a register nobody
+  // has taken gives no streak and no last-attended date. A NOT NULL column would
+  // force runner.js to write a zero, and a zero here does not mean "no absences", it
+  // means "we never looked": exactly the inversion this feature is built to avoid.
+  const current = nullableFields("StudentPredictionCurrent");
+  const history = nullableFields("StudentPredictionHistory");
+
+  for (const column of TRIPWIRE_COLUMNS) {
+    assert.equal(current.has(column), true, `StudentPredictionCurrent is missing "${column}"`);
+    assert.equal(history.has(column), true, `StudentPredictionHistory is missing "${column}"`);
+    assert.equal(current.get(column), true, `StudentPredictionCurrent.${column} is NOT NULL`);
+    assert.equal(history.get(column), true, `StudentPredictionHistory.${column} is NOT NULL`);
+  }
+});
+
 test("the intervention snapshot accepts the figures a never-scored student does not have", () => {
   // Staff may raise an intervention for a student the model has never scored — they
   // notice things it has no data for. Those columns must therefore accept null, or
@@ -168,4 +195,31 @@ test("the intervention snapshot accepts the figures a never-scored student does 
   // Deliberately NOT nullable: the route writes the string "UNSCORED", which is a real
   // answer to "what did we think of them at the time" rather than a missing one.
   assert.equal(intervention.get("riskLevelAtIntervention"), false);
+});
+
+test("the institution probes destructure exactly as many names as they issue queries", () => {
+  // THIS SEAM HAS PRODUCED THREE BUGS AND NO UNIT TEST CAUGHT ANY OF THEM.
+  //
+  // gather() opens with one Promise.all of institution-wide existence probes, and each
+  // time a probe was added the destructuring on the left had to grow with it. Three
+  // times it did not, and every one of the ~290 unit tests still passed — because none
+  // of them calls gather(), which needs a database. The failure surfaced only when a
+  // real recalculation threw "x is not defined", by which point it was in a commit.
+  //
+  // This reads the source rather than running it, exactly as the nullability tests
+  // above read schema.prisma: the seam cannot be exercised without Postgres, but it
+  // CAN be checked for internal consistency, and that is enough to catch the one
+  // mistake that keeps being made.
+  const METRICS = fs.readFileSync(path.join(__dirname, "metrics.js"), "utf8");
+
+  const m = METRICS.match(/const \[([^\]]+)\] = await Promise\.all\(\[([\s\S]*?)\n {2}\]\);/);
+  assert.ok(m, "could not find the institution-probe Promise.all in metrics.js");
+
+  const names = m[1].split(",").map((x) => x.trim()).filter(Boolean);
+  const calls = (m[2].match(/^\s+prisma\./gm) || []).length;
+
+  assert.equal(names.length, calls,
+    `${names.length} names destructured from ${calls} queries — a probe was added without ` +
+    `a name, or a name without a probe. The unbound one is undefined at runtime and ` +
+    `throws on the first real recalculation, which no unit test performs.`);
 });

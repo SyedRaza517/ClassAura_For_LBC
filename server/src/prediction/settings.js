@@ -154,6 +154,130 @@ const DEFAULTS = {
   // student cannot fairly be marked down for not having recovered in three days.
   interventionReviewDays: 14,
 
+  // --- Tripwires -------------------------------------------------------------
+  //
+  // These govern the conditions that ride ALONGSIDE the score rather than inside it
+  // (see tripwires.js). None of them can move a progression score or a band; they
+  // decide when a fact about a student is worth putting in front of a human.
+  //
+  // Every one is a college's judgement rather than a property of the code, for the
+  // same reason the weights are: a provider running a Student-visa cohort loses
+  // contact with somebody after three sessions, while an evening course that meets
+  // fortnightly would fire this on everybody.
+
+  // A run of unexplained absences, in sessions. Only A counts — an excused absence
+  // breaks the run, because the student told somebody and has not been lost.
+  absenceStreakSessions: 3,
+
+  // Days since the student was last marked present or late. Deliberately not "days
+  // since a register was taken": the question is when this person was last in a room.
+  notSeenDays: 14,
+
+  // How long after a deadline work may sit with no submission record before it is
+  // reported. Marking takes time, and a flag that lights the morning after every
+  // deadline is one staff learn to scroll past.
+  unmarkedGraceDays: 7,
+
+  // A fall in attendance between the rolling window and the one before it, in
+  // percentage points, that counts as deterioration rather than ordinary movement.
+  attendanceSlopeDrop: 10,
+
+  // The fewest marked sessions a window needs before a percentage drawn from it is
+  // allowed to contribute to a slope. A window holding one register reads 0 or 100
+  // and neither is information — without this floor a two-mark student produces the
+  // loudest number on the screen.
+  slopeMinMarks: 3,
+
+  // How far above the pass mark still counts as a near miss. A student sitting two
+  // points clear of failing is not comfortable, and an average grade cannot say so —
+  // it reports the same 45 for somebody scraping through every unit and somebody
+  // alternating firsts with failures.
+  nearFailMargin: 10,
+
+  // How many missed arranged meetings count as a pattern rather than a bad week.
+  noShowLimit: 2,
+
+  // How long a student may go without any logged conversation before that becomes
+  // worth reporting. This one describes the COLLEGE, not the student.
+  staleContactDays: 42,
+
+  // The fewest marked sessions a UNIT needs before its percentage may be compared
+  // against another unit's. A unit holding one register reads 0% or 100%, and left in
+  // the comparison it is always the worst unit — the signal would be pointing at the
+  // register rather than at the student.
+  disperseMinMarks: 4,
+
+  // How far apart the best and worst unit may be, in percentage points, before that
+  // gap is worth reporting on its own. A student at 90% in three units and 20% in a
+  // fourth has an overall figure that looks survivable and a problem that is not.
+  unitSpreadLimit: 40,
+
+  // What share of marked work arriving after its deadline counts as a pattern rather
+  // than a bad month.
+  lateSubmissionLimit: 40,
+
+  // How long a student is treated as new. Inside this, the "we have not seen this"
+  // codes are suppressed — in week one nobody has attendance history, marks or a
+  // pastoral record, and firing on all of that would put the entire intake on the
+  // caseload at once.
+  settlingInWeeks: 3,
+
+  // How far ahead to look for work falling due. A fact about the timetable rather than
+  // the student, reported as a figure and never as a code.
+  dueSoonDays: 14,
+
+  // The fewest marked, dated pieces of work before a late-submission percentage may
+  // raise a code. One piece handed in a day late reads 100%, and the screen calls that
+  // a pattern. Every other rate here carries the same kind of floor.
+  lateSubmissionMinPieces: 3,
+
+  // How far back a repeated concern is looked for. Unbounded, a concern raised twice in
+  // a student's first term would stay on their record for the rest of the programme,
+  // and no number of clean reviews since could clear it.
+  concernWindowDays: 180,
+
+  // How far back a missed meeting counts. Unbounded, a student who missed two
+  // arranged meetings in their first term would sit on the caseload for the rest of
+  // the programme however faithfully they attended afterwards — the same failure the
+  // repeated-concern window above exists to prevent, in the signal beside it.
+  noShowWindowDays: 180,
+
+  // How long a question a student asked may sit unanswered before that is worth
+  // reporting. This one describes the COLLEGE, and is set shorter than
+  // staleContactDays because a query is a person who has already put their hand up.
+  unansweredQueryDays: 5,
+
+  // How long a student the model has placed in trouble may go without a logged
+  // conversation. Deliberately much shorter than staleContactDays: that asks the
+  // question of everybody at a leisurely pace, this asks it of the students the
+  // college's own engine has just flagged. Both describe the COLLEGE.
+  contactDeficitDays: 14,
+
+  // The band at which that shorter clock starts. A band KEY, validated against the
+  // ladder this same save is storing — a college that deletes R3 must not be left with
+  // a rule pointing at it.
+  contactDeficitBand: "R3",
+
+  // The fewest absences before the unexplained share is a percentage worth showing.
+  // One unexcused absence reads 100%, which is a pattern claimed from one data point.
+  minAbsencesForShare: 3,
+
+  // How long after its promised date a follow-up stops being "arranged for this week"
+  // and starts being one nobody kept. Without a grace period this fires the morning
+  // after every date in the diary, cohort-wide in any week a tutor arranged a batch --
+  // and a column that is always lit is a column staff stop reading.
+  followUpGraceDays: 7,
+
+  // How far back a missed follow-up counts. Unbounded, a promise made eighteen months
+  // ago and never held would sit on the row for the rest of the programme — the same
+  // accumulating pile this signal replaced.
+  followUpWindowDays: 180,
+
+  // How long a question may sit unanswered before it stops being reported. The code
+  // exists to prompt a reply; past this point nobody is going to answer it, and a
+  // permanently-lit row is one staff scroll past.
+  unansweredQueryCeilingDays: 180,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -386,6 +510,116 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The intervention review window",
       why: "it is a count of days an intervention must run before its effect is judged. At 0 a student would be marked down for not having recovered the same afternoon somebody spoke to them.",
+    }) ||
+    checkNumber(out, "absenceStreakSessions", pick("absenceStreakSessions"), {
+      min: 1, max: 50, whole: true,
+      label: "The absence-streak threshold",
+      why: "it is a count of consecutive unexplained absences. At 0 every student with a register would be reported as having stopped attending.",
+    }) ||
+    checkNumber(out, "notSeenDays", pick("notSeenDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The not-seen window",
+      why: "it is a count of days since the student was last in a room. At 0 everybody who did not attend today would be flagged as lost.",
+    }) ||
+    checkNumber(out, "unmarkedGraceDays", pick("unmarkedGraceDays"), {
+      min: 0, max: 365, whole: true,
+      label: "The marking grace period",
+      why: "it is how long work may sit unmarked after its deadline before it is reported. At 0 every assessment is reported the morning after it was due, including the ones being marked that week.",
+    }) ||
+    checkNumber(out, "attendanceSlopeDrop", pick("attendanceSlopeDrop"), {
+      min: 1, max: 100,
+      label: "The attendance-fall threshold",
+      why: "it is a fall in percentage points between two windows. At 0 the ordinary movement of a single register would be reported as deterioration.",
+    }) ||
+    checkNumber(out, "slopeMinMarks", pick("slopeMinMarks"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum marks for an attendance slope",
+      why: "it is how many marked sessions a window needs before a percentage from it may be compared. At 1 a single register reads as 0% or 100% and produces the largest fall on the screen from no evidence at all.",
+    }) ||
+    checkNumber(out, "nearFailMargin", pick("nearFailMargin"), {
+      min: 0, max: 100,
+      label: "The near-miss margin",
+      why: "it is how far above the pass mark still counts as a near miss. At 0 nothing is ever a near miss and the figure is dead.",
+    }) ||
+    checkNumber(out, "noShowLimit", pick("noShowLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The no-show limit",
+      why: "it is how many missed arranged meetings count as a pattern. At 0 every student would be reported, including those who have never been offered one.",
+    }) ||
+    checkNumber(out, "staleContactDays", pick("staleContactDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The pastoral-contact window",
+      why: "it is how long a student may go without a logged conversation before that is reported. At 0 every student is reported every day and the list means nothing.",
+    }) ||
+    checkNumber(out, "disperseMinMarks", pick("disperseMinMarks"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum marks for a per-unit comparison",
+      why: "it is how many marked sessions a unit needs before its percentage may be compared with another unit's. At 1 a unit with a single register is always the worst unit.",
+    }) ||
+    checkNumber(out, "unitSpreadLimit", pick("unitSpreadLimit"), {
+      min: 1, max: 100,
+      label: "The per-unit attendance gap",
+      why: "it is how far apart the best and worst unit may be before the gap is reported. At 0 every student with any variation between units is flagged.",
+    }) ||
+    checkNumber(out, "lateSubmissionLimit", pick("lateSubmissionLimit"), {
+      min: 1, max: 100,
+      label: "The late-submission threshold",
+      why: "it is the share of marked work arriving after its deadline that counts as a pattern. At 0 a single late piece flags every student who has ever handed anything in late.",
+    }) ||
+    checkNumber(out, "settlingInWeeks", pick("settlingInWeeks"), {
+      min: 0, max: 52, whole: true,
+      label: "The settling-in period",
+      why: "it is how long a new student is exempt from the disengagement codes. At 0 the whole intake is flagged in week one, and a caseload containing everybody is the same as no caseload.",
+    }) ||
+    checkNumber(out, "dueSoonDays", pick("dueSoonDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The upcoming-work window",
+      why: "it is how far ahead to count work falling due. At 0 nothing is ever upcoming and the figure is dead.",
+    }) ||
+    checkNumber(out, "lateSubmissionMinPieces", pick("lateSubmissionMinPieces"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum work for a late-submission pattern",
+      why: "it is how many marked, dated pieces are needed before lateness is called a pattern. At 1 a single late assignment reads as 100% late.",
+    }) ||
+    checkNumber(out, "concernWindowDays", pick("concernWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The repeated-concern window",
+      why: "it is how far back a repeated concern is looked for. Unbounded, a concern raised twice in a first term never clears.",
+    }) ||
+    checkNumber(out, "noShowWindowDays", pick("noShowWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The missed-meeting window",
+      why: "it is how far back a missed meeting counts. Unbounded, two missed meetings in a first term keep a student on the caseload for the rest of their programme.",
+    }) ||
+    checkNumber(out, "unansweredQueryDays", pick("unansweredQueryDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The unanswered-query window",
+      why: "it is how long a student's question may go unanswered before it is reported. At 0 every query is reported the moment it is sent, including the ones being answered that morning.",
+    }) ||
+    checkNumber(out, "contactDeficitDays", pick("contactDeficitDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The high-risk contact window",
+      why: "it is how long a student the model has flagged may go without a logged conversation before that is reported. At 0 every flagged student is reported every day, including those somebody spoke to this morning.",
+    }) ||
+    checkNumber(out, "minAbsencesForShare", pick("minAbsencesForShare"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum absences for an unexplained share",
+      why: "it is how many absences are needed before the unexplained share is shown. At 1 a single unexcused absence reads as 100% unexplained.",
+    }) ||
+    checkNumber(out, "followUpGraceDays", pick("followUpGraceDays"), {
+      min: 0, max: 365, whole: true,
+      label: "The follow-up grace period",
+      why: "it is how long after its promised date a follow-up may go unrecorded before it is reported. At 0 every follow-up is reported the morning after its date, including the ones being held that afternoon.",
+    }) ||
+    checkNumber(out, "followUpWindowDays", pick("followUpWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The missed-follow-up window",
+      why: "it is how far back a missed follow-up counts. Unbounded, one promise never held keeps a student on the caseload for the rest of their programme.",
+    }) ||
+    checkNumber(out, "unansweredQueryCeilingDays", pick("unansweredQueryCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The unanswered-query ceiling",
+      why: "it is how long an unanswered question keeps being reported. Unbounded, one query nobody answered in a first term lights the row for ever.",
     });
   if (err) return err;
 
@@ -400,6 +634,7 @@ function validate(input) {
     ["criticalAttendanceBand", "the critical-attendance override (OVR-002)"],
     ["lowGradeBand", "the below-pass-average override (OVR-003)"],
     ["interventionBand", "the intervention flag"],
+    ["contactDeficitBand", "the high-risk contact deficit"],
   ]) {
     const value = pick(key);
     if (typeof value !== "string" || !bandKeys.includes(value)) {
