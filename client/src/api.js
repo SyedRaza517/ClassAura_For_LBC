@@ -565,6 +565,24 @@ export const api = {
   addIntervention: (body) => request("/prediction/interventions", { method: "POST", body }),
   updateIntervention: (id, body) => request(`/prediction/interventions/${id}`, { method: "PUT", body }),
 
+  // Mitigating circumstances.
+  //
+  // Its own page, and therefore its own permission: a college can grant "see the risk
+  // register" without granting "read why each student is on it". A claim is usually
+  // health data — illness, bereavement, mental health — and the server never lets any of
+  // it reach the prediction pipeline. This screen shows it because the people granted
+  // this page are the ones deciding the claims.
+  listMitigations: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
+    return request(`/mitigations${q ? `?${q}` : ""}`);
+  },
+  addMitigation: (body) => request("/mitigations", { method: "POST", body }),
+  updateMitigation: (id, body) => request(`/mitigations/${id}`, { method: "PATCH", body }),
+  removeMitigation: (id) => request(`/mitigations/${id}`, { method: "DELETE" }),
+  addMitigationAdjustment: (id, body) => request(`/mitigations/${id}/adjustments`, { method: "POST", body }),
+  removeMitigationAdjustment: (id, adjustmentId) =>
+    request(`/mitigations/${id}/adjustments/${adjustmentId}`, { method: "DELETE" }),
+
   // assessments (gradebook)
   listAssessments: (unitId) => request(`/assessments${unitId ? `?unitId=${unitId}` : ""}`),
   addAssessment: (data) => request("/assessments", { method: "POST", body: data }),
