@@ -2738,12 +2738,17 @@ const DRIVER_LABELS = {
   TRIP_NO_PASTORAL_CONTACT: "Nobody has spoken to this student recently",
   TRIP_UNIT_ABANDONED: "Attending most units but not one of them",
   TRIP_UNITS_UNPASSED: "Units with nothing banked yet",
+  TRIP_CHRONIC_LATE: "Work is regularly handed in late",
+  TRIP_REPEAT_CONCERN: "The same concern raised in more than one review",
+  TRIP_REVIEW_OVERDUE: "An intervention is past its agreed review date",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
  *  panel, because the person reading it is the person who can act on either — but
  *  worded so nobody mistakes an institutional failing for a student's. */
-const INSTITUTIONAL_TRIPS = new Set(["TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK"]);
+const INSTITUTIONAL_TRIPS = new Set([
+  "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
+]);
 
 /** A code that came from the tripwire layer rather than the engine's own indicators.
  *  The prefix is the contract — see server/src/prediction/tripwires.js. */
@@ -3184,6 +3189,9 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Last engaged", p.lastEngagedOn ? `${daysAgo(p.lastEngagedOn)} days ago` : "—"],
     ["Week-to-week spread", p.attendanceRegularity == null ? "—" : `±${p.attendanceRegularity}`],
     ["Units with nothing banked", p.unpassedUnitCount == null ? "—" : p.unpassedUnitCount],
+    ["Handed in late", pctOrDash(p.lateSubmissionRate)],
+    ["Work due soon", p.assessmentsDueSoon == null ? "—" : p.assessmentsDueSoon],
+    ["Weeks on programme", p.weeksIntoProgramme == null ? "—" : p.weeksIntoProgramme],
   ];
 
   return (
@@ -3290,6 +3298,11 @@ function PredictionDetail({ detail, bands, onChanged }) {
                       )}
                       {c === "TRIP_UNITS_UNPASSED" && p.unpassedUnitCount != null && (
                         <b className="ml-1 font-semibold">— {p.unpassedUnitCount}</b>
+                      )}
+                      {c === "TRIP_CHRONIC_LATE" && p.lateSubmissionRate != null && (
+                        <b className="ml-1 font-semibold">
+                          — {p.lateSubmissionRate}% of marked work{p.meanDaysLate ? `, ${p.meanDaysLate} days on average` : ""}
+                        </b>
                       )}
                       {INSTITUTIONAL_TRIPS.has(c) && (
                         <span className="ml-1 rounded bg-amber-200/70 px-1 text-[9px] font-bold uppercase tracking-wide text-amber-900">us, not them</span>

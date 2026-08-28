@@ -235,6 +235,10 @@ async function recalculate(opts = {}) {
         unitAttendanceSpread: entry.tripwires ? entry.tripwires.unitAttendanceSpread : null,
         unpassedUnitCount: entry.tripwires ? entry.tripwires.unpassedUnitCount : null,
         attendanceRegularity: entry.tripwires ? entry.tripwires.attendanceRegularity : null,
+        lateSubmissionRate: entry.tripwires ? entry.tripwires.lateSubmissionRate : null,
+        meanDaysLate: entry.tripwires ? entry.tripwires.meanDaysLate : null,
+        weeksIntoProgramme: entry.tripwires ? entry.tripwires.weeksIntoProgramme : null,
+        assessmentsDueSoon: entry.tripwires ? entry.tripwires.assessmentsDueSoon : null,
       };
 
       const current = existingByStudent.get(studentId);

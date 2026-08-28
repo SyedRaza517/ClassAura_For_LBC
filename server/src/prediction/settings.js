@@ -212,6 +212,20 @@ const DEFAULTS = {
   // fourth has an overall figure that looks survivable and a problem that is not.
   unitSpreadLimit: 40,
 
+  // What share of marked work arriving after its deadline counts as a pattern rather
+  // than a bad month.
+  lateSubmissionLimit: 40,
+
+  // How long a student is treated as new. Inside this, the "we have not seen this"
+  // codes are suppressed — in week one nobody has attendance history, marks or a
+  // pastoral record, and firing on all of that would put the entire intake on the
+  // caseload at once.
+  settlingInWeeks: 3,
+
+  // How far ahead to look for work falling due. A fact about the timetable rather than
+  // the student, reported as a figure and never as a code.
+  dueSoonDays: 14,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -494,6 +508,21 @@ function validate(input) {
       min: 1, max: 100,
       label: "The per-unit attendance gap",
       why: "it is how far apart the best and worst unit may be before the gap is reported. At 0 every student with any variation between units is flagged.",
+    }) ||
+    checkNumber(out, "lateSubmissionLimit", pick("lateSubmissionLimit"), {
+      min: 1, max: 100,
+      label: "The late-submission threshold",
+      why: "it is the share of marked work arriving after its deadline that counts as a pattern. At 0 a single late piece flags every student who has ever handed anything in late.",
+    }) ||
+    checkNumber(out, "settlingInWeeks", pick("settlingInWeeks"), {
+      min: 0, max: 52, whole: true,
+      label: "The settling-in period",
+      why: "it is how long a new student is exempt from the disengagement codes. At 0 the whole intake is flagged in week one, and a caseload containing everybody is the same as no caseload.",
+    }) ||
+    checkNumber(out, "dueSoonDays", pick("dueSoonDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The upcoming-work window",
+      why: "it is how far ahead to count work falling due. At 0 nothing is ever upcoming and the figure is dead.",
     });
   if (err) return err;
 

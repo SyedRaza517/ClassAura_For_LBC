@@ -742,3 +742,160 @@ test("unexplained share IS reported at a college that records authorised absence
 
   assert.equal(r.unexplainedShare, 50);
 });
+
+/* ========================================================================== */
+/* Tranche 5 — the last of what this schema can honestly answer               */
+/* ========================================================================== */
+
+const { submissionTiming, repeatConcerns } = require("./tripwires");
+
+/* --- handing work in late -------------------------------------------------- */
+
+test("late submission is measured from the date the work arrived", () => {
+  const r = submissionTiming([
+    { submittedOn: "2026-03-01", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-05", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-11", dueDate: "2026-03-01" },
+  ], { submittedOnRecorded: true });
+
+  assert.equal(r.lateRate, 66.7);
+  assert.equal(r.meanDaysLate, 7);   // (4 + 10) / 2
+});
+
+test("work with no recorded arrival date is dropped from BOTH sides", () => {
+  // A null submittedOn means "we do not know when they handed it in" — manual marks,
+  // and VLE items that carry no submission timestamp. Counting it as on time would
+  // reward the gap in the feed.
+  const r = submissionTiming([
+    { submittedOn: null, dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-05", dueDate: "2026-03-01" },
+  ], { submittedOnRecorded: true });
+
+  assert.equal(r.lateRate, 100);
+  assert.equal(r.gradedWithDates, 1);
+});
+
+test("a college whose feed carries no submission dates gets null, not 0% late", () => {
+  // Same institution-level trap as lateness and excused absence. If nothing anywhere
+  // has a submittedOn, "0% late" is a statement about the integration.
+  const r = submissionTiming([
+    { submittedOn: null, dueDate: "2026-03-01" },
+    { submittedOn: null, dueDate: "2026-03-08" },
+  ], { submittedOnRecorded: false });
+
+  assert.equal(r.lateRate, null);
+  assert.equal(r.meanDaysLate, null);
+});
+
+test("work with no deadline cannot be late", () => {
+  const r = submissionTiming([{ submittedOn: "2026-03-05", dueDate: null }], { submittedOnRecorded: true });
+  assert.equal(r.lateRate, null);
+});
+
+test("everything on time reports zero, not null, when the feed does carry dates", () => {
+  const r = submissionTiming([
+    { submittedOn: "2026-02-28", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-01", dueDate: "2026-03-01" },
+  ], { submittedOnRecorded: true });
+
+  assert.equal(r.lateRate, 0);
+  assert.equal(r.meanDaysLate, 0);
+});
+
+/* --- the same concern raised twice ----------------------------------------- */
+
+test("a concern raised in two separate reviews is a repeat", () => {
+  const r = repeatConcerns([
+    ["Attendance", "Wellbeing"],
+    ["Attendance"],
+  ]);
+
+  assert.deepEqual(r.repeated, ["Attendance"]);
+});
+
+test('"No Concerns" is a value in the list and must never count as one', () => {
+  // The allowlist at routes/studentReviews.js includes "No Concerns" as a member, so a
+  // naive length check turns the strongest reassurance in the dataset into a warning —
+  // and two clean reviews would read as a repeated concern.
+  const r = repeatConcerns([["No Concerns"], ["No Concerns"]]);
+
+  assert.deepEqual(r.repeated, []);
+  assert.equal(r.reviewsWithConcerns, 0);
+});
+
+test("one review cannot establish a repeat", () => {
+  const r = repeatConcerns([["Attendance", "Attendance"]]);
+  assert.deepEqual(r.repeated, []);
+});
+
+test("no reviews at all gives null, not an empty finding", () => {
+  const r = repeatConcerns([]);
+  assert.equal(r.repeated, null);
+});
+
+test("chronic late submission raises a code the on-time rate cannot", () => {
+  const r = evaluate(input({ timing: { lateRate: 60, meanDaysLate: 9 } }),
+    { ...DEFAULTS, lateSubmissionLimit: 40 });
+
+  assert.ok(r.codes.includes(TRIP.CHRONIC_LATE));
+});
+
+test("a null late rate raises nothing", () => {
+  const r = evaluate(input({ timing: { lateRate: null } }), DEFAULTS);
+  assert.equal(r.codes.includes(TRIP.CHRONIC_LATE), false);
+});
+
+test("a concern raised twice raises a code", () => {
+  const r = evaluate(input({ pastoral: { lastContactOn: "2026-03-18", repeated: ["Attendance"] } }), DEFAULTS);
+  assert.ok(r.codes.includes(TRIP.REPEAT_CONCERN));
+});
+
+test("an intervention past its agreed review date with no outcome is the college's failing", () => {
+  const r = evaluate(input({ today: "2026-03-20", interventions: { overdueReviews: 1 } }), DEFAULTS);
+  assert.ok(r.codes.includes(TRIP.REVIEW_OVERDUE));
+});
+
+test("an intervention with no agreed review date is not overdue", () => {
+  // Nobody promised a date, so nobody has missed one. Reporting it would put every
+  // open intervention on the list the moment it was raised.
+  const r = evaluate(input({ interventions: { overdueReviews: 0 } }), DEFAULTS);
+  assert.equal(r.codes.includes(TRIP.REVIEW_OVERDUE), false);
+});
+
+test("a brand-new student is exempt from the disengagement codes", () => {
+  // Weeks-into-programme exists mainly to SUPPRESS. In week one a student has no
+  // attendance history, no marks and no pastoral record, and every "we have not seen
+  // this" code would fire on the whole intake at once — a caseload of everybody,
+  // which is the same as no caseload.
+  const r = evaluate(input({
+    weeksIntoProgramme: 1,
+    pastoral: { lastContactOn: null },
+    marks: [mark("2026-03-19", "A"), mark("2026-03-20", "A"), mark("2026-03-20", "A")],
+  }), { ...DEFAULTS, absenceStreakSessions: 3, settlingInWeeks: 3 });
+
+  assert.equal(r.codes.includes(TRIP.NO_PASTORAL_CONTACT), false);
+  assert.equal(r.codes.includes(TRIP.ABSENCE_STREAK), false);
+});
+
+test("the same student past the settling-in period is not exempt", () => {
+  const r = evaluate(input({
+    weeksIntoProgramme: 8,
+    pastoral: { lastContactOn: null },
+    marks: [mark("2026-03-19", "A"), mark("2026-03-20", "A"), mark("2026-03-20", "A")],
+  }), { ...DEFAULTS, absenceStreakSessions: 3, settlingInWeeks: 3 });
+
+  assert.ok(r.codes.includes(TRIP.NO_PASTORAL_CONTACT));
+  assert.ok(r.codes.includes(TRIP.ABSENCE_STREAK));
+});
+
+test("an unknown programme age is NOT treated as brand new", () => {
+  // A student whose cohort has no start date and no terms has an unknown age, and
+  // exempting them would silently mute every code for anybody the calendar cannot
+  // place — failing safe in the wrong direction.
+  const r = evaluate(input({
+    weeksIntoProgramme: null,
+    pastoral: { lastContactOn: null },
+  }), { ...DEFAULTS, settlingInWeeks: 3 });
+
+  assert.ok(r.codes.includes(TRIP.NO_PASTORAL_CONTACT));
+});

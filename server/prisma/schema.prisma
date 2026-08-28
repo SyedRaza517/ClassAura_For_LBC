@@ -1924,6 +1924,22 @@ model StudentPredictionCurrent {
   /// weeks alternating with empty ones at the same overall figure. Null below three
   /// weeks of register.
   attendanceRegularity   Float?
+  /// Share of MARKED work that arrived after its deadline, and by how many days on
+  /// average. Read from AssessmentGrade.submittedAt rather than AssessmentSubmission,
+  /// which nothing writes. Day resolution only — the Moodle importer truncates the
+  /// timestamp at the boundary. Null when the feed carries no submission dates at all,
+  /// because "0% late" would then describe the integration rather than the student.
+  lateSubmissionRate     Float?
+  meanDaysLate           Float?
+  /// Weeks since the cohort started. Used mainly to SUPPRESS: inside the settling-in
+  /// period a new student has no history for the disengagement codes to read, and
+  /// firing them would put a whole intake on the caseload at once. Null when the
+  /// cohort has neither a start date nor terms — and null is deliberately NOT treated
+  /// as "brand new", which would mute every code for anybody the calendar cannot place.
+  weeksIntoProgramme     Int?
+  /// Work falling due in the near term. A fact about the timetable rather than the
+  /// student, so it is reported and never raises a code on its own.
+  assessmentsDueSoon     Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2075,6 +2091,22 @@ model StudentPredictionHistory {
   /// weeks alternating with empty ones at the same overall figure. Null below three
   /// weeks of register.
   attendanceRegularity   Float?
+  /// Share of MARKED work that arrived after its deadline, and by how many days on
+  /// average. Read from AssessmentGrade.submittedAt rather than AssessmentSubmission,
+  /// which nothing writes. Day resolution only — the Moodle importer truncates the
+  /// timestamp at the boundary. Null when the feed carries no submission dates at all,
+  /// because "0% late" would then describe the integration rather than the student.
+  lateSubmissionRate     Float?
+  meanDaysLate           Float?
+  /// Weeks since the cohort started. Used mainly to SUPPRESS: inside the settling-in
+  /// period a new student has no history for the disengagement codes to read, and
+  /// firing them would put a whole intake on the caseload at once. Null when the
+  /// cohort has neither a start date nor terms — and null is deliberately NOT treated
+  /// as "brand new", which would mute every code for anybody the calendar cannot place.
+  weeksIntoProgramme     Int?
+  /// Work falling due in the near term. A fact about the timetable rather than the
+  /// student, so it is reported and never raises a code on its own.
+  assessmentsDueSoon     Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

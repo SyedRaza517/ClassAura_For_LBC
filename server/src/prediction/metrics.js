@@ -167,6 +167,11 @@ async function gather(studentIds, config) {
     prisma.studentReview.count(),
     prisma.attendanceMark.count({ where: { status: "E" } }),
   ]);
+  // Does this college's feed carry submission dates at all? Fourth guard of the same
+  // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
+  // about the integration, not about anybody's coursework.
+  const submittedAtRows = await prisma.assessmentGrade.count({ where: { NOT: { submittedAt: null } } });
+  const submittedOnRecorded = submittedAtRows > 0;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
   const pastoralInUse = contactRows > 0 || reviewRows > 0;
@@ -178,12 +183,25 @@ async function gather(studentIds, config) {
     select: {
       id: true,
       cohortId: true,
-      cohort: { select: { id: true, terms: { select: { id: true, year: true, index: true, name: true, start: true, end: true } } } },
+      cohort: { select: { id: true, startDate: true, terms: { select: { id: true, year: true, index: true, name: true, start: true, end: true } } } },
     },
   });
 
   const scopes = new Map();
   for (const s of students) scopes.set(s.id, resolveScope(s, config));
+
+  // How long this student has been on the programme, in weeks. The cohort's own start
+  // date wins; the earliest term is the fallback. NEVER Student.createdAt — for a
+  // Moodle-imported college that is the sync date, which says when the row was made
+  // rather than when the student arrived. Null when neither exists, and null is
+  // deliberately NOT treated as "brand new" downstream.
+  const weeksByStudent = new Map();
+  for (const s of students) {
+    const terms = (s.cohort && s.cohort.terms) || [];
+    const start = (s.cohort && s.cohort.startDate)
+      || (terms.length ? terms.reduce((min, t) => (t.start < min ? t.start : min), terms[0].start) : null);
+    weeksByStudent.set(s.id, start ? Math.max(0, Math.floor(daysBetween(start, today) / 7)) : null);
+  }
 
   /* --- attendance ------------------------------------------------------- */
 
@@ -248,7 +266,7 @@ async function gather(studentIds, config) {
   const grades = assessmentIds.length
     ? await prisma.assessmentGrade.findMany({
         where: { assessmentId: { in: assessmentIds }, studentId: { in: studentIds } },
-        select: { assessmentId: true, studentId: true, marks: true, gradedOn: true, gradedAt: true },
+        select: { assessmentId: true, studentId: true, marks: true, gradedOn: true, gradedAt: true, submittedAt: true },
       })
     : [];
 
@@ -277,7 +295,7 @@ async function gather(studentIds, config) {
     where: { studentId: { in: studentIds }, status: { in: ["open", "reviewed"] } },
     orderBy: { interventionDate: "desc" },
     select: {
-      studentId: true, interventionDate: true,
+      studentId: true, interventionDate: true, reviewDate: true, outcome: true,
       recentAttendanceAtIntervention: true, submissionRateAtIntervention: true, averageGradeAtIntervention: true,
     },
   });
@@ -294,7 +312,16 @@ async function gather(studentIds, config) {
   const submissionsRecorded = submissions.length > 0;
 
   const interventionCount = new Map();
-  for (const i of interventions) interventionCount.set(i.studentId, (interventionCount.get(i.studentId) || 0) + 1);
+  const overdueReviews = new Map();
+  for (const i of interventions) {
+    interventionCount.set(i.studentId, (interventionCount.get(i.studentId) || 0) + 1);
+    // Past the date somebody agreed to look again, with no outcome recorded. The schema
+    // documents a null outcome as "no response measured yet", so the absence IS the
+    // finding. No review date means nobody promised one, so nothing is overdue.
+    if (i.reviewDate && i.reviewDate < today && !i.outcome) {
+      overdueReviews.set(i.studentId, (overdueReviews.get(i.studentId) || 0) + 1);
+    }
+  }
 
   /* --- pastoral contact --------------------------------------------------- */
 
@@ -317,7 +344,7 @@ async function gather(studentIds, config) {
   const reviews = await prisma.studentReview.findMany({
     where: { studentId: { in: studentIds } },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    select: { studentId: true, date: true, progress: true },
+    select: { studentId: true, date: true, progress: true, concerns: true },
   });
 
   const pastoralByStudent = new Map();
@@ -333,6 +360,12 @@ async function gather(studentIds, config) {
     // Ordered date desc then createdAt desc, so the first review seen per student is
     // the latest one. Later rows must not overwrite it.
     if (cur.progress === null) cur.progress = r.progress;
+    // Concerns is a JSON array stored in a String column, not a Json column, so it
+    // cannot be queried in SQL and must be parsed here. A throw would take down the
+    // whole chunk's gather, hence the try/catch the rest of the codebase also uses.
+    let parsed = [];
+    try { const j = JSON.parse(r.concerns || "[]"); if (Array.isArray(j)) parsed = j; } catch { /* leave empty */ }
+    (cur.concernSets = cur.concernSets || []).push(parsed);
     pastoralByStudent.set(r.studentId, cur);
   }
 
@@ -517,9 +550,32 @@ async function gather(studentIds, config) {
       (max, g) => (g.gradedOn && (!max || g.gradedOn > max) ? g.gradedOn : max), null
     );
 
+    const rawPastoral = pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null };
+    const concernRepeat = tripwires.repeatConcerns(rawPastoral.concernSets || []);
     const pastoral = pastoralInUse
-      ? (pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null })
+      ? { ...rawPastoral, repeated: concernRepeat.repeated || [] }
       : null;
+
+    // Late submission, read from the marks rather than from AssessmentSubmission —
+    // that table is written by nothing. Scoped like the average grade is.
+    const timing = tripwires.submissionTiming(
+      scopedGrades.map((g) => ({
+        submittedOn: g.submittedAt || null,
+        dueDate: g.assessment ? g.assessment.dueDate : null,
+      })),
+      { submittedOnRecorded }
+    );
+
+    // Assessments falling due in the near term. A fact about the timetable rather than
+    // the student, so it is a figure and never a code — it would fire cohort-wide.
+    let dueSoon = 0;
+    const soonCutoff = shiftDays(today, config.dueSoonDays);
+    for (const unitId of myUnits) {
+      for (const a of assessmentsByUnit.get(unitId) || []) {
+        if (!inScopeAssessment(a) || !a.dueDate) continue;
+        if (a.dueDate >= today && a.dueDate <= soonCutoff) dueSoon += 1;
+      }
+    }
 
     const trips = tripwires.evaluate({
       today,
@@ -533,6 +589,9 @@ async function gather(studentIds, config) {
       pastoral,
       dispersion,
       banked,
+      timing,
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+      interventions: { overdueReviews: overdueReviews.get(id) || 0 },
     }, config);
 
     // The most recent thing this student did that the college can see, of ANY kind.
@@ -557,6 +616,10 @@ async function gather(studentIds, config) {
         unitAttendanceSpread: dispersion.spread,
         unpassedUnitCount: banked.unpassed,
         attendanceRegularity: regularity,
+        lateSubmissionRate: timing.lateRate,
+        meanDaysLate: timing.meanDaysLate,
+        weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+        assessmentsDueSoon: dueSoon,
       },
       raw: {
         attendance: {

@@ -61,6 +61,10 @@ const TRIP = {
   NO_PASTORAL_CONTACT: "TRIP_NO_PASTORAL_CONTACT",
   UNIT_ABANDONED: "TRIP_UNIT_ABANDONED",
   UNITS_UNPASSED: "TRIP_UNITS_UNPASSED",
+  CHRONIC_LATE: "TRIP_CHRONIC_LATE",
+  REPEAT_CONCERN: "TRIP_REPEAT_CONCERN",
+  // Institutional: an intervention nobody went back to.
+  REVIEW_OVERDUE: "TRIP_REVIEW_OVERDUE",
 };
 
 const TRIP_CODES = Object.values(TRIP);
@@ -348,6 +352,93 @@ function weeklyRegularity(marks) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Handing work in late                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How much of this student's marked work arrived after its deadline, and by how far.
+ *
+ * WHY THIS READS GRADES RATHER THAN SUBMISSIONS. The obvious source is
+ * AssessmentSubmission.submittedOn — but nothing in this codebase writes that table,
+ * so it is empty everywhere. AssessmentGrade.submittedAt is populated by the Moodle
+ * importer and carries the same fact for work that has been MARKED. That is a biased
+ * sample (unmarked work is invisible here) and the bias is stated rather than hidden.
+ *
+ * The importer truncates Moodle's timestamp to a date, so this is day resolution.
+ * "Handed in four days late" is answerable; "handed in eleven minutes before the
+ * deadline" is not, and never will be from this data — the time is discarded at the
+ * boundary rather than merely unqueried.
+ *
+ * @param {Array<{submittedOn, dueDate}>} marked
+ * @param {{submittedOnRecorded:boolean}} opts  whether the feed carries dates AT ALL
+ */
+function submissionTiming(marked, opts) {
+  // The institution guard again, third of its kind. If nothing anywhere carries a
+  // submission date, "0% late" describes the integration rather than the students.
+  if (!opts || !opts.submittedOnRecorded) {
+    return { lateRate: null, meanDaysLate: null, gradedWithDates: 0 };
+  }
+
+  let onTime = 0, late = 0, totalDaysLate = 0;
+
+  for (const g of marked || []) {
+    // Both halves required. No deadline means nothing to be late against; no arrival
+    // date means we do not know when it came, which is not the same as on time.
+    if (!g || !g.submittedOn || !g.dueDate) continue;
+    const days = daysBetween(g.dueDate, g.submittedOn);
+    if (days > 0) { late += 1; totalDaysLate += days; } else { onTime += 1; }
+  }
+
+  const n = onTime + late;
+  if (!n) return { lateRate: null, meanDaysLate: null, gradedWithDates: 0 };
+
+  return {
+    lateRate: round1((late / n) * 100),
+    meanDaysLate: late ? round1(totalDaysLate / late) : 0,
+    gradedWithDates: n,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* The same concern, raised twice                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Concerns a tutor has raised in more than one review.
+ *
+ * One review saying "Attendance" is a conversation. Two separate reviews saying it is
+ * an unresolved problem, and the difference is the whole signal — the engine's own
+ * figures cannot see it because they are about the student's data, not about what
+ * staff have already noticed and said out loud.
+ *
+ * "NO CONCERNS" IS A MEMBER OF THE ALLOWLIST, not an empty array. A naive count turns
+ * the strongest reassurance in the dataset into a warning, and two clean reviews would
+ * read as a repeated concern. It is stripped before anything else happens.
+ *
+ * @param {Array<string[]>} perReview  the parsed concerns array from each review
+ */
+function repeatConcerns(perReview) {
+  const list = perReview || [];
+  if (!list.length) return { repeated: null, reviewsWithConcerns: 0 };
+
+  const seen = new Map();
+  let reviewsWithConcerns = 0;
+
+  for (const raw of list) {
+    // Deduped WITHIN a review: the same concern twice on one form is one concern, and
+    // counting it twice would let a single review manufacture a repeat.
+    const concerns = [...new Set((raw || []).filter((c) => c && c !== "No Concerns"))];
+    if (concerns.length) reviewsWithConcerns += 1;
+    for (const c of concerns) seen.set(c, (seen.get(c) || 0) + 1);
+  }
+
+  return {
+    repeated: [...seen.entries()].filter(([, n]) => n >= 2).map(([c]) => c).sort(),
+    reviewsWithConcerns,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Engagement recency                                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -391,9 +482,24 @@ function evaluate(raw, config) {
   const today = raw.today;
   const codes = [];
 
+  // THE SETTLING-IN EXEMPTION, and it exists to SUPPRESS rather than to find.
+  //
+  // In week one a student has no attendance history, no marks and no pastoral record.
+  // Every "we have not seen this" code would fire across the whole intake at once, and
+  // a caseload containing everybody is the same as no caseload — staff stop reading it,
+  // and the students who are genuinely disappearing in week nine are buried under a
+  // hundred who simply started on Monday.
+  //
+  // An UNKNOWN age is deliberately NOT exempt. A student whose cohort has no start
+  // date and no terms cannot be placed on a calendar, and muting every code for them
+  // would fail safe in the wrong direction — silence about the students the timetable
+  // already cannot account for.
+  const weeks = raw.weeksIntoProgramme;
+  const settlingIn = isNum(weeks) && weeks < config.settlingInWeeks;
+
   const { absenceStreak, lastAttendedOn } = attendanceShape(raw.marks || []);
 
-  if (isNum(absenceStreak) && absenceStreak >= config.absenceStreakSessions) {
+  if (!settlingIn && isNum(absenceStreak) && absenceStreak >= config.absenceStreakSessions) {
     codes.push(TRIP.ABSENCE_STREAK);
   }
 
@@ -530,9 +636,32 @@ function evaluate(raw, config) {
     // can fix that. Unlike attendance, absence of a record here IS the finding: every
     // conversation that happens gets logged, so no log means no conversation.
     const never = !pastoral.lastContactOn;
-    if (never || daysBetween(pastoral.lastContactOn, today) >= config.staleContactDays) {
+    if (!settlingIn && (never || daysBetween(pastoral.lastContactOn, today) >= config.staleContactDays)) {
       codes.push(TRIP.NO_PASTORAL_CONTACT);
     }
+
+    // The same concern in two separate reviews. One is a conversation; two is a problem
+    // nobody has resolved, and no figure the engine computes can see the difference.
+    if ((pastoral.repeated || []).length) codes.push(TRIP.REPEAT_CONCERN);
+  }
+
+  /* --- handing work in late ---------------------------------------------- */
+
+  const timing = raw.timing || {};
+  if (isNum(timing.lateRate) && timing.lateRate >= config.lateSubmissionLimit) {
+    codes.push(TRIP.CHRONIC_LATE);
+  }
+
+  /* --- an intervention nobody went back to -------------------------------- */
+
+  // INSTITUTIONAL. The college agreed a date to look again and the date has passed with
+  // no outcome recorded. The schema is explicit that a null outcome means "no response
+  // measured yet", so absence IS the finding here — the opposite of almost everything
+  // else in this file. An intervention with no review date is NOT overdue: nobody
+  // promised a date, so nobody has missed one.
+  const interventions = raw.interventions || {};
+  if (isNum(interventions.overdueReviews) && interventions.overdueReviews >= 1) {
+    codes.push(TRIP.REVIEW_OVERDUE);
   }
 
   return { absenceStreak, lastAttendedOn, oldestUnmarkedDueDate, attendanceSlope, codes };
@@ -540,6 +669,6 @@ function evaluate(raw, config) {
 
 module.exports = {
   evaluate, attendanceShape, attendanceQuality, attainmentShape, engagementRecency,
-  unitDispersion, unpassedUnits, weeklyRegularity,
+  unitDispersion, unpassedUnits, weeklyRegularity, submissionTiming, repeatConcerns,
   TRIP, TRIP_CODES,
 };

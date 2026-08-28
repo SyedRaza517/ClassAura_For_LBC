@@ -86,7 +86,8 @@ const TRIPWIRE_COLUMNS = [
   "absenceStreak", "lastAttendedOn", "oldestUnmarkedDueDate", "attendanceSlope",
   "lastEngagedOn", "unexplainedShare", "latenessRate", "failCount", "nearFailCount",
   "gradeVolatility", "worstUnitId", "unitAttendanceSpread", "unpassedUnitCount",
-  "attendanceRegularity",
+  "attendanceRegularity", "lateSubmissionRate", "meanDaysLate", "weeksIntoProgramme",
+  "assessmentsDueSoon",
 ];
 
 /**
