@@ -263,6 +263,11 @@ async function recalculate(opts = {}) {
         oldestOpenQueryOn: entry.tripwires ? entry.tripwires.oldestOpenQueryOn : null,
         openQueryCount: entry.tripwires ? entry.tripwires.openQueryCount : null,
         overdueFollowUpCount: entry.tripwires ? entry.tripwires.overdueFollowUpCount : null,
+        weightedAverageGrade: entry.tripwires ? entry.tripwires.weightedAverageGrade : null,
+        gradeWasWeighted: entry.tripwires ? entry.tripwires.gradeWasWeighted : null,
+        markingLatencyDays: entry.tripwires ? entry.tripwires.markingLatencyDays : null,
+        firstSessionAbsenceRate: entry.tripwires ? entry.tripwires.firstSessionAbsenceRate : null,
+        laterSessionAbsenceRate: entry.tripwires ? entry.tripwires.laterSessionAbsenceRate : null,
       };
 
       const current = existingByStudent.get(studentId);

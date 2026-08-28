@@ -3199,6 +3199,14 @@ function PredictionDetail({ detail, bands, onChanged }) {
       : `${p.lateSubmissionRate}%${p.gradedWithDates ? ` of ${p.gradedWithDates}` : ""}`],
     ["Work due soon", p.assessmentsDueSoon == null ? "—" : p.assessmentsDueSoon],
     ["Weeks on programme", p.weeksIntoProgramme == null ? "—" : p.weeksIntoProgramme],
+    // The weighted figure sits beside the plain one and says which it is. A number that
+    // appears to honour the assessment weighting while silently not doing so is exactly
+    // what the flag exists to prevent — the Moodle sync never sets a weight.
+    ["Weighted average", p.weightedAverageGrade == null ? "—"
+      : `${p.weightedAverageGrade}%${p.gradeWasWeighted ? "" : " (unweighted)"}`],
+    ["Marking turnaround", p.markingLatencyDays == null ? "—" : `${p.markingLatencyDays} days`],
+    ["Absent first thing", pctOrDash(p.firstSessionAbsenceRate)],
+    ["Absent later in the day", pctOrDash(p.laterSessionAbsenceRate)],
   ];
 
   return (

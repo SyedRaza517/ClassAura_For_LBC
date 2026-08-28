@@ -311,7 +311,7 @@ async function gather(studentIds, config) {
   const assessments = unitIds.length
     ? await prisma.assessment.findMany({
         where: { unitId: { in: unitIds } },
-        select: { id: true, unitId: true, dueDate: true, maxMarks: true, unit: { select: { termId: true } } },
+        select: { id: true, unitId: true, dueDate: true, maxMarks: true, weight: true, unit: { select: { termId: true } } },
       })
     : [];
 
@@ -655,6 +655,19 @@ async function gather(studentIds, config) {
 
     const regularity = tripwires.weeklyRegularity(overallMarks);
 
+    // The weighting the engine has never read. Assessment.weight came along on the
+    // select that was already being issued.
+    const weighted = tripwires.weightedGrade(scopedGrades.map((g) => ({
+      pct: g.pct, weight: g.assessment ? g.assessment.weight : 0,
+    })));
+
+    // A staff figure, from the two dates the Moodle importer already stores.
+    const latency = tripwires.markingLatency(scopedGrades.map((g) => ({
+      submittedAt: g.submittedAt || null, gradedOn: g.gradedOn || null,
+    })));
+
+    const dayShape = tripwires.firstSessionAbsence(overallMarks, { minDays: config.firstSessionMinDays });
+
     const lastGradedOn = myGrades.reduce(
       (max, g) => (g.gradedOn && (!max || g.gradedOn > max) ? g.gradedOn : max), null
     );
@@ -747,6 +760,11 @@ async function gather(studentIds, config) {
         oldestOpenQueryOn: backlog.oldestOpenQueryOn,
         openQueryCount: backlog.openQueryCount,
         overdueFollowUpCount: missedFollowUps.overdue,
+        weightedAverageGrade: weighted.value,
+        gradeWasWeighted: weighted.value === null ? null : weighted.weighted,
+        markingLatencyDays: latency.meanDays,
+        firstSessionAbsenceRate: dayShape.firstSessionRate,
+        laterSessionAbsenceRate: dayShape.laterRate,
         // Forwarded for the contact deficit, which crosses the risk level with these
         // dates and therefore CANNOT be computed here: gather() runs before score(),
         // so the only risk level visible to it is the previous run's — and every

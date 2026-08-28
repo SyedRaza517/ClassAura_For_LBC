@@ -1234,3 +1234,143 @@ test("the same student past the settling-in period IS a contact failure", () => 
 
   assert.ok(codes.includes(TRIP.CONTACT_DEFICIT));
 });
+
+/* ========================================================================== */
+/* Tranche 8 — the last of what the current schema supports                   */
+/* ========================================================================== */
+
+const { weightedGrade, markingLatency, firstSessionAbsence } = require("./tripwires");
+
+/* --- the weighting the engine has always ignored --------------------------- */
+
+test("a weighted average respects what each assessment is actually worth", () => {
+  // Assessment.weight is stored, validated and shown on the assessment itself, and the
+  // engine has never read it — so a 20% quiz and a 60% project count the same.
+  const r = weightedGrade([{ pct: 40, weight: 60 }, { pct: 90, weight: 20 }]);
+  assert.equal(r.value, 52.5);   // (40*60 + 90*20) / 80
+  assert.equal(r.weighted, true);
+});
+
+test("when NOTHING carries a weight the mean is unweighted and SAYS SO", () => {
+  // The Moodle importer never sets weight, so every synced assessment has 0. Silently
+  // falling back to the unweighted mean would be the exact failure the house rule
+  // exists to prevent: a figure that looks like it honours the weighting and does not.
+  // The client already warns about this in words; the flag makes it checkable.
+  const r = weightedGrade([{ pct: 40, weight: 0 }, { pct: 90, weight: 0 }]);
+  assert.equal(r.value, 65);
+  assert.equal(r.weighted, false);
+});
+
+test("a partially weighted set uses only the weighted marks, and says it is weighted", () => {
+  // An unweighted assessment is not worth zero — it is worth an unknown amount, and
+  // averaging it in at weight 0 would silently discard a real mark.
+  const r = weightedGrade([{ pct: 40, weight: 50 }, { pct: 90, weight: 0 }]);
+  assert.equal(r.value, 40);
+  assert.equal(r.weighted, true);
+  assert.equal(r.ignored, 1);
+});
+
+test("no marks at all gives null, not zero", () => {
+  const r = weightedGrade([]);
+  assert.equal(r.value, null);
+  assert.equal(r.weighted, false);
+});
+
+/* --- how long marking takes ------------------------------------------------ */
+
+test("marking latency is measured from submission to mark", () => {
+  const r = markingLatency([
+    { submittedAt: "2026-03-01", gradedOn: "2026-03-15" },
+    { submittedAt: "2026-03-01", gradedOn: "2026-03-08" },
+  ]);
+  assert.equal(r.meanDays, 10.5);
+  assert.equal(r.judged, 2);
+});
+
+test("work missing either date cannot be timed and is dropped from both sides", () => {
+  const r = markingLatency([
+    { submittedAt: null, gradedOn: "2026-03-15" },
+    { submittedAt: "2026-03-01", gradedOn: null },
+    { submittedAt: "2026-03-01", gradedOn: "2026-03-11" },
+  ]);
+  assert.equal(r.meanDays, 10);
+  assert.equal(r.judged, 1);
+});
+
+test("nothing timeable gives null latency, never zero", () => {
+  // Zero would read as "marked the same day", which is praise for a college that
+  // recorded no dates at all.
+  const r = markingLatency([{ submittedAt: null, gradedOn: null }]);
+  assert.equal(r.meanDays, null);
+});
+
+test("a mark dated before its submission is discarded rather than counted negative", () => {
+  // Two different clocks feed these — Moodle's date and the date it landed here — so a
+  // negative gap is a data fault, not a college that marks work before it arrives.
+  const r = markingLatency([{ submittedAt: "2026-03-10", gradedOn: "2026-03-01" }]);
+  assert.equal(r.meanDays, null);
+  assert.equal(r.judged, 0);
+});
+
+/* --- can they get here in the morning? ------------------------------------- */
+
+test("absence concentrated in the first session of the day is reported separately", () => {
+  // Distinguishes "cannot get here" — transport, caring, a night shift — from "not
+  // engaged". Different diagnosis, different conversation, and the overall percentage
+  // cannot tell them apart.
+  const r = firstSessionAbsence([
+    { date: "2026-03-02", startTime: "09:00", status: "A" },
+    { date: "2026-03-02", startTime: "13:00", status: "P" },
+    { date: "2026-03-03", startTime: "09:00", status: "A" },
+    { date: "2026-03-03", startTime: "13:00", status: "P" },
+  ], { minDays: 2 });
+
+  assert.equal(r.firstSessionRate, 100);
+  assert.equal(r.laterRate, 0);
+});
+
+test("a student with too few multi-session days yields null, not a pattern", () => {
+  const r = firstSessionAbsence([
+    { date: "2026-03-02", startTime: "09:00", status: "A" },
+    { date: "2026-03-02", startTime: "13:00", status: "P" },
+  ], { minDays: 3 });
+
+  assert.equal(r.firstSessionRate, null);
+});
+
+test("days with only one session cannot distinguish first from later", () => {
+  // A single-register day has no "later session" to compare against, so it carries no
+  // information about arriving late in the day and is excluded from both sides.
+  const r = firstSessionAbsence([
+    { date: "2026-03-02", startTime: "09:00", status: "A" },
+    { date: "2026-03-03", startTime: "09:00", status: "A" },
+    { date: "2026-03-04", startTime: "09:00", status: "A" },
+  ], { minDays: 2 });
+
+  assert.equal(r.firstSessionRate, null);
+});
+
+test("single-session days do not skew the first-session rate on a mixed timetable", () => {
+  // THE TEST THAT ACTUALLY PINS THE EXCLUSION. The one above passes even without it,
+  // because a set of only single-session days has no later sessions at all and the
+  // empty-denominator guard catches it — so deleting the exclusion left that test green.
+  //
+  // Here the student has two multi-session days on which they attended the morning, and
+  // three single-register days they missed. Counting those three as "first session"
+  // absences takes the rate from 0% to 60% and turns somebody who gets in every morning
+  // into somebody who cannot.
+  const marks = [
+    { date: "2026-03-02", startTime: "09:00", status: "P" },
+    { date: "2026-03-02", startTime: "13:00", status: "A" },
+    { date: "2026-03-03", startTime: "09:00", status: "P" },
+    { date: "2026-03-03", startTime: "13:00", status: "A" },
+    { date: "2026-03-04", startTime: "09:00", status: "A" },
+    { date: "2026-03-05", startTime: "09:00", status: "A" },
+    { date: "2026-03-06", startTime: "09:00", status: "A" },
+  ];
+  const r = firstSessionAbsence(marks, { minDays: 2 });
+
+  assert.equal(r.days, 2, "only the multi-session days are counted");
+  assert.equal(r.firstSessionRate, 0, "they attended every morning they had a full day");
+  assert.equal(r.laterRate, 100);
+});

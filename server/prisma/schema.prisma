@@ -2064,6 +2064,29 @@ model StudentPredictionCurrent {
   /// written before followUpCompletedOn existed looks like. A zero would report the
   /// migration; a null reports that we cannot yet tell.
   overdueFollowUpCount   Int?
+  /// The average grade WEIGHTED by what each assessment is worth, and whether it
+  /// actually was. Assessment.weight is stored, validated and displayed, and the engine
+  /// has never read it — so a 20% quiz and a 60% project count the same in averageGrade
+  /// above. The Moodle importer never sets weight, so at a synced college every
+  /// assessment carries 0 and this falls back to the plain mean: `gradeWasWeighted`
+  /// records which figure you are looking at, because a number that appears to honour
+  /// the weighting and silently does not is the failure this schema is organised
+  /// against.
+  weightedAverageGrade   Float?
+  gradeWasWeighted       Boolean?
+  /// Mean days between work arriving and being marked. A STAFF signal reported beside
+  /// the score rather than inside it — a lecturer's backlog is not a fact about the
+  /// student sitting under it, though it does mean their average rests on less work
+  /// than it appears to. Null when nothing could be timed; zero would read as "marked
+  /// the same day", which is praise for a college that recorded no dates.
+  markingLatencyDays     Float?
+  /// Absence in the first session of a teaching day against absence in the rest of it.
+  /// Separates "cannot get here" — transport, caring, a night shift — from "not
+  /// engaged", which need opposite conversations and produce the same overall
+  /// percentage. Null unless the student has enough days carrying more than one
+  /// session: a single-register day has no later session to compare against.
+  firstSessionAbsenceRate Float?
+  laterSessionAbsenceRate Float?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2253,6 +2276,29 @@ model StudentPredictionHistory {
   /// written before followUpCompletedOn existed looks like. A zero would report the
   /// migration; a null reports that we cannot yet tell.
   overdueFollowUpCount   Int?
+  /// The average grade WEIGHTED by what each assessment is worth, and whether it
+  /// actually was. Assessment.weight is stored, validated and displayed, and the engine
+  /// has never read it — so a 20% quiz and a 60% project count the same in averageGrade
+  /// above. The Moodle importer never sets weight, so at a synced college every
+  /// assessment carries 0 and this falls back to the plain mean: `gradeWasWeighted`
+  /// records which figure you are looking at, because a number that appears to honour
+  /// the weighting and silently does not is the failure this schema is organised
+  /// against.
+  weightedAverageGrade   Float?
+  gradeWasWeighted       Boolean?
+  /// Mean days between work arriving and being marked. A STAFF signal reported beside
+  /// the score rather than inside it — a lecturer's backlog is not a fact about the
+  /// student sitting under it, though it does mean their average rests on less work
+  /// than it appears to. Null when nothing could be timed; zero would read as "marked
+  /// the same day", which is praise for a college that recorded no dates.
+  markingLatencyDays     Float?
+  /// Absence in the first session of a teaching day against absence in the rest of it.
+  /// Separates "cannot get here" — transport, caring, a night shift — from "not
+  /// engaged", which need opposite conversations and produce the same overall
+  /// percentage. Null unless the student has enough days carrying more than one
+  /// session: a single-register day has no later session to compare against.
+  firstSessionAbsenceRate Float?
+  laterSessionAbsenceRate Float?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

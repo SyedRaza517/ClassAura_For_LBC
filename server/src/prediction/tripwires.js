@@ -651,6 +651,132 @@ function overdueFollowUps(promises, closureFrom, cutoff, since) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The weighting the engine has always ignored                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An average grade that respects what each piece of work is actually worth.
+ *
+ * `Assessment.weight` is stored, validated on the way in and displayed on the
+ * assessment itself — and the engine has never read it, so a 20% quiz and a 60%
+ * project count the same. The client already says so in words; this makes it a number.
+ *
+ * THE TRAP, AND WHY THERE IS A FLAG RATHER THAN A SILENT FALLBACK. The Moodle importer
+ * never sets weight, so at a synced college EVERY assessment carries 0. Quietly
+ * returning the unweighted mean there would produce a figure that LOOKS like it honours
+ * the weighting and does not — which is precisely the class of failure the null-is-not-
+ * zero rule exists to prevent, and it would be invisible because the number is
+ * plausible. So the fallback is explicit and the row records which one it got.
+ *
+ * A PARTIALLY weighted set is different again. An assessment with no weight is not
+ * worth nothing — it is worth an unknown amount. Averaging it in at zero would silently
+ * discard a real mark, so it is excluded and counted, and the caller can see how many.
+ */
+function weightedGrade(marks) {
+  const list = (marks || []).filter((m) => m && isNum(m.pct));
+  if (!list.length) return { value: null, weighted: false, ignored: 0 };
+
+  const weighed = list.filter((m) => isNum(m.weight) && m.weight > 0);
+
+  // Nothing carries a weight — the ordinary state at a Moodle-synced college. Fall back
+  // to the plain mean and SAY that is what happened.
+  if (!weighed.length) {
+    const mean = list.reduce((a, m) => a + m.pct, 0) / list.length;
+    return { value: round1(mean), weighted: false, ignored: 0 };
+  }
+
+  const total = weighed.reduce((a, m) => a + m.weight, 0);
+  const sum = weighed.reduce((a, m) => a + m.pct * m.weight, 0);
+  return { value: round1(sum / total), weighted: true, ignored: list.length - weighed.length };
+}
+
+/* -------------------------------------------------------------------------- */
+/* How long marking takes                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Days between work arriving and being marked.
+ *
+ * A STAFF SIGNAL, NOT A STUDENT ONE, and it is reported rather than scored for exactly
+ * that reason: a lecturer's backlog is not a fact about the student sitting under it.
+ * It belongs beside the score as context — a student whose work is unmarked has an
+ * average built on less than it appears to be.
+ *
+ * NULL WHEN NOTHING CAN BE TIMED, never zero. Zero reads as "marked the same day",
+ * which is praise for a college that recorded no dates at all.
+ *
+ * A NEGATIVE GAP IS DISCARDED rather than counted. Two different clocks feed these —
+ * Moodle's own date and the date the mark landed here — and the schema warns about the
+ * distinction. A mark dated before its submission is a data fault, not a college that
+ * marks work before it arrives, and averaging it in would drag the mean towards a
+ * flattering number.
+ */
+function markingLatency(marked) {
+  let total = 0, judged = 0;
+
+  for (const g of marked || []) {
+    if (!g || !g.submittedAt || !g.gradedOn) continue;
+    const days = daysBetween(g.submittedAt, g.gradedOn);
+    if (days < 0) continue;
+    total += days;
+    judged += 1;
+  }
+
+  if (!judged) return { meanDays: null, judged: 0 };
+  return { meanDays: round1(total / judged), judged };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Can they get here in the morning?                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Absence in the first session of a teaching day, against absence in the rest of it.
+ *
+ * This separates "cannot get here" — transport, caring, a night shift, a commute that
+ * does not work — from "not engaged". They need opposite conversations, and an overall
+ * attendance percentage cannot tell them apart: both produce the same number.
+ *
+ * ONLY DAYS WITH MORE THAN ONE SESSION COUNT. A single-register day has no later
+ * session to compare against, so it carries no information about the pattern and is
+ * excluded from BOTH sides rather than counted as a first-session absence — otherwise
+ * a college that timetables one session a day would report every absent student as
+ * unable to get out of bed.
+ */
+function firstSessionAbsence(marks, config) {
+  const byDay = new Map();
+
+  for (const m of marks || []) {
+    if (!m || !isStatus(m.status) || !m.date) continue;
+    if (!byDay.has(m.date)) byDay.set(m.date, []);
+    byDay.get(m.date).push(m);
+  }
+
+  let firstAbs = 0, firstTotal = 0, laterAbs = 0, laterTotal = 0, days = 0;
+
+  for (const list of byDay.values()) {
+    if (list.length < 2) continue;   // nothing to compare against
+    days += 1;
+    const ordered = [...list].sort((a, b) => (a.startTime || "") < (b.startTime || "") ? -1 : 1);
+    ordered.forEach((m, i) => {
+      const absent = m.status === "A";
+      if (i === 0) { firstTotal += 1; if (absent) firstAbs += 1; }
+      else { laterTotal += 1; if (absent) laterAbs += 1; }
+    });
+  }
+
+  if (days < (config && config.minDays ? config.minDays : 3) || !firstTotal || !laterTotal) {
+    return { firstSessionRate: null, laterRate: null, days };
+  }
+
+  return {
+    firstSessionRate: round1((firstAbs / firstTotal) * 100),
+    laterRate: round1((laterAbs / laterTotal) * 100),
+    days,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Engagement recency                                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -940,5 +1066,6 @@ module.exports = {
   evaluate, attendanceShape, attendanceQuality, attainmentShape, engagementRecency,
   unitDispersion, unpassedUnits, weeklyRegularity, submissionTiming, repeatConcerns,
   queryBacklog, contactDeficit, overdueFollowUps,
+  weightedGrade, markingLatency, firstSessionAbsence,
   TRIP, TRIP_CODES,
 };

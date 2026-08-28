@@ -278,6 +278,12 @@ const DEFAULTS = {
   // permanently-lit row is one staff scroll past.
   unansweredQueryCeilingDays: 180,
 
+  // The fewest teaching days carrying MORE THAN ONE session before the first-session
+  // absence pattern is reported. A single-register day has no later session to compare
+  // against, so at a college timetabling one session a day this figure stays null
+  // rather than reporting every absent student as unable to get out of bed.
+  firstSessionMinDays: 3,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -620,6 +626,11 @@ function validate(input) {
       min: 1, max: 3650, whole: true,
       label: "The unanswered-query ceiling",
       why: "it is how long an unanswered question keeps being reported. Unbounded, one query nobody answered in a first term lights the row for ever.",
+    }) ||
+    checkNumber(out, "firstSessionMinDays", pick("firstSessionMinDays"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum days for a first-session pattern",
+      why: "it is how many multi-session teaching days are needed before morning absence is reported as a pattern. At 1 a single bad morning reads as an inability to get here.",
     });
   if (err) return err;
 

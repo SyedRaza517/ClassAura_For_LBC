@@ -64,6 +64,7 @@ const PREDICTION_OUT = [
   "gradeVolatility", "worstUnitId", "unitAttendanceSpread", "unpassedUnitCount",
   "attendanceRegularity", "lateSubmissionRate", "meanDaysLate", "weeksIntoProgramme",
   "assessmentsDueSoon", "gradedWithDates", "oldestOpenQueryOn", "openQueryCount", "overdueFollowUpCount",
+  "weightedAverageGrade", "gradeWasWeighted", "markingLatencyDays", "firstSessionAbsenceRate", "laterSessionAbsenceRate",
 ];
 
 const pick = (row, keys) => {
