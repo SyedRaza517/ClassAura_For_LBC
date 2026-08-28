@@ -35,3 +35,7 @@ client.zip
 
 # Agent worktrees — scratch clones, never part of the repo
 .claude/worktrees/
+
+# Backfill proposals are per-database and contain student identifiers — they belong
+# in a scratch directory a person reads, never in version control.
+student-link-proposals-*.csv
