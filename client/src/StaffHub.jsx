@@ -11,7 +11,9 @@ import {
   Sun, Sunrise, Sunset, TrendingUp, Timer, Info, Phone,
   CalendarCheck, UserCheck, Layers, Activity, Award, ShieldCheck,
   BookOpen, Percent, PlayCircle, RefreshCw, MoreHorizontal, MessageSquare, ChevronDown, Loader2, KeyRound, Send, Wallet,
-  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy
+  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy,
+  Radio,
+  Nfc,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -21,6 +23,9 @@ import {
 import { downloadCSV } from "./csv";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
+import CheckInCard from "./CheckInCard";
+import AdminNfcTags from "./AdminNfcTags";
+import AdminLiveAttendance from "./AdminLiveAttendance";
 import { useBackHandler } from "./backButton";
 import PhoneShell, { useIsHandset } from "./PhoneShell";
 import DeleteAccount from "./DeleteAccount";
@@ -710,6 +715,38 @@ const SITES = ["Onsite", "Online"];
 // Staff-tab filter and the Add/Edit Staff form. Matches validate.js HOME_SITES.
 const HOME_SITES = ["HND", "FE", "SL"];
 
+// Clocking in by touching a sticker. Renders nothing at all unless the college has
+// switched tap check-in on AND allowed it for staff, so nobody sees a control that would
+// only ever refuse them.
+function StaffTapCheckIn({ store }) {
+  const [settings, setSettings] = useState(null);
+  useEffect(() => {
+    // Deliberately silent on failure. A member of staff who is not granted the NFC Tags
+    // page gets a 403 here, and that is not an error worth showing them on a screen
+    // whose actual job is the two buttons above.
+    api.tapSettings().then(setSettings).catch(() => setSettings({ enabled: false }));
+  }, []);
+  if (!settings?.enabled || !settings?.staffTapEnabled) return null;
+
+  return (
+    <div className="mt-4">
+      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Or tap a sticker</p>
+      <CheckInCard
+        armSeconds={settings.armSeconds || 60}
+        actionLabel="Clock in — Onsite"
+        // Through the store, not the api directly: run() resyncs the check-in list and
+        // raises the same toast the button does, so both routes in behave identically.
+        onCheckIn={(tagCode) => store.tapCheckIn(tagCode)}
+        renderResult={(r) => (
+          r.alreadyCheckedIn
+            ? <>You were already clocked in at <strong>{r.in}</strong>.</>
+            : <>Clocked in <strong>Onsite</strong> at <strong>{r.in}</strong>.</>
+        )}
+      />
+    </div>
+  );
+}
+
 function CheckInScreen({ store, me }) {
   const today = todayISO();
   const rec = store.checkins.find(c => c.staffId === me.id && c.date === today);
@@ -766,6 +803,12 @@ function CheckInScreen({ store, me }) {
                 );
               })}
             </div>
+
+            {/* Tapping a sticker is the OTHER way in, and it does not ask where you are
+                working: touching a wall in the building settles that. Online stays on
+                the buttons above, which is why both are offered rather than one
+                replacing the other. */}
+            <StaffTapCheckIn store={store} />
           </div>
         )}
         <div className="mt-5">
@@ -2124,8 +2167,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
 // Can this user see/use a given admin page? The Super Admin gets everything,
 // including the Super-Admin-only Access tab. A page-scoped admin gets only their
@@ -2564,6 +2607,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "signups", label: "Sign-Up Requests", I: UserCheck },
     { key: "summaries", label: "Daily Summaries", I: UserPlus },
     { key: "registers", label: "Registers — HND", I: ClipboardList },
+    { key: "live-attendance", label: "Live Attendance", I: Radio },
+    { key: "attendance-tags", label: "NFC Tags", I: Nfc },
     { key: "students", label: "Students", I: GraduationCap },
     { key: "attendance-emails", label: "Attendance Emails", I: Mail },
     { key: "admissions", label: "Admissions", I: ClipboardList },
@@ -2666,6 +2711,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "signups" && <AdminSignups store={store} />}
         {activeKey === "summaries" && <AdminSummaries store={store} />}
         {activeKey === "registers" && <AdminHndRegisters store={store} />}
+        {activeKey === "live-attendance" && <AdminLiveAttendance store={store} />}
+        {activeKey === "attendance-tags" && <AdminNfcTags />}
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}

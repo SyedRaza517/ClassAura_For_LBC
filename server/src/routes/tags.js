@@ -8,6 +8,7 @@
 const crypto = require("crypto");
 const router = require("express").Router();
 const prisma = require("../db");
+const { crossTenant } = require("../db");
 const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
@@ -18,6 +19,23 @@ router.use(requireAuth, requirePage("attendance-tags"));
 // 16 random bytes, base64url. Not sequential and not derived from the label: a code
 // guessable from the sticker in the next room is a check-in nobody attended.
 const newCode = () => crypto.randomBytes(16).toString("base64url");
+
+/**
+ * Is this physical tag already registered ANYWHERE on the platform?
+ *
+ * The one cross-tenant read in this feature, and it has to be: AttendanceTag.code is
+ * globally unique, so a create() with a code another college already holds fails with an
+ * opaque P2002 — and the honest answer to "is this sticker already in use" is yes, even
+ * when the other holder is an institution this administrator cannot see.
+ *
+ * Returns a BOOLEAN and nothing else. Which college holds it, what they call it and when
+ * they registered it all stay invisible; the caller learns only that this sticker is
+ * spoken for, which is what they need to go and find a different one.
+ */
+async function crossTenantTagExists(code) {
+  return await crossTenant(async () =>
+    Boolean(await prisma.attendanceTag.findUnique({ where: { code }, select: { id: true } })));
+}
 
 // An allowlist, like every other serialiser here. Note what is absent: `code`. A column
 // added to AttendanceTag tomorrow is private until somebody publishes it deliberately.
@@ -71,14 +89,40 @@ router.get("/", async (_req, res) => {
   res.json(rows.map(sTag));
 });
 
+// The shortest code we will accept from a caller. A tag's factory UID is 4–7 bytes,
+// which is 8–14 hex characters, so this admits a real UID and refuses "room1".
+const MIN_SUPPLIED_CODE = 8;
+
 // POST /api/tags — register a sticker. The code comes back ONCE, to be written onto it.
+//
+// `code` is optional and exists for the second way of registering a sticker: an admin on
+// a phone taps a BLANK tag and the app sends its factory UID. That needs no NFC writing
+// tool at all — buy stickers, tap each one, name the room — which is a materially easier
+// rollout than writing a generated secret onto every tag with a separate app. When it is
+// omitted we generate a secret instead, for an admin working at a desktop with no NFC.
 router.post("/", async (req, res) => {
   const label = req.body?.label;
   if (!isString(label) || !label.trim()) return res.status(400).json({ error: "A label is required — the room this sticker lives in" });
   if (label.length > 120) return res.status(400).json({ error: "That label is too long (120 characters maximum)" });
 
+  const supplied = req.body?.code;
+  if (supplied != null && !isString(supplied)) return res.status(400).json({ error: "code must be text" });
+  const code = supplied ? supplied.trim() : null;
+  if (code !== null && code.length < MIN_SUPPLIED_CODE) {
+    return res.status(400).json({ error: `A tag's own code must be at least ${MIN_SUPPLIED_CODE} characters — a short one would be guessable` });
+  }
+  if (code !== null && code.length > 200) return res.status(400).json({ error: "That code is too long (200 characters maximum)" });
+
+  // code is unique across every college, so a clash here means this physical sticker is
+  // already registered — possibly to another institution, which is exactly the case we
+  // must not paper over by generating a different code and pretending it worked.
+  if (code !== null) {
+    const clash = await crossTenantTagExists(code);
+    if (clash) return res.status(409).json({ error: "That tag is already registered." });
+  }
+
   const tag = await prisma.attendanceTag.create({
-    data: { code: newCode(), label: label.trim(), createdBy: req.user?.name || null },
+    data: { code: code || newCode(), label: label.trim(), createdBy: req.user?.name || null },
   });
 
   audit.record(req, {

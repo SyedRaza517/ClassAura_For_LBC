@@ -333,6 +333,10 @@ export function useApiStore(notify, user) {
     refresh,
     // check-ins
     checkIn: run((site) => api.checkIn(site), "Checked in — have a great day!"),
+    // Clocking in by touching an NFC sticker. Always Onsite — the tap proves it — so
+    // unlike checkIn above it takes no site. Same run() wrapper, so the check-in list
+    // resyncs and the toast appears exactly as it does for the button.
+    tapCheckIn: run((tagCode) => api.tapCheckIn(tagCode), "Clocked in — have a great day!"),
     checkOut: run((id) => api.checkOut(id), "Checked out. See you tomorrow!"),
     upsertCheckin: run((data) => api.upsertCheckin(data), "Check-in record saved"),
     saveSummary: run((date, text) => api.saveSummary(date, text), "Daily summary saved"),

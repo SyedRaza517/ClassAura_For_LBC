@@ -8,11 +8,12 @@ import { api, setToken } from "./api";
 // The same Face ID / fingerprint control the staff app uses, so both halves behave
 // identically and there is one implementation to keep correct.
 import { BiometricSetting } from "./StaffHub";
+import CheckInCard from "./CheckInCard";
 import {
   Percent, Award, MessageSquare, LogOut, ChevronLeft, ChevronRight,
   Loader2, Send, CheckCircle2, Info, ArrowRight, RefreshCw,
   Settings, KeyRound, Lock, Trash2, AlertTriangle, Home as HomeIcon,
-  Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin,
+  Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin, Nfc,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
@@ -179,6 +180,7 @@ export default function StudentApp({ user, logout }) {
   const [results, setResults] = useState(null);
   const [reviews, setReviews] = useState(null);
   const [timetable, setTimetable] = useState(null);
+  const [tapContext, setTapContext] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(true);
   // Android back returns to the home screen from any other tab.
@@ -188,8 +190,9 @@ export default function StudentApp({ user, logout }) {
   // attendance and results without each tab refetching the same thing.
   const load = useCallback(async () => {
     setBusy(true); setErr("");
-    const [a, r, q, v, tt] = await Promise.allSettled([
+    const [a, r, q, v, tt, tap] = await Promise.allSettled([
       api.studentAttendance(), api.studentAssessments(), api.studentQueries(), api.studentReviewsAboutMe(), api.studentTimetable(),
+      api.studentTapContext(),
     ]);
     if (a.status === "fulfilled") setAttendance(a.value);
     if (r.status === "fulfilled") setResults(r.value);
@@ -198,6 +201,10 @@ export default function StudentApp({ user, logout }) {
     // The timetable is a bonus screen — a failure here shouldn't add to the error
     // banner that gates the core screens, so it's loaded but not counted in `failed`.
     if (tt.status === "fulfilled") setTimetable(tt.value);
+    // Tap check-in is a bonus like the timetable: a college that has not switched it on
+    // returns { enabled: false }, and a failure here must not add to the error banner
+    // that gates attendance, results and messages.
+    if (tap.status === "fulfilled") setTapContext(tap.value);
     // ANY failure is reported, not only a total one. Requiring all of them to fail meant
     // a single broken call showed the student "Not graded yet" or "0 sessions" — an
     // answer, and a wrong one — instead of telling them something didn't load.
@@ -241,7 +248,7 @@ export default function StudentApp({ user, logout }) {
   }, [screen, reviews]);
 
   const title = { home: "Student Hub", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", more: "More" }[screen];
-  const shared = { attendance, results, reviews, queries, timetable, busy, err, reload: load, setScreen };
+  const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen };
 
   return (
     <PhoneShell header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} />}>
@@ -341,7 +348,89 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
 
 /* ============================== home ============================== */
 
-function Home({ user, attendance, results, queries, reviews, busy, err, setScreen, newReplies, newReviews }) {
+/* ============================== tap check-in ============================== */
+
+// The card at the top of the home screen. Renders nothing at all when the college has
+// not switched tap check-in on, so a student at an institution that does not use it
+// never sees a feature they cannot have.
+//
+// `now` from the server is the list of this student's classes running at this moment:
+// empty when none is, one when it is unambiguous, several when two overlap. The picker
+// only appears in that last case, which is rare enough that making it the default shape
+// would put a menu in front of every student every day for the sake of a few.
+function StudentCheckIn({ tapContext, reload }) {
+  const [picked, setPicked] = useState(null);
+  if (!tapContext?.enabled) return null;
+
+  const running = tapContext.now || [];
+  const next = tapContext.next;
+  const many = running.length > 1;
+  const one = running.length === 1 ? running[0] : null;
+  const target = many ? picked : one;
+
+  const when = (s) => `${s.startTime}–${s.endTime}`;
+
+  const subtitle = (
+    <div className="mb-3">
+      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        <Nfc size={13} /> Check in
+      </p>
+      {running.length === 0 ? (
+        <p className="mt-1 text-sm leading-snug text-slate-600">
+          {next
+            ? <>No class on right now. Your next one is <span className="font-semibold text-slate-800">{next.unitName}</span> at {next.startTime}.</>
+            : "You have no more classes today."}
+        </p>
+      ) : many && !picked ? (
+        <>
+          <p className="mt-1 text-sm leading-snug text-slate-600">Two of your classes are running. Which one are you in?</p>
+          <div className="mt-2 space-y-1.5">
+            {running.map((s) => (
+              <button key={s.id} type="button" onClick={() => setPicked(s)}
+                className="press w-full rounded-xl border border-slate-200 px-3 py-2 text-left">
+                <p className="text-[13px] font-semibold text-slate-800">{s.unitName || s.unitCode}</p>
+                <p className="text-[11px] text-slate-500">{when(s)}</p>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="mt-1 text-sm leading-snug text-slate-600">
+          <span className="font-semibold text-slate-800">{target?.unitName || target?.unitCode}</span>
+          <span className="text-slate-500"> · {target ? when(target) : ""}</span>
+          {many && <button type="button" onClick={() => setPicked(null)} className="ml-2 text-[12px] font-semibold underline" style={{ color: NAVY }}>change</button>}
+        </p>
+      )}
+    </div>
+  );
+
+  return (
+    <CheckInCard
+      armSeconds={tapContext.armSeconds || 60}
+      subtitle={subtitle}
+      actionLabel="Check in"
+      disabled={running.length === 0 || (many && !picked)}
+      disabledNote={running.length === 0
+        ? (next ? `Check-in opens at ${next.startTime}.` : "Nothing to check in to today.")
+        : "Choose which class you're in first."}
+      onCheckIn={async (tagCode) => {
+        const r = await api.studentTapCheckIn(tagCode, target?.id);
+        // The mark changes this student's attendance percentage, so the screen behind
+        // the card is now stale. Refreshing also re-reads tap-context, which is what
+        // stops a second check-in being offered for a class already marked.
+        reload();
+        return r;
+      }}
+      renderResult={(r) => (
+        r.alreadyMarked
+          ? <>You were already marked <strong>{r.status === "L" ? "late" : "present"}</strong> for {r.session?.unitName || "this class"}.</>
+          : <>Marked <strong>{r.status === "L" ? "late" : "present"}</strong> for {r.session?.unitName || "this class"} at <strong>{r.checkedInAt}</strong>.</>
+      )}
+    />
+  );
+}
+
+function Home({ user, attendance, results, queries, reviews, tapContext, busy, err, reload, setScreen, newReplies, newReviews }) {
   // Only blank the screen when nothing at all arrived. One failed call must not
   // hide the data that did load — that was the old silent-wrong-data bug inverted.
   if (err && !attendance && !results) return <Screen><ErrBox>{err}</ErrBox></Screen>;
@@ -369,6 +458,11 @@ function Home({ user, attendance, results, queries, reviews, busy, err, setScree
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
+      {/* Check-in sits ABOVE the headline numbers on purpose: it is the one thing on
+          this screen with a deadline attached. Attendance and results are still true in
+          an hour; a register closes when the class does. */}
+      <StudentCheckIn tapContext={tapContext} reload={reload} />
+
       {/* Headline pair: the two numbers a student actually cares about. */}
       <div className="grid grid-cols-2 gap-3">
         <HeroTile onClick={() => setScreen("attendance")} i={0}

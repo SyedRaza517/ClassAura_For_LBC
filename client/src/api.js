@@ -267,6 +267,11 @@ export const api = {
   submitStudentQuery: (subject, message) => request("/student/me/query", { method: "POST", body: { subject, message } }),
   studentQueries: () => request("/student/me/queries"),
   studentTimetable: () => request("/student/me/timetable"),
+  // NFC tap check-in. tapContext says whether the feature is on and which of this
+  // student's classes are running; tapCheckIn writes the mark. sessionId is sent only
+  // after an "ambiguous" reply, when two of their classes overlap.
+  studentTapContext: () => request("/student/me/tap-context"),
+  studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) } }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
   timetableCourses: () => request("/timetable/courses"),
@@ -449,6 +454,9 @@ export const api = {
   // check-ins
   listCheckins: (date) => request(`/checkins${date ? `?date=${date}` : ""}`),
   checkIn: (site) => request("/checkins/check-in", { method: "POST", body: site ? { site } : {} }),
+  // Clocking in by touching a sticker. No site is sent: the tap proves Onsite, and the
+  // server refuses to record anything else for this route.
+  tapCheckIn: (tagCode) => request("/checkins/tap-check-in", { method: "POST", body: { tagCode } }),
   checkOut: (id) => request(`/checkins/${id}/check-out`, { method: "POST" }),
   upsertCheckin: (data) => request("/checkins", { method: "PUT", body: data }),
   saveSummary: (date, summary) => request("/checkins/summary", { method: "PUT", body: { date, summary } }),
@@ -524,6 +532,22 @@ export const api = {
   removeSession: (id, override) => request(`/hnd/sessions/${id}`, { method: "DELETE", body: override ? { override: true } : undefined }),
   getRegister: (sessionId) => request(`/hnd/sessions/${sessionId}/register`),
   saveRegister: (sessionId, marks, override) => request(`/hnd/sessions/${sessionId}/register`, { method: "PUT", body: { marks, ...(override ? { override: true } : {}) } }),
+  // The lecturer's live view: who is in, who is late, who has not appeared, and the
+  // minute each of them tapped. Polled while a class is running.
+  sessionLive: (sessionId) => request(`/hnd/sessions/${sessionId}/live`),
+  mySessionsToday: () => request("/hnd/my-sessions/today"),
+  // The ONLY route from tap check-in to an absence, and it takes a named human.
+  markRemainingAbsent: (sessionId, override) => request(`/hnd/sessions/${sessionId}/mark-remaining-absent`, { method: "POST", body: override ? { override: true } : {} }),
+
+  // --- NFC tags (admin) ---
+  tags: () => request("/tags"),
+  // `code` is optional: supplied when an admin registers a blank sticker by tapping it,
+  // omitted when the server should generate a secret to be written onto one.
+  createTag: (label, code) => request("/tags", { method: "POST", body: { label, ...(code ? { code } : {}) } }),
+  updateTag: (id, patch) => request(`/tags/${id}`, { method: "PATCH", body: patch }),
+  tagLog: (id) => request(`/tags/${id}/log`),
+  tapSettings: () => request("/tags/settings"),
+  saveTapSettings: (patch) => request("/tags/settings", { method: "PUT", body: patch }),
   // semesterId: "" = all semesters, "unassigned" = sessions outside every semester
   getAttendance: (semesterId, termId) => request(`/hnd/attendance${termId ? `?termId=${encodeURIComponent(termId)}` : semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : ""}`),
   // year/termNumber scope to a curriculum stage ("Year 1 · Term 2") by narrowing to
