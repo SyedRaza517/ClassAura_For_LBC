@@ -6,7 +6,7 @@
 
 **Architecture:** One pure resolver decides which register a tap belongs to and whether it is `P` or `L`, with tests beside it and no database. Two thin endpoints sit on top — one under `/api/student` (already inside `STUDENT_ROUTERS`, so the student portal's isolation is untouched) and one under `/api/checkins`, reusing the existing `CheckIn` model unchanged. Both write a `TagTap` log row on every outcome, accepted or refused. A per-tenant config module following `attendanceBandConfig.js` keeps the feature switched off until a college turns it on.
 
-**Tech Stack:** Node 20, Express, Prisma 6 / PostgreSQL, `node:test` for unit tests, `scripts/smoke-*.mjs` for HTTP suites.
+**Tech Stack:** Node 24.15.0, Express, Prisma 5.22 / PostgreSQL, `node:test` for unit tests, `scripts/smoke-*.mjs` for HTTP suites.
 
 **Spec:** `docs/superpowers/specs/2026-08-28-nfc-attendance-design.md`
 

@@ -69,6 +69,13 @@ const requireStudentAdmin = requireAnyPage(["students"]);    // the student dire
 // The handful of routes that genuinely serve both screens (enrolments link a student
 // to a unit, so either side may legitimately edit them).
 const requireHndWrite = requireAnyPage(["registers", "students"]);
+// The live attendance dashboard. Its own grantable page, because the audience differs
+// from the Registers page: a lecturer watching their class fill in is not the person who
+// restructures a course. "registers" is included so an administrator who already has the
+// registers themselves does not have to be granted a second page to watch one being
+// taken — but a college can now grant the watching WITHOUT the editing, which is the
+// point of the key existing at all.
+const requireLiveAttendance = requireAnyPage(["live-attendance", "registers"]);
 const { isStatus, summarise, summariseCounts } = require("../attendance");
 
 // DEF-01: HND registers are an admin-only feature (they live entirely in the admin
@@ -89,7 +96,9 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 // impossible dates were accepted. A session dated to a day that doesn't exist falls
 // outside every semester range and shows different totals depending on the scope.
 const { isRealDate } = require("../validate");
-const { localDate } = require("../clock");
+const { localDate, localTime } = require("../clock");
+const tapConfig = require("../attendanceTapConfig");
+const { subMinutes, SELF_CHECKIN_STAMP } = require("../attendanceTap");
 const isDate = (v) => isRealDate(v);
 const isTime = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
@@ -1199,6 +1208,192 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
 
   const saved = await prisma.attendanceMark.findMany({ where: { sessionId: session.id } });
   res.json({ ok: true, saved: saved.length, marks: saved.map(sMark) });
+});
+
+/* ========================= the lecturer's live view ========================= */
+
+// GET /api/hnd/my-sessions/today — the classes this lecturer is teaching today.
+//
+// Via Unit.tutorStaffId, so the dashboard opens on the right register without hunting
+// through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
+// on: a name typed into a box is not an identity, and matching on it would hand one
+// lecturer another's register whenever two people share a surname.
+router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req, res) => {
+  const date = localDate();
+  const time = localTime();
+  const settings = await tapConfig.get();
+
+  const sessions = await prisma.hndSession.findMany({
+    where: { date, unit: { tutorStaffId: req.user.id } },
+    include: {
+      unit: { select: { id: true, code: true, name: true, term: { select: { start: true, end: true } } } },
+      _count: { select: { marks: true } },
+    },
+    orderBy: { startTime: "asc" },
+  });
+
+  res.json({
+    date,
+    tapEnabled: settings.enabled,
+    sessions: sessions.map((s) => ({
+      id: s.id,
+      unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      description: s.description,
+      kind: s.kind,
+      marked: s._count.marks,
+      // Whether taps are being accepted for this class RIGHT NOW. Derived at read time
+      // rather than stored: "is it running" changes every minute, and a column holding
+      // it would be wrong within one and have nothing to correct it.
+      // The term is part of this, matching what the tap route will actually do. Without
+      // it the dashboard advertised "Open now" for a session inside a closed term while
+      // every tap on it came back 409, which reads as the app being broken.
+      acceptingTaps: settings.enabled
+        && time >= subMinutes(s.startTime, settings.earlyGraceMins)
+        && time <= s.endTime
+        && (!s.unit?.term || (date >= s.unit.term.start && date <= s.unit.term.end)),
+    })),
+  });
+});
+
+// GET /api/hnd/sessions/:id/live — who is in, who is late, who has not appeared.
+//
+// The register as it stands during the class, with the minute each student tapped in.
+// Polled every few seconds by the dashboard; this codebase has no websocket layer and
+// one three-hour class does not justify introducing one.
+//
+// "Not tapped" is a DISPLAY state, not a mark. Nothing is written for those students
+// here — the roll simply has no row for them yet. The only route from this feature to an
+// A is POST /mark-remaining-absent below, with a named human on the end of it.
+router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req, res) => {
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    include: { unit: { select: { id: true, code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const [enrolments, marks, settings] = await Promise.all([
+    prisma.enrolment.findMany({ where: { unitId: session.unitId }, include: { student: true } }),
+    prisma.attendanceMark.findMany({ where: { sessionId: session.id } }),
+    tapConfig.get(),
+  ]);
+
+  const byStudent = new Map(marks.map((m) => [m.studentId, m]));
+
+  // A student since un-enrolled who was marked on this register still belongs on it,
+  // matching GET /register — otherwise their mark would silently vanish from the screen
+  // while remaining in the database.
+  const extraIds = marks.filter((m) => !enrolments.some((e) => e.studentId === m.studentId)).map((m) => m.studentId);
+  const extras = extraIds.length ? await prisma.student.findMany({ where: { id: { in: extraIds } } }) : [];
+
+  const students = [...enrolments.map((e) => e.student), ...extras]
+    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+
+  const rows = students.map((s) => {
+    const mark = byStudent.get(s.id);
+    return {
+      student: sStudent(s),
+      status: mark?.status || null,
+      remark: mark?.remark || "",
+      checkedInAt: mark?.checkedInAt ?? null,
+      // Whether the student put themselves on this register or a member of staff did.
+      // takenBy already carries provenance this way for the Moodle importer.
+      selfMarked: mark?.takenBy === SELF_CHECKIN_STAMP,
+      takenBy: mark?.takenBy || null,
+      enrolled: enrolments.some((e) => e.studentId === s.id),
+    };
+  });
+
+  const time = localTime();
+  const counts = { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
+  for (const r of rows) {
+    if (r.status && r.status in counts) counts[r.status] += 1;
+    else counts.notMarked += 1;
+  }
+
+  res.json({
+    session: sSession(session),
+    unit: session.unit ? { id: session.unit.id, code: session.unit.code, name: session.unit.name } : null,
+    acceptingTaps: settings.enabled
+      && session.date === localDate()
+      && time >= subMinutes(session.startTime, settings.earlyGraceMins)
+      && time <= session.endTime,
+    // Null when the unit has no term, which is a real state — the register is simply
+    // never term-locked — and not the same as "the term is open".
+    termLocked: session.unit?.term
+      ? !(localDate() >= session.unit.term.start && localDate() <= session.unit.term.end)
+      : null,
+    counts,
+    rows,
+  });
+});
+
+// POST /api/hnd/sessions/:id/mark-remaining-absent — the lecturer closes the register.
+//
+// Writes A for every ENROLLED student who has no mark on this session. This is the only
+// path from tap check-in to an absence, and it exists precisely so that no automatic
+// process ever takes it: a phone with a flat battery, a forgotten handset or a device
+// with no NFC must not become an academic record without somebody deciding it should.
+router.post("/sessions/:id/mark-remaining-absent", requireAuth, requireRegisters, async (req, res) => {
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    include: { unit: { include: { term: true } } },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // The same term gate the register save enforces. A convenience button must not be a
+  // way around a closed term.
+  const term = session.unit?.term;
+  if (term && req.body?.override !== true) {
+    const today = localDate();
+    if (today < term.start || today > term.end) {
+      return res.status(423).json({ error: `${term.name} is ${today > term.end ? "over" : "not open yet"} — reopen it to edit this register.`, locked: true });
+    }
+  }
+
+  // A register for a class that has not happened yet cannot be closed off. Nothing
+  // stopped this before, so one press marked a whole cohort absent for next Tuesday —
+  // and because a tap can never overwrite a mark, those students would then be unable to
+  // check in when the class actually ran. PUT /register has the same hole, but this is a
+  // single button and reaches every enrolled student at once.
+  if (session.date > localDate()) {
+    return res.status(400).json({ error: "That class hasn't happened yet — its register can't be closed off." });
+  }
+
+  const [enrolments, marks] = await Promise.all([
+    prisma.enrolment.findMany({ where: { unitId: session.unitId }, select: { studentId: true } }),
+    prisma.attendanceMark.findMany({ where: { sessionId: session.id }, select: { studentId: true } }),
+  ]);
+  const marked = new Set(marks.map((m) => m.studentId));
+  const missing = enrolments.map((e) => e.studentId).filter((id) => !marked.has(id));
+
+  if (!missing.length) return res.json({ ok: true, marked: 0, message: "Everyone on this register already has a mark." });
+
+  const outOfTerm = Boolean(term && req.body?.override === true);
+  const takenBy = req.user?.name ? (outOfTerm ? `${req.user.name} (out-of-term correction)` : req.user.name) : null;
+
+  // createMany, not upsert: every id here provably has no mark, and using create makes
+  // it structurally impossible for this route to overwrite one. skipDuplicates covers
+  // the race where a student taps in between the read above and this write — their P
+  // wins, which is the correct outcome.
+  const created = await prisma.attendanceMark.createMany({
+    data: missing.map((studentId) => ({ sessionId: session.id, studentId, status: "A", remark: "", takenBy })),
+    skipDuplicates: true,
+  });
+
+  await flagStale(missing, "a register being closed off");
+
+  audit.record(req, {
+    action: outOfTerm ? "attendance.register.corrected" : "attendance.register.closed",
+    entity: "HndSession", entityId: session.id,
+    summary: `${created.count} student(s) marked absent on the ${session.date} register for ${session.unit?.code || "a unit"} by ${req.user?.name || "an administrator"}` +
+      (outOfTerm ? ` — an out-of-term correction made after ${term.name} closed on ${term.end}` : ""),
+    before: null,
+    after: Object.fromEntries(missing.slice(0, 40).map((id) => [id, "A"])),
+  });
+
+  res.json({ ok: true, marked: created.count });
 });
 
 /* ============================== percentages ============================== */

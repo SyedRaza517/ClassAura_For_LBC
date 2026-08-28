@@ -92,6 +92,9 @@ const TRIPWIRE_COLUMNS = [
   "openMitigationCount", "oldestOpenMitigationOn", "mitigatedAssessmentCount", "attendanceMitigated",
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
   "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
+  "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
+  "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
+  "entryProfileRecorded", "entryProfileOn", "entryProfileAnswered", "entryProfileQuestions", "entryProfileBarriers", "entryWifiAtHome", "entryKnowsOfficeSoftware", "entryAdmittedOutcome", "rightToStudyExpiresOn", "currentBandSince", "worstBandHeld", "worstBandSince", "observedDays", "bandChanges", "bandsVisited", "recoveredPoints", "recoveredBy", "lowestScore", "lowestOn", "divergenceShape", "attendanceSubmissionGap", "attendanceVleGap",
 ];
 
 /**
@@ -277,4 +280,71 @@ test("adjustments.js reads nothing but the decision and the window", () => {
   for (const forbidden of ["c.category", "c.detail", ".category", ".detail"]) {
     assert.ok(!src.includes(forbidden), `adjustments.js touches ${forbidden}`);
   }
+});
+
+/* -------------------------------------------------------------------------- */
+/* One vocabulary, five files                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Every TRIP_ code from every module lands in the SAME riskDriverCodes column, so staff
+// read one list of reasons rather than five. Two consequences that nothing else checks:
+//
+//   1. A DUPLICATE STRING would make two different findings indistinguishable on the
+//      screen, and the modules are written independently and cannot see each other.
+//   2. THE PREFIX IS STRUCTURAL. OVR-004 worsens a band on redIndicatorCount, which
+//      engine.js derives from its own internal reds array; riskDriverCodes is a copy
+//      taken afterwards, so nothing appended can reach the override. A code named
+//      RED_something would read as the engine own and invite a later reader to take the
+//      count from the copy, silently wiring these layers into banding.
+//
+// Each module tests its own vocabulary. Nothing tested them TOGETHER, which is the only
+// place a collision can exist.
+test("the nine tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
+  const all = ALL_VOCABULARIES;
+
+  const seen = new Map();
+  for (const [name, codes] of all) {
+    assert.ok(Array.isArray(codes) && codes.length, name + " exports no code vocabulary");
+    for (const code of codes) {
+      assert.ok(code.startsWith("TRIP_"), name + ' emits \"' + code + '\", which is not TRIP_-prefixed');
+      assert.ok(!seen.has(code), code + " is emitted by both " + seen.get(code) + " and " + name);
+      seen.set(code, name);
+    }
+  }
+});
+
+// THE NINE VOCABULARIES, IN ONE PLACE.
+//
+// Two tests below need this list, and for a while they each had their own copy — so
+// adding a module to one and not the other left the second passing while checking
+// nothing. That is the failure mode this file exists to catch in other people's code,
+// and it had it. One constant, both tests, and adding a module is a single edit.
+const ALL_VOCABULARIES = [
+  ["tripwires", require("./tripwires").TRIP_CODES],
+  ["coverage", require("./coverage").COVERAGE_CODES],
+  ["cohort", require("./cohort").COHORT_CODES],
+  ["workload", require("./workload").WORKLOAD_CODES],
+  ["funding", require("./funding").FUNDING_CODES],
+  ["sessions", require("./sessions").SESSIONS_CODES],
+  ["intake", require("./intake").INTAKE_CODES],
+  ["history", require("./history").HISTORY_CODES],
+  ["divergence", require("./divergence").DIVERGENCE_CODES],
+];
+
+// EVERY CODE THE SERVER CAN EMIT MUST HAVE A LABEL ON THE SCREEN.
+//
+// The two lists are hand-maintained copies in different workspaces, which is the same
+// shape of problem CLAUDE.md documents for ADMIN_PAGES — and it fails the same way, by
+// looking fine. A code with no label does not error; it renders its own constant, so a
+// tutor opening a student's record sees "TRIP_WORKLOAD_PILEUP" where a sentence should
+// be. There is no client-side test framework, so the only place this can be caught is
+// here, by reading the file as text.
+test("every tripwire code the server emits is labelled in the client", () => {
+  const codes = [...new Set(ALL_VOCABULARIES.flatMap(([, v]) => v))];
+
+  const ui = fs.readFileSync(path.join(__dirname, "..", "..", "..", "client", "src", "StaffHub.jsx"), "utf8");
+  const missing = codes.filter((c) => !ui.includes(`${c}:`));
+
+  assert.deepEqual(missing, [],
+    `these codes would render as their own constant on a tutor's screen: ${missing.join(", ")}`);
 });

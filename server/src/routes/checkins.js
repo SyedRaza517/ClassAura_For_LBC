@@ -5,6 +5,7 @@ const { sCheckin } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isString, isRealDate, MAX_TEXT, isSite } = require("../validate");
 const { localDate, localTime } = require("../clock");
+const tapConfig = require("../attendanceTapConfig");
 
 // HH:MM, 24-hour. Times are stored as plain strings and rendered verbatim.
 const isTime = (v) => isString(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -122,6 +123,146 @@ router.post("/check-in", requireAuth, async (req, res) => {
     create: { staffId: req.user.id, date, timeIn: nowTime(), site: site || null },
   });
   res.status(201).json(sCheckin(rec));
+});
+
+// GET /api/checkins/tap-settings — may I offer the tap button, and for how long?
+//
+// requireAuth ONLY, and that is the entire reason it exists. The full settings live on
+// /api/tags/settings, whose router is gated on the attendance-tags admin page — so an
+// ordinary lecturer asking whether they may tap got a 403, the client swallowed it, and
+// the check-in card rendered nothing. The feature worked and was invisible to everybody
+// it was built for.
+//
+// An allowlist of three booleans and a number. Nothing here is sensitive: it says only
+// whether the college has switched the feature on. The lateness threshold, the grace
+// window and who last changed them stay on the admin route.
+router.get("/tap-settings", requireAuth, async (_req, res) => {
+  const s = await tapConfig.get();
+  res.json({ enabled: s.enabled, staffTapEnabled: s.staffTapEnabled, armSeconds: s.armSeconds });
+});
+
+// In-process and module-level, correct for ONE Node process; a clustered deployment needs
+// Redis. The student route has had one from the start and this did not, which was an
+// oversight rather than a decision: without it a staff account can try tag codes as fast
+// as the API will answer, and nothing else here throttles that.
+const staffTapHits = new Map(); // staffId -> number[] of timestamps
+const STAFF_TAP_WINDOW_MS = 60_000;
+const STAFF_TAP_MAX = 10;
+function staffTapAllowed(staffId) {
+  const now = Date.now();
+  const recent = (staffTapHits.get(staffId) || []).filter((t) => now - t < STAFF_TAP_WINDOW_MS);
+  if (recent.length >= STAFF_TAP_MAX) { staffTapHits.set(staffId, recent); return false; }
+  recent.push(now);
+  staffTapHits.set(staffId, recent);
+  return true;
+}
+
+// POST /api/checkins/tap-check-in — clock in by touching an NFC sticker.
+//
+// `site` is NOT accepted and NOT asked for. Someone who touched a sticker in the
+// building cannot be working online — the tap is what proves they were at that wall — so
+// recording anything but "Onsite" would store a claim the tap itself disproves. Working
+// online remains available through POST /check-in, which does take a site.
+//
+// WHAT THIS DOES AND DOES NOT PROVE
+//
+// It proves somebody was at the sticker, ONCE, with this account signed in. It does not
+// prove they are there now. The code on a sticker is static and any phone with a generic
+// NFC app can read it, so a member of staff who notes it down can clock in Onsite from
+// home, and the tagId on the row would read as corroboration it is not. An earlier
+// version of this comment claimed this was "the first time a staff clock-in has meant
+// 'was in the building' rather than 'said so'" — that overstated it, and a claim like
+// that in a timesheet record is worth more care than a claim about a feature.
+//
+// What it does raise is the bar: a clock-in now requires having walked past a sticker at
+// least once rather than nothing at all, and every tap lands in TagTap with its IP, so a
+// pattern is visible to somebody looking. Closing it properly needs rotating codes or a
+// tag bound to a place — see the design note in docs/superpowers/specs/.
+router.post("/tap-check-in", requireAuth, async (req, res) => {
+  const settings = await tapConfig.get();
+  if (!settings.enabled || !settings.staffTapEnabled) {
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "disabled", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    catch (e) { console.error("[tap] could not log a disabled staff tap:", e.message); }
+    return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
+  }
+
+  const code = req.body?.tagCode;
+  if (!isString(code) || !code.trim()) return res.status(400).json({ error: "A tag is required" });
+
+  if (!staffTapAllowed(req.user.id)) {
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "rate_limited", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    catch (e) { console.error("[tap] could not log a rate-limited staff tap:", e.message); }
+    return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+  }
+
+  // Tenant-scoped by db.js, so another college's tag is simply not found.
+  const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
+  if (!tag) {
+    // The code itself is never stored — a log an administrator reads must not become a
+    // list of the codes somebody has been trying.
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "tag_unknown", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    catch (e) { console.error("[tap] could not log an unknown-tag staff tap:", e.message); }
+    return res.status(404).json({ error: "That tag isn't recognised." });
+  }
+
+  const date = today();
+
+  // Never throws into the request: the clock-in is the record, this is the account of it.
+  const logTap = async (outcome, extra = {}) => {
+    try {
+      await prisma.tagTap.create({
+        data: { tagId: tag.id, staffId: req.user.id, outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
+      });
+    } catch (e) {
+      console.error("[tap] could not log a staff tap:", e.message);
+    }
+  };
+
+  const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+
+  // A real clock-in already stands. Re-tapping must not rewrite the arrival time — the
+  // same rule POST /check-in follows, and for the same reason: a second tap on the way
+  // past the door would otherwise falsify how long somebody was on site.
+  if (existing && existing.timeIn) {
+    await logTap("already_checked_in", { site: "Onsite" });
+    return res.json({ ok: true, alreadyCheckedIn: true, ...sCheckin(existing) });
+  }
+
+  // timeIn "" is the sentinel PUT /summary writes for "wrote a summary, never checked
+  // in". Fill in the real clock time rather than leaving the day blank.
+  // updateMany with `timeIn: ""` in the WHERE, not a bare upsert. Two concurrent taps can
+  // both pass the `existing.timeIn` guard above; a bare upsert then has the second one
+  // rewrite the arrival time, which is exactly what that guard exists to prevent. Making
+  // the condition part of the statement means the database settles it: the first write
+  // fills the sentinel, the second matches nothing.
+  const filled = await prisma.checkIn.updateMany({
+    where: { staffId: req.user.id, date, timeIn: "" },
+    data: { timeIn: nowTime(), site: "Onsite", tagId: tag.id },
+  });
+  let rec;
+  if (filled.count === 0 && !existing) {
+    try {
+      rec = await prisma.checkIn.create({ data: { staffId: req.user.id, date, timeIn: nowTime(), site: "Onsite", tagId: tag.id } });
+    } catch (e) {
+      // P2002 on @@unique([staffId, date]) — somebody else's request created the row
+      // between our read and this write. Their clock-in stands; report it as theirs
+      // rather than as a 500.
+      const now = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+      if (!now) throw e;
+      await logTap("already_checked_in", { site: "Onsite" });
+      return res.json({ ok: true, alreadyCheckedIn: true, ...sCheckin(now) });
+    }
+  } else {
+    rec = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+  }
+
+  await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });
+  await logTap("checked_in", { site: "Onsite" });
+
+  // Not audited, matching POST /check-in: this records the present, in the caller's own
+  // name, and cannot alter history. PUT / — which writes anyone's hours on any date —
+  // is the one that is audited.
+  res.status(201).json({ ok: true, ...sCheckin(rec) });
 });
 
 // POST /api/checkins/:id/check-out  — owner or admin

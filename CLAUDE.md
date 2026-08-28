@@ -57,14 +57,31 @@ database that actually was.
 There are **two databases, in two Supabase projects**: staging and production. They
 drift. When you fix one by hand, check the other.
 
-To run the suites safely without a scratch database, use an isolated **schema** in the
-same database — Prisma scopes everything to it, `_prisma_migrations` included:
+**There is a local PostgreSQL on the development machine, and the whole suite runs
+against it.** Two services are installed (`postgresql-x64-16`, `postgresql-x64-18`) and
+16.13 answers on `127.0.0.1:5432` with the credentials `server/.env.example` documents.
+This is the route to use:
 
 ```bash
-DATABASE_URL="postgresql://…/postgres?schema=smoketest" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test -- smoke-nfc-tap
 ```
 
-Snapshot row counts in `public` before and after, and drop the schema afterwards.
+Create it once with `CREATE DATABASE edtech_dev`, then `npx prisma migrate deploy` with
+the same URL. `edtech_dev` is safe on two counts at once — `localhost` is in
+`LOCAL_HOSTS`, and `dev` matches the disposable-name regex.
+
+**Always pass `DATABASE_URL` on the command line. Never let it fall through to
+`server/.env`.**
+
+An isolated **schema** in the remote database was previously documented here as the safe
+fallback. It is not, and the reason matters: **`assertDisposable` parses only the host
+and the database name — it never looks at `?schema=`.** So
+`…/postgres?schema=smoketest` fails the guard exactly as `public` does, and the only way
+past is `DESTRUCTIVE_DB_CONFIRM=postgres@<supabase-host>` — a token which, because the
+schema is not part of it, equally authorises seeding straight over `public`. One dropped
+query parameter between typing the token and running the command is the whole live
+database. Use the local one.
 
 **Never rename a migration directory once it has been applied anywhere.** Prisma
 identifies a migration by directory name; a rename makes an applied migration look new,
@@ -260,6 +277,48 @@ figures for this reason.
 **Being below average is not a risk.** Half of every cohort is below the median by
 definition, so a cohort signal needs BOTH a rank test and an absolute gap — the bottom
 decile of a cohort sitting between 88% and 92% is three points off the mean.
+
+## Workload, funding and VLE engagement
+
+**Five modules now emit `TRIP_` codes into one `riskDriverCodes` column** — `tripwires`,
+`coverage`, `cohort`, `workload`, `funding`. They are written independently and cannot see
+each other, so `schema-contract.test.js` asserts the five vocabularies are disjoint and
+all `TRIP_`-prefixed. A duplicate string would make two different findings
+indistinguishable on the screen.
+
+**A busy calendar is a figure; a busy calendar PLUS something about this student is a
+code.** `assessmentsDueSoon` already established that a timetable fact fires cohort-wide
+and must not be a caseload entry. `workload.js` keeps that structurally: every `codes.push`
+is guarded by the heavy window AND by this student's own backlog or absence, so neither
+half can fire alone.
+
+**VLE engagement costs no extra Moodle calls.** `core_enrol_get_enrolled_users` is already
+issued once per course by `syncFromMoodle` and `lastcourseaccess` is already in the
+response. A ROW MEANS "WE LOOKED": observed-but-inactive is `accessed: false`, unobservable
+is no row at all. This is the one place where absence IS the institution guard, because no
+count can separate a disengaged cohort from a Moodle with `$CFG->hiddenuserfields` set from
+a college that teaches face to face — all three are zero. The engagement denominator is
+DAYS, not rows: a student on four units gets four rows a day, and counting rows makes
+someone who opens one course of four every day look 75% disengaged.
+
+**Funding: no `SlcApplication` row means "we do not know", never "no funding".**
+Self-funded, employer-sponsored and international students legitimately have none, and
+putting them on a risk register for a loan they never wanted is the failure. Every funding
+code fires on the PRESENCE of a row saying something specific; none fires on an absence,
+and that invariant is the constraint any fourth code must satisfy.
+
+**The funding probe requires a LINKED row.** `count(SlcApplication) > 0` is true at a
+college holding four thousand unlinked rows, and the pipeline would then report "no funding
+record" about four thousand people who have one. `studentName` and `studentRef` on that
+table are plain strings with no relation to `Student`, so matching on them would attach one
+student's loan status to another — a data-protection incident, not a bug.
+
+**`SlcApplication.statusChangedOn` is written only when the status actually moves.**
+`routes/slc.js` never wrote it at all until recently, so it is null on every older row and
+`funding.js` falls back to `applicationDate` — which measures time in the PIPELINE rather
+than time in THIS state, and therefore carries a much longer threshold. Do NOT backfill it
+from `updatedAt`: that moves when somebody corrects a typo, and the figure would look
+freshest for exactly the claims being fussed over rather than the ones nobody has touched.
 
 ## Testing approach
 

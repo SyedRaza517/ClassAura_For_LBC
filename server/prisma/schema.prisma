@@ -430,6 +430,9 @@ model Tenant {
   mitigatingCircumstance   MitigatingCircumstance[]
   vleEngagement            VleEngagement[]
   assessmentAdjustment     AssessmentAdjustment[]
+  attendanceTags           AttendanceTag[]
+  tagTaps                  TagTap[]
+  attendanceTapConfig      AttendanceTapConfig?
 
   @@index([active])
 }
@@ -634,6 +637,10 @@ model CheckIn {
   timeOut   String?
   summary   String   @default("")
   site      String?  // HND | FE | Online — where this clock-in happened
+  // The NFC sticker this clock-in was made at. NULL for one made by pressing the button
+  // in the app, which stays available. Distinguishes "was in the building" from "said
+  // they were", without a second boolean that could disagree with it.
+  tagId     String?
   createdAt DateTime @default(now())
 
   @@unique([staffId, date])
@@ -1224,6 +1231,20 @@ model AttendanceMark {
   remark    String     @default("")
   takenBy   String?    // staff name who took the register
   takenAt   DateTime   @default(now())
+  // When the student actually tapped in. NULL when nobody self-checked-in — the lecturer
+  // marked them by hand — which is "not measurable", not an early arrival.
+  //
+  // Written ONCE and never again. A later register save must not overwrite it: takenAt
+  // is already reset on every update (the register save writes `takenAt: new Date()`),
+  // so it means "when this mark was last edited", and a lecturer correcting the register
+  // at four o'clock would otherwise destroy the only record of the 09:07 arrival.
+  //
+  // A string, not a DateTime, matching CheckIn.timeIn: the session carries the date, so
+  // the two reconstruct the instant, and a time written through clock.localTime() is
+  // right when stored and stays right. STATUS.md records D8 — the 08:00 notifications
+  // firing at 09:00 through BST because something read the host clock — which is the bug
+  // a stored instant re-zoned at every render invites back.
+  checkedInAt String?  // "HH:MM", London
 
   @@unique([sessionId, studentId])
   @@index([studentId])
@@ -1232,6 +1253,89 @@ model AttendanceMark {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+}
+
+// A registered NFC sticker. One per room, and the SAME sticker serves students and
+// staff — the server branches on who is signed in, not on which tag was touched, so a
+// college prints one sticker per room rather than two.
+model AttendanceTag {
+  id        String    @id @default(cuid())
+  // The secret written onto the sticker. Opaque and random, and deliberately NOT a URL.
+  // Our own app reads it, so there is nothing to gain from it being clickable and a lot
+  // to lose: a readable link is one a student can read off the wall with any phone and
+  // replay from home. Globally unique rather than unique-per-tenant so a code is never
+  // ambiguous about which college it belongs to.
+  code      String    @unique
+  label     String                       // "Room 101", "Reception"
+  active    Boolean   @default(true)     // deactivate a peeled-off or lost sticker
+  // NULL until the first tap. "Never used" is not a zero date, and a college auditing
+  // its stickers needs to tell the two apart.
+  lastTapAt DateTime?
+  createdAt DateTime  @default(now())
+  createdBy String?
+  taps      TagTap[]
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Every tap, accepted or refused, for students and staff alike.
+//
+// The refusals are the valuable half. "I did tap and it didn't work" is a question
+// attendance evidence has to be able to answer, and a pattern — one address checking in
+// six students inside a minute — is invisible in AttendanceMark and obvious here.
+model TagTap {
+  id        String        @id @default(cuid())
+  // NULLABLE, and that is the whole point of this column's existence being awkward.
+  // The refusals an administrator is most often asked about — "I tapped and it didn't
+  // work" — happen BEFORE any tag is identified: an unknown code matches nothing, a
+  // retired sticker is filtered out by the lookup, a rate-limited or switched-off tap
+  // never reaches the lookup at all. A required foreign key made those three outcomes
+  // literally unwritable, so the vocabulary below listed them and nothing ever produced
+  // one. A tap with no tag is a real event and now leaves a real row.
+  tag       AttendanceTag? @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     String?
+  // Exactly one of these is set on an accepted tap; BOTH are null when the tap was
+  // refused before anybody was identified. Not measurable — never a blank string
+  // standing in for a person.
+  studentId String?
+  staffId   String?
+  sessionId String?       // the register a student tap landed on
+  // marked | checked_in | already_marked | already_checked_in | no_session_now |
+  // ambiguous | term_locked | tag_unknown | rate_limited | disabled
+  outcome   String
+  status    String?       // "P" | "L" when a mark was actually written
+  site      String?       // "Onsite" for a staff tap — the tap itself proves that
+  at        DateTime      @default(now())
+  ip        String?
+
+  @@index([tagId, at])
+  @@index([studentId])
+  @@index([staffId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Per-college settings for tap check-in.
+//
+// Same shape as AttendanceBandConfig, which is the reference implementation: platform
+// defaults in code, one JSON column merged over them, no row until a college edits
+// something, an allowlist on the way out, and a short cache invalidated on save. The
+// defaults have enabled:false, so an unconfigured college behaves exactly as it did
+// before this feature existed.
+model AttendanceTapConfig {
+  id        String   @id @default(cuid())
+  settings  Json     @default("{}")
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 // One line on a staff member's timesheet: a class or work session on a given day,
@@ -2151,6 +2255,117 @@ model StudentPredictionCurrent {
   vleActiveDayRate  Float?
   vleObservedDays   Int?
   vleUnitsObserved  Int?
+  /// WORKLOAD. assessmentsDueSoon already counts deadlines in the next fortnight and is
+  /// deliberately a figure, because a busy calendar is shared by the whole cohort. These
+  /// say WHERE the work bunches, so that the busy window can be crossed with something
+  /// about THIS student -- an existing backlog, or an absence in the run-up. That
+  /// conjunction is the only thing here that becomes a code.
+  /// Dates, never day counts: nothing runs on a schedule, so "peak in 9 days" is wrong by
+  /// the next morning while the date is true for ever.
+  peakFrom              String?
+  peakTo                String?
+  peakCount             Int?
+  /// The share of the peak by assessment weight, and whether the weighting was real.
+  /// Assessment.weight defaults to 0 and the Moodle importer never sets it, so at a
+  /// synced college the share means nothing -- gradeWasWeighted's contract, for the same
+  /// reason it exists there.
+  peakWeightShare       Float?
+  peakWasWeighted       Boolean?
+  /// How much of the horizon could not be placed on a calendar, so a reader can see that
+  /// the peak is a lower bound rather than a measurement.
+  undatedAssessments    Int?
+  /// The union of work positively not handed in and work past due with no answer either
+  /// way. Deliberately a union of two separately stored sets, so it cannot be
+  /// reconstructed from either column alone.
+  carriedBacklogCount   Int?
+  /// FUNDING. A student whose loan has not come through is at real risk of withdrawing,
+  /// and it is one of the few risks a college can act on -- hardship funds, payment
+  /// plans, chasing evidence. It is also the least visible in academic data: they attend
+  /// and submit right up to the day they leave.
+  /// ALL NULL where the college has no linked SlcApplication rows at all. No row means
+  /// "we do not know", never "no funding" -- self-funded, employer-sponsored and
+  /// international students legitimately have none, and putting them on a risk register
+  /// for a loan they never wanted is the failure this guards against.
+  fundingPosition       String?
+  /// Dates, never day counts, same rule as above.
+  fundingUnsettledSince String?
+  fundingSettledOn      String?
+  fundingRefusedOn      String?
+  fundingApplications   Int?
+  /// Recorded as "has not applied" -- a FIGURE and never a code. The string is the
+  /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
+  /// so it means three different things, one of which is a bug.
+  fundingNotApplied     Int?
+  /// THE SHAPE OF THE ABSENCE, not the amount of it. A student who misses every Friday
+  /// is a different conversation from one absent at random to the same percentage — the
+  /// first is usually a clash, a shift or a caring commitment, and it is fixable.
+  /// ISO-8601 weekday, 1 = Monday. Figures only, and deliberately: within one student's
+  /// marks nothing separates "this student misses Fridays" from "nobody attends the
+  /// Friday nine o'clock", and the half that would separate them is the cohort's Friday.
+  worstAbsenceWeekday     Int?
+  worstWeekdayAbsenceRate Float?
+  weekdayAbsenceGap       Float?
+  weekdaysMeasured        Int?
+  /// The same question by session KIND, where a college records one. HndSession.kind
+  /// defaults to "" and is empty on every row in both databases today, so these stay null
+  /// — which is the institution guard working, not a fault.
+  worstAbsenceKind        String?
+  worstKindAbsenceRate    Float?
+  kindAbsenceGap          Float?
+  kindsMeasured           Int?
+  /// Whole WEEKS in which the register ran and this student appeared in none of them.
+  /// Deliberately not absenceStreak, which counts consecutive absent ROWS: a partial week
+  /// breaks this and not a streak, and a week with no sessions timetabled produces no
+  /// marks and breaks neither. Deliberately not TRIP_NOT_SEEN either, which reads the
+  /// calendar and would fire college-wide every summer — this cannot fire on a closed
+  /// college at all, because a closed college produces no marks to observe.
+  unseenWeekRun        Int?
+  unseenSinceWeekOn    String?
+  lastAttendedWeekOn   String?
+  longestUnseenWeekRun Int?
+  observedWeeks        Int?
+  /// WHAT THE STUDENT TOLD US BEFORE THEY STARTED. The pre-entry self-assessment is the
+  /// only evidence that exists in week one, when attendance, marks and pastoral contact
+  /// all have nothing in them — and every barrier it names is actionable: no wifi at
+  /// home, no office software, a reservation recorded at interview.
+  /// `entryProfileRecorded` is TRI-STATE. Null means the college has no linked ISM data
+  /// at all; false means it does and this student has none; true means a row. The middle
+  /// state is the finding — a student nobody interviewed at a college that interviews.
+  entryProfileRecorded     Boolean?
+  entryProfileOn           String?
+  entryProfileAnswered     Int?
+  entryProfileQuestions    Int?
+  entryProfileBarriers     Int?
+  entryWifiAtHome          Boolean?
+  entryKnowsOfficeSoftware Boolean?
+  entryAdmittedOutcome     String?
+  /// The date a student's right to study runs out. Stored for ever even when the
+  /// caseload code has aged out, because a compliance list needs every expiry and a
+  /// caseload needs only the ones worth acting on this term.
+  rightToStudyExpiresOn    String?
+  /// WHAT THE RISK HAS DONE, as opposed to what it is. A student stuck at the same band
+  /// all year and one who fell there last week sort identically without these: the first
+  /// has had an intervention that did not work, the second has had nothing tried.
+  /// Dates, never day counts — nothing here runs on a schedule.
+  currentBandSince   String?
+  worstBandHeld      String?
+  worstBandSince     String?
+  observedDays       Int?
+  bandChanges        Int?
+  bandsVisited       Int?
+  /// Evidence about the college's own interventions on THIS student: somebody who has
+  /// fallen and come back is somebody it has already helped successfully. Measured on the
+  /// score rather than the band, so a climb inside one band still counts.
+  recoveredPoints    Float?
+  recoveredBy        String?
+  lowestScore        Float?
+  lowestOn           String?
+  /// WHEN THE SIGNALS DISAGREE. A weighted mean is exactly the operation that destroys
+  /// disagreement: 95% attendance with 20% submission and 55% on both land close
+  /// together, and they need opposite conversations. At most one shape is named.
+  divergenceShape         String?
+  attendanceSubmissionGap Float?
+  attendanceVleGap        Float?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2420,6 +2635,117 @@ model StudentPredictionHistory {
   vleActiveDayRate  Float?
   vleObservedDays   Int?
   vleUnitsObserved  Int?
+  /// WORKLOAD. assessmentsDueSoon already counts deadlines in the next fortnight and is
+  /// deliberately a figure, because a busy calendar is shared by the whole cohort. These
+  /// say WHERE the work bunches, so that the busy window can be crossed with something
+  /// about THIS student -- an existing backlog, or an absence in the run-up. That
+  /// conjunction is the only thing here that becomes a code.
+  /// Dates, never day counts: nothing runs on a schedule, so "peak in 9 days" is wrong by
+  /// the next morning while the date is true for ever.
+  peakFrom              String?
+  peakTo                String?
+  peakCount             Int?
+  /// The share of the peak by assessment weight, and whether the weighting was real.
+  /// Assessment.weight defaults to 0 and the Moodle importer never sets it, so at a
+  /// synced college the share means nothing -- gradeWasWeighted's contract, for the same
+  /// reason it exists there.
+  peakWeightShare       Float?
+  peakWasWeighted       Boolean?
+  /// How much of the horizon could not be placed on a calendar, so a reader can see that
+  /// the peak is a lower bound rather than a measurement.
+  undatedAssessments    Int?
+  /// The union of work positively not handed in and work past due with no answer either
+  /// way. Deliberately a union of two separately stored sets, so it cannot be
+  /// reconstructed from either column alone.
+  carriedBacklogCount   Int?
+  /// FUNDING. A student whose loan has not come through is at real risk of withdrawing,
+  /// and it is one of the few risks a college can act on -- hardship funds, payment
+  /// plans, chasing evidence. It is also the least visible in academic data: they attend
+  /// and submit right up to the day they leave.
+  /// ALL NULL where the college has no linked SlcApplication rows at all. No row means
+  /// "we do not know", never "no funding" -- self-funded, employer-sponsored and
+  /// international students legitimately have none, and putting them on a risk register
+  /// for a loan they never wanted is the failure this guards against.
+  fundingPosition       String?
+  /// Dates, never day counts, same rule as above.
+  fundingUnsettledSince String?
+  fundingSettledOn      String?
+  fundingRefusedOn      String?
+  fundingApplications   Int?
+  /// Recorded as "has not applied" -- a FIGURE and never a code. The string is the
+  /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
+  /// so it means three different things, one of which is a bug.
+  fundingNotApplied     Int?
+  /// THE SHAPE OF THE ABSENCE, not the amount of it. A student who misses every Friday
+  /// is a different conversation from one absent at random to the same percentage — the
+  /// first is usually a clash, a shift or a caring commitment, and it is fixable.
+  /// ISO-8601 weekday, 1 = Monday. Figures only, and deliberately: within one student's
+  /// marks nothing separates "this student misses Fridays" from "nobody attends the
+  /// Friday nine o'clock", and the half that would separate them is the cohort's Friday.
+  worstAbsenceWeekday     Int?
+  worstWeekdayAbsenceRate Float?
+  weekdayAbsenceGap       Float?
+  weekdaysMeasured        Int?
+  /// The same question by session KIND, where a college records one. HndSession.kind
+  /// defaults to "" and is empty on every row in both databases today, so these stay null
+  /// — which is the institution guard working, not a fault.
+  worstAbsenceKind        String?
+  worstKindAbsenceRate    Float?
+  kindAbsenceGap          Float?
+  kindsMeasured           Int?
+  /// Whole WEEKS in which the register ran and this student appeared in none of them.
+  /// Deliberately not absenceStreak, which counts consecutive absent ROWS: a partial week
+  /// breaks this and not a streak, and a week with no sessions timetabled produces no
+  /// marks and breaks neither. Deliberately not TRIP_NOT_SEEN either, which reads the
+  /// calendar and would fire college-wide every summer — this cannot fire on a closed
+  /// college at all, because a closed college produces no marks to observe.
+  unseenWeekRun        Int?
+  unseenSinceWeekOn    String?
+  lastAttendedWeekOn   String?
+  longestUnseenWeekRun Int?
+  observedWeeks        Int?
+  /// WHAT THE STUDENT TOLD US BEFORE THEY STARTED. The pre-entry self-assessment is the
+  /// only evidence that exists in week one, when attendance, marks and pastoral contact
+  /// all have nothing in them — and every barrier it names is actionable: no wifi at
+  /// home, no office software, a reservation recorded at interview.
+  /// `entryProfileRecorded` is TRI-STATE. Null means the college has no linked ISM data
+  /// at all; false means it does and this student has none; true means a row. The middle
+  /// state is the finding — a student nobody interviewed at a college that interviews.
+  entryProfileRecorded     Boolean?
+  entryProfileOn           String?
+  entryProfileAnswered     Int?
+  entryProfileQuestions    Int?
+  entryProfileBarriers     Int?
+  entryWifiAtHome          Boolean?
+  entryKnowsOfficeSoftware Boolean?
+  entryAdmittedOutcome     String?
+  /// The date a student's right to study runs out. Stored for ever even when the
+  /// caseload code has aged out, because a compliance list needs every expiry and a
+  /// caseload needs only the ones worth acting on this term.
+  rightToStudyExpiresOn    String?
+  /// WHAT THE RISK HAS DONE, as opposed to what it is. A student stuck at the same band
+  /// all year and one who fell there last week sort identically without these: the first
+  /// has had an intervention that did not work, the second has had nothing tried.
+  /// Dates, never day counts — nothing here runs on a schedule.
+  currentBandSince   String?
+  worstBandHeld      String?
+  worstBandSince     String?
+  observedDays       Int?
+  bandChanges        Int?
+  bandsVisited       Int?
+  /// Evidence about the college's own interventions on THIS student: somebody who has
+  /// fallen and come back is somebody it has already helped successfully. Measured on the
+  /// score rather than the band, so a climb inside one band still counts.
+  recoveredPoints    Float?
+  recoveredBy        String?
+  lowestScore        Float?
+  lowestOn           String?
+  /// WHEN THE SIGNALS DISAGREE. A weighted mean is exactly the operation that destroys
+  /// disagreement: 95% attendance with 20% submission and 55% on both land close
+  /// together, and they need opposite conversations. At most one shape is named.
+  divergenceShape         String?
+  attendanceSubmissionGap Float?
+  attendanceVleGap        Float?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

@@ -60,7 +60,7 @@ const isHomeSite = (v) => v == null || (isString(v) && HOME_SITES.includes(v));
 // Must stay in sync with the client's ADMIN_PAGES.
 const ADMIN_PAGES = [
   "executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents",
-  "approvals", "signups", "summaries", "registers", "students", "attendance-emails", "assessments",
+  "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments",
   "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings",
 ];
 

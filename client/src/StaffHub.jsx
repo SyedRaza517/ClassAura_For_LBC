@@ -11,7 +11,9 @@ import {
   Sun, Sunrise, Sunset, TrendingUp, Timer, Info, Phone,
   CalendarCheck, UserCheck, Layers, Activity, Award, ShieldCheck,
   BookOpen, Percent, PlayCircle, RefreshCw, MoreHorizontal, MessageSquare, ChevronDown, Loader2, KeyRound, Send, Wallet,
-  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy
+  Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy,
+  Radio,
+  Nfc,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -21,6 +23,9 @@ import {
 import { downloadCSV } from "./csv";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
+import CheckInCard from "./CheckInCard";
+import AdminNfcTags from "./AdminNfcTags";
+import AdminLiveAttendance from "./AdminLiveAttendance";
 import { useBackHandler } from "./backButton";
 import PhoneShell, { useIsHandset } from "./PhoneShell";
 import DeleteAccount from "./DeleteAccount";
@@ -710,6 +715,40 @@ const SITES = ["Onsite", "Online"];
 // Staff-tab filter and the Add/Edit Staff form. Matches validate.js HOME_SITES.
 const HOME_SITES = ["HND", "FE", "SL"];
 
+// Clocking in by touching a sticker. Renders nothing at all unless the college has
+// switched tap check-in on AND allowed it for staff, so nobody sees a control that would
+// only ever refuse them.
+function StaffTapCheckIn({ store }) {
+  const [settings, setSettings] = useState(null);
+  useEffect(() => {
+    // The STAFF-reachable settings route, not the admin one. api.tapSettings() lives on a
+    // router gated by the NFC Tags page, so asking it here 403'd for every ordinary
+    // lecturer and this card silently rendered nothing — the feature worked and was
+    // invisible to everybody it was built for. Still silent on failure: a college that
+    // has not migrated yet should show the two buttons above, not an error.
+    api.staffTapSettings().then(setSettings).catch(() => setSettings({ enabled: false }));
+  }, []);
+  if (!settings?.enabled || !settings?.staffTapEnabled) return null;
+
+  return (
+    <div className="mt-4">
+      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Or tap a sticker</p>
+      <CheckInCard
+        armSeconds={settings.armSeconds || 60}
+        actionLabel="Clock in — Onsite"
+        // Through the store, not the api directly: run() resyncs the check-in list and
+        // raises the same toast the button does, so both routes in behave identically.
+        onCheckIn={(tagCode) => store.tapCheckIn(tagCode)}
+        renderResult={(r) => (
+          r.alreadyCheckedIn
+            ? <>You were already clocked in at <strong>{r.in}</strong>.</>
+            : <>Clocked in <strong>Onsite</strong> at <strong>{r.in}</strong>.</>
+        )}
+      />
+    </div>
+  );
+}
+
 function CheckInScreen({ store, me }) {
   const today = todayISO();
   const rec = store.checkins.find(c => c.staffId === me.id && c.date === today);
@@ -766,6 +805,12 @@ function CheckInScreen({ store, me }) {
                 );
               })}
             </div>
+
+            {/* Tapping a sticker is the OTHER way in, and it does not ask where you are
+                working: touching a wall in the building settles that. Online stays on
+                the buttons above, which is why both are offered rather than one
+                replacing the other. */}
+            <StaffTapCheckIn store={store} />
           </div>
         )}
         <div className="mt-5">
@@ -2124,8 +2169,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
 // Can this user see/use a given admin page? The Super Admin gets everything,
 // including the Super-Admin-only Access tab. A page-scoped admin gets only their
@@ -2564,6 +2609,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "signups", label: "Sign-Up Requests", I: UserCheck },
     { key: "summaries", label: "Daily Summaries", I: UserPlus },
     { key: "registers", label: "Registers — HND", I: ClipboardList },
+    { key: "live-attendance", label: "Live Attendance", I: Radio },
+    { key: "attendance-tags", label: "NFC Tags", I: Nfc },
     { key: "students", label: "Students", I: GraduationCap },
     { key: "attendance-emails", label: "Attendance Emails", I: Mail },
     { key: "admissions", label: "Admissions", I: ClipboardList },
@@ -2572,6 +2619,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "assessments", label: "Assessments", I: Award },
     { key: "pat", label: "PAT", I: MessageSquare },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
+    { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
     { key: "staffreviews", label: "Staff Reviews", I: ClipboardList },
     { key: "studentreviews", label: "Student Reviews", I: MessageSquare },
     { key: "studentqueries", label: "Student Queries", I: Inbox },
@@ -2665,11 +2713,14 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "signups" && <AdminSignups store={store} />}
         {activeKey === "summaries" && <AdminSummaries store={store} />}
         {activeKey === "registers" && <AdminHndRegisters store={store} />}
+        {activeKey === "live-attendance" && <AdminLiveAttendance store={store} />}
+        {activeKey === "attendance-tags" && <AdminNfcTags />}
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}
         {activeKey === "pat" && <AdminPAT store={store} />}
         {activeKey === "prediction" && <AdminPrediction store={store} />}
+        {activeKey === "mitigations" && <AdminMitigations />}
         {activeKey === "staffreviews" && <AdminStaffReviews store={store} />}
         {activeKey === "studentreviews" && <AdminStudentReviews store={store} />}
         {activeKey === "passwords" && <AdminPasswords />}
@@ -2744,6 +2795,55 @@ const DRIVER_LABELS = {
   TRIP_QUERY_UNANSWERED: "A question this student asked has gone unanswered",
   TRIP_CONTACT_DEFICIT: "Flagged as at risk, and nobody has spoken to them",
   TRIP_FOLLOWUP_MISSED: "A follow-up the college promised has not happened",
+
+  // Register coverage. The first two are about STAFF: a register nobody took is not a
+  // fact about the student sitting under it, and the wording has to say so or a tutor
+  // reads it as an accusation about the person in front of them.
+  TRIP_ATTENDANCE_UNRELIABLE: "Attendance % withheld — too few registers behind it",
+  TRIP_REGISTER_NOT_TAKEN: "Registers not being taken for this student's sessions",
+  TRIP_REGISTER_STALE: "No register taken for these sessions recently",
+
+  // Cohort standing. Context, never a replacement for the absolute figures: a student
+  // in the top decile of a failing cohort is still failing.
+  TRIP_COHORT_ATTENDANCE_OUTLIER: "Attending far less than the rest of their cohort",
+  TRIP_COHORT_ATTAINMENT_OUTLIER: "Marks far below the rest of their cohort",
+
+  // Workload. Neither of these fires on a busy fortnight alone — a heavy week is shared
+  // by the whole cohort. Both need something about THIS student as well.
+  TRIP_WORKLOAD_PILEUP: "Heavy deadline week ahead, and already carrying work",
+  TRIP_WORKLOAD_ABSENT: "Heavy deadline week ahead, and not turning up",
+
+  // Student finance. The first two are the college's own queue — the delay belongs to
+  // the institution and the student underneath it is the one being harmed by it.
+  TRIP_FUNDING_STALLED: "A finance claim has sat undecided",
+  TRIP_FUNDING_EVIDENCE_OUTSTANDING: "A finance claim is waiting on evidence nobody has chased",
+  TRIP_FUNDING_REFUSED: "Student finance was refused and nothing has replaced it",
+
+  // Whole weeks in which the register ran and this student appeared in none of them.
+  // Deliberately not the absence streak, which counts rows and breaks on a partial week.
+  TRIP_WEEKS_UNSEEN: "Not seen at all for whole weeks the register was taken",
+
+  // What the student told us before they started. These are the only findings that
+  // exist in week one, when attendance, marks and pastoral contact all have nothing in
+  // them — and every one of them is something the college can actually fix.
+  TRIP_INTAKE_NO_WIFI: "Told us at interview they have no internet at home",
+  TRIP_INTAKE_DIGITAL_SKILLS: "Told us at interview they do not know office software",
+  TRIP_INTAKE_RESERVATION: "Admitted with a reservation recorded at interview",
+  TRIP_INTAKE_ID_EXPIRING: "Right to study runs out during the course",
+  TRIP_INTAKE_ID_EXPIRED: "Right to study has expired on the record",
+
+  // What the risk has DONE. Chronic is not the same finding as the band beside it: the
+  // band says the student is at risk, this says it has been true long enough that
+  // whatever was tried has not worked.
+  TRIP_CHRONIC_RISK: "At this level for a long time — what was tried has not worked",
+  TRIP_RISK_OSCILLATING: "Risk level keeps changing — the score has not settled",
+
+  // When the signals disagree. A weighted mean hides exactly this, and the four shapes
+  // need four different conversations.
+  TRIP_DIVERGENCE_ATTENDING_NOT_SUBMITTING: "Turning up but handing nothing in",
+  TRIP_DIVERGENCE_SUBMITTING_NOT_ATTENDING: "Handing work in but not attending",
+  TRIP_DIVERGENCE_ONLINE_NOT_ATTENDING: "Active online but not in the building",
+  TRIP_DIVERGENCE_ATTAINING_NOT_ATTENDING: "Marks holding up while attendance falls",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -2752,7 +2852,19 @@ const DRIVER_LABELS = {
 const INSTITUTIONAL_TRIPS = new Set([
   "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
   "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT", "TRIP_FOLLOWUP_MISSED",
+  // A register nobody took, a figure withheld for want of one, and a finance queue
+  // nobody has worked: all four describe the institution. The student sitting under
+  // them is the person being harmed, not the person at fault.
+  "TRIP_REGISTER_NOT_TAKEN", "TRIP_REGISTER_STALE", "TRIP_ATTENDANCE_UNRELIABLE",
+  "TRIP_FUNDING_STALLED", "TRIP_FUNDING_EVIDENCE_OUTSTANDING",
+  // An expired right-to-study date is usually a record nobody updated after a renewal,
+  // not a student doing anything wrong. It belongs with the institutional findings so
+  // the wording never reads as an accusation.
+  "TRIP_INTAKE_ID_EXPIRED", "TRIP_INTAKE_ID_EXPIRING",
 ]);
+
+/** ISO weekday names, 1 = Monday, matching worstAbsenceWeekday. */
+const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** A code that came from the tripwire layer rather than the engine's own indicators.
  *  The prefix is the contract — see server/src/prediction/tripwires.js. */
@@ -2839,6 +2951,318 @@ function RiskPill({ bands, level, score }) {
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone }} />
       {level}{band ? ` · ${band.label}` : ""}{score != null ? ` · ${score}` : ""}
     </span>
+  );
+}
+
+/* ----- Mitigating circumstances ---------------------------------------- */
+//
+// The capture surface for "something happened to this student and we agreed to take it
+// into account". Until this screen existed the tables and the route were there and no
+// human could reach them, so the suppression they exist to perform never happened.
+//
+// ITS OWN PAGE ON PURPOSE. A claim is usually health data — illness, bereavement, mental
+// health, a caring responsibility — and it is collected so the college can SUPPORT a
+// student, not so it can build a risk score. Giving it a separate permission lets a
+// college grant "see the risk register" without granting "read why each student is on
+// it". The server enforces the other half: nothing under prediction/ ever selects the
+// category or the detail, and a test reads the source to keep it that way.
+//
+// The one thing this screen must make obvious is WHAT EACH DECISION DOES, because a
+// pending claim already suppresses. Somebody approving or rejecting is changing whether a
+// student appears on a caseload, and the wording says so rather than making them guess.
+const MIT_STATUSES = ["open", "approved", "rejected", "withdrawn"];
+const MIT_CATEGORIES = [
+  "illness", "mental-health", "bereavement", "caring", "financial",
+  "accident", "victim-of-crime", "pregnancy-maternity", "other",
+];
+const mitLabel = (s) => (s || "").replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+const MIT_TONE = {
+  open: "bg-amber-50 text-amber-700 ring-amber-200",
+  approved: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  rejected: "bg-slate-100 text-slate-600 ring-slate-200",
+  withdrawn: "bg-slate-100 text-slate-500 ring-slate-200",
+};
+
+function AdminMitigations() {
+  const [rows, setRows] = useState(null);
+  const [students, setStudents] = useState([]);
+  const [status, setStatus] = useState("");
+  const [err, setErr] = useState("");
+  const [editing, setEditing] = useState(null);   // the claim open in the drawer
+  const [adding, setAdding] = useState(false);
+
+  const load = async () => {
+    try {
+      const list = await api.listMitigations(status ? { status } : {});
+      setRows(list); setErr("");
+    } catch (e) { setErr(e.message); }
+  };
+  useEffect(() => { load(); }, [status]);
+  useEffect(() => { api.listStudents().then(setStudents).catch(() => setStudents([])); }, []);
+
+  const open = (rows || []).filter((r) => r.status === "open");
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-extrabold text-slate-800">Mitigating Circumstances</h2>
+          <p className="max-w-prose text-xs text-slate-400">
+            Extensions, deferrals and excused absence. An approved claim stops the progression
+            score counting the work it covers — in both directions, so it is never counted as
+            handed in on time either.
+          </p>
+        </div>
+        <button onClick={() => setAdding(true)} className="press flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold text-white shadow-sm" style={{ background: grad(BLUE) }}>
+          <Plus size={14} /> Record a claim
+        </button>
+      </div>
+
+      {/* The decision queue is the thing this page is FOR. A claim sitting undecided
+          suppresses signals for that student, so a long queue is not a tidy inbox
+          problem — it is students quietly off the risk register while nobody decides. */}
+      {open.length > 0 && (
+        <Card className="!bg-amber-50/70 !ring-amber-200">
+          <div className="flex gap-2">
+            <Info size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            <p className="text-xs font-semibold text-amber-900">
+              {open.length} claim{open.length === 1 ? "" : "s"} awaiting a decision. A pending claim already
+              suppresses the work it covers, so until it is decided those students are measured as though
+              the work were not required.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap gap-1.5">
+        <button onClick={() => setStatus("")} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${!status ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={!status ? { background: grad(BLUE) } : {}}>All</button>
+        {MIT_STATUSES.map((s) => (
+          <button key={s} onClick={() => setStatus(s)} className={`rounded-full px-3 py-1.5 text-xs font-bold capitalize transition ${status === s ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={status === s ? { background: grad(BLUE) } : {}}>{s}</button>
+        ))}
+      </div>
+
+      {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+      {!rows && <Card><p className="text-xs text-slate-400">Loading…</p></Card>}
+      {rows && rows.length === 0 && (
+        <EmptyState Icon={LifeBuoy} title="No claims recorded" msg="Nothing has been logged against this filter." />
+      )}
+
+      <div className="space-y-2">
+        {(rows || []).map((m) => (
+          <Card key={m.id} className="!p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-slate-800">
+                  {m.student ? `${m.student.firstName} ${m.student.lastName}` : "Unknown student"}
+                  {m.student && <span className="ml-1.5 text-xs font-semibold text-slate-400">{m.student.studentRef}</span>}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  Covers {m.coversFrom} to {m.coversTo}
+                  {m.category ? ` · ${mitLabel(m.category)}` : ""}
+                  {m.coversAttendance ? " · excuses attendance" : ""}
+                </p>
+                {m.adjustments.length > 0 && (
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    {m.adjustments.length} assessment{m.adjustments.length === 1 ? "" : "s"} adjusted
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold capitalize ring-1 ${MIT_TONE[m.status] || MIT_TONE.rejected}`}>{m.status}</span>
+                <button onClick={() => setEditing(m)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}>Open</button>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {adding && <MitigationForm students={students} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />}
+      {editing && <MitigationDrawer claim={editing} onClose={() => setEditing(null)} onChanged={(next) => { setEditing(next); load(); }} />}
+    </div>
+  );
+}
+
+function MitigationForm({ students, onClose, onSaved }) {
+  const [f, setF] = useState({ studentId: "", coversFrom: "", coversTo: "", raisedOn: "", category: "", detail: "", coversAttendance: false });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    try { await api.addMitigation(f); onSaved(); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Record a claim" width={520}>
+      <div className="space-y-3">
+        <Field label="Student">
+          <select className={inputCls} value={f.studentId} onChange={set("studentId")}>
+            <option value="">Choose a student…</option>
+            {students.map((s) => <option key={s.id} value={s.id}>{s.firstName} {s.lastName} — {s.studentRef}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Covers from"><input type="date" className={inputCls} value={f.coversFrom} onChange={set("coversFrom")} /></Field>
+          <Field label="Covers to"><input type="date" className={inputCls} value={f.coversTo} onChange={set("coversTo")} /></Field>
+        </div>
+        {/* The date the STUDENT raised it, not the date somebody typed it in. Those
+            differ by days or weeks, and the gap between them is the college's own
+            response time — the figure it is least likely to record if this field
+            silently defaults to today. */}
+        <Field label="Date the student raised it">
+          <input type="date" className={inputCls} value={f.raisedOn} onChange={set("raisedOn")} />
+          <p className="mt-1 text-[11px] text-slate-400">When they told you — not when this record was created. Leave blank for today.</p>
+        </Field>
+        <Field label="Category">
+          <select className={inputCls} value={f.category} onChange={set("category")}>
+            <option value="">Not recorded</option>
+            {MIT_CATEGORIES.map((c) => <option key={c} value={c}>{mitLabel(c)}</option>)}
+          </select>
+        </Field>
+        <Field label="Detail">
+          <textarea rows={3} className={inputCls} value={f.detail} onChange={set("detail")} placeholder="What the student told you." />
+          <p className="mt-1 text-[11px] text-slate-400">
+            Only people granted this page can read this. It is never used to score the student.
+          </p>
+        </Field>
+        {/* Attendance cover is opt-in per claim and never implied by a category,
+            because it removes sessions from BOTH sides of the percentage — a far
+            larger act than suppressing one deadline. */}
+        <label className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
+          <input type="checkbox" className="mt-0.5" checked={f.coversAttendance} onChange={set("coversAttendance")} />
+          <span className="text-xs text-slate-600">
+            <span className="font-bold">Also excuse attendance in this period.</span>{" "}
+            Covered sessions leave the attendance percentage entirely. Dates last attended, absence
+            streaks and pastoral prompts are deliberately unaffected — a student on approved
+            circumstances is one to speak to more, not less.
+          </span>
+        </label>
+        {err && <p className="text-xs font-semibold text-rose-700">{err}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="rounded-xl px-3.5 py-2 text-xs font-bold text-slate-500 ring-1 ring-slate-200">Cancel</button>
+          <button disabled={busy || !f.studentId} onClick={save} className="press rounded-xl px-3.5 py-2 text-xs font-bold text-white disabled:opacity-40" style={{ background: grad(BLUE) }}>
+            {busy ? "Saving…" : "Record claim"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function MitigationDrawer({ claim, onClose, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState(claim.decisionNote || "");
+  const [assessments, setAssessments] = useState([]);
+  const [adj, setAdj] = useState({ assessmentId: "", adjustmentType: "extension", revisedDueDate: "" });
+
+  useEffect(() => {
+    api.adminStudentAssessments(claim.studentId)
+      .then((r) => setAssessments(Array.isArray(r) ? r : (r.assessments || [])))
+      .catch(() => setAssessments([]));
+  }, [claim.studentId]);
+
+  const act = async (fn) => {
+    setBusy(true); setErr("");
+    try { const next = await fn(); onChanged(next); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const decide = (status) => act(() => api.updateMitigation(claim.id, { status, decisionNote: note }));
+
+  return (
+    <Modal open onClose={onClose} title="Mitigating circumstances" width={560}>
+      <div className="space-y-3">
+        <div className="rounded-xl bg-slate-50 p-3">
+          <p className="text-sm font-bold text-slate-800">
+            {claim.student ? `${claim.student.firstName} ${claim.student.lastName}` : "Unknown student"}
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            Raised {claim.raisedOn} · covers {claim.coversFrom} to {claim.coversTo}
+            {claim.category ? ` · ${mitLabel(claim.category)}` : ""}
+          </p>
+          {claim.detail && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{claim.detail}</p>}
+          {claim.decidedOn && (
+            <p className="mt-2 text-[11px] font-semibold text-slate-500">
+              {mitLabel(claim.status)} on {claim.decidedOn}{claim.decidedBy ? ` by ${claim.decidedBy}` : ""}
+            </p>
+          )}
+        </div>
+
+        {/* WHAT THE CLAIM CHANGED. A claim with no rows here is not incomplete — it is
+            the ordinary state at the moment of approval, and it already covers every
+            piece due inside its window. Setting dates here narrows that to specific
+            assessments. */}
+        <div>
+          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Assessments adjusted</p>
+          {claim.adjustments.length === 0 && (
+            <p className="mb-2 rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500">
+              None set. While this claim is approved or undecided it covers <em>every</em> assessment
+              falling due inside its window. Add a row below to give one piece its own new deadline instead.
+            </p>
+          )}
+          {claim.adjustments.map((a) => (
+            <div key={a.id} className="mb-1.5 flex items-center justify-between rounded-xl bg-white p-2.5 ring-1 ring-slate-200">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-bold text-slate-700">{a.assessment ? a.assessment.title : "Assessment"}</p>
+                <p className="text-[11px] text-slate-500">
+                  {a.adjustmentType === "exclusion" ? "Not required" : `New deadline ${a.revisedDueDate}`}
+                  {a.assessment && a.assessment.dueDate ? ` · originally ${a.assessment.dueDate}` : ""}
+                </p>
+              </div>
+              <button disabled={busy} onClick={() => act(() => api.removeMitigationAdjustment(claim.id, a.id))} className="rounded-lg px-2 py-1 text-[11px] font-bold text-rose-600 ring-1 ring-rose-200">Remove</button>
+            </div>
+          ))}
+
+          <div className="mt-2 grid gap-2 rounded-xl bg-slate-50 p-2.5 sm:grid-cols-3">
+            <select className={inputCls} value={adj.assessmentId} onChange={(e) => setAdj({ ...adj, assessmentId: e.target.value })}>
+              <option value="">Assessment…</option>
+              {assessments.map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+            <select className={inputCls} value={adj.adjustmentType} onChange={(e) => setAdj({ ...adj, adjustmentType: e.target.value })}>
+              <option value="extension">Extension</option>
+              <option value="exclusion">Not required</option>
+            </select>
+            {adj.adjustmentType === "extension"
+              ? <input type="date" className={inputCls} value={adj.revisedDueDate} onChange={(e) => setAdj({ ...adj, revisedDueDate: e.target.value })} />
+              : <div className="text-[11px] text-slate-400">Leaves both sides of every fraction.</div>}
+          </div>
+          <button
+            disabled={busy || !adj.assessmentId || (adj.adjustmentType === "extension" && !adj.revisedDueDate)}
+            onClick={() => act(async () => { const r = await api.addMitigationAdjustment(claim.id, adj); setAdj({ assessmentId: "", adjustmentType: "extension", revisedDueDate: "" }); return r; })}
+            className="press mt-2 rounded-xl px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
+            Add adjustment
+          </button>
+        </div>
+
+        <Field label="Decision note">
+          <textarea rows={2} className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why this was approved or refused." />
+        </Field>
+
+        {err && <p className="text-xs font-semibold text-rose-700">{err}</p>}
+
+        {/* The wording is deliberate. Somebody pressing these is changing whether a
+            student appears on a caseload, and a rejection is not a neutral tidy-up —
+            it puts the work back into the student's figures. */}
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
+          <button disabled={busy} onClick={onClose} className="rounded-xl px-3.5 py-2 text-xs font-bold text-slate-500 ring-1 ring-slate-200">Close</button>
+          {claim.status !== "withdrawn" && (
+            <button disabled={busy} onClick={() => decide("withdrawn")} className="rounded-xl px-3.5 py-2 text-xs font-bold text-slate-600 ring-1 ring-slate-200">Student withdrew it</button>
+          )}
+          {claim.status !== "rejected" && (
+            <button disabled={busy} onClick={() => decide("rejected")} className="rounded-xl px-3.5 py-2 text-xs font-bold text-rose-700 ring-1 ring-rose-200">Refuse</button>
+          )}
+          {claim.status !== "approved" && (
+            <button disabled={busy} onClick={() => decide("approved")} className="press rounded-xl px-3.5 py-2 text-xs font-bold text-white" style={{ background: grad(BLUE) }}>Approve</button>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -3207,6 +3631,48 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Marking turnaround", p.markingLatencyDays == null ? "—" : `${p.markingLatencyDays} days`],
     ["Absent first thing", pctOrDash(p.firstSessionAbsenceRate)],
     ["Absent later in the day", pctOrDash(p.laterSessionAbsenceRate)],
+    // How much of this student's timetable was actually registered, and how much the
+    // attendance percentage above rests on. The sample belongs beside the figure: 100%
+    // from three registers must not render identically to 100% from thirty, and when the
+    // figure was withheld entirely this is what explains the dash.
+    ["Register coverage", p.registerCoverageRate == null ? "—"
+      : `${p.registerCoverageRate}%${p.scheduledSessionCount ? ` of ${p.scheduledSessionCount} sessions` : ""}`],
+    ["Attendance rests on", p.attendanceObservations == null ? "—"
+      : `${p.attendanceObservations} marks${p.attendanceConfidence ? ` (${p.attendanceConfidence})` : ""}`],
+    ["Register last taken", p.lastRegisterMarkOn ? `${daysAgo(p.lastRegisterMarkOn)} days ago` : "—"],
+    // Where they stand against their own cohort. Null when the cohort is too small to
+    // describe anybody — a percentile from three peers is noise, and from one it is
+    // meaningless. The size is shown so a reader can judge the rank rather than trust it.
+    ["Attendance vs cohort", p.cohortAttendancePercentile == null ? "—"
+      : `${p.cohortAttendancePercentile}th of ${p.cohortSize}`],
+    ["Marks vs cohort", p.cohortAttainmentPercentile == null ? "—"
+      : `${p.cohortAttainmentPercentile}th of ${p.cohortSize}`],
+    // The shape of the absence, which the percentage cannot show. Two students on 70%
+    // are not the same student if one misses every Friday.
+    ["Worst day", p.worstAbsenceWeekday == null ? "—"
+      : `${WEEKDAY_NAMES[p.worstAbsenceWeekday]} — ${p.worstWeekdayAbsenceRate}% absent, ${p.weekdayAbsenceGap} pts worse`],
+    ["Whole weeks unseen", p.unseenWeekRun == null ? "—"
+      : `${p.unseenWeekRun} now, ${p.longestUnseenWeekRun} at worst, of ${p.observedWeeks} observed`],
+    // Where the work bunches. A busy fortnight is a fact about the timetable and never a
+    // code on its own; it is shown because it is what a conversation is about.
+    ["Heaviest week ahead", p.peakCount == null ? "—"
+      : `${p.peakCount} due ${p.peakFrom} to ${p.peakTo}${p.peakWasWeighted ? "" : " (unweighted)"}`],
+    ["Work already outstanding", p.carriedBacklogCount == null ? "—" : p.carriedBacklogCount],
+    // The VLE. Attendance says whether they came to the room; this says whether they
+    // opened the course at all — and a sponsoring provider must evidence engagement
+    // rather than attendance.
+    ["Opened the VLE", p.vleActiveDayRate == null ? "—"
+      : `${p.vleActiveDayRate}% of ${p.vleObservedDays} days observed`],
+    ["VLE last opened", p.vleLastAccessOn ? `${daysAgo(p.vleLastAccessOn)} days ago` : "—"],
+    // Money. The least visible risk in academic data — a student whose loan has not come
+    // through attends and submits right up until the day they leave.
+    ["Student finance", p.fundingPosition || "—"],
+    ["Finance unsettled since", p.fundingUnsettledSince || "—"],
+    // Claims the college agreed to take into account. Shown as a COUNT and a date only:
+    // the reason is health data and lives behind its own permission.
+    ["Claims awaiting a decision", p.openMitigationCount == null ? "—"
+      : `${p.openMitigationCount}${p.oldestOpenMitigationOn ? `, oldest ${p.oldestOpenMitigationOn}` : ""}`],
+    ["Assessments covered by a claim", p.mitigatedAssessmentCount == null ? "—" : p.mitigatedAssessmentCount],
   ];
 
   return (

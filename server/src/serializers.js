@@ -47,7 +47,10 @@ const sSignup = (r) => ({
   requestedAt: r.createdAt,
 });
 const sNotification = (n) => ({ id: n.id, type: n.type, message: n.message, link: n.link, read: n.read, at: n.createdAt });
-const sCheckin = (c) => ({ id: c.id, staffId: c.staffId, date: c.date, in: c.timeIn, out: c.timeOut, summary: c.summary, site: c.site ?? null });
+// tagId is named explicitly for the same reason as checkedInAt below — sCheckin is an
+// allowlist. It says the clock-in was made at a sticker in the building rather than by
+// pressing the button, which is the difference between "was here" and "said so".
+const sCheckin = (c) => ({ id: c.id, staffId: c.staffId, date: c.date, in: c.timeIn, out: c.timeOut, summary: c.summary, site: c.site ?? null, tagId: c.tagId ?? null });
 const sLeave = (l) => ({
   id: l.id, staffId: l.staffId, type: l.type, start: l.start, end: l.end, days: l.days, reason: l.reason,
   status: l.status, requestedAt: l.requestedAt, decidedBy: l.decidedBy, decidedAt: l.decidedAt, note: l.note,
@@ -114,7 +117,11 @@ const sSession = (x) => ({
   description: x.description, audience: x.audience, kind: x.kind ?? "",
   ...(x._count ? { markedCount: x._count.marks } : {}),
 });
-const sMark = (m) => ({ id: m.id, sessionId: m.sessionId, studentId: m.studentId, status: m.status, remark: m.remark, takenBy: m.takenBy, takenAt: m.takenAt });
+// checkedInAt is named explicitly because this is an allowlist, not a blocklist: a
+// column added to AttendanceMark tomorrow stays private until somebody publishes it
+// deliberately. It is the minute the student tapped in, distinct from takenAt, which is
+// reset every time the register is saved.
+const sMark = (m) => ({ id: m.id, sessionId: m.sessionId, studentId: m.studentId, status: m.status, remark: m.remark, takenBy: m.takenBy, takenAt: m.takenAt, checkedInAt: m.checkedInAt ?? null });
 const sInteraction = (i) => ({
   id: i.id, studentId: i.studentId, date: i.date, time: i.time, queryType: i.queryType,
   summary: i.summary, followUpActions: i.followUpActions, followUpRequired: i.followUpRequired,

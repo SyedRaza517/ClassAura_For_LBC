@@ -231,9 +231,13 @@ affected user is notified. Returns 400 if the account has no 2FA set up, 404 if 
 |--------|------|--------|------|
 | GET    | `/checkins?date=YYYY-MM-DD` | auth (staff: own; admin: all) | — |
 | POST   | `/checkins/check-in` | auth | — (self, today) |
+| POST   | `/checkins/tap-check-in` | auth | `{ tagCode }` — clock in by touching an NFC sticker; always `Onsite` |
 | POST   | `/checkins/:id/check-out` | auth (owner/admin) | — |
 | PUT    | `/checkins` | admin | `{ staffId, date, in, out? }` |
 | PUT    | `/checkins/summary` | auth | `{ date?, summary }` |
+
+`POST /checkins/tap-check-in` is documented in full under **NFC tap check-in** below,
+including why it refuses to record any site but `Onsite`.
 
 ## Leave
 | Method | Path | Access | Body |
@@ -285,10 +289,16 @@ applied twice. (Single-process; a multi-process deployment needs a database-leve
 | GET    | `/hnd/sessions/:id/register` | auth | — enrolled students + their marks |
 | PUT    | `/hnd/sessions/:id/register` | admin | `{ marks: [{ studentId, status, remark? }] }` |
 | GET    | `/hnd/attendance?semesterId=` | auth | — per-student/per-module + overall percentages |
+| GET    | `/hnd/my-sessions/today` | admin | — the classes this lecturer is teaching today |
+| GET    | `/hnd/sessions/:id/live` | admin | — the register as it stands during the class |
+| POST   | `/hnd/sessions/:id/mark-remaining-absent` | admin (`registers`) | `{ override? }` — marks the unmarked absent |
 
 `email` defaults to `<studentRef>@edtech.co.uk` when omitted.
 A mark with `status: null` clears that student's mark. Partial `marks` arrays are
 allowed, so a half-taken register can be saved and finished later.
+
+The last three rows are the lecturer's live view, which exists to serve NFC tap
+check-in — they are documented under **NFC tap check-in** below.
 
 ### Attendance statuses & percentage
 `status` is one of `P` (Present), `L` (Late), `E` (Excused), `A` (Absent).
@@ -320,6 +330,316 @@ The response's `scope: { semesterId, sessionCount }` echoes what was counted, an
 `moduleTotals[id].sessionCount` is scoped the same way. `unassignedSessions` on
 `GET /hnd/semesters` flags sessions no semester covers — otherwise they'd be
 invisible in every scoped view.
+
+## NFC tap check-in
+
+A student holds their phone against a sticker on the classroom wall and the app writes
+their **own** attendance mark; a member of staff touches the same sticker and is clocked
+in `Onsite`. Both write to records the college is asked to evidence at a funding audit, a
+visa compliance check or a student's appeal, so the interesting half of this API is the
+refusals.
+
+**It ships off.** `enabled` defaults to `false` for every college, exactly like the
+attendance emails and for the same reason: a feature that writes to the attendance record
+must not switch itself on everywhere on the next deploy. Until an administrator turns it
+on, `POST /student/me/tap-check-in` and `POST /checkins/tap-check-in` answer **403** and
+`GET /student/me/tap-context` reports `enabled: false` without naming a single class.
+
+### Settings (per college)
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/tags/settings` | `attendance-tags` | — |
+| PUT | `/tags/settings` | `attendance-tags` | any of `{ enabled, lateAfterMins, earlyGraceMins, armSeconds, staffTapEnabled }` |
+
+| Setting | Default | Means |
+|---|---|---|
+| `enabled` | `false` | Whether taps are accepted at all |
+| `lateAfterMins` | `15` | Past this many minutes after the start, a tap records `L` rather than `P` |
+| `earlyGraceMins` | `0` | Minutes **before** the start that taps begin to be accepted |
+| `armSeconds` | `60` | How long a tag read keeps the app's check-in button live — a client-side arming window, not a server rule |
+| `staffTapEnabled` | `true` | Whether the same stickers also clock staff in |
+
+`PUT` **behaves as a PATCH**: only the keys sent are changed, so switching the feature on
+does not silently reset a lateness threshold somebody tuned last term. It returns the
+complete merged settings (200), never a partial object, so no client needs a fallback of
+its own. A body that is not a plain object is the only 400 —
+`{ error: "Settings must be an object" }`.
+
+Values are filtered on the way out as well as in, because a stored blob can predate a
+rule or have been edited by hand in a console:
+
+- unknown keys are **dropped** by the allowlist, not stored;
+- `enabled` and `staffTapEnabled` are compared identically against `true`/`false` — the
+  string `"false"` and the number `0` are both mistakes somewhere in a chain of JSON, and
+  reading either as consent to switch a college on is the wrong failure to pick;
+- `lateAfterMins` and `earlyGraceMins` are whole minutes, clamped to **120**;
+  `armSeconds` is clamped to **600**. Without a ceiling, a typo of `600` in
+  `earlyGraceMins` accepts a tap ten hours before the class starts — which is not a
+  setting, it is an outage in the attendance record;
+- a value that survives none of that falls back to the **platform default** for that
+  field. Note the consequence: sending an unusable value does not leave the college's own
+  figure in place, it resets that one field to the default. The response says so — it is
+  the merged object, so the caller can see what was actually stored.
+
+Switching the feature on or off is audited on its own
+(`attendance.tap.settings.updated`): it makes every register in the college writable by a
+student holding a phone, and switching it off silently stops attendance being recorded.
+Settings are cached for 30 seconds per tenant (`ATTENDANCE_TAP_CACHE_MS`) and the cache is
+dropped on save, so an administrator who has just switched it on sees it work while they
+are still looking at the screen.
+
+### The stickers
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/tags` | `attendance-tags` | — every sticker this college has registered |
+| POST | `/tags` | `attendance-tags` | `{ label, code? }` |
+| PATCH | `/tags/:id` | `attendance-tags` | any of `{ label, active }` |
+| GET | `/tags/:id/log` | `attendance-tags` | — this sticker's last 200 taps |
+
+**The code is returned exactly once, by `POST /tags` (201), and no endpoint ever reads it
+back.** That response is the only place it appears: `sTag` is an allowlist that omits it,
+the tag list omits it, the tap log omits it, and the audit entry records only the label —
+the audit log is read on Settings by admins who were never granted this page, and a code
+in it is a check-in they could manufacture. A leaked code is a sticker anyone can simulate
+from anywhere, so the remedy is `PATCH /tags/:id { active: false }` and a new sticker, not
+a lookup.
+
+`code` is optional and covers the second way of registering a sticker: an admin on a phone
+taps a **blank** tag and the app sends its factory UID, which needs no NFC writing tool at
+all — buy stickers, tap each one, name the room. Omitted, the server generates 16 random
+bytes as base64url — not sequential and not derived from the label, because a code
+guessable from the sticker in the next room is a check-in nobody attended. An empty
+`code` counts as omitted, so it generates one rather than failing the length check.
+
+| Refusal | Status | Body |
+|---|---|---|
+| No `label`, or blank | 400 | `A label is required — the room this sticker lives in` |
+| `label` over 120 characters | 400 | `That label is too long (120 characters maximum)` |
+| `code` present but not a string | 400 | `code must be text` |
+| `code` present and shorter than 8 characters | 400 | `A tag's own code must be at least 8 characters — a short one would be guessable` |
+| `code` over 200 characters | 400 | `That code is too long (200 characters maximum)` |
+| That physical sticker is already registered | 409 | `That tag is already registered.` |
+| `PATCH` or log on an unknown id | 404 | `Tag not found` |
+| `PATCH` with a blank `label` | 400 | `A label is required` |
+| `PATCH` with `active` not a boolean | 400 | `active must be true or false` |
+| `PATCH` with no recognised field | 400 | `Nothing to change` |
+
+The 409 is this feature's **one cross-tenant read**, and it has to be:
+`AttendanceTag.code` is unique across the whole platform, so a create with a code another
+college already holds would otherwise fail as an opaque P2002, and the honest answer to
+"is this sticker already in use" is yes even when the other holder is an institution this
+administrator cannot see. The check returns a boolean and nothing else — which college
+holds it, what they call it and when they registered it all stay invisible. The caller
+learns only that this sticker is spoken for, which is what they need in order to go and
+find a different one.
+
+`PATCH` differs from `POST` on an over-long label: it **truncates** to 120 characters
+rather than refusing.
+
+`GET /tags/:id/log` returns `{ tag, taps }`, newest first, capped at 200:
+
+```
+{ id, at, who, kind: "student" | "staff" | null, outcome, status, site }
+```
+
+The refusals are the point — "I tapped and it didn't work" is answerable here and nowhere
+else, and so is a pattern (one address checking in six students inside a minute) that is
+invisible in `AttendanceMark`. `outcome` is one of `marked`, `already_marked`,
+`no_session_now`, `term_locked`, `ambiguous` (student taps) or `checked_in`,
+`already_checked_in` (staff taps); `status` is `"P"` or `"L"` only when a mark was
+actually written, and `null` otherwise. `who` is `null` when the tap was refused before
+anybody was identified, which is a real state rather than a missing name, and **no email
+address is ever included**: `GET /staff` already withholds colleagues' addresses from
+page-scoped admins, and a tag log carrying them would become a way to harvest the roster.
+
+### The student's tap
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/student/me/tap-context` | **student session** | — |
+| POST | `/student/me/tap-check-in` | **student session** | `{ tagCode, sessionId? }` |
+
+Both live on `/api/student`, so a staff token is refused with **403**
+`Student access required` and an applicant token with **403**
+`Not available for applicant accounts`, before either handler runs. Neither route takes a
+student id — `req.user.id` is the only student either can see, so there is nothing to
+tamper with. In the other direction, a student token reaching `/api/tags` or `/api/hnd`
+gets **403** `Not available for student accounts` from the router allowlist.
+
+`tap-context` is what the check-in screen shows *before* a tap: this student's classes
+today and whether taps are being accepted right now.
+
+```
+{ enabled: false, armSeconds, now: null, next: null }                // feature off
+{ enabled: true, armSeconds, date, now: [Session…], reason, next }   // feature on
+```
+
+`now` is the class (or classes) a tap would land on: one entry normally, more than one
+when two of the student's lectures genuinely overlap, and `[]` when nothing is running —
+in which case `reason` is `no_session_now` or `term_locked`. `next` is the first class
+still to come today, so the screen can say "your next class is at 13:00" rather than only
+"nothing on now", which reads as a fault rather than as a timetable. Note that `now` is
+`null` in the disabled shape and `[]` in the enabled one. A session here carries only
+`{ id, unitCode, unitName, startTime, endTime }` — no other student's data, ever.
+
+**Which register a tap lands on is decided by the timetable, not by a window anybody
+opens.** There is nothing for a lecturer to arm and nothing to remember to switch off. A
+tap is accepted from `startTime - earlyGraceMins` to `endTime`, both ends inclusive — a
+student who tapped as the class ended did arrive — and only for sessions on units this
+student is **enrolled** on, which is what stops a tap attaching a student to a unit they
+were never on. The mark is `P` when the tap is at or before `startTime + lateAfterMins`
+and `L` after it; arriving exactly on the threshold is not late. After an ambiguous
+choice the verdict is recomputed for the class the student picked, because inheriting the
+first candidate's answer would mark a punctual student late.
+
+A successful tap writes an ordinary `AttendanceMark` with `takenBy` set to the stamp
+`Self check-in (NFC)` and `checkedInAt` set to the local `HH:MM`. `checkedInAt` is
+distinct from `takenAt`, which every register save resets — that is the whole reason the
+column exists, and a later save correcting the status leaves the arrival time alone. The
+student's progression score is flagged stale (never rescored inline: a check-in must not
+wait on arithmetic) and the write is audited as `attendance.tap.marked`.
+
+**Three things a tap can never do**, each of which would damage a record the college has
+to evidence:
+
+- **overwrite a mark a lecturer already set.** The human in the room wins — the same
+  invariant the Moodle importer holds. A tap onto an existing mark answers **200** with
+  `{ ok: true, alreadyMarked: true, status, checkedInAt, session }`, where `status` and
+  `checkedInAt` are the *existing* mark's, and writes nothing. It follows that a second
+  tap never creates a second mark and never moves the recorded arrival time.
+- **write an `A`.** Absence is what an untaken register already means, and scoring "did
+  not tap" as absent turns a flat battery into a permanent academic record. The only
+  route from this feature to an absence is `POST /hnd/sessions/:id/mark-remaining-absent`
+  below, with a named human on the end of it.
+- **bypass the term lock.** A session whose unit's term is closed is refused, so a tap
+  never becomes a back door around the lock that `PUT /hnd/sessions/:id/register` enforces
+  with a **423**. The tap's own refusal is a **409** carrying `reason: "term_locked"` —
+  the 423 belongs to the staff-facing register routes, which accept `override: true`;
+  this refusal has no override at all.
+
+| Refusal | Status | Body |
+|---|---|---|
+| Feature switched off | 403 | `Tap check-in isn't switched on for this college.` |
+| Missing or blank `tagCode` | 400 | `A tag is required` |
+| `sessionId` present but not a string | 400 | `sessionId must be text` |
+| More than 10 taps in 60 seconds by the same student | 429 | `Too many attempts — wait a moment and try again.` |
+| Tag unknown, retired, or another college's | 404 | `That tag isn't recognised.` |
+| No class of theirs running now | 409 | `No class of yours is running right now.` + `reason: "no_session_now"` |
+| That class's term is closed | 409 | `That class is outside its teaching term, so the register is closed.` + `reason: "term_locked"` |
+| Two of their classes are running at once | 409 | `{ reason: "ambiguous", sessions: [...] }` — **no `error` key**; the app re-posts with `sessionId` |
+| `sessionId` names a class that is not the one running | 409 | `That class is no longer running. Try again.` |
+
+The three 404s read **identically** — an unknown code, a retired sticker and a tag
+belonging to another institution are one message, which is the tenant isolation working
+rather than a special case anybody wrote. "Nothing is running" is reported *before* the
+term is checked, so a student who tapped at the wrong time of day is not told their term
+is closed: two different problems with two different remedies. The rate limit is an
+in-process module-level `Map` keyed on the student — correct for one Node process, and
+there to stop a runaway loop rather than to ration people standing in a doorway. Note
+that the 403, the 429 and the 404 all answer *before* a tag has been resolved, so unlike
+every other outcome they leave no row in the tap log.
+
+Success is **201** with `{ ok: true, status, checkedInAt, session }`.
+
+### The staff tap
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| POST | `/checkins/tap-check-in` | auth (any signed-in staff member) | `{ tagCode }` |
+
+No admin page is required: clocking yourself in is not an administrative act. It does need
+**both** `enabled` and `staffTapEnabled`, and answers 403
+`Tap check-in isn't switched on for this college.` when either is off — so a college can
+run tap check-in for students only.
+
+**`site` is not accepted and not asked for — the record always says `Onsite`, and any
+`site` in the body is deliberately ignored.** Someone who touched a sticker in the
+building cannot be working online: the tap is what proves they are here, so recording
+anything else would store a claim the tap itself disproves. Working online remains
+available through `POST /checkins/check-in`, which does take a site. This is also the
+first time a staff clock-in has meant "was in the building" rather than "said so" — the
+button records a clock-in from anywhere, bed included.
+
+A successful tap answers **201** with `{ ok: true, ...CheckIn }`, the row carrying
+`site: "Onsite"` and `tagId`. Re-tapping the same day answers **200** with
+`{ ok: true, alreadyCheckedIn: true, ...CheckIn }` and **does not rewrite the arrival
+time** — the same rule `POST /checkins/check-in` follows, and for the same reason: a
+second tap on the way past the door would otherwise falsify how long somebody was on site.
+A day whose row exists only because a summary was saved (`timeIn: ""`) is filled in rather
+than left blank. The refusals are 400 `A tag is required` and 404
+`That tag isn't recognised.`, worded exactly as on the student side.
+
+Like `POST /checkins/check-in`, it is **not audited**: it records the present, in the
+caller's own name, and cannot alter history. `PUT /checkins` — which writes anyone's hours
+on any date — is the one that is audited.
+
+### The lecturer's live view
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/hnd/my-sessions/today` | `registers` \| `students` \| `executive` | — |
+| GET | `/hnd/sessions/:id/live` | `registers` \| `students` \| `executive` | — |
+| POST | `/hnd/sessions/:id/mark-remaining-absent` | `registers` | `{ override? }` |
+
+All three sit on the HND router, whose blanket guard is
+`requireAnyPage(["registers", "students", "executive"])`; the write additionally requires
+`registers`. The admin dashboard shows this screen under the **`live-attendance`** page
+key, but the server does not check that key anywhere — an admin granted *only*
+`live-attendance` reaches the tab and is refused by every request on it.
+
+`GET /hnd/my-sessions/today` answers `{ date, tapEnabled, sessions: [...] }` — the classes
+this lecturer is teaching today, matched on `Unit.tutorStaffId` so the dashboard opens on
+the right register without hunting through a term's worth of sessions. The free-text
+`tutor` field is deliberately **not** matched on: a name typed into a box is not an
+identity, and matching on it would hand one lecturer another's register whenever two
+people share a surname. Each session carries `{ id, unit, startTime, endTime, description,
+kind, marked, acceptingTaps }`, where `marked` is how many marks exist and `acceptingTaps`
+is derived at read time rather than stored — "is it running" changes every minute, and a
+column holding it would be wrong within one with nothing to correct it. A lecturer
+teaching nothing today gets an empty array, not an error.
+
+`GET /hnd/sessions/:id/live` is the register as it stands during the class (404
+`Session not found` otherwise), polled by the dashboard every few seconds; there is no
+websocket layer in this codebase and one three-hour class does not justify introducing
+one. It returns:
+
+```
+{ session, unit, acceptingTaps, termLocked, counts: { P, L, E, A, notMarked },
+  rows: [{ student, status, remark, checkedInAt, selfMarked, takenBy, enrolled }] }
+```
+
+- `status` is `null` for a student with no mark, and they are counted in `notMarked`.
+  **"Not tapped" is a display state, not a mark** — nothing is written for those students
+  here; the roll simply has no row for them yet.
+- `selfMarked` is `takenBy === "Self check-in (NFC)"`, so a row a lecturer has taken over
+  stops reading as self-marked. `takenBy` carries provenance the same way for the Moodle
+  importer.
+- `enrolled` is `false` for a student since un-enrolled who still holds a mark on this
+  register. They stay on the screen, matching `GET /hnd/sessions/:id/register`, because
+  otherwise their mark would vanish from view while remaining in the database.
+- `termLocked` is `null` — not `false` — when the unit has no term at all. That register
+  is simply never term-locked, which is not the same statement as "the term is open".
+
+`POST /hnd/sessions/:id/mark-remaining-absent` is the lecturer closing the register: it
+writes `A` for every **enrolled** student with no mark on this session and answers 200
+with `{ ok: true, marked }`. It exists precisely so that no automatic process ever takes
+this step — a flat battery, a forgotten handset or a phone with no NFC must not become an
+academic record without somebody deciding it should.
+
+- 404 `Session not found` for an unknown id.
+- **423** — `<Term> is over — reopen it to edit this register.` (or `is not open yet`)
+  with `locked: true` — when the unit's term is closed, matching
+  `PUT /hnd/sessions/:id/register` exactly, because a convenience button must not be a way
+  around a closed term. `{ override: true }` passes the lock, stamps `takenBy` as
+  `<name> (out-of-term correction)`, and is audited as `attendance.register.corrected`
+  rather than `attendance.register.closed`. A unit with no term is never locked.
+- Marks are written with `createMany` + `skipDuplicates`, never an upsert, so it is
+  structurally impossible for this route to overwrite a mark — and a student who taps in
+  between the read and the write keeps their `P`.
+- Running it again answers 200 with `{ ok: true, marked: 0, message: "Everyone on this
+  register already has a mark." }`.
 
 ## Predictive analysis (progression risk)
 
@@ -409,7 +729,7 @@ Staff    { id, name, role, dept, email, allowance, initials, colour, accountRole
          // totpSecret is NEVER serialised here
 Signup   { id, name, email, role, dept, status, note, decidedBy, decidedAt, requestedAt }
 Notification { id, type, message, link, read, at }   // type: info | success | error
-CheckIn  { id, staffId, date, in, out, summary }
+CheckIn  { id, staffId, date, in, out, summary, site, tagId }   // tagId: the sticker tapped, null otherwise
 Leave    { id, staffId, type, start, end, reason, status, requestedAt, decidedBy, decidedAt, note }
 Adjustment { id, staffId, days, note, date }
 Document { id, name, type, date, scope, assignedTo }
@@ -417,6 +737,10 @@ Semester { id, name, start, end, sessionCount? }
 HndModule { id, code, name, tutor, sessionCount?, studentCount? }
 Student  { id, firstName, lastName, name, studentRef, email, initials, colour, active, moduleIds? }
 Session  { id, moduleId, date, start, end, description, audience, markedCount? }
-Mark     { id, sessionId, studentId, status, remark, takenBy, takenAt }
+Mark     { id, sessionId, studentId, status, remark, takenBy, takenAt, checkedInAt }
+         // checkedInAt: HH:MM the student tapped in; takenAt is reset by every register save
+AttendanceTag { id, label, active, lastTapAt, createdAt, createdBy }   // `code` ONLY on POST /tags
+TagTap   { id, at, who, kind, outcome, status, site }   // who/kind null on a refusal before identification
+TapSettings { enabled, lateAfterMins, earlyGraceMins, armSeconds, staffTapEnabled }
 Summary  { P, L, E, A, marked, earned, possible, pct }   // pct: null until marked
 ```

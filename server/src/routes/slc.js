@@ -5,6 +5,8 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const audit = require("../audit");
+const { localDate } = require("../clock");
+const predictionRunner = require("../prediction/runner");
 const { requireAuth, requirePage } = require("../auth");
 
 router.use(requireAuth, requirePage("slc"));
@@ -43,7 +45,15 @@ router.get("/", async (_req, res) => {
 router.post("/", async (req, res) => {
   const data = pick(req.body || {}, req.user);
   if (!data.studentName) return res.status(400).json({ error: "A student name is required." });
-  const row = await prisma.slcApplication.create({ data });
+  // WHEN THIS STATUS BECAME TRUE, which is the anchor the funding signals measure a
+  // stall from. The column existed and nothing ever wrote it, so it was null on every
+  // row and prediction/funding.js had to fall back to applicationDate — which measures
+  // time in the PIPELINE rather than time in THIS STATE, and is why that fallback
+  // carries a much longer threshold. Writing it here is what lets the stronger anchor
+  // start being true for rows created from now on.
+  //
+  // The college's own date, never the host clock (see clock.js).
+  const row = await prisma.slcApplication.create({ data: { ...data, statusChangedOn: localDate() } });
   audit.record(req, {
     action: "slc.created", entity: "SlcApplication", entityId: row.id,
     summary: `Student finance record created for ${row.studentName} — ${row.status}`,
@@ -57,7 +67,24 @@ router.put("/:id", async (req, res) => {
   if (!data.studentName) return res.status(400).json({ error: "A student name is required." });
   const existing = await prisma.slcApplication.findUnique({ where: { id: req.params.id } });
   try {
-    const row = await prisma.slcApplication.update({ where: { id: req.params.id }, data });
+    // ONLY WHEN THE STATUS ACTUALLY MOVED. Stamping it on every save would turn "how
+    // long has this been sitting at Awaiting evidence" into "when did somebody last
+    // open the record and correct a typo", and the figure would look freshest for
+    // exactly the claims being fussed over rather than the ones nobody has touched.
+    // The comparison is the same one the audit summary below already makes.
+    const statusMoved = Boolean(existing) && existing.status !== data.status;
+    const row = await prisma.slcApplication.update({
+      where: { id: req.params.id },
+      data: statusMoved ? { ...data, statusChangedOn: localDate() } : data,
+    });
+
+    // A funding decision changes what the prediction layer can say about this student,
+    // in both directions -- an approval settles a stall, a refusal opens one. Guarded on
+    // the link because nothing populates studentId yet: until the backfill runs, every
+    // row here is unattached to a Student and there is nobody to flag.
+    if (row.studentId) {
+      try { await predictionRunner.markStale([row.studentId]); } catch { /* scoring is not this route's job to guarantee */ }
+    }
     // The status is the substance: whether a student's funding has been applied for,
     // approved or refused decides whether they can enrol and be charged.
     audit.record(req, {

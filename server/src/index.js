@@ -96,6 +96,7 @@ app.use("/api/adjustments", wrapAsync(require("./routes/adjustments")));
 app.use("/api/notifications", wrapAsync(require("./routes/notifications")));
 app.use("/api/devices", wrapAsync(require("./routes/devices")));
 app.use("/api/hnd", wrapAsync(require("./routes/hnd")));
+app.use("/api/tags", wrapAsync(require("./routes/tags")));
 app.use("/api/interactions", wrapAsync(require("./routes/interactions")));
 app.use("/api/assessments", wrapAsync(require("./routes/assessments")));
 app.use("/api/prediction", wrapAsync(require("./routes/prediction")));

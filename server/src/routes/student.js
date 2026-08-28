@@ -6,8 +6,13 @@ const prisma = require("../db");
 const { sUnit, sStudent, sStudentQuery } = require("../serializers");
 const { requireAuth, requireStudent } = require("../auth");
 const { summarise } = require("../attendance");
-const { localDate } = require("../clock");
+const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
+const audit = require("../audit");
+const tapConfig = require("../attendanceTapConfig");
+const predictionRunner = require("../prediction/runner");
+const { resolveTapSession, statusFor, SELF_CHECKIN_STAMP } = require("../attendanceTap");
+const { isString } = require("../validate");
 
 router.use(requireAuth, requireStudent);
 
@@ -18,6 +23,233 @@ const bandOf = (pct) => (pct == null ? null : pct >= 70 ? "Distinction" : pct >=
 // assessment maximum would otherwise show the student a percentage over 100.
 const pctOf = (marks, max) => (max > 0 ? Math.min(100, Math.max(0, Math.round((marks / max) * 1000) / 10)) : null);
 const str = (v) => (typeof v === "string" ? v.trim() : "");
+
+/* ============================== NFC tap check-in ============================== */
+
+// WHAT A TAP PROVES, STATED HONESTLY
+//
+// That somebody was at that sticker once, with this account signed in. NOT that they are
+// there now: the code on a sticker is static and any phone with a generic NFC reader app
+// can lift it, so a student who notes one down can mark themselves present from home for
+// the rest of the year — and the ten-per-minute limiter is no obstacle at one request per
+// class. The lecturer's live view and the TagTap log, which carries the IP, are what make
+// that visible after the fact. Nothing here prevents it.
+//
+// This is a real improvement on a button anybody could press, and it is not proof of
+// presence. Closing the gap properly means a tag that rotates its code, or a tag bound to
+// a room with the session required to match it. Both are recorded in the design note under
+// docs/superpowers/specs/. Comments elsewhere in this feature once claimed more than this;
+// they have been corrected, because an overclaim in an attendance record is worse than a
+// gap somebody knows about.
+
+// In-process, module-level, and therefore correct for ONE Node process — a clustered
+// deployment needs Redis. Keyed on the student because the caller is already
+// authenticated: this is not a login endpoint, so the point is to stop a runaway loop,
+// not to ration people who are standing in a doorway.
+const tapHits = new Map(); // studentId -> number[] of timestamps
+const TAP_WINDOW_MS = 60_000;
+const TAP_MAX = 10;
+function tapAllowed(studentId) {
+  const now = Date.now();
+  const recent = (tapHits.get(studentId) || []).filter((t) => now - t < TAP_WINDOW_MS);
+  if (recent.length >= TAP_MAX) { tapHits.set(studentId, recent); return false; }
+  recent.push(now);
+  tapHits.set(studentId, recent);
+  return true;
+}
+
+/**
+ * Record what happened, whatever happened.
+ *
+ * Never throws into the request. A tap that WAS marked must not report a failure because
+ * the log write did — the register is the record, this is the account of it.
+ */
+async function logTap(req, fields) {
+  try {
+    await prisma.tagTap.create({ data: { ip: req.ip ? String(req.ip).slice(0, 60) : null, ...fields } });
+  } catch (e) {
+    console.error("[tap] could not log a student tap:", e.message);
+  }
+}
+
+/** Today's sessions on units this student is enrolled on, shaped for the resolver. */
+async function candidateSessions(studentId, date) {
+  const enrolments = await prisma.enrolment.findMany({ where: { studentId }, select: { unitId: true } });
+  const unitIds = enrolments.map((e) => e.unitId);
+  if (!unitIds.length) return [];
+  const sessions = await prisma.hndSession.findMany({
+    where: { date, unitId: { in: unitIds } },
+    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  return sessions.map((s) => ({
+    id: s.id,
+    unitId: s.unitId,
+    unitCode: s.unit?.code || "",
+    unitName: s.unit?.name || "",
+    date: s.date,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    term: s.unit?.term ? { name: s.unit.term.name, start: s.unit.term.start, end: s.unit.term.end } : null,
+  }));
+}
+
+/** What a session looks like on the check-in screen. No other student's data, ever. */
+const sTapSession = (s) => ({ id: s.id, unitCode: s.unitCode, unitName: s.unitName, startTime: s.startTime, endTime: s.endTime });
+
+// GET /api/student/me/tap-context — what the check-in screen shows before a tap.
+//
+// This student's classes today and whether taps are being accepted right now. Keyed on
+// req.user.id like every other route in this file; no id parameter exists, so there is
+// nothing to tamper with.
+router.get("/me/tap-context", async (req, res) => {
+  const settings = await tapConfig.get();
+  if (!settings.enabled) return res.json({ enabled: false, armSeconds: settings.armSeconds, now: null, next: null });
+
+  const date = localDate();
+  const time = localTime();
+  const candidates = await candidateSessions(req.user.id, date);
+  const decision = resolveTapSession(candidates, { date, time }, settings);
+
+  // The classes still to come today, so the screen can say "your next class is at 13:00"
+  // rather than only "nothing on now" — which reads as a fault rather than a timetable.
+  const later = candidates
+    .filter((s) => s.startTime > time)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  res.json({
+    enabled: true,
+    armSeconds: settings.armSeconds,
+    date,
+    now: decision.kind === "one" ? [sTapSession(decision.session)]
+       : decision.kind === "ambiguous" ? decision.sessions.map(sTapSession)
+       : [],
+    reason: decision.kind === "none" ? decision.reason : null,
+    next: later.length ? sTapSession(later[0]) : null,
+  });
+});
+
+// POST /api/student/me/tap-check-in — mark this student present at the class running now.
+//
+// Writes an ordinary P or L into the existing register. Three things it must never do,
+// each of which would damage a record the college is asked to evidence:
+//   * overwrite a mark a lecturer already set — the human in the room wins, the same
+//     invariant the Moodle importer holds;
+//   * write an A — absence is what an untaken register already means, and scoring "did
+//     not tap" as absent turns a flat battery into a permanent academic record;
+//   * bypass the term lock, which the register save enforces with a 423.
+router.post("/me/tap-check-in", async (req, res) => {
+  const settings = await tapConfig.get();
+  // Logged with no tag, like the two refusals below it. A college that switched this off
+  // while students were still tapping needs to be able to see that happening, and until
+  // TagTap.tagId became nullable none of these three could be recorded at all.
+  if (!settings.enabled) {
+    await logTap(req, { studentId: req.user.id, outcome: "disabled" });
+    return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
+  }
+
+  const code = req.body?.tagCode;
+  if (!isString(code) || !code.trim()) return res.status(400).json({ error: "A tag is required" });
+  const chosenId = req.body?.sessionId;
+  if (chosenId != null && !isString(chosenId)) return res.status(400).json({ error: "sessionId must be text" });
+
+  if (!tapAllowed(req.user.id)) {
+    await logTap(req, { studentId: req.user.id, outcome: "rate_limited" });
+    return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+  }
+
+  // Tenant-scoped by db.js, so a tag belonging to another college is simply not found.
+  // That is the isolation working; it needs no special case here.
+  const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
+  if (!tag) {
+    // The code itself is NOT stored. It is a secret, and a log an administrator can read
+    // must not become a list of the codes somebody has been trying. What is worth
+    // keeping is that an unrecognised tap happened, when, and from where — which is what
+    // makes a run of them visible as a run.
+    await logTap(req, { studentId: req.user.id, outcome: "tag_unknown" });
+    return res.status(404).json({ error: "That tag isn't recognised." });
+  }
+
+  const date = localDate();
+  const time = localTime();
+  const candidates = await candidateSessions(req.user.id, date);
+  const decision = resolveTapSession(candidates, { date, time }, settings);
+
+  const base = { tagId: tag.id, studentId: req.user.id };
+
+  if (decision.kind === "none") {
+    await logTap(req, { ...base, outcome: decision.reason });
+    return res.status(409).json({
+      error: decision.reason === "term_locked"
+        ? "That class is outside its teaching term, so the register is closed."
+        : "No class of yours is running right now.",
+      reason: decision.reason,
+    });
+  }
+
+  let chosen;
+  if (decision.kind === "ambiguous") {
+    chosen = chosenId ? decision.sessions.find((s) => s.id === chosenId) : null;
+    if (!chosen) {
+      await logTap(req, { ...base, outcome: "ambiguous" });
+      return res.status(409).json({ reason: "ambiguous", sessions: decision.sessions.map(sTapSession) });
+    }
+  } else {
+    chosen = decision.session;
+    // A sessionId naming something else is a stale screen or a tampered body. It must
+    // not silently mark a different class than the one the student was shown.
+    if (chosenId && chosenId !== chosen.id) return res.status(409).json({ error: "That class is no longer running. Try again." });
+  }
+
+  // Recomputed for the CHOSEN session rather than reusing the single-session verdict: an
+  // ambiguous pick may be a class that started at a different time, and inheriting the
+  // first candidate's answer would mark a punctual student late.
+  const status = statusFor(chosen, { date, time }, settings);
+
+  const existing = await prisma.attendanceMark.findUnique({
+    where: { sessionId_studentId: { sessionId: chosen.id, studentId: req.user.id } },
+  });
+  if (existing) {
+    await logTap(req, { ...base, sessionId: chosen.id, outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: existing.status, checkedInAt: existing.checkedInAt ?? null, session: sTapSession(chosen) });
+  }
+
+  let mark;
+  try {
+    mark = await prisma.attendanceMark.create({
+      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time },
+    });
+  } catch (e) {
+    // P2002 on @@unique([sessionId, studentId]): two taps raced past the existence check
+    // above, or a lecturer saved the register in between. Either way a mark now exists
+    // and this request must not have written it — report what stands rather than a 500.
+    const standing = await prisma.attendanceMark.findUnique({
+      where: { sessionId_studentId: { sessionId: chosen.id, studentId: req.user.id } },
+    });
+    if (!standing) throw e;
+    await logTap(req, { ...base, sessionId: chosen.id, outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: standing.status, checkedInAt: standing.checkedInAt ?? null, session: sTapSession(chosen) });
+  }
+
+  await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });
+  await logTap(req, { ...base, sessionId: chosen.id, outcome: "marked", status });
+
+  // Attendance feeds the progression score, and none of that is written by the
+  // prediction feature itself — so anything that touches a mark has to say so. Cheap,
+  // and deliberately does NOT rescore: a check-in must not wait on arithmetic. Never
+  // throws into a request that has already written; the mark is saved either way.
+  try { await predictionRunner.markStale([req.user.id]); }
+  catch (e) { console.error("[prediction] could not flag a score after a tap check-in:", e.message); }
+
+  audit.record(req, {
+    action: "attendance.tap.marked",
+    entity: "AttendanceMark", entityId: mark.id,
+    summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) checked themselves in at ${time} on the ${chosen.date} register for ${chosen.unitCode || "a unit"} — recorded ${status} via tag "${tag.label}"`,
+    before: null,
+    after: { sessionId: chosen.id, status, checkedInAt: time, tag: tag.label },
+  });
+
+  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(chosen) });
+});
 
 // GET /api/student/me — the signed-in student's own profile.
 router.get("/me", async (req, res) => {

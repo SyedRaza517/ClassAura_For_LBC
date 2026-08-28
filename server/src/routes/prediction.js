@@ -68,6 +68,9 @@ const PREDICTION_OUT = [
   "openMitigationCount", "oldestOpenMitigationOn", "mitigatedAssessmentCount", "attendanceMitigated",
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
   "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
+  "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
+  "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
+  "entryProfileRecorded", "entryProfileOn", "entryProfileAnswered", "entryProfileQuestions", "entryProfileBarriers", "entryWifiAtHome", "entryKnowsOfficeSoftware", "entryAdmittedOutcome", "rightToStudyExpiresOn", "currentBandSince", "worstBandHeld", "worstBandSince", "observedDays", "bandChanges", "bandsVisited", "recoveredPoints", "recoveredBy", "lowestScore", "lowestOn", "divergenceShape", "attendanceSubmissionGap", "attendanceVleGap",
 ];
 
 const pick = (row, keys) => {

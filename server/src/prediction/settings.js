@@ -355,6 +355,128 @@ const DEFAULTS = {
   // exactly when that data point exists and nothing else does.
   minObservedDays: 5,
 
+  /* --- assessment workload -------------------------------------------------- */
+
+  // The window deadlines are bunched into, and how far ahead to look. A week is the unit
+  // both a timetable and a student's own planning are in. The horizon is 28 rather than
+  // 14 because a fortnight-wide view can only see the near half of a cluster that
+  // straddles its edge, and would report it at half size; 28 also matches
+  // recentAttendanceDays and directionOfTravelDays.
+  clusterWindowDays: 7,
+  horizonDays: 28,
+  // Deadlines in one window before it counts as heavy. Two a week is ordinary; three
+  // cannot be sequenced. Set at "heavy, not extreme" ON PURPOSE, because the threshold is
+  // never the whole test — every workload CODE also requires something about this
+  // student, so it is the conjunction that discriminates, not this number.
+  peakDeadlineLimit: 3,
+  // Outstanding pieces carried INTO that window. A count of concrete pieces, not a rate,
+  // so it does not need the sample floors that lateSubmissionMinPieces and
+  // disperseMinMarks carry — those protect percentages from tiny denominators.
+  backlogLimit: 1,
+  // The attendance the run-up has to fall below for the second conjunction, and the
+  // fewest marks behind it. Both mirror figures already here — redAttendanceThreshold
+  // and slopeMinMarks — rather than inventing a third opinion.
+  peakAttendanceFloor: 70,
+  recentMinMarks: 3,
+
+  /* --- student finance ------------------------------------------------------ */
+
+  // How long a claim may sit in one non-terminal state before it is reported. A third of
+  // a twelve-week term: late enough to be a real stall, early enough that a hardship
+  // payment still helps. Twice notSeenDays because a register is touched weekly and a
+  // finance queue monthly.
+  stalledStatusDays: 28,
+  // The same question measured from applicationDate, which is the WEAKER anchor: it
+  // measures time in the pipeline rather than time in THIS state, so it gets a longer
+  // rope. Used only where statusChangedOn is null — which, until routes/slc.js began
+  // writing it, was every row.
+  unsettledApplicationDays: 56,
+  // Shorter on purpose. "Awaiting evidence" is the one state the college can clear this
+  // afternoon, by telling the student what is missing.
+  evidenceOutstandingDays: 21,
+  // The ceiling, in the shape unansweredQueryCeilingDays already carries. Unbounded, one
+  // abandoned row from a first term keeps a code lit for three years.
+  stalledCeilingDays: 240,
+  // How long a refusal stays reportable. A student still enrolled a year after a decline
+  // resolved it some other way, and that continued enrolment is the only evidence of
+  // resolution this table can offer.
+  refusedWindowDays: 365,
+
+  /* --- the shape of the absence --------------------------------------------- */
+
+  // Marks on ONE weekday (or one session kind) before that slice may be compared against
+  // the rest. Four, matching disperseMinMarks: a weekday is the same shape of slice as a
+  // unit. Deliberately NOT minMarksForRate (6), which would silence the signal entirely
+  // for a cohort timetabled two days a week — exactly the cohorts where a clash on one of
+  // those days matters most.
+  weekdayMinMarks: 4,
+  kindMinMarks: 4,
+  // And a floor on the POOLED side too. A floor on only the interesting number is a
+  // half-guard: "60% absent on Fridays against 0% across two other marks" is not a
+  // comparison. Six, because the pooled side is the whole register minus one slice.
+  weekdayMinOtherMarks: 6,
+  kindMinOtherMarks: 6,
+  // At least two slices must clear the floor before a worst one is named. A superlative
+  // over one candidate is not a comparison — unitDispersion already refuses on the same
+  // grounds.
+  minWeekdaysMeasured: 2,
+  minKindsMeasured: 2,
+
+  // Consecutive weeks in which the register RAN and the student appeared in none of them.
+  // Two, because one unattended week is a bad week and everybody has one. Commensurable
+  // with notSeenDays (14) on purpose, so the two say the same thing in different units
+  // rather than contradicting each other on the same screen.
+  zeroWeekLimit: 2,
+  // Marks across the whole RUN, not per week. A per-week floor would make this
+  // structurally unable to fire at a college teaching one session a week — which is
+  // precisely a college where three unseen weeks matters.
+  zeroWeekMinMarks: 3,
+  // How recent the run must be to still be reported. Empty weeks are transparent, which
+  // is what lets a reading week pass without breaking a run — and would otherwise keep
+  // one lit all summer. Past this, the finding hands over to the stale-register code, so
+  // one event puts one row on the caseload rather than two.
+  runRecencyDays: 21,
+
+  /* --- what the student said before they started ---------------------------- */
+
+  // A CEILING, running the opposite way to settlingInWeeks' floor. The entry profile is
+  // worth most in week one, when nothing else has any data, and must DECAY — because
+  // nothing ever updates an Ism. No route re-asks the questions, so a September answer
+  // would still be sitting on the row in year two with no event able to clear it.
+  entryProfileWeeks: 12,
+  // How much notice before a right to study runs out. Renewals take weeks, so a term of
+  // warning makes this an intervention rather than a report. Chosen structurally, NOT
+  // from any published Home Office turnaround.
+  idExpiryWarnDays: 90,
+  // And a ceiling on how long an expired date stays on the caseload, in the shape
+  // refusedWindowDays already carries. Admission stops being maintained the day somebody
+  // enrols, so an old expiry usually means "renewed, nobody updated the row". It costs
+  // nothing: the DATE is stored regardless, so a compliance list still sees every expiry
+  // for ever — only the caseload code ages out.
+  idExpiredCeilingDays: 365,
+
+  /* --- when the signals disagree -------------------------------------------- */
+
+  // How far apart two rates must be before the disagreement is a finding.
+  //
+  // DELIBERATELY LARGER than attendanceSlopeDrop (10) or cohortOutlierGap (10), and the
+  // reason is that those compare LIKE WITH LIKE — the same instrument and the same
+  // denominator, with only the window or the population moving. Nothing is held constant
+  // here, so ten points between an attendance percentage and a submission rate is the
+  // ordinary state of an ordinary student. 25 is more than one step of the band ladder
+  // (85/70/55/40) and less than two: 95/20 fires, 80/60 does not.
+  divergenceGap: 25,
+  // Floors on BOTH sides of every comparison. A floor on only the interesting number is
+  // a half-guard, which this codebase has shipped before. The asymmetry is deliberate:
+  // requiring six submissions would silence the comparison until the back half of a term.
+  minAttendanceObservations: 6,
+  minSubmissionObservations: 3,
+  minVleObservedDays: 5,
+  minGradedForAttainment: 4,
+  // The mark at which attainment counts as "holding up" despite falling attendance. A
+  // band rung rather than a number, and clear of a bare pass: 40 props nothing up.
+  attainingGradeFloor: 55,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -762,6 +884,151 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The fewest observed days behind a VLE engagement rate",
       why: "one observed day on which a student did not log in reads 0% and renders as \"never active\" — a pattern claimed from a single data point on the first day of observation.",
+    }) ||
+    checkNumber(out, "clusterWindowDays", pick("clusterWindowDays"), {
+      min: 1, max: 90, whole: true,
+      label: "The workload clustering window",
+      why: "it is the span deadlines are bunched into. A week is the unit both a timetable and a student's own planning are in.",
+    }) ||
+    checkNumber(out, "horizonDays", pick("horizonDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The workload horizon",
+      why: "a horizon shorter than twice the clustering window can only see the near half of a cluster straddling its edge, and reports it at half size.",
+    }) ||
+    checkNumber(out, "peakDeadlineLimit", pick("peakDeadlineLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The heavy-window threshold",
+      why: "it is how many deadlines in one window count as heavy. It never fires alone — every workload code also requires something about the individual student.",
+    }) ||
+    checkNumber(out, "backlogLimit", pick("backlogLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The carried-backlog threshold",
+      why: "it is how much outstanding work a student must be carrying into a heavy window before that combination is reported.",
+    }) ||
+    checkNumber(out, "peakAttendanceFloor", pick("peakAttendanceFloor"), {
+      min: 0, max: 100,
+      label: "The workload attendance floor",
+      why: "it is the attendance in the run-up below which a heavy window ahead becomes a finding rather than a timetable fact.",
+    }) ||
+    checkNumber(out, "recentMinMarks", pick("recentMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest recent marks behind that judgement",
+      why: "an attendance figure from one or two registers is not evidence a student has stopped turning up.",
+    }) ||
+    checkNumber(out, "stalledStatusDays", pick("stalledStatusDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The stalled-claim threshold",
+      why: "it is how long a finance claim may sit in one state before it is reported. Late enough to be a real stall, early enough that a hardship payment still helps.",
+    }) ||
+    checkNumber(out, "unsettledApplicationDays", pick("unsettledApplicationDays"), {
+      min: 1, max: 730, whole: true,
+      label: "The unsettled-claim threshold",
+      why: "the same question measured from the application date, which is a weaker anchor — it measures time in the pipeline rather than time in this state — so it gets a longer rope.",
+    }) ||
+    checkNumber(out, "evidenceOutstandingDays", pick("evidenceOutstandingDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The outstanding-evidence threshold",
+      why: "awaiting evidence is the one state the college can clear this afternoon, by telling the student what is missing, so it is reported sooner.",
+    }) ||
+    checkNumber(out, "stalledCeilingDays", pick("stalledCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The stalled-claim ceiling",
+      why: "unbounded, one abandoned row from a first term keeps a code lit for three years.",
+    }) ||
+    checkNumber(out, "refusedWindowDays", pick("refusedWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The refusal reporting window",
+      why: "a student still enrolled a year after a decline resolved it some other way, and that continued enrolment is the only evidence of resolution this table can offer.",
+    }) ||
+    checkNumber(out, "weekdayMinMarks", pick("weekdayMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks on one weekday",
+      why: "a weekday absence rate from two registers is a pattern claimed from two data points.",
+    }) ||
+    checkNumber(out, "kindMinMarks", pick("kindMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks on one session kind",
+      why: "the same floor as a weekday, for the same reason — one slice compared against the rest.",
+    }) ||
+    checkNumber(out, "weekdayMinOtherMarks", pick("weekdayMinOtherMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The fewest marks on the other weekdays",
+      why: "a floor on only the interesting number is a half-guard: 60% absent on Fridays against two marks elsewhere is not a comparison.",
+    }) ||
+    checkNumber(out, "kindMinOtherMarks", pick("kindMinOtherMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The fewest marks on the other session kinds",
+      why: "the pooled side needs a floor as much as the slice does, or the gap is measured against nothing.",
+    }) ||
+    checkNumber(out, "minWeekdaysMeasured", pick("minWeekdaysMeasured"), {
+      min: 2, max: 7, whole: true,
+      label: "The fewest weekdays before a worst one is named",
+      why: "a superlative over one candidate is not a comparison — it names the only weekday there is.",
+    }) ||
+    checkNumber(out, "minKindsMeasured", pick("minKindsMeasured"), {
+      min: 2, max: 50, whole: true,
+      label: "The fewest session kinds before a worst one is named",
+      why: "naming the worst of one kind says nothing about the student.",
+    }) ||
+    checkNumber(out, "zeroWeekLimit", pick("zeroWeekLimit"), {
+      min: 1, max: 52, whole: true,
+      label: "The unseen-weeks threshold",
+      why: "one unattended week is a bad week and everybody has one. At 1 this fires for most of the college in any week containing a bank holiday.",
+    }) ||
+    checkNumber(out, "zeroWeekMinMarks", pick("zeroWeekMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks behind an unseen run",
+      why: "measured across the whole run rather than per week, because a per-week floor makes this unable to fire at a college teaching one session a week.",
+    }) ||
+    checkNumber(out, "runRecencyDays", pick("runRecencyDays"), {
+      min: 1, max: 365, whole: true,
+      label: "How recent an unseen run must be to report",
+      why: "empty weeks are transparent, which is what lets a reading week pass without breaking a run — and would otherwise keep one lit all summer.",
+    }) ||
+    checkNumber(out, "entryProfileWeeks", pick("entryProfileWeeks"), {
+      min: 1, max: 104, whole: true,
+      label: "How long the entry profile stays relevant",
+      why: "nothing ever updates an ISM — no route re-asks the questions — so without a ceiling a September answer sits on the record in year two with no event able to clear it.",
+    }) ||
+    checkNumber(out, "idExpiryWarnDays", pick("idExpiryWarnDays"), {
+      min: 1, max: 730, whole: true,
+      label: "The right-to-study warning window",
+      why: "renewals take weeks, so a warning shorter than that is a report rather than an intervention.",
+    }) ||
+    checkNumber(out, "idExpiredCeilingDays", pick("idExpiredCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "How long an expired document stays on the caseload",
+      why: "an admission record stops being maintained the day somebody enrols, so an old expiry usually means it was renewed and nobody updated the row. The date is stored regardless.",
+    }) ||
+    checkNumber(out, "divergenceGap", pick("divergenceGap"), {
+      min: 1, max: 100,
+      label: "The divergence threshold",
+      why: "it is how far two rates must disagree before that is a finding. Set near the like-for-like thresholds it fires for ordinary students, because nothing is held constant between two different measurements.",
+    }) ||
+    checkNumber(out, "minAttendanceObservations", pick("minAttendanceObservations"), {
+      min: 1, max: 500, whole: true,
+      label: "The attendance sample behind a divergence",
+      why: "a floor on only one side of a comparison is a half-guard.",
+    }) ||
+    checkNumber(out, "minSubmissionObservations", pick("minSubmissionObservations"), {
+      min: 1, max: 500, whole: true,
+      label: "The submission sample behind a divergence",
+      why: "deliberately lower than the attendance floor — requiring six would silence the comparison until the back half of a term.",
+    }) ||
+    checkNumber(out, "minVleObservedDays", pick("minVleObservedDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The VLE sample behind a divergence",
+      why: "the same floor engagement itself applies, restated because it answers a different question here.",
+    }) ||
+    checkNumber(out, "minGradedForAttainment", pick("minGradedForAttainment"), {
+      min: 1, max: 200, whole: true,
+      label: "The marks needed before attainment props anything up",
+      why: "it is the sample the engine already requires before calling a grade direction at all.",
+    }) ||
+    checkNumber(out, "attainingGradeFloor", pick("attainingGradeFloor"), {
+      min: 0, max: 100,
+      label: "The mark at which attainment is holding up",
+      why: "a bare pass props nothing up, so this sits a band rung clear of the pass mark.",
     });
   if (err) return err;
 

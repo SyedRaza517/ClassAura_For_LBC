@@ -1,6 +1,8 @@
 # Staff Hub — What's Built & What's Working
 
 *Reviewed 23 Aug 2026 (evening) against `main` at `7856ea0`.*
+*§1, §3.9, §5 and §7 updated 28 Aug 2026 (evening) against `nfc-tap-check-in` at
+`74774a9`. Every count in §1 was re-counted on that commit, not carried forward.*
 
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
@@ -11,16 +13,21 @@ This revision was produced by **reading the code**: every route mounted in
 `server/src/index.js`, the Prisma schema and its migrations, `server/src/db.js`,
 `tenant.js`, `integrationConfig.js`, `branding.js`, `docTemplate.js`,
 `emailTemplate.js`, `email.js`, `usage.js`, `audit.js`, the schedulers, the test
-runner and the header of all 21 suites, `scripts/README.md`, `API.md`, `render.yaml`,
+runner and the header of all 21 suites as they stood then, `scripts/README.md`, `API.md`, `render.yaml`,
 `server/.env.example`, and the client's routing, `api.js` and the platform dashboard.
 
-**Nothing here was re-verified by running the API.** `npm test` was deliberately not
-run: `server/.env` on this machine points at a **live staging database**, and the
-suites create, mutate and delete real rows. The last live verification run was 21 Jul
-2026 and is now archaeology. Where a claim rests on code reading alone — which is all
-of them — it is a statement about what the code says it does, not a demonstration that
-it works. The honest way to close that gap is `npm test` against a scratch database
-plus a manual pass over the feature areas the suites still do not reach (§5).
+**That was true of the 23 Aug pass, and it is no longer true of the whole file.** At the
+time, `npm test` was deliberately not run, because `server/.env` points at a **live
+staging database** and the suites create, mutate and delete real rows. Since then the
+suite has been run three times against a database it is safe to destroy — 25 Aug (24
+passed, 1 skipped), 28 Aug (**25 passed, 1 skipped**), and the 29 Aug prediction work —
+and §3.8, §3.8.1, §3.8.2 and §3.9 each carry a *Verification status* table separating
+what was demonstrated from what was read.
+
+So read every claim by its section. A row in §3 with no verification table behind it is
+still a statement about what the code says it does, not a demonstration that it works.
+The gap that remains is the client, which has no test framework at all, and the feature
+areas the suites do not reach (§5).
 
 **The previous edition of this file was wrong, and wrong in the expensive direction.**
 It listed **eighteen** defects as open that had already been fixed — D1, D3, D4, D5,
@@ -42,30 +49,33 @@ platform with a supplier-facing operator tier above it, and the July 2026 descri
 of it — SQLite, 8 route files, ~50 endpoints — understated it by roughly a factor of
 five.
 
-| | July 2026 | This morning | Now |
+| | July 2026 | 23 Aug 2026 | Now (28 Aug) |
 |---|---|---|---|
 | Database | SQLite file | PostgreSQL | **PostgreSQL** |
-| Schema changes | `prisma db push` | `prisma migrate deploy` | **`migrate deploy`, 9 migrations** |
-| Route modules | 8 | 33 | **38** |
-| Endpoints | ~50 | 212 | **242** |
-| Prisma models | ~20 | 39 | **44** |
-| Admin dashboard pages | 10 | 28 | **28**, 27 individually grantable |
+| Schema changes | `prisma db push` | `prisma migrate deploy` | **`migrate deploy`, 30 migrations** |
+| Route modules | 8 | 38 | **41** |
+| Endpoints | ~50 | 242 | **275** |
+| Prisma models | ~20 | 44 | **57** |
+| Admin dashboard pages | 10 | 28 | **33 tabs, 31 individually grantable** |
 | Account kinds | staff | staff, student, applicant, operator | **same four** |
 | Institutions | one | many, one database | **many, each with its own identity** |
-| Tests | 5 suites, by hand | 10 suites, CI | **21 suites**, CI |
+| Tests | 5 suites, by hand | 21 suites, CI | **26 suites**, CI |
 
-Counted, not quoted: `ls server/src/routes/*.js` → 38; `router.<method>(` across those
-files → 242; `^model ` in `schema.prisma` → 44; `ls scripts/smoke-*.mjs` → 21 at the
-time of reading, and 22 by the end of it — see the note at the foot of §5.
+Counted on `74774a9`, not quoted: `ls server/src/routes/*.js` → 41;
+`router.<method>(` across those files → 275; `^model ` in `schema.prisma` → 57;
+`ls -d server/prisma/migrations/*/` → 30; `ls scripts/smoke-*.mjs` → 26. The page
+figures come from `ADMIN_PAGES` in `validate.js` (31, identical in list *and order* to
+the client's) plus the two tabs that are not grantable — `audit`, which is derived from
+the grants somebody already holds, and `access`, which is Super Admin only.
 
 ```
 edtech-hub/
-├── server/   Express + Prisma + PostgreSQL API  (38 route modules, 242 endpoints)
+├── server/   Express + Prisma + PostgreSQL API  (41 route modules, 275 endpoints)
 ├── client/   React 18 + Vite SPA                (staff app, admin dashboard,
 │                                                 student + applicant portals,
 │                                                 college registration,
 │                                                 Super Admin platform dashboard)
-└── scripts/  setup, the test runner + 21 suites, load test, screenshots
+└── scripts/  setup, the test runner + 26 suites, load test, screenshots
 ```
 
 **Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` (sending
@@ -83,7 +93,7 @@ precise about what is and is not done.
 
 | Piece | Where | Notes |
 |---|---|---|
-| `Tenant` model; `tenantId` on all 42 other tables | `server/prisma/schema.prisma` | Only `Tenant` and `PlatformAdmin` are exempt |
+| `Tenant` model; `tenantId` on all 55 other tables | `server/prisma/schema.prisma` | Only `Tenant` and `PlatformAdmin` are exempt |
 | **Isolation enforced centrally** in the Prisma client extension | `server/src/db.js` | Filters, stamps, and **throws** on a query with no tenant context. A new route is isolated without its author doing anything |
 | `crossTenant()` / `runInTenant()` escape hatches | `server/src/db.js` | Deliberately conspicuous, so cross-institution reads show up in a diff |
 | Per-request resolution: `X-Tenant` → subdomain → `DEFAULT_TENANT_SLUG` → `default` | `server/src/tenant.js` | Runs **before** auth, because `Staff.email` is unique per tenant now |
@@ -132,7 +142,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | Login rate limiting (8 per IP+email / 15 min) | `routes/auth.js` | ✅ in-process only |
 | **Platform login rate limiting** (5 per IP+email / 15 min → 30 min lock, plus an address-independent account floor) | `routes/platform.js:61–91` | ✅ in-process only |
 | **2FA on the platform login** | `routes/platform.js:128–275` | ✅ Challenge/verify split; `/2fa/setup`, `/enable`, `/disable`; disabling bumps `tokenVersion` |
-| **Per-page admin access + Super Admin** | `src/auth.js` (`requirePage`), `AdminAccess` tab | ✅ 27 grantable pages |
+| **Per-page admin access + Super Admin** | `src/auth.js` (`requirePage`), `AdminAccess` tab | ✅ 31 grantable pages, the two copies of `ADMIN_PAGES` verified identical by set *and* order. Two of them — `prediction` and `mitigations` — have no entry in the client's `PAGE_LABELS`, so they render as blank rows on the Access tab (D16) |
 | **Student accounts** — own token kind, router allowlist | `src/auth.js`, `routes/student.js` | ✅ |
 | **Applicant accounts** — own token kind, router allowlist | `src/auth.js`, `routes/applicant.js` | ✅ |
 | **Platform operators** — separate tier entirely | `src/platformAuth.js` | ✅ |
@@ -144,7 +154,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 
 | Feature | Mount | Notes |
 |---|---|---|
-| Check-in / out, daily summaries | `/api/checkins` | ✅ |
+| Check-in / out, daily summaries | `/api/checkins` | ✅ Now with `POST /tap-check-in`, which clocks a staff member in by touching an NFC sticker and refuses to accept a `site` — see §3.9. Switched off by default |
 | Leave requests, approvals, allowance enforcement | `/api/leave`, `/api/adjustments` | ✅ Allowance checked server-side at approval, serialised per staff member; sick leave exempt; a decided request cannot be re-decided (409) |
 | Documents, shared and personally assigned | `/api/documents` | ✅ Files live in SharePoint, falling back to a private Supabase bucket with 300s signed URLs |
 | **Timesheets** | `/api/timesheets` | ✅ Log dated sessions, submit a month, admin approves or bounces back. Self-approval blocked. Admins can edit a locked entry — now visible in the audit log rather than untraceable |
@@ -156,7 +166,8 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 
 | Feature | Mount | Notes |
 |---|---|---|
-| HND attendance registers, semesters | `/api/hnd` | ✅ The largest single module (37 endpoints). P=2, L=1, E=1, A=0; unmarked sessions excluded |
+| HND attendance registers, semesters | `/api/hnd` | ✅ The largest single module (40 endpoints). P=2, L=1, E=1, A=0; unmarked sessions excluded. Three of the 40 are the lecturer's live view, added 28 Aug — see §3.9 |
+| **NFC tap check-in** | `/api/tags`, `/api/student/me/tap-*`, `/api/checkins/tap-check-in`, `/api/hnd` live view | ⚠️ Built, tested over HTTP, and **switched off**: `enabled` defaults to `false`, so no college has it. Never once run against real NFC hardware. §3.9 |
 | **Assessments / gradebook** | `/api/assessments` | ✅ Bulk mark entry (max 500 rows), D/M/P/F at 70/60/50. Refuses a `maxMarks` cut below an awarded mark. Manual marks stamped `source:"manual"` so a Moodle sync cannot revert them |
 | **Timetable** | `/api/timetable` | ✅ Per course/year/term, autofilled from generated registers, then published |
 | **Student Reviews** | `/api/student-reviews` | ✅ Any lecturer may record and list their own; listing everyone's needs the page grant |
@@ -165,7 +176,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | **Student queries** | `/api/student-queries` | ✅ Two states (open/answered). No threading, no close/reopen, and **still no notification to the student on reply** — `routes/studentQueries.js` contains no notify or email call at all |
 | **Attendance Emails** | `/api/attendance-emails` | ⚠️ Built and complete, but the automation still ships switched off (`autoEnabled` defaults false) and the default template contact details ship blank for an admin to fill |
 | **Moodle / VLE sync** | `/api/moodle` | ✅ One-way and non-destructive, with a dry-run preview. Unit matching is heuristic by design. Now reads the institution's own URL, token and auto-sync switch |
-| **Predictive Analysis** (progression risk) | `/api/prediction` | ✅ Added 25 Aug 2026. Seven weighted components → a 0–100 progression score → R1–R5, with four override rules on top. Per-college weights, bands and thresholds (`PredictionModelSettings`), an append-only history, and an intervention record. Behind the new `prediction` page grant, so it is inert until a college grants it. **Nothing runs on a schedule and no student is ever emailed.** See §3.8 |
+| **Predictive Analysis** (progression risk) | `/api/prediction` | ✅ Added 25 Aug 2026. Seven weighted components → a 0–100 progression score → R1–R5, with four override rules on top. Per-college weights, bands and thresholds (`PredictionModelSettings`), an append-only history, and an intervention record. Behind the new `prediction` page grant, so it is inert until a college grants it. **Nothing runs on a schedule and no student is ever emailed.** See §3.8, §3.8.1 and §3.8.2. **Extended substantially 28-29 Aug 2026** — mitigating circumstances (which fixed a live harm), register coverage, cohort standing, VLE engagement, workload, student finance and the shape of the absence. About half of it renders null on both databases for want of data; §3.8.2 says exactly which half and why. |
 
 ### 3.4 Admissions
 
@@ -343,6 +354,109 @@ upstream data-quality fixes; roughly sixty need capture surfaces or VLE access l
 do not exist. The two highest-leverage unblocks are small: a `followUpCompletedOn` column
 on `Interaction`/`StudentReview`, and a `studentId` FK on `SlcApplication`.
 
+
+### 3.8.2 Mitigating circumstances, cohort standing, coverage, VLE, workload, finance and absence shape (28–29 Aug 2026)
+
+Six more layers beside the score, one live harm fixed, and a screen that finally shows
+any of it. The honest headline is at the bottom: **about half of what is described here
+renders as a dash on both databases today, because the tables behind it are empty.**
+
+**The live harm.** `TRIP_CHRONIC_LATE` was firing on real students. `moodle.js` populates
+`AssessmentGrade.submittedAt` from `gradedatesubmitted`, `metrics.js` compared it against
+the assessment's own `dueDate`, and nothing in the schema recorded that a college had
+granted an extension — so a college reported a student as chronically late for using an
+accommodation it had granted them itself, with nothing on the screen saying so.
+`MitigatingCircumstance` + `AssessmentAdjustment` + `prediction/adjustments.js` fix it.
+
+The governing rule: **a suppressed assessment leaves BOTH sides of every fraction.** Never
+counted as submitted, never as on time, never as missing. That is null-is-not-zero pointed
+the other way, and getting it backwards is the *mirror* harm — counting an extended piece
+as handed in on time inflates the score of a student in real difficulty and quietly
+removes them from the register. Proven end to end in an isolated schema: the same student
+scored three times, `TRIP_CHRONIC_LATE` present with no claim, gone with approved
+extensions, and `lateSubmissionRate` **null rather than 0** under a pending blanket claim.
+
+**Health data never reaches the score.** A claim is Article 9 data — illness, bereavement,
+mental health — collected for student support, not for scoring. `status` / the window /
+`coversAttendance` / the adjustments say WHAT was decided and are the only fields the
+prediction pipeline selects; `category` and `detail` say WHY and are selected by nothing
+under `src/prediction/`. Enforced in one place, so `schema-contract.test.js` reads
+`metrics.js` as text and fails if either appears. Its own page grant (`mitigations`), and
+the audit summary names the student and the decision but never the reason — the audit log
+is read on Settings by admins never granted this page.
+
+**The other five layers.**
+
+| Module | Answers | Codes |
+|---|---|---|
+| `coverage.js` | is the attendance % worth anything — how much of the timetable was registered | 3 |
+| `cohort.js` | where the student stands against their own cohort | 2 |
+| `workload.js` | where deadlines bunch, crossed with this student's own backlog or absence | 2 |
+| `funding.js` | is student finance a reason they may not continue | 3 |
+| `sessions.js` | the SHAPE of the absence — worst weekday, whole weeks unseen | 1 |
+| `vle/engagementNormalise.js` | did they open the course at all | — |
+
+Two design rules held throughout. **A signal that fires for a whole cohort at once is a
+FIGURE, not a code** — `riskDriverCodes` is a per-student caseload array, and a hundred
+rows carrying an identical reason is the same as no caseload. `assessmentsDueSoon` set the
+precedent; `cohortStruggling` follows it, and every workload code is structurally guarded
+by a per-student conjunction so a busy fortnight alone can never fire. And **the sanitised
+attendance figure reaches the ENGINE, not just the screen**: a percentage resting on three
+marks is a measurement of how often somebody opened the register, so below the floor it is
+null and `engine.js` renormalises around it.
+
+**VLE engagement costs no extra Moodle calls.** `core_enrol_get_enrolled_users` was already
+issued once per course and `lastcourseaccess` was already in the response, being discarded.
+A ROW MEANS "WE LOOKED": observed-but-inactive is `accessed: false`, unobservable is no row.
+This is the one place where absence *is* the institution guard, because no count separates
+a disengaged cohort from a Moodle with `hiddenuserfields` set from a college that teaches
+face to face — all three are zero. The denominator is DAYS, not rows.
+
+**Defects found and fixed in this work**
+
+| | |
+|---|---|
+| `SlcApplication.statusChangedOn` was **dead schema** — `routes/slc.js` never wrote it, nor `studentId`, `studentLinkSource`, `studentLinkedAt`. `funding.js` measures a stall from it | Written, and only when the status actually moves: stamping it on every save would turn "how long at Awaiting evidence" into "when did somebody last fix a typo" |
+| `registerCoverage` received marks with no `sessionId` — they are flattened from `session.date`, and the id comes from the mark itself | Carried through. The module's own guard caught it by returning null rather than reporting a perfect register as untaken |
+| `const sessions = require("./sessions")` was silently shadowed by `gather()`'s local `sessions` array. **All 697 unit tests passed** — they import `evaluate` directly | Renamed. First symptom was a live run failing |
+| `kindsMeasured` returned 0 where a college records no session kinds. Zero claims a sample that was never taken | Null. It survived a 32-mutant run because the test was **titled** "every kind figure is NULL" while asserting 0 |
+| A health-data guard used `new RegExp(\`\\b${name}\\s*:\`)` inside a **template literal**, where `\b` is backspace and `\s` is a bare "s". It searched for a control character and passed everything | Substring tests, mutation-checked three ways |
+| Eleven codes reached the client with no label, so a tutor would have read `TRIP_WORKLOAD_PILEUP` where a sentence should be | Labelled; `schema-contract.test.js` now reads `StaffHub.jsx` as text — the `ADMIN_PAGES` problem again |
+
+**Verification status.** Demonstrated on 29 Aug 2026:
+
+| | |
+|---|---|
+| 699 unit tests | pass |
+| Mutation testing | every new guard broken deliberately and caught; survivors reported as equivalent rather than counted as kills |
+| Six migrations | **applied to BOTH databases.** `edtech_staging` was 12 behind and is now level. Row counts identical on both |
+| Full smoke suite | **25 passed, 0 failed, 1 skipped**, in an isolated schema. `public` row counts identical before and after; schema dropped |
+| `smoke-mitigations.mjs` | **new, 13 checks, passed.** Mostly refusals, and two that matter: the audit trail carries no category or detail, and the prediction payload carries neither |
+| Real scoring | 10 students on each database, **no score moved**, weekday shape populated for all 20 |
+| End-to-end suppression | **proven discriminating** — code fires without cover, gone with it, rate null under a pending claim |
+| Client | **builds**; there is no client test framework, so that is the whole claim |
+
+**Signals implemented: about 101 of the 138 catalogued** — but the number flatters the
+state of things and should be read with the next paragraph.
+
+**What is inert, and why.** Both databases hold **zero** assessments, grades, submissions,
+SLC rows and admissions; `HndSession.kind` is empty on all 32 rows; every student has
+`cohortId` null; and no Moodle sync has run since the VLE capture was added. So workload,
+funding, cohort standing, submission timing, VLE engagement and the session-kind figures
+all render null. That is the modules refusing to invent figures from nothing — the correct
+behaviour, and the new screen shows *why* a figure is missing rather than a bare dash — but
+nobody should read those columns as working until there is data behind them. The
+attendance-derived layers (coverage, weekday shape, weeks unseen) **do** produce real
+values today: 10/10 students on both databases carry a measurable weekday pattern.
+
+**The highest-leverage unblock is a Moodle sync**, which lights up assessments, grades and
+VLE engagement together. After that: assigning students to cohorts, and the SLC backfill —
+still dry-run, and staying that way until the CSV is read per database, because a wrong
+match attaches one student's loan status to another.
+
+**Equity monitoring is deliberately not built.** It means processing protected
+characteristics, and it needs a DPO rather than a developer's judgement.
+
 **What it deliberately does not do.** No student-facing route (the student app cannot
 reach the router). No automatic email — compare Attendance Emails, which *does* write to
 students, but with a template a human wrote and a band a human set; this one would be a
@@ -374,6 +488,78 @@ inferred:
 The one thing still unproven end-to-end is the **client**, which has no test framework
 at all (§5) — the Predictive Analysis tab has been built and deployed but not driven by
 anything except a person.
+
+### 3.9 NFC tap check-in (28 Aug 2026)
+
+A student holds their phone against a sticker on the classroom wall and an ordinary P or
+L is written into the register with the minute they arrived. A member of staff taps the
+same sticker and is clocked in Onsite. A lecturer watches the register fill during the
+class and closes it off at the end.
+
+**It ships switched off.** `enabled` is `false` in the platform defaults, exactly as
+Attendance Emails does, and for the same reason: a feature that writes to the attendance
+record must not switch itself on at every college on the next deploy. **No college has
+this today**, and nothing about it is reachable until an administrator turns it on.
+
+| Piece | Where | What it does |
+|---|---|---|
+| **The tag register** | `AttendanceTag`, `routes/tags.js` (6 endpoints, `attendance-tags` page grant) | Register a sticker, rename it, retire it, read its taps. The code is returned **exactly once**, to the administrator who creates it, because that is the moment somebody writes it onto the tag — there is deliberately no endpoint that reads one back, and `code` is absent from the serialiser, which is an allowlist. Two rollouts are supported on purpose: generate a secret and write it on with a phone app, or tap a **blank** sticker and register its factory UID, which needs no NFC writing tool at all |
+| **The one cross-tenant read** | `crossTenantTagExists()` in `routes/tags.js` | `AttendanceTag.code` is unique across the whole platform, so a college registering a sticker another institution already holds would otherwise get an opaque P2002. The probe runs in `crossTenant()` and returns **a boolean and nothing else** — never which college, never what they call it |
+| **The window** | `src/attendanceTap.js` — pure, no database, no clock | The lecture's own hours *are* the window; there is nothing for a lecturer to open and nothing to forget to switch off. Taps are accepted from `startTime − earlyGraceMins` to `endTime`, **both ends inclusive**; `P` until `startTime + lateAfterMins`, `L` after. Two classes genuinely running at once return `ambiguous` and the student picks — and the status is then recomputed for the chosen session, because inheriting the first candidate's verdict would mark a punctual student late. The term lock is honoured, matching the 423 on `PUT /sessions/:id/register`, so a tap is not a back door around a closed term |
+| **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. Five settings — `enabled`, `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `staffTapEnabled` (true) — capped at 120 minutes and 600 seconds, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
+| **The student's tap** | `GET /api/student/me/tap-context`, `POST /api/student/me/tap-check-in` | Inside the student router allowlist and keyed on `req.user.id`; no id parameter exists. Candidates are built from `Enrolment`, so a tap cannot attach a student to a unit they were never on. Rate limited 10 per minute per student — in-process, like the other six limiters (§6). Writing a mark flags the student's progression score stale but deliberately does **not** rescore: a check-in must not wait on arithmetic |
+| **The staff tap** | `POST /api/checkins/tap-check-in` | `site` is not accepted and not asked for. Somebody who touched a sticker in the building cannot be working online — the tap is what proves they are here — so recording anything but `Onsite` would store a claim the tap itself disproves. This is the first time a staff clock-in has meant "was in the building" rather than "said so"; `POST /check-in`, which records one from anywhere, still exists and still takes a site |
+| **The lecturer's live view** | `GET /api/hnd/my-sessions/today`, `GET /api/hnd/sessions/:id/live`, `POST /api/hnd/sessions/:id/mark-remaining-absent` | Who is in, who is late, who has not appeared, and the minute each of them tapped. Today's classes are found through `Unit.tutorStaffId` and never through the free-text `tutor` field — a name typed into a box is not an identity. "Accepting taps" is derived at read time, not stored, because it changes every minute |
+| **The tap log** | `TagTap`, `GET /api/tags/:id/log` | Every tap, accepted or refused. The refusals are the valuable half: "I tapped and it didn't work" is answerable here and nowhere else, and so is a pattern — one address checking in six students inside a minute — which is invisible in `AttendanceMark`. Names are resolved for the screen; **no email addresses**, so a tag log cannot become a way to harvest the roster |
+| **The apps** | `client/src/nfc.js`, `CheckInCard.jsx`, `AdminNfcTags.jsx`, `AdminLiveAttendance.jsx` | One check-in card serves both apps — the student marks a register, staff clock in, and what differs is one API call and the words on the result. The button is dead until a sticker is read and dead again 60 seconds later, and the code is dropped on failure too: a refused tap is not a credential to retry with |
+
+**Four things it will not do**, each of which would damage a record the college is asked
+to evidence at a funding audit, a visa compliance check or a student's appeal.
+
+*A tap never overwrites a mark a lecturer already set.* The human in the room wins — the
+same invariant the Moodle importer holds. The suite plants an `A`, taps, and asserts the
+`A` survived with `checkedInAt` still null.
+
+*A tap never writes an `A`.* Absence is what an untaken register already means, and
+scoring "did not tap" as absent turns a flat battery, a forgotten handset or a phone with
+no NFC into a permanent academic record — most often for the students least able to argue
+about it. The only path from this feature to an absence is
+`POST /sessions/:id/mark-remaining-absent`, with a named human on the end of it, the same
+term gate as the register save, and `createMany` rather than `upsert` so the route is
+*structurally* incapable of overwriting an existing mark.
+
+*`checkedInAt` is its own column, not `takenAt`.* `takenAt` is reset every time the
+register is saved, so a lecturer correcting one row an hour later would silently rewrite
+everybody's arrival time. The suite taps, saves a correction over it, and asserts the
+arrival time did not move.
+
+*Nothing runs on a schedule.* There is no sweep that closes registers, no job that marks
+anybody, and no email to a student at any point.
+
+**Two notes on scope, so nobody reads more into this than is there.** The
+`live-attendance` page grant gates the **menu item**, not the data: `my-sessions/today`
+is self-scoped by `tutorStaffId`, but `GET /sessions/:id/live` is `requireAuth` only —
+which is the convention `hnd.js` already follows for reads (`GET /students` and
+`GET /sessions/:id/register` are the same), with writes page-gated. And the settings and
+tag routes *are* gated, behind `attendance-tags`.
+
+**Verification status.** Demonstrated on 28 Aug 2026 — this is a run, not a code read:
+
+| | |
+|---|---|
+| Whole suite, 26 files | **25 passed, 0 failed, 1 skipped**, plus the unit tests (655 at that commit) |
+| Where it ran | **A local PostgreSQL 16 on this machine** — `edtech_dev` on `localhost:5432`, created for the purpose. Not the staging database, not an isolated schema inside it. See §5 |
+| `smoke-nfc-tap.mjs` | **new, 48 checks, passed.** Mostly refusals: a tap while the feature is off, an unknown code, a retired tag, a tag belonging to another college, a tap before the class and after it, a student reaching the tag admin or the lecturer's live view, a student closing a register, a second tap creating a second mark or moving the arrival time |
+| `attendanceTap.test.js` (23 tests), `attendanceTapSettings.test.js` (7) | pass — pure boundary arithmetic and the settings merge, no database |
+| Client | **builds**; there is still no client test framework, so that is the whole claim |
+| Native config | `cap sync` has been run and committed. Android declares the NFC permission with `android:required="false"` — load-bearing, because declaring the permission makes Google Play *infer* a hardware requirement whose default is REQUIRED, which would hide the app from every phone without an NFC chip. iOS gets `NFCReaderUsageDescription` and an entitlements file requesting NDEF only |
+| iOS entitlement, end to end | **not done.** The file exists; the Xcode project references no entitlements file at all, so two manual steps remain on a Mac — adding the Near Field Communication Tag Reading capability and pointing `CODE_SIGN_ENTITLEMENTS` at it. A build that skips them compiles, installs, and then refuses every scan |
+| An Android build | **not produced.** No Java and no `ANDROID_HOME` on this machine |
+| **A physical tap** | **has never been performed.** Not once, on any handset, against any sticker. Everything above is the HTTP surface and the pure logic; the half that touches a radio — `@capgo/capacitor-nfc`, reader mode, Apple's scan sheet, NDEF decoding, a factory UID — has been read and reasoned about and never executed. Treat the device half as unproven |
+
+**What would close the gap**, in order: buy tags, run the app on one Android handset
+(reader mode is silent there, so it needs no Apple capability), register a sticker by
+tapping it, and check the log. Only then the two Xcode steps and an iPhone.
 
 ### 3.7 Business rules that are actually enforced
 
@@ -443,7 +629,7 @@ a failure.
 **The July sweep never covered** sign-up/approval, check-ins, HND registers,
 staff/documents/notifications, input robustness, the browser UI, or a static code
 review. The August work closed specific reported findings; it was not a sweep. A fresh
-sweep across the current surface — which is now 242 endpoints, four identity tiers and
+sweep across the current surface — which is now 275 endpoints, four identity tiers and
 a supplier-facing dashboard — is outstanding and is a much larger job than it was in
 July.
 
@@ -457,7 +643,7 @@ non-zero if any failed. `.github/workflows/ci.yml` runs it on every push and PR 
 a throwaway Postgres container, builds the client first (so a broken import fails
 before the tests start), and runs `npm audit` advisory-only.
 
-**21 suites, up from 10.** Eleven landed today. Read from each file's own header:
+**26 suites, up from 10 in July and 21 on 23 Aug.** Read from each file's own header:
 
 | Suite | Covers |
 |---|---|
@@ -484,6 +670,9 @@ before the tests start), and runs `npm audit` advisory-only.
 | `smoke-fixes` | Role scoping on `/staff`, adjustment validation, re-decision guard |
 | `smoke-signup-2fa` | **SKIPPED** — see D2 |
 | `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. 25 checks; **passed on 25 Aug 2026** |
+| `smoke-mitigations` | **Added 28 Aug 2026.** Mitigating circumstances. Mostly refusals, and two that matter: the audit trail carries no `category` or `detail`, and neither does the prediction payload — health data is collected for student support and must not reach a score. 13 checks; **passed** |
+| `smoke-nfc-tap` | **Added 28 Aug 2026.** What a tap must never be able to do — a tap while the feature is off, an unknown or retired tag, a tag belonging to another college, a tap before the class or after it, a student reaching the tag admin or the lecturer's live view or closing a register, a second tap creating a second mark. The two that would otherwise be missed: a tap cannot overwrite a mark a lecturer already set, and a later register save cannot overwrite `checkedInAt`. 48 checks; **passed on 28 Aug 2026** |
+| `smoke-registrations` | How an organisation becomes a customer — the one route that manufactures an institution from outside the platform, where a mistake hands a stranger a whole college with a super-admin account in it. Proves both halves are needed: a form submission, a guessed code, a stolen code, a spent code, a rejected code and a locked-out code must each be worth nothing on its own. 41 checks. Written 23 Aug, after the previous edition of this file had read the suite headers, so it was never described in it |
 
 **What still has no automated coverage** — checked by grepping every suite for each
 mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
@@ -493,36 +682,42 @@ mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
 escaping checks in `smoke-branding`. Neither router is covered on its own terms.
 There is still no unit or component test framework and no client-side tests.
 
-**The whole suite was run on 25 Aug 2026 and passed: 24 passed, 0 failed, 1 skipped**
-— every smoke suite plus the unit tests, including `smoke-prediction.mjs` on its first
-ever execution. That run is also what makes the rest of this file's claims about the
-prediction HTTP surface demonstrations rather than code-reading.
+**The whole suite was run on 28 Aug 2026 and passed: 25 passed, 0 failed, 1 skipped**
+— every smoke suite plus the unit tests, including `smoke-nfc-tap.mjs` on its first ever
+execution. That run is what makes this file's claims about the tap HTTP surface
+demonstrations rather than code-reading. The 25 Aug run (24 passed, 1 skipped) did the
+same for the prediction surface.
 
-**How, given there is no local Postgres or Docker and `server/.env` points at the live
-database.** Not by pointing the suite at it. `assertDisposable` *would* have allowed
-that — `edtech_staging` matches its disposable-name rule — which is worth knowing,
-because it means a plain `npm test` on this machine seeds over live data and the guard
-does not stop you.
-
-Instead the suite ran in an isolated **Postgres schema** in the same database:
+**There IS a local PostgreSQL on this machine, and earlier editions of this file were
+wrong to say otherwise.** Two services are installed and 16.13 answers on
+`127.0.0.1:5432` with the credentials `server/.env.example` documents. The 28 Aug run
+used a database created there for the purpose:
 
 ```bash
-DATABASE_URL="postgresql://…/edtech_staging?schema=smoketest" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
 ```
 
-Prisma scopes everything to the named schema, `_prisma_migrations` included, so
-`migrate deploy` built all 51 tables there from nothing — which independently proves
-the migration chain applies cleanly from scratch, the thing CI does on every push.
-Row counts in `public` were snapshotted before and compared after: **zero drift**. The
-schema was then dropped.
+`edtech_dev` is safe on two counts at once — `localhost` is in `assertDisposable`'s
+`LOCAL_HOSTS`, and `dev` matches its disposable-name regex. `CLAUDE.md` has been
+corrected to say this, and it is now the documented route.
 
-This is the pattern to reuse on any machine with no scratch database. It is not a
-substitute for CI — same server, same connection limits — but it is a great deal
-better than not running them.
+**The isolated-schema trick this file previously recommended is not safe, and the reason
+matters.** `DATABASE_URL="…/edtech_staging?schema=smoketest"` was used successfully on
+25 Aug, but `assertDisposable` parses only the **host and the database name** — it never
+looks at `?schema=`. So that URL fails the guard exactly as `public` does, and the only
+way past it is a `DESTRUCTIVE_DB_CONFIRM` token which, because the schema is not part of
+it, equally authorises seeding straight over `public`. One dropped query parameter
+between typing the token and running the command is the whole live database. Use the
+local one.
 
-**A 22nd suite, `scripts/smoke-registrations.mjs`, was written while this review was
-in progress** and is not counted above or described in the table — it appeared in
-`scripts/` after the headers were read, and this pass has not read it.
+Worth keeping from that run: `migrate deploy` built every table into an empty schema
+from nothing, which independently proves the migration chain applies cleanly from
+scratch — the thing CI does on every push. Neither route is a substitute for CI.
+
+**`server/.env` still points at live staging, and `assertDisposable` would allow it** —
+`edtech_staging` matches the disposable-name rule. A plain `npm test` on this machine
+seeds over live data and the guard does not stop you. Always pass `DATABASE_URL` on the
+command line; never let it fall through.
 
 `SKIP` deliberately reads differently from `PASS`, so a switched-off feature stays
 visible rather than counting as coverage. Exactly one suite reports it —
@@ -635,6 +830,7 @@ before assuming it deployed.
 | D13 | medium | **The upload cap disagrees with itself.** `sharepoint.MAX_BYTES` is 15 MB and `storage.MAX_BYTES` is 10 MB; `routes/admissionsUpload.js:58` and `routes/applicant.js:250` both use the SharePoint figure as the body limit. On a deployment using the Supabase fallback, a 12 MB file is accepted and then rejected downstream |
 | D14 | medium | **The offer letter contradicts the accept link.** `src/offerLetter.js:224` prints "reply to the email containing this offer" while `/api/admission-offers` is a one-click acceptance. Now worse than before: a college may have replaced the letter with its own via `TenantDocTemplate`, in which case the built-in text and the college's text can say different things about the same offer |
 | D15 | medium | **A student is never told their query was answered.** `routes/studentQueries.js` contains no notification or email call of any kind. The answer sits in the portal until they happen to look |
+| D16 | low | **Two grantable pages have no label on the screen that grants them.** `PAGE_LABELS` in `StaffHub.jsx` has 29 entries against `ADMIN_PAGES`' 31; `prediction` and `mitigations` are missing, so the Access tab renders them as a checkbox with no words beside it. The two `ADMIN_PAGES` copies *are* in sync — this is a third hand-maintained list in the same file that nothing checks. Predates the NFC work; `live-attendance` and `attendance-tags` were both labelled when they were added |
 | T5b | medium | Three EdTech literals in `StaffHub.jsx` (above) |
 | T8b | low | `seed-admissions.js` on a bare client; five tools now fail closed rather than running |
 | ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026** |
@@ -647,13 +843,13 @@ before assuming it deployed.
 | # | Item | Notes |
 |---|---|---|
 | 1 | JWT has revocation but no refresh | `tokenVersion` revokes on reset/change. A shorter expiry plus refresh tokens is still the production-grade answer, and there is no "sign out my other devices" button |
-| 2 | Every rate limiter and the leave-decision lock are **in-process** | Module-level `Map`s and promises — now six of them: staff login, TOTP verify, platform login, applicant check-email, registration submit, and the leave lock. Correct for one Node process; a clustered deployment needs Redis and a database-level lock. Each one says so in a comment, which is at least honest, but it is now a systemic property rather than an exception |
-| 3 | Client bundle size | 1.22 MB / 313 kB gzipped in July; `StaffHub.jsx` alone is now **12,391 lines**. **Unverified since July** — certainly larger, and today added `pdf-lib` on the server and pdfjs on the client. pdfjs is at least loaded on demand (`TemplateEditor.jsx`), which is the pattern the rest of the client still needs. Nothing else is code-split except the Capacitor plugins |
+| 2 | Every rate limiter and the leave-decision lock are **in-process** | Module-level `Map`s and promises — now seven of them: staff login, TOTP verify, platform login, applicant check-email, registration submit, the student tap limiter (`routes/student.js`), and the leave lock. Correct for one Node process; a clustered deployment needs Redis and a database-level lock. Each one says so in a comment, which is at least honest, but it is now a systemic property rather than an exception |
+| 3 | Client bundle size | 1.22 MB / 313 kB gzipped in July; `StaffHub.jsx` alone is now **14,256 lines**. **Unverified since July** — certainly larger, with `pdf-lib` on the server and pdfjs on the client since 23 Aug and `@capgo/capacitor-nfc` since 28 Aug. pdfjs is loaded on demand (`TemplateEditor.jsx`) and the NFC plugin is imported lazily and only on a native platform (`nfc.js`), which is the pattern the rest of the client still needs. Nothing else is code-split except the Capacitor plugins |
 | 4 | Throughput ceiling | ~110 req/s in July, limited by synchronous bcrypt blocking the event loop. **Unverified since July**; Postgres, the tenant middleware and the audit write all change the picture. See `STRESS-TEST.md` |
 | ~~8~~ | ~~SQLite, single file~~ | **RESOLVED** — PostgreSQL, 9 migrations |
 | ~~9~~ | ~~Tailwind from the Play CDN~~ | **RESOLVED** — compiled at build time |
 | ~~10~~ | ~~"Today" derived in UTC~~ | **RESOLVED** — `src/clock.js` pins `APP_TIMEZONE`; D8 was the last exception and is fixed |
-| ~~11~~ | ~~Thin automated coverage, no CI~~ | **Largely resolved** — 21 suites and CI. The list of uncovered areas in §5 is now short enough to read |
+| ~~11~~ | ~~Thin automated coverage, no CI~~ | **Largely resolved** — 26 suites and CI, and there is now a local PostgreSQL to run them against (§5). The list of uncovered areas in §5 is now short enough to read |
 
 ---
 
@@ -670,15 +866,23 @@ $env:Path += ";C:\Program Files\nodejs"
 You also need a **PostgreSQL** database and a `server/.env` pointing at it. See *Quick
 start* in `README.md`.
 
-> ⚠️ **`server/.env` on this machine currently points at a live staging database.**
-> `npm test` seeds fixtures and the suites create, mutate and delete real rows. Set
-> `DATABASE_URL` to a scratch database on the command line before running it — that is
-> why this revision was produced by reading rather than running. `prisma/assertDisposable.js`
-> is a backstop, not permission.
+**There is a local PostgreSQL here** — 16.13 on `127.0.0.1:5432`, with `edtech_dev`
+created for the test suite. That is the database to run anything destructive against:
 
-> The project sits three folders deep — `Downloads\...\edtech-hub\edtech-hub\edtech-hub`.
-> That innermost one is the real root (the one with `package.json`). Still worth
-> flattening.
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test -- smoke-nfc-tap
+```
+
+> ⚠️ **`server/.env` on this machine still points at a live staging database.**
+> `npm test` seeds fixtures and the suites create, mutate and delete real rows, and
+> `assertDisposable` does **not** stop you — `edtech_staging` matches its
+> disposable-name rule. Always pass `DATABASE_URL` on the command line and never let it
+> fall through to `.env`. `prisma/assertDisposable.js` is a backstop, not permission.
+
+> The repo is now flat at `Documents\Edtech` (the folder with `package.json`). Earlier
+> editions of this file described it as three folders deep under `Downloads`; that copy
+> is stale.
 
 Beware: `npm run setup` **re-seeds**, which clears the demo tables it owns.
 
@@ -688,10 +892,10 @@ Beware: `npm run setup` **re-seeds**, which clears the demo tables it owns.
 
 | File | State |
 |---|---|
-| `STATUS.md` | This file. Rewritten 23 Aug 2026 (evening) after the previous edition was found to be listing sixteen fixed defects as open |
-| `README.md` | **Partly stale.** Updated earlier on 23 Aug — setup, PostgreSQL, migrations, `npm test`, multi-tenancy, the data model and the API mount map are current. It knows nothing about anything after 17:26 today: branding, document templates, email templates, per-tenant email, college registration, the audit trail, or the Super Admin dashboard. `grep -i` finds no mention of any of them. It still says 27 grantable pages, which is right |
-| `scripts/README.md` | **Partly stale.** The runner, the `PASS`/`FAIL`/`SKIP` convention, the throwaway-database warning and the "adding a suite" contract are all accurate and worth keeping. Its suite table lists **9 of the 21** — every suite added today is missing from it. The `smoke-signup-2fa` skip note is still correct |
-| `API.md` | **Badly out of date, and further behind than the last estimate.** Counted: it documents **62 endpoints across 10 route modules** — auth (including password reset, activation, 2FA), sign-up, staff, check-ins, leave, adjustments, documents, notifications, devices and HND. That is **26% of the 242 endpoints and 26% of the 38 modules**. Nothing on admissions (6 modules), the applicant portal, the student portal, student queries, assessments, timesheets, timetable, the three review modules, PAT, ISM, SLC, Moodle, attendance emails, integrations, branding, document templates, email templates, audit, registrations, or the platform surface. **The single largest remaining documentation gap**, and it grew today: 30 endpoints were added and none were documented |
+| `STATUS.md` | This file. Rewritten 23 Aug 2026 (evening) after the previous edition was found to be listing sixteen fixed defects as open; extended 25, 28 and 29 Aug. **Not current for the last two commits on `nfc-tap-check-in`** — prediction trajectory, intake profile and divergence (`17b1a96`, `74774a9`) landed after §3.8.2 was written and have no section here |
+| `README.md` | **Partly stale.** Updated earlier on 23 Aug — setup, PostgreSQL, migrations, `npm test`, multi-tenancy, the data model and the API mount map are current. It knows nothing about anything after 17:26 today: branding, document templates, email templates, per-tenant email, college registration, the audit trail, or the Super Admin dashboard. `grep -i` finds no mention of any of them. Its page figures have now gone stale too: `README.md:449` says "28 pages … 27 grantable" where the counted answer is 33 tabs and 31 grantable |
+| `scripts/README.md` | **Partly stale.** The runner, the `PASS`/`FAIL`/`SKIP` convention, the throwaway-database warning and the "adding a suite" contract are all accurate and worth keeping. Its suite table lists **9 of the 26** — every suite added since 23 Aug is missing from it. The `smoke-signup-2fa` skip note is still correct. Worth noting that its database advice was right all along: it tells you to create a local scratch database (`postgresql://postgres:postgres@localhost:5432/edtech_test`), which is what §5 has only now caught up with. It names `edtech_test`; the one that exists is `edtech_dev` |
+| `API.md` | **Badly out of date.** Counted on 23 Aug: **62 endpoints across 10 route modules** — auth (including password reset, activation, 2FA), sign-up, staff, check-ins, leave, adjustments, documents, notifications, devices and HND. Nothing on admissions (6 modules), the applicant portal, the student portal, student queries, assessments, timesheets, timetable, the three review modules, PAT, ISM, SLC, Moodle, attendance emails, integrations, branding, document templates, email templates, audit, registrations, prediction, mitigations, NFC tags, or the platform surface. **That numerator has not been re-measured, and the denominator has moved twice since** — the API is now 275 endpoints across 41 modules, so 62 would be 23%. `API.md` is being revised in a parallel change as this section is written; **re-count it before quoting a figure**. It remains the single largest documentation gap |
 | `server/prisma/migrations/README.md` | Accurate. Covers why `db push` was abandoned and the rules for changing the schema |
 | `DEPLOY.md`, `render.yaml` | Correct for what they cover, but predate tenancy — see T9 |
 | `BUG-AUDIT.md`, `STRESS-TEST.md` | Historic. July 2026 figures, not re-measured |
@@ -718,18 +922,21 @@ What is genuinely left, in order:
    is thirty lines away in `routes/registrations.js`.
 3. **Bring `API.md` up to date.** It documents a quarter of the API and fell further
    behind today.
-4. **Update `README.md` and `scripts/README.md`** for what landed this evening —
-   twelve missing suites and six missing feature areas between them.
-5. **Extend coverage** to the timetable, PAT, attendance emails, the Moodle sync,
-   templates — the areas §5 still lists as untested. (Registration coverage is being
-   written now.)
-6. **Fix T9** before a second deployment: `render.yaml` and `DEPLOY.md` do not mention
-   `CREDENTIALS_KEY` or `DEFAULT_TENANT_SLUG`, and without the first, no college can
-   save any credential at all.
-7. **Run a fresh security sweep.** The July one covered 4 of 12 planned areas against
-   a much smaller product. Today's fixes closed reported findings; they were not a
-   sweep.
+4. **Update `README.md` and `scripts/README.md`** — seventeen missing suites between
+   them, six missing feature areas, and `README.md`'s page counts are now wrong (§8).
+5. **Prove the NFC tap on a handset (§3.9).** The HTTP surface passes 48 checks and the
+   window arithmetic has 23 unit tests, but no physical tap has ever been performed.
+   One Android phone and a packet of stickers closes it; iOS additionally needs two
+   manual Xcode steps that nobody has done.
+6. **Extend coverage** to the timetable, PAT, attendance emails, the Moodle sync,
+   templates — the areas §5 still lists as untested. Registrations, mitigations and the
+   NFC tap have since got suites of their own.
+7. **Run a fresh security sweep.** The July one covered 4 of 12 planned areas against a
+   much smaller product, which is now 275 endpoints across four identity tiers, a
+   supplier dashboard, and — newly — a route by which a student writes their own
+   attendance mark. The August fixes closed reported findings; they were not a sweep.
 
 Nothing in this file should be read as a claim that the system has been verified end to
-end. It has not been run at all in this pass, and *How this was checked* says so on
-purpose.
+end. The HTTP surface has been exercised (§5); the client has no test framework at all;
+and the NFC feature's device half has never been run against hardware (§3.9). *How this
+was checked* says which is which.
