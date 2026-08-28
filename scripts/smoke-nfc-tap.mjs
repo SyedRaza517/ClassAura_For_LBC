@@ -371,6 +371,74 @@ try {
   check("a student cannot read a tag's log", studentReadsLog.status === 403, `HTTP ${studentReadsLog.status}`);
 
   /* ====================================================================== */
+  console.log("\n--- the lecturer's live view ---");
+  /* ====================================================================== */
+
+  const live1 = await call(`/hnd/sessions/${live.id}/live`, { token: adminToken });
+  const meRow = (live1.data?.rows || []).find((r) => r.student?.id === A_ID);
+  check("the live view shows the tapped student with the minute they arrived",
+    live1.status === 200 && meRow?.checkedInAt === firstCheckedInAt,
+    `HTTP ${live1.status} checkedInAt=${meRow?.checkedInAt}`);
+  // Provenance follows the LAST writer. This row was tapped, then corrected by the
+  // administrator in the register-save section above, so it must no longer read as
+  // self-marked — a lecturer who takes a mark over owns it.
+  check("a row a lecturer took over no longer reads as self-marked",
+    meRow?.selfMarked === false && meRow?.takenBy && meRow.takenBy !== "Self check-in (NFC)",
+    `selfMarked=${meRow?.selfMarked} takenBy=${meRow?.takenBy}`);
+
+  // And the other direction, on a register nobody has corrected. Both assertions are
+  // needed: the first alone would pass against a `selfMarked` hardcoded to false.
+  const freshSession = await db.hndSession.create({
+    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, -2), endTime: shift(now, 118), description: "fresh" },
+  });
+  made.sessions.push(freshSession.id);
+  // sessionId explicit: several of this student's sessions are running by now, so a bare
+  // tap comes back ambiguous.
+  await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode, sessionId: freshSession.id } });
+  const freshLive = await call(`/hnd/sessions/${freshSession.id}/live`, { token: adminToken });
+  const freshRow = (freshLive.data?.rows || []).find((r) => r.student?.id === A_ID);
+  const freshMark = await db.attendanceMark.findFirst({ where: { sessionId: freshSession.id, studentId: A_ID } });
+  if (freshMark) made.marks.push(freshMark.id);
+  check("a row the student tapped DOES read as self-marked",
+    freshRow?.selfMarked === true && freshRow?.checkedInAt,
+    `selfMarked=${freshRow?.selfMarked} checkedInAt=${freshRow?.checkedInAt}`);
+  check("the counts add up to the roll",
+    live1.data && (live1.data.counts.P + live1.data.counts.L + live1.data.counts.E + live1.data.counts.A + live1.data.counts.notMarked) === live1.data.rows.length,
+    JSON.stringify(live1.data?.counts));
+  check("a student cannot read the lecturer's live view", (await call(`/hnd/sessions/${live.id}/live`, { token: sToken })).status === 403, "");
+
+  // Closing the register: the ONLY path from this feature to an absence.
+  const strangerEnrol = await db.enrolment.create({ data: { tenantId, studentId: "st-100122", unitId: unit.id } }).catch(() => null);
+  if (strangerEnrol) made.enrolments.push(strangerEnrol.id);
+
+  const beforeClose = await call(`/hnd/sessions/${live.id}/live`, { token: adminToken });
+  const notMarkedBefore = beforeClose.data?.counts?.notMarked ?? 0;
+  const closed = await call(`/hnd/sessions/${live.id}/mark-remaining-absent`, { method: "POST", token: adminToken });
+  const closedMarks = await db.attendanceMark.findMany({ where: { sessionId: live.id } });
+  for (const m of closedMarks) if (!made.marks.includes(m.id)) made.marks.push(m.id);
+  check("closing the register marks exactly the students who had no mark",
+    closed.status === 200 && closed.data?.marked === notMarkedBefore,
+    `marked ${closed.data?.marked} of ${notMarkedBefore} unmarked`);
+
+  const mineAfterClose = closedMarks.find((m) => m.studentId === A_ID);
+  check("closing the register does NOT touch a student who already tapped in",
+    mineAfterClose?.status === "L" && mineAfterClose?.checkedInAt === firstCheckedInAt,
+    `status=${mineAfterClose?.status} checkedInAt=${mineAfterClose?.checkedInAt}`);
+
+  const closedAgain = await call(`/hnd/sessions/${live.id}/mark-remaining-absent`, { method: "POST", token: adminToken });
+  check("closing an already-closed register marks nobody a second time",
+    closedAgain.status === 200 && closedAgain.data?.marked === 0,
+    `marked=${closedAgain.data?.marked}`);
+
+  const studentCloses = await call(`/hnd/sessions/${live.id}/mark-remaining-absent`, { method: "POST", token: sToken });
+  check("a student cannot close a register", studentCloses.status === 403, `HTTP ${studentCloses.status}`);
+
+  const mine = await call("/hnd/my-sessions/today", { token: adminToken });
+  check("my-sessions/today answers without error for a lecturer teaching nothing",
+    mine.status === 200 && Array.isArray(mine.data?.sessions),
+    `HTTP ${mine.status} ${mine.data?.sessions?.length} session(s)`);
+
+  /* ====================================================================== */
   console.log("\n--- the staff side ---");
   /* ====================================================================== */
 

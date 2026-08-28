@@ -57,14 +57,31 @@ database that actually was.
 There are **two databases, in two Supabase projects**: staging and production. They
 drift. When you fix one by hand, check the other.
 
-To run the suites safely without a scratch database, use an isolated **schema** in the
-same database — Prisma scopes everything to it, `_prisma_migrations` included:
+**There is a local PostgreSQL on the development machine, and the whole suite runs
+against it.** Two services are installed (`postgresql-x64-16`, `postgresql-x64-18`) and
+16.13 answers on `127.0.0.1:5432` with the credentials `server/.env.example` documents.
+This is the route to use:
 
 ```bash
-DATABASE_URL="postgresql://…/postgres?schema=smoketest" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test -- smoke-nfc-tap
 ```
 
-Snapshot row counts in `public` before and after, and drop the schema afterwards.
+Create it once with `CREATE DATABASE edtech_dev`, then `npx prisma migrate deploy` with
+the same URL. `edtech_dev` is safe on two counts at once — `localhost` is in
+`LOCAL_HOSTS`, and `dev` matches the disposable-name regex.
+
+**Always pass `DATABASE_URL` on the command line. Never let it fall through to
+`server/.env`.**
+
+An isolated **schema** in the remote database was previously documented here as the safe
+fallback. It is not, and the reason matters: **`assertDisposable` parses only the host
+and the database name — it never looks at `?schema=`.** So
+`…/postgres?schema=smoketest` fails the guard exactly as `public` does, and the only way
+past is `DESTRUCTIVE_DB_CONFIRM=postgres@<supabase-host>` — a token which, because the
+schema is not part of it, equally authorises seeding straight over `public`. One dropped
+query parameter between typing the token and running the command is the whole live
+database. Use the local one.
 
 **Never rename a migration directory once it has been applied anywhere.** Prisma
 identifies a migration by directory name; a rename makes an applied migration look new,
