@@ -153,16 +153,27 @@ function attendanceShape(marks) {
  * and how often the student arrives late.
  *
  * @param {{P,L,E,A,marked}} counts  as attendance.summarise() returns them
- * @param {{lateRecorded:boolean}} opts  whether this college records lateness AT ALL
+ * @param {{lateRecorded:boolean, excusedRecorded:boolean}} opts  what this college
+ *        records AT ALL — both are institution-level facts, not student ones.
  */
 function attendanceQuality(counts, opts) {
   const c = counts || {};
   const absences = (c.A || 0) + (c.E || 0);
 
+  // Two guards, not one.
+  //
   // A student with no absences has no absence to characterise. Zero would read as
   // "all of their absences were authorised", which is a claim about absences that do
   // not exist, and it would sit on the screen looking like a finding.
-  const unexplainedShare = absences > 0 ? round1(((c.A || 0) / absences) * 100) : null;
+  //
+  // AND: a college whose register has no "E" — the Moodle importer maps statuses by
+  // acronym, so a plugin without an excused code produces zero E rows institution-wide
+  // — makes every absent student read as 100% unexplained. That is the mirror image of
+  // the lateness trap below and it errs the other way: it manufactures alarm rather
+  // than reassurance. Same institution-level question, same null answer.
+  const unexplainedShare = opts && opts.excusedRecorded && absences > 0
+    ? round1(((c.A || 0) / absences) * 100)
+    : null;
 
   // THE ZERO HERE IS A TRAP AND THIS GUARD IS THE WHOLE POINT.
   //
@@ -451,10 +462,21 @@ function evaluate(raw, config) {
   // This does not suppress the trend. It records, on the row, that the trend rests
   // on dates that cannot support it, so a member of staff arguing the case at an
   // appeal can see why.
-  const dates = (raw.gradeDates || []).filter(Boolean);
+  // THE SLICE MATTERS. engine.js compares the last N against the N before them and
+  // reads nothing older, so testing the whole history answers a different question:
+  // a student whose four most recent marks were all typed in one sitting passed as
+  // reliable because three older marks happened to carry distinct dates.
+  //
+  // AND NULLS COUNT. A grade with no gradedOn falls back to gradedAt — the row's
+  // creation timestamp — so on a first Moodle import the ordering is import order.
+  // That is MORE artefactual than four marks sharing a real date, not exempt from the
+  // check, so a missing date is treated as its own indistinguishable value rather than
+  // filtered out before the length test.
   const needed = config.gradeTrendAssessmentCount * 2;
-  if (dates.length >= needed && new Set(dates).size === 1) {
-    codes.push(TRIP.TREND_UNRELIABLE);
+  const all = raw.gradeDates || [];
+  if (all.length >= needed) {
+    const window = all.slice(-needed).map((d) => d || "");
+    if (new Set(window).size === 1) codes.push(TRIP.TREND_UNRELIABLE);
   }
 
   /* --- a mark under the pass threshold ----------------------------------- */

@@ -401,7 +401,19 @@ const sOutcome = (row) => (row ? { ...pick(row, STUDENT_OUTCOME_OUT), student: s
 // withdrawal this year" is one request.
 router.get("/outcomes", async (req, res) => {
   const where = {};
-  if (req.query.outcome && STUDENT_OUTCOMES.includes(String(req.query.outcome))) where.outcome = String(req.query.outcome);
+  // Filtered HERE, not in the browser. The list is capped at 500 newest-first, so a
+  // client-side filter silently loses a student's own outcome once a college passes
+  // that many — and the record page would then say "no outcome recorded" about a
+  // student who has one on file, which is worse than saying nothing.
+  if (isString(req.query.studentId) && req.query.studentId) where.studentId = String(req.query.studentId);
+  // An unrecognised value is refused rather than ignored: silently returning EVERY
+  // outcome under a heading that says "withdrawals" is a wrong answer, not a broad one.
+  if (req.query.outcome != null && req.query.outcome !== "") {
+    if (!STUDENT_OUTCOMES.includes(String(req.query.outcome))) {
+      return res.status(400).json({ error: `outcome must be one of: ${STUDENT_OUTCOMES.join(", ")}` });
+    }
+    where.outcome = String(req.query.outcome);
+  }
   if (isRealDate(req.query.from)) where.effectiveOn = { ...(where.effectiveOn || {}), gte: String(req.query.from) };
   if (isRealDate(req.query.to)) where.effectiveOn = { ...(where.effectiveOn || {}), lte: String(req.query.to) };
 
@@ -444,6 +456,11 @@ router.post("/outcomes", async (req, res) => {
   if (!isRealDate(b.effectiveOn)) {
     return res.status(400).json({ error: "effectiveOn must be a real date in YYYY-MM-DD form." });
   }
+  // A mistyped year passes isRealDate and then sorts to the top of the list forever.
+  // Outcomes are recorded after the fact, so a date in the future is always an error.
+  if (b.effectiveOn > localDate()) {
+    return res.status(400).json({ error: "effectiveOn cannot be in the future — record an outcome after it has happened." });
+  }
 
   // The live score moves every time anything is recalculated. Freezing it here is what
   // keeps "what did the model say about this student at the time" answerable — without
@@ -466,7 +483,16 @@ router.post("/outcomes", async (req, res) => {
     include: { student: { select: STUDENT_SELECT } },
   });
 
-  await audit.log(req, "create", "StudentOutcome", row.id, { after: { outcome: row.outcome, effectiveOn: row.effectiveOn } });
+  // audit.record, NOT audit.log — there is no `log` export, and calling it threw
+  // AFTER the row was created: Express does not catch async rejections here, so the
+  // outcome was written, the client got no 201, and the process died. The summary
+  // deliberately carries no student name, matching the intervention route beside it.
+  audit.record(req, {
+    action: "prediction.outcome.create",
+    entity: "StudentOutcome",
+    entityId: row.id,
+    summary: `Recorded outcome: ${row.outcome}${row.reason ? ` (${row.reason})` : ""}`,
+  });
 
   res.status(201).json({ outcome: sOutcome(row) });
 });

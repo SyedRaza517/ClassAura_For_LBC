@@ -137,9 +137,39 @@ async function gather(studentIds, config) {
   const directionCutoff = shiftDays(today, -config.directionOfTravelDays);
 
   // The window before the recent one, the same length and not overlapping it, so a
-  // slope compares two equal periods rather than a period against itself.
+  // slope compares two equal periods rather than a period against itself. Both are
+  // inclusive at each end, so the span is recentAttendanceDays + 1 days on each side —
+  // equal is what matters, not the exact count.
   const priorTo = shiftDays(recentFrom, -1);
-  const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays + 1);
+  const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays);
+
+  /* --- what this INSTITUTION records at all ------------------------------ */
+
+  // These three ask "does this college use this field", and the answer must come from
+  // the whole institution, never from the chunk.
+  //
+  // gather() is called per chunk of 200, and the ordinary incremental path scores only
+  // the handful of students markStale() flagged — often one. Deciding "this college
+  // does not record lateness" from a chunk of one student who happens to have no late
+  // marks is not a fact about the college; it flips latenessRate between null ("not
+  // recorded") and 0.0 ("never late") for the SAME student depending on who else was
+  // in the batch, and the id list has no ORDER BY, so it is not even stable run to run.
+  //
+  // The pastoral pair is worse than unstable: it suppresses TRIP_NO_PASTORAL_CONTACT
+  // for exactly the students it exists to find, because a chunk of never-contacted
+  // students contains no contacts and therefore looks like a college with no pastoral
+  // module at all.
+  //
+  // Three cheap existence probes, once per run, unfiltered by student.
+  const [lateMarks, contactRows, reviewRows, excusedMarks] = await Promise.all([
+    prisma.attendanceMark.count({ where: { status: "L" } }),
+    prisma.interaction.count(),
+    prisma.studentReview.count(),
+    prisma.attendanceMark.count({ where: { status: "E" } }),
+  ]);
+  const lateRecorded = lateMarks > 0;
+  const excusedRecorded = excusedMarks > 0;
+  const pastoralInUse = contactRows > 0 || reviewRows > 0;
 
   /* --- students and their term calendars -------------------------------- */
 
@@ -168,14 +198,6 @@ async function gather(studentIds, config) {
     // nothing — it is the same row, already being read.
     select: { studentId: true, status: true, session: { select: { date: true, startTime: true, unitId: true } } },
   });
-
-  // Does this college record lateness AT ALL? Decided once for the batch, because it
-  // is a property of the institution's register, not of a student. The Moodle importer
-  // maps statuses by acronym, so a college whose plugin has no "L" produces zero L rows
-  // for everybody — and a per-student lateness rate of 0.0% there means "not recorded",
-  // not "never late". Reporting that as a clean sheet would be a lie told about every
-  // student at once. One student having no L marks is, by contrast, entirely ordinary.
-  const lateRecorded = marks.some((m) => m.status === "L");
 
   const marksByStudent = new Map();
   for (const m of marks) {
@@ -297,12 +319,6 @@ async function gather(studentIds, config) {
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     select: { studentId: true, date: true, progress: true },
   });
-
-  // Whether the college uses the pastoral module at all. If nothing has ever been
-  // logged for anybody in this chunk, "nobody has spoken to this student" is not a
-  // finding about the student — it is the absence of a feature, and firing it would
-  // put the entire institution on a contact list.
-  const pastoralInUse = contacts.length > 0 || reviews.length > 0;
 
   const pastoralByStudent = new Map();
   for (const c of contacts) {
@@ -464,7 +480,7 @@ async function gather(studentIds, config) {
     // points model folds L and E into a single percentage. Lateness and unexplained
     // absence are orthogonal to both models and are reported as their own figures.
     const counts = attendance.summarise(overallMarks);
-    const quality = tripwires.attendanceQuality(counts, { lateRecorded });
+    const quality = tripwires.attendanceQuality(counts, { lateRecorded, excusedRecorded });
 
     const attainment = tripwires.attainmentShape(scopedGrades.map((g) => g.pct), config);
 

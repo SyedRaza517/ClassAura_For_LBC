@@ -314,8 +314,35 @@ test("too few grades to trend at all raises nothing", () => {
   assert.equal(r.codes.includes(TRIP.TREND_UNRELIABLE), false);
 });
 
-test("missing graded-on dates do not fabricate a collapse", () => {
+test("undated grades are the WORST case for a trend, not an exempt one", () => {
+  // This test asserted the opposite until the review caught it. A grade with no
+  // gradedOn falls back to gradedAt — the row-creation timestamp — so on a first
+  // Moodle import the "trend" is import order. That is more artefactual than four
+  // marks sharing a real date, not less, and stripping the nulls before the length
+  // check let it through silently.
   const r = evaluate(input({ gradeDates: [null, null, null, null] }), DEFAULTS);
+
+  assert.ok(r.codes.includes(TRIP.TREND_UNRELIABLE));
+});
+
+test("only the grades the ENGINE compares decide whether the trend is reliable", () => {
+  // engine.js reads the last gradeTrendAssessmentCount * 2 marks and nothing else.
+  // Testing the whole history meant a student whose four most recent marks were all
+  // entered in one sitting — the exact artefact — passed as reliable because three
+  // older marks carried distinct dates.
+  const r = evaluate(input({
+    gradeDates: ["2026-01-10", "2026-02-10", "2026-03-10",
+                 "2026-05-01", "2026-05-01", "2026-05-01", "2026-05-01"],
+  }), DEFAULTS);
+
+  assert.ok(r.codes.includes(TRIP.TREND_UNRELIABLE));
+});
+
+test("older marks sharing a date do not condemn a trend built on distinct ones", () => {
+  const r = evaluate(input({
+    gradeDates: ["2026-01-10", "2026-01-10", "2026-01-10",
+                 "2026-03-01", "2026-03-10", "2026-04-01", "2026-04-20"],
+  }), DEFAULTS);
 
   assert.equal(r.codes.includes(TRIP.TREND_UNRELIABLE), false);
 });
@@ -364,14 +391,14 @@ const { attendanceQuality, attainmentShape, engagementRecency } = require("./tri
 test("the unexplained share of absence is a ratio of A to A plus E", () => {
   // Same attendance percentage, opposite meaning. Three absences all phoned in is a
   // student managing an illness; three unexplained is a student nobody has heard from.
-  const r = attendanceQuality({ P: 6, L: 0, E: 3, A: 1, marked: 10 }, { lateRecorded: true });
+  const r = attendanceQuality({ P: 6, L: 0, E: 3, A: 1, marked: 10 }, { lateRecorded: true, excusedRecorded: true });
   assert.equal(r.unexplainedShare, 25);
 });
 
 test("a student with no absences at all has a NULL unexplained share", () => {
   // Not 0, and not 100. There is no absence to characterise, and 0 would read as
   // "all their absences were authorised" — a statement about absences that do not exist.
-  const r = attendanceQuality({ P: 10, L: 0, E: 0, A: 0, marked: 10 }, { lateRecorded: true });
+  const r = attendanceQuality({ P: 10, L: 0, E: 0, A: 0, marked: 10 }, { lateRecorded: true, excusedRecorded: true });
   assert.equal(r.unexplainedShare, null);
 });
 
@@ -696,4 +723,22 @@ test("the same student IS reported at a college that does record submissions", (
 
   assert.equal(r.oldestUnmarkedDueDate, "2026-01-15");
   assert.ok(r.codes.includes(TRIP.UNMARKED_WORK));
+});
+
+test("a college that never records authorised absence gets null, not 100% unexplained", () => {
+  // The mirror image of the lateness trap, and it errs the other way: where a missing
+  // "L" understates concern, a missing "E" acronym makes EVERY absent student in the
+  // institution read as 100% unexplained — presented on the panel as a finding about
+  // them. Same institution-level question, same answer: null.
+  const r = attendanceQuality({ P: 10, L: 1, E: 0, A: 4, marked: 15 },
+    { lateRecorded: true, excusedRecorded: false });
+
+  assert.equal(r.unexplainedShare, null);
+});
+
+test("unexplained share IS reported at a college that records authorised absence", () => {
+  const r = attendanceQuality({ P: 10, L: 1, E: 2, A: 2, marked: 15 },
+    { lateRecorded: true, excusedRecorded: true });
+
+  assert.equal(r.unexplainedShare, 50);
 });

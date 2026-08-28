@@ -3282,9 +3282,6 @@ function PredictionDetail({ detail, bands, onChanged }) {
                       {c === "TRIP_ATTENDANCE_FALLING" && p.attendanceSlope != null && (
                         <b className="ml-1 font-semibold">— {p.attendanceSlope} points</b>
                       )}
-                      {c === "TRIP_NO_SHOW" && (
-                        <b className="ml-1 font-semibold">— {p.noShowCount ?? "several"}</b>
-                      )}
                       {c === "TRIP_RECENT_FAIL" && p.failCount != null && (
                         <b className="ml-1 font-semibold">— {p.failCount} below the pass mark</b>
                       )}
@@ -6524,8 +6521,11 @@ function StudentAttendanceDetail({ student, store }) {
     api.predictionStudent(student.id)
       .then(d => { if (alive) setPred(d); })
       .catch(e => { if (alive && e?.status === 403) setPredDenied(true); });
-    api.predictionOutcomes({ })
-      .then(r => { if (alive) setOutcomes((r.outcomes || []).filter(o => o.studentId === student.id)); })
+    // Filtered by the SERVER. The list route caps at 500 newest-first, so filtering in
+    // the browser silently loses this student's outcome once a college passes that many
+    // — and the panel would then say "no outcome recorded" about a student who has one.
+    api.predictionOutcomes({ studentId: student.id })
+      .then(r => { if (alive) setOutcomes(r.outcomes || []); })
       .catch(() => { /* the section just shows no outcome */ });
     return () => { alive = false; };
   }, [student.id]);
@@ -6797,8 +6797,8 @@ function StudentAttendanceDetail({ student, store }) {
           student={student}
           onSaved={() => {
             setRecordingOutcome(false);
-            api.predictionOutcomes({})
-              .then(r => setOutcomes((r.outcomes || []).filter(o => o.studentId === student.id)))
+            api.predictionOutcomes({ studentId: student.id })
+              .then(r => setOutcomes(r.outcomes || []))
               .catch(() => {});
           }}
         />
