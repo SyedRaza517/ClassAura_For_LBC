@@ -2746,6 +2746,33 @@ const DRIVER_LABELS = {
   TRIP_QUERY_UNANSWERED: "A question this student asked has gone unanswered",
   TRIP_CONTACT_DEFICIT: "Flagged as at risk, and nobody has spoken to them",
   TRIP_FOLLOWUP_MISSED: "A follow-up the college promised has not happened",
+
+  // Register coverage. The first two are about STAFF: a register nobody took is not a
+  // fact about the student sitting under it, and the wording has to say so or a tutor
+  // reads it as an accusation about the person in front of them.
+  TRIP_ATTENDANCE_UNRELIABLE: "Attendance % withheld — too few registers behind it",
+  TRIP_REGISTER_NOT_TAKEN: "Registers not being taken for this student's sessions",
+  TRIP_REGISTER_STALE: "No register taken for these sessions recently",
+
+  // Cohort standing. Context, never a replacement for the absolute figures: a student
+  // in the top decile of a failing cohort is still failing.
+  TRIP_COHORT_ATTENDANCE_OUTLIER: "Attending far less than the rest of their cohort",
+  TRIP_COHORT_ATTAINMENT_OUTLIER: "Marks far below the rest of their cohort",
+
+  // Workload. Neither of these fires on a busy fortnight alone — a heavy week is shared
+  // by the whole cohort. Both need something about THIS student as well.
+  TRIP_WORKLOAD_PILEUP: "Heavy deadline week ahead, and already carrying work",
+  TRIP_WORKLOAD_ABSENT: "Heavy deadline week ahead, and not turning up",
+
+  // Student finance. The first two are the college's own queue — the delay belongs to
+  // the institution and the student underneath it is the one being harmed by it.
+  TRIP_FUNDING_STALLED: "A finance claim has sat undecided",
+  TRIP_FUNDING_EVIDENCE_OUTSTANDING: "A finance claim is waiting on evidence nobody has chased",
+  TRIP_FUNDING_REFUSED: "Student finance was refused and nothing has replaced it",
+
+  // Whole weeks in which the register ran and this student appeared in none of them.
+  // Deliberately not the absence streak, which counts rows and breaks on a partial week.
+  TRIP_WEEKS_UNSEEN: "Not seen at all for whole weeks the register was taken",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -2754,7 +2781,15 @@ const DRIVER_LABELS = {
 const INSTITUTIONAL_TRIPS = new Set([
   "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
   "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT", "TRIP_FOLLOWUP_MISSED",
+  // A register nobody took, a figure withheld for want of one, and a finance queue
+  // nobody has worked: all four describe the institution. The student sitting under
+  // them is the person being harmed, not the person at fault.
+  "TRIP_REGISTER_NOT_TAKEN", "TRIP_REGISTER_STALE", "TRIP_ATTENDANCE_UNRELIABLE",
+  "TRIP_FUNDING_STALLED", "TRIP_FUNDING_EVIDENCE_OUTSTANDING",
 ]);
+
+/** ISO weekday names, 1 = Monday, matching worstAbsenceWeekday. */
+const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** A code that came from the tripwire layer rather than the engine's own indicators.
  *  The prefix is the contract — see server/src/prediction/tripwires.js. */
@@ -3521,6 +3556,48 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Marking turnaround", p.markingLatencyDays == null ? "—" : `${p.markingLatencyDays} days`],
     ["Absent first thing", pctOrDash(p.firstSessionAbsenceRate)],
     ["Absent later in the day", pctOrDash(p.laterSessionAbsenceRate)],
+    // How much of this student's timetable was actually registered, and how much the
+    // attendance percentage above rests on. The sample belongs beside the figure: 100%
+    // from three registers must not render identically to 100% from thirty, and when the
+    // figure was withheld entirely this is what explains the dash.
+    ["Register coverage", p.registerCoverageRate == null ? "—"
+      : `${p.registerCoverageRate}%${p.scheduledSessionCount ? ` of ${p.scheduledSessionCount} sessions` : ""}`],
+    ["Attendance rests on", p.attendanceObservations == null ? "—"
+      : `${p.attendanceObservations} marks${p.attendanceConfidence ? ` (${p.attendanceConfidence})` : ""}`],
+    ["Register last taken", p.lastRegisterMarkOn ? `${daysAgo(p.lastRegisterMarkOn)} days ago` : "—"],
+    // Where they stand against their own cohort. Null when the cohort is too small to
+    // describe anybody — a percentile from three peers is noise, and from one it is
+    // meaningless. The size is shown so a reader can judge the rank rather than trust it.
+    ["Attendance vs cohort", p.cohortAttendancePercentile == null ? "—"
+      : `${p.cohortAttendancePercentile}th of ${p.cohortSize}`],
+    ["Marks vs cohort", p.cohortAttainmentPercentile == null ? "—"
+      : `${p.cohortAttainmentPercentile}th of ${p.cohortSize}`],
+    // The shape of the absence, which the percentage cannot show. Two students on 70%
+    // are not the same student if one misses every Friday.
+    ["Worst day", p.worstAbsenceWeekday == null ? "—"
+      : `${WEEKDAY_NAMES[p.worstAbsenceWeekday]} — ${p.worstWeekdayAbsenceRate}% absent, ${p.weekdayAbsenceGap} pts worse`],
+    ["Whole weeks unseen", p.unseenWeekRun == null ? "—"
+      : `${p.unseenWeekRun} now, ${p.longestUnseenWeekRun} at worst, of ${p.observedWeeks} observed`],
+    // Where the work bunches. A busy fortnight is a fact about the timetable and never a
+    // code on its own; it is shown because it is what a conversation is about.
+    ["Heaviest week ahead", p.peakCount == null ? "—"
+      : `${p.peakCount} due ${p.peakFrom} to ${p.peakTo}${p.peakWasWeighted ? "" : " (unweighted)"}`],
+    ["Work already outstanding", p.carriedBacklogCount == null ? "—" : p.carriedBacklogCount],
+    // The VLE. Attendance says whether they came to the room; this says whether they
+    // opened the course at all — and a sponsoring provider must evidence engagement
+    // rather than attendance.
+    ["Opened the VLE", p.vleActiveDayRate == null ? "—"
+      : `${p.vleActiveDayRate}% of ${p.vleObservedDays} days observed`],
+    ["VLE last opened", p.vleLastAccessOn ? `${daysAgo(p.vleLastAccessOn)} days ago` : "—"],
+    // Money. The least visible risk in academic data — a student whose loan has not come
+    // through attends and submits right up until the day they leave.
+    ["Student finance", p.fundingPosition || "—"],
+    ["Finance unsettled since", p.fundingUnsettledSince || "—"],
+    // Claims the college agreed to take into account. Shown as a COUNT and a date only:
+    // the reason is health data and lives behind its own permission.
+    ["Claims awaiting a decision", p.openMitigationCount == null ? "—"
+      : `${p.openMitigationCount}${p.oldestOpenMitigationOn ? `, oldest ${p.oldestOpenMitigationOn}` : ""}`],
+    ["Assessments covered by a claim", p.mitigatedAssessmentCount == null ? "—" : p.mitigatedAssessmentCount],
   ];
 
   return (

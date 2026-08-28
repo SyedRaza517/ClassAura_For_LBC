@@ -318,3 +318,28 @@ test("the six tripwire vocabularies are disjoint and all TRIP_-prefixed", () => 
     }
   }
 });
+
+// EVERY CODE THE SERVER CAN EMIT MUST HAVE A LABEL ON THE SCREEN.
+//
+// The two lists are hand-maintained copies in different workspaces, which is the same
+// shape of problem CLAUDE.md documents for ADMIN_PAGES — and it fails the same way, by
+// looking fine. A code with no label does not error; it renders its own constant, so a
+// tutor opening a student's record sees "TRIP_WORKLOAD_PILEUP" where a sentence should
+// be. There is no client-side test framework, so the only place this can be caught is
+// here, by reading the file as text.
+test("every tripwire code the server emits is labelled in the client", () => {
+  const codes = [...new Set([
+    ...require("./tripwires").TRIP_CODES,
+    ...require("./coverage").COVERAGE_CODES,
+    ...require("./cohort").COHORT_CODES,
+    ...require("./workload").WORKLOAD_CODES,
+    ...require("./funding").FUNDING_CODES,
+    ...require("./sessions").SESSIONS_CODES,
+  ])];
+
+  const ui = fs.readFileSync(path.join(__dirname, "..", "..", "..", "client", "src", "StaffHub.jsx"), "utf8");
+  const missing = codes.filter((c) => !ui.includes(`${c}:`));
+
+  assert.deepEqual(missing, [],
+    `these codes would render as their own constant on a tutor's screen: ${missing.join(", ")}`);
+});
