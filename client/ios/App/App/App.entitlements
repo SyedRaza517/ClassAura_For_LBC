@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Near Field Communication Tag Reading.
+
+	  Required before Core NFC will start a session at all: without this entitlement on
+	  the provisioning profile, startScanning() fails at runtime on a real device even
+	  though the code, the plugin and Info.plist are all correct. The failure looks like
+	  a bug in the app rather than a missing capability, which is why it is written down
+	  here rather than left to be rediscovered.
+
+	  NDEF is the only format listed on purpose. The plugin can also open a raw "tag"
+	  session, which needs TAG added here — but a raw session reads the chip directly,
+	  which is a broader permission than reading a check-in sticker warrants, and every
+	  extra entitlement is another thing App Review asks about.
+
+	  THIS FILE IS NOT ENOUGH ON ITS OWN. Two manual steps remain, in Xcode:
+	    1. Signing & Capabilities -> + Capability -> Near Field Communication Tag Reading
+	       (this writes the matching entry into the App target's build settings, and
+	       regenerates the provisioning profile with the capability enabled).
+	    2. Confirm the App target's CODE_SIGN_ENTITLEMENTS points at this file.
+	  A build that skips those will compile, install, and then refuse every scan.
+	-->
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>NDEF</string>
+	</array>
+</dict>
+</plist>

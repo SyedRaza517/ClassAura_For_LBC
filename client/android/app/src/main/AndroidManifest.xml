@@ -68,4 +68,20 @@
     <!-- Used by the biometric app lock (Face/fingerprint unlock). Harmless on
          devices without a sensor — the feature simply reports itself unavailable. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- Reading the attendance stickers. Not a runtime permission: Android grants NFC
+         at install time, so there is no prompt to handle. -->
+    <uses-permission android:name="android.permission.NFC" />
+
+    <!-- android:required="false" IS LOAD-BEARING AND MUST NOT BE REMOVED.
+         Declaring the NFC permission above makes Google Play infer a hardware
+         requirement, and the default for that inference is REQUIRED — which would
+         hide this app from the Play Store listing of every phone without an NFC chip.
+         Those students still need the app: attendance figures, results, timetable and
+         messaging have nothing to do with tapping, and their lecturer marks them in
+         the usual way. Stating required="false" explicitly overrides the inference and
+         keeps the app installable on every handset.
+         The code already copes: nfc.js reports "no-hardware" and the check-in card
+         renders an explanation instead of a dead button. -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
 </manifest>
