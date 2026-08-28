@@ -5,6 +5,7 @@ const { sCheckin } = require("../serializers");
 const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isString, isRealDate, MAX_TEXT, isSite } = require("../validate");
 const { localDate, localTime } = require("../clock");
+const tapConfig = require("../attendanceTapConfig");
 
 // HH:MM, 24-hour. Times are stored as plain strings and rendered verbatim.
 const isTime = (v) => isString(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -122,6 +123,66 @@ router.post("/check-in", requireAuth, async (req, res) => {
     create: { staffId: req.user.id, date, timeIn: nowTime(), site: site || null },
   });
   res.status(201).json(sCheckin(rec));
+});
+
+// POST /api/checkins/tap-check-in — clock in by touching an NFC sticker.
+//
+// `site` is NOT accepted and NOT asked for. Someone who touched a sticker in the
+// building cannot be working online — the tap is what proves they are here — so
+// recording anything but "Onsite" would store a claim the tap itself disproves. Working
+// online remains available through POST /check-in, which does take a site.
+//
+// This is also the first time a staff clock-in has meant "was in the building" rather
+// than "said so": the button records a clock-in from anywhere, bed included.
+router.post("/tap-check-in", requireAuth, async (req, res) => {
+  const settings = await tapConfig.get();
+  if (!settings.enabled || !settings.staffTapEnabled) return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
+
+  const code = req.body?.tagCode;
+  if (!isString(code) || !code.trim()) return res.status(400).json({ error: "A tag is required" });
+
+  // Tenant-scoped by db.js, so another college's tag is simply not found.
+  const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
+  if (!tag) return res.status(404).json({ error: "That tag isn't recognised." });
+
+  const date = today();
+
+  // Never throws into the request: the clock-in is the record, this is the account of it.
+  const logTap = async (outcome, extra = {}) => {
+    try {
+      await prisma.tagTap.create({
+        data: { tagId: tag.id, staffId: req.user.id, outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
+      });
+    } catch (e) {
+      console.error("[tap] could not log a staff tap:", e.message);
+    }
+  };
+
+  const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+
+  // A real clock-in already stands. Re-tapping must not rewrite the arrival time — the
+  // same rule POST /check-in follows, and for the same reason: a second tap on the way
+  // past the door would otherwise falsify how long somebody was on site.
+  if (existing && existing.timeIn) {
+    await logTap("already_checked_in", { site: "Onsite" });
+    return res.json({ ok: true, alreadyCheckedIn: true, ...sCheckin(existing) });
+  }
+
+  // timeIn "" is the sentinel PUT /summary writes for "wrote a summary, never checked
+  // in". Fill in the real clock time rather than leaving the day blank.
+  const rec = await prisma.checkIn.upsert({
+    where: { staffId_date: { staffId: req.user.id, date } },
+    update: { timeIn: nowTime(), site: "Onsite", tagId: tag.id },
+    create: { staffId: req.user.id, date, timeIn: nowTime(), site: "Onsite", tagId: tag.id },
+  });
+
+  await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });
+  await logTap("checked_in", { site: "Onsite" });
+
+  // Not audited, matching POST /check-in: this records the present, in the caller's own
+  // name, and cannot alter history. PUT / — which writes anyone's hours on any date —
+  // is the one that is audited.
+  res.status(201).json({ ok: true, ...sCheckin(rec) });
 });
 
 // POST /api/checkins/:id/check-out  — owner or admin
