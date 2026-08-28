@@ -92,6 +92,7 @@ const TRIPWIRE_COLUMNS = [
   "openMitigationCount", "oldestOpenMitigationOn", "mitigatedAssessmentCount", "attendanceMitigated",
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
   "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
+  "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
 ];
 
 /**
@@ -276,5 +277,42 @@ test("adjustments.js reads nothing but the decision and the window", () => {
   const src = fs.readFileSync(path.join(__dirname, "adjustments.js"), "utf8");
   for (const forbidden of ["c.category", "c.detail", ".category", ".detail"]) {
     assert.ok(!src.includes(forbidden), `adjustments.js touches ${forbidden}`);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* One vocabulary, five files                                                  */
+/* -------------------------------------------------------------------------- */
+
+// Every TRIP_ code from every module lands in the SAME riskDriverCodes column, so staff
+// read one list of reasons rather than five. Two consequences that nothing else checks:
+//
+//   1. A DUPLICATE STRING would make two different findings indistinguishable on the
+//      screen, and the modules are written independently and cannot see each other.
+//   2. THE PREFIX IS STRUCTURAL. OVR-004 worsens a band on redIndicatorCount, which
+//      engine.js derives from its own internal reds array; riskDriverCodes is a copy
+//      taken afterwards, so nothing appended can reach the override. A code named
+//      RED_something would read as the engine own and invite a later reader to take the
+//      count from the copy, silently wiring these layers into banding.
+//
+// Each module tests its own vocabulary. Nothing tested them TOGETHER, which is the only
+// place a collision can exist.
+test("the five tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
+  const all = [
+    ["tripwires", require("./tripwires").TRIP_CODES],
+    ["coverage", require("./coverage").COVERAGE_CODES],
+    ["cohort", require("./cohort").COHORT_CODES],
+    ["workload", require("./workload").WORKLOAD_CODES],
+    ["funding", require("./funding").FUNDING_CODES],
+  ];
+
+  const seen = new Map();
+  for (const [name, codes] of all) {
+    assert.ok(Array.isArray(codes) && codes.length, name + " exports no code vocabulary");
+    for (const code of codes) {
+      assert.ok(code.startsWith("TRIP_"), name + ' emits \"' + code + '\", which is not TRIP_-prefixed');
+      assert.ok(!seen.has(code), code + " is emitted by both " + seen.get(code) + " and " + name);
+      seen.set(code, name);
+    }
   }
 });

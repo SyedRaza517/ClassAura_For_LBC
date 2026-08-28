@@ -27,6 +27,8 @@ const adjustments = require("./adjustments");
 const coverage = require("./coverage");
 const cohort = require("./cohort");
 const engagement = require("../vle/engagementNormalise");
+const workload = require("./workload");
+const funding = require("./funding");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -174,7 +176,7 @@ async function gather(studentIds, config) {
   // every chunk for no reason.
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
          answeredQueryRows, firstClosedContact, firstClosedReview,
-         unmarkedSessions] = await Promise.all([
+         unmarkedSessions, linkedSlcRows] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -229,12 +231,21 @@ async function gather(studentIds, config) {
     // no unmarked sessions is ordinary; a college with none has no timetable this can be
     // measured against, and every code depending on coverage must fall silent.
     prisma.hndSession.count({ where: { marks: { none: {} } } }),
+    prisma.slcApplication.count({ where: { NOT: { studentId: null } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
   // about the integration, not about anybody's coursework.
   const submittedOnRecorded = submittedAtRows > 0;
   const timetableRecorded = unmarkedSessions > 0;
+  // THE ELEVENTH INSTITUTION PROBE. "At least one claim in this tenant is attached to a
+  // real Student", and the attachment is the point -- count(SlcApplication) > 0 would be
+  // true at a college holding four thousand UNLINKED rows, and the pipeline would then
+  // report "no funding record" about four thousand people who have one.
+  //
+  // False everywhere today, because nothing writes studentId until the backfill runs.
+  // Every funding figure therefore stays null, which is correct rather than broken.
+  const slcRecorded = linkedSlcRows > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -462,6 +473,26 @@ async function gather(studentIds, config) {
     sessionsByUnit.get(h.unitId).push(h);
   }
 
+  // STUDENT FINANCE. Per chunk -- whose claim it is, is a question about the student.
+  //
+  // ONLY LINKED ROWS. SlcApplication.studentId is nullable and nothing populates it yet,
+  // so an unlinked row belongs to a NAME rather than to a person: studentName and
+  // studentRef are plain strings typed by an administrator, with no relation to Student.
+  // Matching on them would attach one student's loan status to another with a similar
+  // name, which is a data-protection incident rather than a bug.
+  const slcRows = await prisma.slcApplication.findMany({
+    where: { studentId: { in: studentIds } },
+    select: {
+      studentId: true, status: true, loanType: true,
+      applicationDate: true, decisionDate: true, statusChangedOn: true,
+    },
+  });
+  const slcByStudent = new Map();
+  for (const r of slcRows) {
+    if (!slcByStudent.has(r.studentId)) slcByStudent.set(r.studentId, []);
+    slcByStudent.get(r.studentId).push(r);
+  }
+
   // VLE engagement observations. Per chunk -- "did this student open the course" is a
   // question about the student. There is deliberately NO institution probe here and none
   // is needed: a college that is not observable has written no rows at all, every
@@ -678,6 +709,7 @@ async function gather(studentIds, config) {
     const mySubs = (submissionsByStudent.get(id) || []).filter((s) => inScopeAssessment(assessmentById.get(s.assessmentId)));
 
     let submitted = 0, notSubmitted = 0, unknown = 0, onTime = 0, missing = 0;
+    const missingPieces = [];
     for (const s of mySubs) {
       const a = assessmentById.get(s.assessmentId);
       const eff = effective(a);
@@ -708,6 +740,11 @@ async function gather(studentIds, config) {
         if (eff.due && eff.due < today) {
           notSubmitted += 1;
           missing += 1;
+          // The same pieces the counter counts, kept as rows. workload.js needs the id
+          // to dedupe this set against the unmarked one -- a piece can be BOTH reported
+          // not-submitted and sitting unmarked, and counting it twice would inflate the
+          // backlog that decides a code.
+          missingPieces.push({ assessmentId: s.assessmentId, dueDate: eff.due });
         }
       } else {
         unknown += 1;
@@ -775,7 +812,9 @@ async function gather(studentIds, config) {
         if (eff.state === EXCLUDED) continue;
         if (!eff.due || eff.due >= today) continue;
         if (decided.has(a.id)) continue;
-        dueUnmarked.push({ dueDate: eff.due });
+        // assessmentId rides along for the same dedupe. It costs nothing -- the
+        // assessment is already in hand.
+        dueUnmarked.push({ assessmentId: a.id, dueDate: eff.due });
       }
     }
 
@@ -1012,6 +1051,37 @@ async function gather(studentIds, config) {
       cohortAverageGrades: pop.grades,
     }, config);
 
+    // WORKLOAD. The assessments at their EFFECTIVE deadlines, with suppressed work
+    // already gone, so a heavy fortnight is not manufactured out of pieces this student
+    // has been excused from.
+    const horizonAssessments = [];
+    for (const unitId of myUnits) {
+      for (const a of assessmentsByUnit.get(unitId) || []) {
+        const eff = effective(a);
+        if (eff.state === EXCLUDED) continue;
+        horizonAssessments.push({ dueDate: eff.due, weight: a.weight });
+      }
+    }
+    const load = workload.evaluate({
+      today,
+      assessments: horizonAssessments,
+      backlog: { missing: missingPieces, unresolved: dueUnmarked },
+      // The rolling window exactly as it was already summarised, never recomputed --
+      // two definitions of "recent attendance" on one screen is how they drift.
+      recentAttendance: summariseAttendance(recentRateMarks, config.attendanceMode),
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+      institution: { submissionsRecorded },
+    }, config);
+
+    // STUDENT FINANCE. A student whose loan has not come through attends and submits
+    // right up until the day they leave, which is exactly why it is invisible in the
+    // academic figures beside it.
+    const money = funding.evaluate({
+      today,
+      applications: slcByStudent.get(id) || [],
+      institution: { slcRecorded },
+    }, config);
+
     const trips = tripwires.evaluate({
       today,
       marks: overallMarks,
@@ -1101,6 +1171,19 @@ async function gather(studentIds, config) {
         vleActiveDayRate: vle.activeDayRate,
         vleObservedDays: vle.observedDays,
         vleUnitsObserved: vle.unitsObserved,
+        peakFrom: load.peakFrom,
+        peakTo: load.peakTo,
+        peakCount: load.peakCount,
+        peakWeightShare: load.peakWeightShare,
+        peakWasWeighted: load.peakWasWeighted,
+        undatedAssessments: load.undatedAssessments,
+        carriedBacklogCount: load.carriedBacklogCount,
+        fundingPosition: money.fundingPosition,
+        fundingUnsettledSince: money.fundingUnsettledSince,
+        fundingSettledOn: money.fundingSettledOn,
+        fundingRefusedOn: money.fundingRefusedOn,
+        fundingApplications: money.fundingApplications,
+        fundingNotApplied: money.fundingNotApplied,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
         // riskDriverCodes column runner.js builds -- staff read one list of reasons, not
@@ -1111,7 +1194,10 @@ async function gather(studentIds, config) {
         // cohortStruggling is deliberately NOT in here. It is true of every student in the
         // cohort at once, and a hundred caseload rows carrying an identical reason is no
         // caseload -- the same judgement metrics.js already made for assessmentsDueSoon.
-        codes: [...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || [])],
+        codes: [
+          ...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || []),
+          ...(load.codes || []), ...(money.codes || []),
+        ],
       },
       raw: {
         attendance: {

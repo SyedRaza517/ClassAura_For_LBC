@@ -355,6 +355,53 @@ const DEFAULTS = {
   // exactly when that data point exists and nothing else does.
   minObservedDays: 5,
 
+  /* --- assessment workload -------------------------------------------------- */
+
+  // The window deadlines are bunched into, and how far ahead to look. A week is the unit
+  // both a timetable and a student's own planning are in. The horizon is 28 rather than
+  // 14 because a fortnight-wide view can only see the near half of a cluster that
+  // straddles its edge, and would report it at half size; 28 also matches
+  // recentAttendanceDays and directionOfTravelDays.
+  clusterWindowDays: 7,
+  horizonDays: 28,
+  // Deadlines in one window before it counts as heavy. Two a week is ordinary; three
+  // cannot be sequenced. Set at "heavy, not extreme" ON PURPOSE, because the threshold is
+  // never the whole test — every workload CODE also requires something about this
+  // student, so it is the conjunction that discriminates, not this number.
+  peakDeadlineLimit: 3,
+  // Outstanding pieces carried INTO that window. A count of concrete pieces, not a rate,
+  // so it does not need the sample floors that lateSubmissionMinPieces and
+  // disperseMinMarks carry — those protect percentages from tiny denominators.
+  backlogLimit: 1,
+  // The attendance the run-up has to fall below for the second conjunction, and the
+  // fewest marks behind it. Both mirror figures already here — redAttendanceThreshold
+  // and slopeMinMarks — rather than inventing a third opinion.
+  peakAttendanceFloor: 70,
+  recentMinMarks: 3,
+
+  /* --- student finance ------------------------------------------------------ */
+
+  // How long a claim may sit in one non-terminal state before it is reported. A third of
+  // a twelve-week term: late enough to be a real stall, early enough that a hardship
+  // payment still helps. Twice notSeenDays because a register is touched weekly and a
+  // finance queue monthly.
+  stalledStatusDays: 28,
+  // The same question measured from applicationDate, which is the WEAKER anchor: it
+  // measures time in the pipeline rather than time in THIS state, so it gets a longer
+  // rope. Used only where statusChangedOn is null — which, until routes/slc.js began
+  // writing it, was every row.
+  unsettledApplicationDays: 56,
+  // Shorter on purpose. "Awaiting evidence" is the one state the college can clear this
+  // afternoon, by telling the student what is missing.
+  evidenceOutstandingDays: 21,
+  // The ceiling, in the shape unansweredQueryCeilingDays already carries. Unbounded, one
+  // abandoned row from a first term keeps a code lit for three years.
+  stalledCeilingDays: 240,
+  // How long a refusal stays reportable. A student still enrolled a year after a decline
+  // resolved it some other way, and that continued enrolment is the only evidence of
+  // resolution this table can offer.
+  refusedWindowDays: 365,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -762,6 +809,61 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The fewest observed days behind a VLE engagement rate",
       why: "one observed day on which a student did not log in reads 0% and renders as \"never active\" — a pattern claimed from a single data point on the first day of observation.",
+    }) ||
+    checkNumber(out, "clusterWindowDays", pick("clusterWindowDays"), {
+      min: 1, max: 90, whole: true,
+      label: "The workload clustering window",
+      why: "it is the span deadlines are bunched into. A week is the unit both a timetable and a student's own planning are in.",
+    }) ||
+    checkNumber(out, "horizonDays", pick("horizonDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The workload horizon",
+      why: "a horizon shorter than twice the clustering window can only see the near half of a cluster straddling its edge, and reports it at half size.",
+    }) ||
+    checkNumber(out, "peakDeadlineLimit", pick("peakDeadlineLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The heavy-window threshold",
+      why: "it is how many deadlines in one window count as heavy. It never fires alone — every workload code also requires something about the individual student.",
+    }) ||
+    checkNumber(out, "backlogLimit", pick("backlogLimit"), {
+      min: 1, max: 50, whole: true,
+      label: "The carried-backlog threshold",
+      why: "it is how much outstanding work a student must be carrying into a heavy window before that combination is reported.",
+    }) ||
+    checkNumber(out, "peakAttendanceFloor", pick("peakAttendanceFloor"), {
+      min: 0, max: 100,
+      label: "The workload attendance floor",
+      why: "it is the attendance in the run-up below which a heavy window ahead becomes a finding rather than a timetable fact.",
+    }) ||
+    checkNumber(out, "recentMinMarks", pick("recentMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest recent marks behind that judgement",
+      why: "an attendance figure from one or two registers is not evidence a student has stopped turning up.",
+    }) ||
+    checkNumber(out, "stalledStatusDays", pick("stalledStatusDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The stalled-claim threshold",
+      why: "it is how long a finance claim may sit in one state before it is reported. Late enough to be a real stall, early enough that a hardship payment still helps.",
+    }) ||
+    checkNumber(out, "unsettledApplicationDays", pick("unsettledApplicationDays"), {
+      min: 1, max: 730, whole: true,
+      label: "The unsettled-claim threshold",
+      why: "the same question measured from the application date, which is a weaker anchor — it measures time in the pipeline rather than time in this state — so it gets a longer rope.",
+    }) ||
+    checkNumber(out, "evidenceOutstandingDays", pick("evidenceOutstandingDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The outstanding-evidence threshold",
+      why: "awaiting evidence is the one state the college can clear this afternoon, by telling the student what is missing, so it is reported sooner.",
+    }) ||
+    checkNumber(out, "stalledCeilingDays", pick("stalledCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The stalled-claim ceiling",
+      why: "unbounded, one abandoned row from a first term keeps a code lit for three years.",
+    }) ||
+    checkNumber(out, "refusedWindowDays", pick("refusedWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The refusal reporting window",
+      why: "a student still enrolled a year after a decline resolved it some other way, and that continued enrolment is the only evidence of resolution this table can offer.",
     });
   if (err) return err;
 

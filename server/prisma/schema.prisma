@@ -2248,6 +2248,47 @@ model StudentPredictionCurrent {
   vleActiveDayRate  Float?
   vleObservedDays   Int?
   vleUnitsObserved  Int?
+  /// WORKLOAD. assessmentsDueSoon already counts deadlines in the next fortnight and is
+  /// deliberately a figure, because a busy calendar is shared by the whole cohort. These
+  /// say WHERE the work bunches, so that the busy window can be crossed with something
+  /// about THIS student -- an existing backlog, or an absence in the run-up. That
+  /// conjunction is the only thing here that becomes a code.
+  /// Dates, never day counts: nothing runs on a schedule, so "peak in 9 days" is wrong by
+  /// the next morning while the date is true for ever.
+  peakFrom              String?
+  peakTo                String?
+  peakCount             Int?
+  /// The share of the peak by assessment weight, and whether the weighting was real.
+  /// Assessment.weight defaults to 0 and the Moodle importer never sets it, so at a
+  /// synced college the share means nothing -- gradeWasWeighted's contract, for the same
+  /// reason it exists there.
+  peakWeightShare       Float?
+  peakWasWeighted       Boolean?
+  /// How much of the horizon could not be placed on a calendar, so a reader can see that
+  /// the peak is a lower bound rather than a measurement.
+  undatedAssessments    Int?
+  /// The union of work positively not handed in and work past due with no answer either
+  /// way. Deliberately a union of two separately stored sets, so it cannot be
+  /// reconstructed from either column alone.
+  carriedBacklogCount   Int?
+  /// FUNDING. A student whose loan has not come through is at real risk of withdrawing,
+  /// and it is one of the few risks a college can act on -- hardship funds, payment
+  /// plans, chasing evidence. It is also the least visible in academic data: they attend
+  /// and submit right up to the day they leave.
+  /// ALL NULL where the college has no linked SlcApplication rows at all. No row means
+  /// "we do not know", never "no funding" -- self-funded, employer-sponsored and
+  /// international students legitimately have none, and putting them on a risk register
+  /// for a loan they never wanted is the failure this guards against.
+  fundingPosition       String?
+  /// Dates, never day counts, same rule as above.
+  fundingUnsettledSince String?
+  fundingSettledOn      String?
+  fundingRefusedOn      String?
+  fundingApplications   Int?
+  /// Recorded as "has not applied" -- a FIGURE and never a code. The string is the
+  /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
+  /// so it means three different things, one of which is a bug.
+  fundingNotApplied     Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2517,6 +2558,47 @@ model StudentPredictionHistory {
   vleActiveDayRate  Float?
   vleObservedDays   Int?
   vleUnitsObserved  Int?
+  /// WORKLOAD. assessmentsDueSoon already counts deadlines in the next fortnight and is
+  /// deliberately a figure, because a busy calendar is shared by the whole cohort. These
+  /// say WHERE the work bunches, so that the busy window can be crossed with something
+  /// about THIS student -- an existing backlog, or an absence in the run-up. That
+  /// conjunction is the only thing here that becomes a code.
+  /// Dates, never day counts: nothing runs on a schedule, so "peak in 9 days" is wrong by
+  /// the next morning while the date is true for ever.
+  peakFrom              String?
+  peakTo                String?
+  peakCount             Int?
+  /// The share of the peak by assessment weight, and whether the weighting was real.
+  /// Assessment.weight defaults to 0 and the Moodle importer never sets it, so at a
+  /// synced college the share means nothing -- gradeWasWeighted's contract, for the same
+  /// reason it exists there.
+  peakWeightShare       Float?
+  peakWasWeighted       Boolean?
+  /// How much of the horizon could not be placed on a calendar, so a reader can see that
+  /// the peak is a lower bound rather than a measurement.
+  undatedAssessments    Int?
+  /// The union of work positively not handed in and work past due with no answer either
+  /// way. Deliberately a union of two separately stored sets, so it cannot be
+  /// reconstructed from either column alone.
+  carriedBacklogCount   Int?
+  /// FUNDING. A student whose loan has not come through is at real risk of withdrawing,
+  /// and it is one of the few risks a college can act on -- hardship funds, payment
+  /// plans, chasing evidence. It is also the least visible in academic data: they attend
+  /// and submit right up to the day they leave.
+  /// ALL NULL where the college has no linked SlcApplication rows at all. No row means
+  /// "we do not know", never "no funding" -- self-funded, employer-sponsored and
+  /// international students legitimately have none, and putting them on a risk register
+  /// for a loan they never wanted is the failure this guards against.
+  fundingPosition       String?
+  /// Dates, never day counts, same rule as above.
+  fundingUnsettledSince String?
+  fundingSettledOn      String?
+  fundingRefusedOn      String?
+  fundingApplications   Int?
+  /// Recorded as "has not applied" -- a FIGURE and never a code. The string is the
+  /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
+  /// so it means three different things, one of which is a bug.
+  fundingNotApplied     Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
