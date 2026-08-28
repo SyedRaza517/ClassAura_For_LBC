@@ -2289,6 +2289,34 @@ model StudentPredictionCurrent {
   /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
   /// so it means three different things, one of which is a bug.
   fundingNotApplied     Int?
+  /// THE SHAPE OF THE ABSENCE, not the amount of it. A student who misses every Friday
+  /// is a different conversation from one absent at random to the same percentage — the
+  /// first is usually a clash, a shift or a caring commitment, and it is fixable.
+  /// ISO-8601 weekday, 1 = Monday. Figures only, and deliberately: within one student's
+  /// marks nothing separates "this student misses Fridays" from "nobody attends the
+  /// Friday nine o'clock", and the half that would separate them is the cohort's Friday.
+  worstAbsenceWeekday     Int?
+  worstWeekdayAbsenceRate Float?
+  weekdayAbsenceGap       Float?
+  weekdaysMeasured        Int?
+  /// The same question by session KIND, where a college records one. HndSession.kind
+  /// defaults to "" and is empty on every row in both databases today, so these stay null
+  /// — which is the institution guard working, not a fault.
+  worstAbsenceKind        String?
+  worstKindAbsenceRate    Float?
+  kindAbsenceGap          Float?
+  kindsMeasured           Int?
+  /// Whole WEEKS in which the register ran and this student appeared in none of them.
+  /// Deliberately not absenceStreak, which counts consecutive absent ROWS: a partial week
+  /// breaks this and not a streak, and a week with no sessions timetabled produces no
+  /// marks and breaks neither. Deliberately not TRIP_NOT_SEEN either, which reads the
+  /// calendar and would fire college-wide every summer — this cannot fire on a closed
+  /// college at all, because a closed college produces no marks to observe.
+  unseenWeekRun        Int?
+  unseenSinceWeekOn    String?
+  lastAttendedWeekOn   String?
+  longestUnseenWeekRun Int?
+  observedWeeks        Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2599,6 +2627,34 @@ model StudentPredictionHistory {
   /// column default AND what routes/slc.js silently rewrites an unrecognised status to,
   /// so it means three different things, one of which is a bug.
   fundingNotApplied     Int?
+  /// THE SHAPE OF THE ABSENCE, not the amount of it. A student who misses every Friday
+  /// is a different conversation from one absent at random to the same percentage — the
+  /// first is usually a clash, a shift or a caring commitment, and it is fixable.
+  /// ISO-8601 weekday, 1 = Monday. Figures only, and deliberately: within one student's
+  /// marks nothing separates "this student misses Fridays" from "nobody attends the
+  /// Friday nine o'clock", and the half that would separate them is the cohort's Friday.
+  worstAbsenceWeekday     Int?
+  worstWeekdayAbsenceRate Float?
+  weekdayAbsenceGap       Float?
+  weekdaysMeasured        Int?
+  /// The same question by session KIND, where a college records one. HndSession.kind
+  /// defaults to "" and is empty on every row in both databases today, so these stay null
+  /// — which is the institution guard working, not a fault.
+  worstAbsenceKind        String?
+  worstKindAbsenceRate    Float?
+  kindAbsenceGap          Float?
+  kindsMeasured           Int?
+  /// Whole WEEKS in which the register ran and this student appeared in none of them.
+  /// Deliberately not absenceStreak, which counts consecutive absent ROWS: a partial week
+  /// breaks this and not a streak, and a week with no sessions timetabled produces no
+  /// marks and breaks neither. Deliberately not TRIP_NOT_SEEN either, which reads the
+  /// calendar and would fire college-wide every summer — this cannot fire on a closed
+  /// college at all, because a closed college produces no marks to observe.
+  unseenWeekRun        Int?
+  unseenSinceWeekOn    String?
+  lastAttendedWeekOn   String?
+  longestUnseenWeekRun Int?
+  observedWeeks        Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

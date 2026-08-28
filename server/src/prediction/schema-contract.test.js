@@ -93,6 +93,7 @@ const TRIPWIRE_COLUMNS = [
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
   "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
   "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
+  "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
 ];
 
 /**
@@ -297,13 +298,14 @@ test("adjustments.js reads nothing but the decision and the window", () => {
 //
 // Each module tests its own vocabulary. Nothing tested them TOGETHER, which is the only
 // place a collision can exist.
-test("the five tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
+test("the six tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
   const all = [
     ["tripwires", require("./tripwires").TRIP_CODES],
     ["coverage", require("./coverage").COVERAGE_CODES],
     ["cohort", require("./cohort").COHORT_CODES],
     ["workload", require("./workload").WORKLOAD_CODES],
     ["funding", require("./funding").FUNDING_CODES],
+    ["sessions", require("./sessions").SESSIONS_CODES],
   ];
 
   const seen = new Map();

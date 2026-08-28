@@ -11,7 +11,7 @@ const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const predictionRunner = require("../prediction/runner");
-const { resolveTapSession, statusFor } = require("../attendanceTap");
+const { resolveTapSession, statusFor, SELF_CHECKIN_STAMP } = require("../attendanceTap");
 const { isString } = require("../validate");
 
 router.use(requireAuth, requireStudent);
@@ -25,11 +25,6 @@ const pctOf = (marks, max) => (max > 0 ? Math.min(100, Math.max(0, Math.round((m
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 
 /* ============================== NFC tap check-in ============================== */
-
-// The stamp that marks a mark as the student's own. takenBy already carries provenance
-// this way for the Moodle importer, so a self check-in is distinguishable in the
-// register UI and in the audit trail without a new column.
-const SELF_STAMP = "Self check-in (NFC)";
 
 // In-process, module-level, and therefore correct for ONE Node process — a clustered
 // deployment needs Redis. Keyed on the student because the caller is already
@@ -187,7 +182,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   }
 
   const mark = await prisma.attendanceMark.create({
-    data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_STAMP, checkedInAt: time },
+    data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time },
   });
 
   await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });

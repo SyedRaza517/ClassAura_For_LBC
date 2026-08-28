@@ -402,6 +402,41 @@ const DEFAULTS = {
   // resolution this table can offer.
   refusedWindowDays: 365,
 
+  /* --- the shape of the absence --------------------------------------------- */
+
+  // Marks on ONE weekday (or one session kind) before that slice may be compared against
+  // the rest. Four, matching disperseMinMarks: a weekday is the same shape of slice as a
+  // unit. Deliberately NOT minMarksForRate (6), which would silence the signal entirely
+  // for a cohort timetabled two days a week — exactly the cohorts where a clash on one of
+  // those days matters most.
+  weekdayMinMarks: 4,
+  kindMinMarks: 4,
+  // And a floor on the POOLED side too. A floor on only the interesting number is a
+  // half-guard: "60% absent on Fridays against 0% across two other marks" is not a
+  // comparison. Six, because the pooled side is the whole register minus one slice.
+  weekdayMinOtherMarks: 6,
+  kindMinOtherMarks: 6,
+  // At least two slices must clear the floor before a worst one is named. A superlative
+  // over one candidate is not a comparison — unitDispersion already refuses on the same
+  // grounds.
+  minWeekdaysMeasured: 2,
+  minKindsMeasured: 2,
+
+  // Consecutive weeks in which the register RAN and the student appeared in none of them.
+  // Two, because one unattended week is a bad week and everybody has one. Commensurable
+  // with notSeenDays (14) on purpose, so the two say the same thing in different units
+  // rather than contradicting each other on the same screen.
+  zeroWeekLimit: 2,
+  // Marks across the whole RUN, not per week. A per-week floor would make this
+  // structurally unable to fire at a college teaching one session a week — which is
+  // precisely a college where three unseen weeks matters.
+  zeroWeekMinMarks: 3,
+  // How recent the run must be to still be reported. Empty weeks are transparent, which
+  // is what lets a reading week pass without breaking a run — and would otherwise keep
+  // one lit all summer. Past this, the finding hands over to the stale-register code, so
+  // one event puts one row on the caseload rather than two.
+  runRecencyDays: 21,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -864,6 +899,51 @@ function validate(input) {
       min: 1, max: 3650, whole: true,
       label: "The refusal reporting window",
       why: "a student still enrolled a year after a decline resolved it some other way, and that continued enrolment is the only evidence of resolution this table can offer.",
+    }) ||
+    checkNumber(out, "weekdayMinMarks", pick("weekdayMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks on one weekday",
+      why: "a weekday absence rate from two registers is a pattern claimed from two data points.",
+    }) ||
+    checkNumber(out, "kindMinMarks", pick("kindMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks on one session kind",
+      why: "the same floor as a weekday, for the same reason — one slice compared against the rest.",
+    }) ||
+    checkNumber(out, "weekdayMinOtherMarks", pick("weekdayMinOtherMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The fewest marks on the other weekdays",
+      why: "a floor on only the interesting number is a half-guard: 60% absent on Fridays against two marks elsewhere is not a comparison.",
+    }) ||
+    checkNumber(out, "kindMinOtherMarks", pick("kindMinOtherMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The fewest marks on the other session kinds",
+      why: "the pooled side needs a floor as much as the slice does, or the gap is measured against nothing.",
+    }) ||
+    checkNumber(out, "minWeekdaysMeasured", pick("minWeekdaysMeasured"), {
+      min: 2, max: 7, whole: true,
+      label: "The fewest weekdays before a worst one is named",
+      why: "a superlative over one candidate is not a comparison — it names the only weekday there is.",
+    }) ||
+    checkNumber(out, "minKindsMeasured", pick("minKindsMeasured"), {
+      min: 2, max: 50, whole: true,
+      label: "The fewest session kinds before a worst one is named",
+      why: "naming the worst of one kind says nothing about the student.",
+    }) ||
+    checkNumber(out, "zeroWeekLimit", pick("zeroWeekLimit"), {
+      min: 1, max: 52, whole: true,
+      label: "The unseen-weeks threshold",
+      why: "one unattended week is a bad week and everybody has one. At 1 this fires for most of the college in any week containing a bank holiday.",
+    }) ||
+    checkNumber(out, "zeroWeekMinMarks", pick("zeroWeekMinMarks"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks behind an unseen run",
+      why: "measured across the whole run rather than per week, because a per-week floor makes this unable to fire at a college teaching one session a week.",
+    }) ||
+    checkNumber(out, "runRecencyDays", pick("runRecencyDays"), {
+      min: 1, max: 365, whole: true,
+      label: "How recent an unseen run must be to report",
+      why: "empty weeks are transparent, which is what lets a reading week pass without breaking a run — and would otherwise keep one lit all summer.",
     });
   if (err) return err;
 

@@ -9,6 +9,13 @@
 // time. There is no window for a lecturer to open and nothing to remember to switch off
 // — the timetable already knows when the class is.
 
+// What a self check-in writes into AttendanceMark.takenBy. It lives here, in the module
+// both halves already import, because it is a value TWO routes must agree on exactly:
+// the student route writes it and the lecturer's dashboard reads it back to decide
+// whether a row was self-marked. Two hand-maintained copies of a string that must match
+// is the ADMIN_PAGES problem, and that one is only survivable because a test checks it.
+const SELF_CHECKIN_STAMP = "Self check-in (NFC)";
+
 /** "HH:MM" → minutes since midnight, or null when the string is not a time. */
 function toMins(hhmm) {
   const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm ?? ""));
@@ -101,4 +108,4 @@ function statusFor(session, now, settings) {
   return now.time <= addMinutes(session.startTime, late) ? "P" : "L";
 }
 
-module.exports = { addMinutes, subMinutes, resolveTapSession, statusFor };
+module.exports = { addMinutes, subMinutes, resolveTapSession, statusFor, SELF_CHECKIN_STAMP };

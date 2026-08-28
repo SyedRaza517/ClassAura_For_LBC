@@ -69,6 +69,7 @@ const PREDICTION_OUT = [
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
   "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
   "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
+  "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
 ];
 
 const pick = (row, keys) => {

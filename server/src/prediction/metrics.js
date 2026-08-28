@@ -29,6 +29,11 @@ const cohort = require("./cohort");
 const engagement = require("../vle/engagementNormalise");
 const workload = require("./workload");
 const funding = require("./funding");
+// NOT `sessions`: gather() already declares a local `sessions` array of HndSession rows
+// for register coverage, and a const in that scope shadows this import silently. The unit
+// tests could not see it -- they import evaluate directly -- and the first symptom was
+// "sessions.evaluate is not a function" on a live run.
+const sessionShape = require("./sessions");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -176,7 +181,7 @@ async function gather(studentIds, config) {
   // every chunk for no reason.
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
          answeredQueryRows, firstClosedContact, firstClosedReview,
-         unmarkedSessions, linkedSlcRows] = await Promise.all([
+         unmarkedSessions, linkedSlcRows, kindedSessions] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -232,6 +237,14 @@ async function gather(studentIds, config) {
     // measured against, and every code depending on coverage must fall silent.
     prisma.hndSession.count({ where: { marks: { none: {} } } }),
     prisma.slcApplication.count({ where: { NOT: { studentId: null } } }),
+    // THE TWELFTH, and it is a count of sessions carrying a NON-EMPTY kind rather than of
+    // sessions. HndSession.kind defaults to "", so count(HndSession) > 0 is true at every
+    // college that ever timetabled anything and would answer a different question
+    // entirely -- the mistake coverage.js documents for its own probe.
+    //
+    // Empty on every row in both databases today, so the kind figures are null
+    // everywhere. That is the guard working, not the feature failing.
+    prisma.hndSession.count({ where: { NOT: { kind: "" } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -246,6 +259,7 @@ async function gather(studentIds, config) {
   // False everywhere today, because nothing writes studentId until the backfill runs.
   // Every funding figure therefore stays null, which is correct rather than broken.
   const slcRecorded = linkedSlcRows > 0;
+  const kindRecorded = kindedSessions > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -321,7 +335,7 @@ async function gather(studentIds, config) {
     // SESSIONS a student should have been marked in, and a mark that cannot be tied to a
     // session cannot be reconciled. It comes free -- it is a column on the row already
     // being read, not a join.
-    select: { studentId: true, status: true, sessionId: true, session: { select: { date: true, startTime: true, unitId: true } } },
+    select: { studentId: true, status: true, sessionId: true, session: { select: { date: true, startTime: true, unitId: true, kind: true } } },
   });
 
   const marksByStudent = new Map();
@@ -333,6 +347,7 @@ async function gather(studentIds, config) {
       date: m.session ? m.session.date : null,
       startTime: m.session ? m.session.startTime : null,
       unitId: m.session ? m.session.unitId : null,
+      kind: m.session ? m.session.kind : null,
     });
   }
 
@@ -1082,6 +1097,18 @@ async function gather(studentIds, config) {
       institution: { slcRecorded },
     }, config);
 
+    // THE SHAPE OF THE ABSENCE. Reads the RAW marks, not rateMarks: a session an approved
+    // claim excuses is still a session the student was not at, and the pattern this looks
+    // for -- every Friday, or three whole weeks -- is exactly the kind of thing a claim
+    // explains rather than erases. The percentages drop covered sessions; the shape does
+    // not, for the same reason lastAttendedOn does not.
+    const shape = sessionShape.evaluate({
+      today,
+      marks: overallMarks,
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+      institution: { kindRecorded },
+    }, config);
+
     const trips = tripwires.evaluate({
       today,
       marks: overallMarks,
@@ -1184,6 +1211,19 @@ async function gather(studentIds, config) {
         fundingRefusedOn: money.fundingRefusedOn,
         fundingApplications: money.fundingApplications,
         fundingNotApplied: money.fundingNotApplied,
+        worstAbsenceWeekday: shape.worstAbsenceWeekday,
+        worstWeekdayAbsenceRate: shape.worstWeekdayAbsenceRate,
+        weekdayAbsenceGap: shape.weekdayAbsenceGap,
+        weekdaysMeasured: shape.weekdaysMeasured,
+        worstAbsenceKind: shape.worstAbsenceKind,
+        worstKindAbsenceRate: shape.worstKindAbsenceRate,
+        kindAbsenceGap: shape.kindAbsenceGap,
+        kindsMeasured: shape.kindsMeasured,
+        unseenWeekRun: shape.unseenWeekRun,
+        unseenSinceWeekOn: shape.unseenSinceWeekOn,
+        lastAttendedWeekOn: shape.lastAttendedWeekOn,
+        longestUnseenWeekRun: shape.longestUnseenWeekRun,
+        observedWeeks: shape.observedWeeks,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
         // riskDriverCodes column runner.js builds -- staff read one list of reasons, not
@@ -1196,7 +1236,7 @@ async function gather(studentIds, config) {
         // caseload -- the same judgement metrics.js already made for assessmentsDueSoon.
         codes: [
           ...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || []),
-          ...(load.codes || []), ...(money.codes || []),
+          ...(load.codes || []), ...(money.codes || []), ...(shape.codes || []),
         ],
       },
       raw: {
