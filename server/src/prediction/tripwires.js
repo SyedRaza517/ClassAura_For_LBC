@@ -554,6 +554,15 @@ function contactDeficit(state, config) {
   // would look correct and be inverted.
   if (!s.pastoralRecorded) return { codes };
 
+  // THE SETTLING-IN EXEMPTION APPLIES HERE TOO, and its absence was an oversight rather
+  // than a decision. This fires on the ABSENCE of a pastoral record, which is exactly
+  // the class the exemption covers — and because it runs in runner.js rather than in
+  // evaluate(), it sat outside the guard that mutes NO_PASTORAL_CONTACT beside it. A
+  // week-one intake scored into the band would otherwise fire on day one, which is the
+  // caseload-of-everybody failure the exemption exists to prevent. An UNKNOWN programme
+  // age is not exempt, for the same reason it is not exempt anywhere else.
+  if (isNum(s.weeksIntoProgramme) && s.weeksIntoProgramme < config.settlingInWeeks) return { codes };
+
   const bands = config.bands || [];
   const at = bands.findIndex((b) => b.key === s.riskLevel);
   const threshold = bands.findIndex((b) => b.key === config.contactDeficitBand);
@@ -608,7 +617,7 @@ function contactDeficit(state, config) {
  * @param {string|null} closureFrom  the earliest completion this college ever recorded
  * @param {string} cutoff  YYYY-MM-DD; a promise is judged only once its date is this old
  */
-function overdueFollowUps(promises, closureFrom, cutoff) {
+function overdueFollowUps(promises, closureFrom, cutoff, since) {
   // The institution guard. Not a zero: before this college closed its first follow-up,
   // "promised and not done" and "promised, done, never written down" are the same row.
   if (!closureFrom) return { overdue: null, judged: 0 };
@@ -619,6 +628,12 @@ function overdueFollowUps(promises, closureFrom, cutoff) {
     const due = p && p.followUpDate;
     if (!due) continue;               // no promise — nothing to keep
     if (due < closureFrom) continue;  // promised before a closure could be recorded
+    // AND A WINDOW, which the first version did not have. Without one the count is
+    // monotonic — a follow-up promised eighteen months ago and never held sits on the
+    // row for the rest of the programme — which is precisely the accumulating pile this
+    // signal was written to replace. TRIP_NO_SHOW and TRIP_REPEAT_CONCERN beside it are
+    // both windowed for that reason, and this was written a commit later without it.
+    if (since && due < since) continue;
     if (due > cutoff) continue;       // still inside the grace period
     judged += 1;
     // Retraction is not failure. A follow-up the college explicitly stood down — the
@@ -881,9 +896,14 @@ function evaluate(raw, config) {
   // an unanswered one, so it belongs with ABSENCE_STREAK. A student who asked
   // something in week one and heard nothing for a fortnight is precisely who a
   // settling-in grace must not silence.
+  // A FLOOR AND A CEILING. The floor is the point at which a reply is overdue; the
+  // ceiling is the point past which nobody is going to answer it and a permanently-lit
+  // row is one staff scroll past. Without the ceiling this is monotonic — one query
+  // answered face-to-face in a first term pins the code on for the rest of the
+  // programme, with no way to clear it from the prediction side.
   const queries = raw.queries || {};
-  if (queries.oldestOpenQueryOn
-      && daysBetween(queries.oldestOpenQueryOn, today) >= config.unansweredQueryDays) {
+  const waited = queries.oldestOpenQueryOn ? daysBetween(queries.oldestOpenQueryOn, today) : null;
+  if (isNum(waited) && waited >= config.unansweredQueryDays && waited <= config.unansweredQueryCeilingDays) {
     codes.push(TRIP.QUERY_UNANSWERED);
   }
 

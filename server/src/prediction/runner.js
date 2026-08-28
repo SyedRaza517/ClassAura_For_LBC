@@ -228,6 +228,7 @@ async function recalculate(opts = {}) {
                 riskLevel: result.riskLevel,
                 lastContactOn: entry.tripwires.lastPastoralOn,
                 pastoralRecorded: entry.tripwires.pastoralRecorded,
+                weeksIntoProgramme: entry.tripwires.weeksIntoProgramme,
                 today,
               }, config).codes
             : []),

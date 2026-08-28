@@ -1127,6 +1127,14 @@ model Interaction {
   /// attribute after that person has left, and a SetNull relation erases precisely
   /// the fact worth keeping. Stamped from the token, never from the body.
   followUpCompletedBy String?
+  /// When this row was last written. StudentReview has carried one since it was
+  /// created; Interaction did not, and its absence had a consequence beyond tidiness —
+  /// the prediction layer needs to know when a follow-up COMPLETION was first recorded
+  /// anywhere in the college, and the completion DATE cannot answer that because staff
+  /// legitimately backdate it ("promised for 1 March, held on 30 April"). Without an
+  /// update stamp the only available watermark was a backdatable claim, and one honest
+  /// backdated entry would have re-opened months of history in a single run.
+  updatedAt        DateTime @updatedAt @default(now())
   tutor            String   @default("")  // staff member who conducted the meeting
   loggedBy         String?                // who recorded the interaction
   createdAt        DateTime @default(now())

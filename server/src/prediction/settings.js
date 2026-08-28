@@ -268,6 +268,16 @@ const DEFAULTS = {
   // and a column that is always lit is a column staff stop reading.
   followUpGraceDays: 7,
 
+  // How far back a missed follow-up counts. Unbounded, a promise made eighteen months
+  // ago and never held would sit on the row for the rest of the programme — the same
+  // accumulating pile this signal replaced.
+  followUpWindowDays: 180,
+
+  // How long a question may sit unanswered before it stops being reported. The code
+  // exists to prompt a reply; past this point nobody is going to answer it, and a
+  // permanently-lit row is one staff scroll past.
+  unansweredQueryCeilingDays: 180,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -600,6 +610,16 @@ function validate(input) {
       min: 0, max: 365, whole: true,
       label: "The follow-up grace period",
       why: "it is how long after its promised date a follow-up may go unrecorded before it is reported. At 0 every follow-up is reported the morning after its date, including the ones being held that afternoon.",
+    }) ||
+    checkNumber(out, "followUpWindowDays", pick("followUpWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The missed-follow-up window",
+      why: "it is how far back a missed follow-up counts. Unbounded, one promise never held keeps a student on the caseload for the rest of their programme.",
+    }) ||
+    checkNumber(out, "unansweredQueryCeilingDays", pick("unansweredQueryCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The unanswered-query ceiling",
+      why: "it is how long an unanswered question keeps being reported. Unbounded, one query nobody answered in a first term lights the row for ever.",
     });
   if (err) return err;
 

@@ -144,6 +144,7 @@ async function gather(studentIds, config) {
   const concernSince = shiftDays(today, -config.concernWindowDays);
   const noShowSince = shiftDays(today, -config.noShowWindowDays);
   const followUpCutoff = shiftDays(today, -config.followUpGraceDays);
+  const followUpSince = shiftDays(today, -config.followUpWindowDays);
   const priorTo = shiftDays(recentFrom, -1);
   const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays);
 
@@ -192,8 +193,19 @@ async function gather(studentIds, config) {
     // migrate on different days, so a value right for one is silently wrong for the
     // other. The earliest completion this college has EVER recorded is an observed
     // lower bound on when it became able to record one.
-    prisma.interaction.aggregate({ _min: { followUpCompletedOn: true } }),
-    prisma.studentReview.aggregate({ _min: { followUpCompletedOn: true } }),
+    // NOT _min(followUpCompletedOn). That is the earliest CLAIMED completion date, and
+    // the routes deliberately accept a backdated one — "promised for 1 March, held on
+    // 30 April" is a legitimate entry. So the first honest backdated close would drag
+    // the watermark months into the past and make every untouched promise since then
+    // judgeable in a single run: the institution-wide flood this design exists to
+    // prevent, arriving the moment somebody works through their backlog. It is also
+    // non-monotonic, because _min can only ever move EARLIER.
+    //
+    // The bound that matters is when the column became WRITABLE, which is what
+    // updatedAt on a row carrying a completion tells us — a row cannot have been
+    // updated with a completion before the migration existed.
+    prisma.interaction.aggregate({ _min: { updatedAt: true }, where: { NOT: { followUpCompletedOn: null } } }),
+    prisma.studentReview.aggregate({ _min: { updatedAt: true }, where: { NOT: { followUpCompletedOn: null } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -220,9 +232,9 @@ async function gather(studentIds, config) {
   // under-reports, which is the safe direction, it is bounded, and it converges. The
   // alternative over-reports the entire history at once.
   const closureDates = [
-    firstClosedContact._min.followUpCompletedOn,
-    firstClosedReview._min.followUpCompletedOn,
-  ].filter(Boolean);
+    firstClosedContact._min.updatedAt,
+    firstClosedReview._min.updatedAt,
+  ].filter(Boolean).map((d) => d.toISOString().slice(0, 10));
   const followUpClosureFrom = closureDates.length ? closureDates.reduce((a, b) => (a < b ? a : b)) : null;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
@@ -650,7 +662,7 @@ async function gather(studentIds, config) {
     const rawPastoral = pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null };
     const concernRepeat = tripwires.repeatConcerns(rawPastoral.concernSets || [], concernSince);
     const missedFollowUps = tripwires.overdueFollowUps(
-      rawPastoral.promises || [], followUpClosureFrom, followUpCutoff
+      rawPastoral.promises || [], followUpClosureFrom, followUpCutoff, followUpSince
     );
     const pastoral = pastoralInUse
       ? { ...rawPastoral, repeated: concernRepeat.repeated || [], overdueFollowUps: missedFollowUps.overdue }

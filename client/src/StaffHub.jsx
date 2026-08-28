@@ -7781,9 +7781,12 @@ const studentReviewError = (f) => {
   if (f.followUp && !f.followUpDate) return "Enter the date the follow-up is due.";
   return "";
 };
-// followUpDate only means anything alongside a follow-up; clearing it on "No" stops
-// a stale date being sent back after someone changes their mind.
-const studentReviewBody = (f) => ({ ...f, followUpDate: f.followUp ? f.followUpDate : "" });
+// followUpDate is the permanent record that a follow-up WAS arranged, so it is sent as
+// typed and never blanked here. Blanking it on "No" used to be tidiness; it is now a
+// RETRACTION — the server reads an explicit empty date as standing the promise down —
+// so doing it on every ordinary save would erase the evidence a follow-up had ever been
+// due, which is the exact destruction the follow-up work set out to stop.
+const studentReviewBody = (f) => ({ ...f });
 
 /* ----- Student Review (in app) — the lecturer's own reviews ----- */
 function StudentReviewScreen({ store, me }) {
@@ -8188,7 +8191,7 @@ function StudentReviewScreen({ store, me }) {
                 <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                   {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
                     <button key={String(o.v)} type="button" disabled={busy}
-                      onClick={() => setForm(f => ({ ...f, followUp: o.v, followUpDate: o.v ? f.followUpDate : "" }))}
+                      onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
                       className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
                   ))}
                 </div>
@@ -8278,7 +8281,14 @@ function StudentReviewDetail({ r }) {
             ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">Yes</span>
             : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
         </DetailRow>
-        <DetailRow label="Follow-up date">{r.followUpDate ? fmtDate(r.followUpDate) : <span className="text-slate-300">—</span>}</DetailRow>
+        {/* Labelled "was arranged for", because the date now survives the follow-up
+            being closed or stood down — it is the record that one was promised, not a
+            claim that one is outstanding. Rendering it under "Follow-up required: No"
+            without saying so read as a contradiction. */}
+        <DetailRow label="Follow-up was arranged for">{r.followUpDate ? fmtDate(r.followUpDate) : <span className="text-slate-300">—</span>}</DetailRow>
+        <DetailRow label="Follow-up happened">{r.followUpCompletedOn
+          ? <>{fmtDate(r.followUpCompletedOn)}<span className="block text-[11px] text-slate-400">recorded by {r.followUpCompletedBy || "—"}</span></>
+          : <span className="text-slate-300">Not recorded</span>}</DetailRow>
       </div>
       <DetailRow label="Submitted by">{r.staffName || <span className="text-slate-300">—</span>}</DetailRow>
     </div>
@@ -8340,6 +8350,13 @@ function AdminStudentReviews({ store }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const openAdd = () => { setEditing(null); setForm(blankStudentReview()); setFormErr(""); setModal(true); };
+  // One field, and the server derives the rest: recording a completion closes the
+  // follow-up, so the flag is never sent from here and the two cannot disagree.
+  const markFollowUpDone = async (r) => {
+    try { await api.updateStudentReview(r.id, { followUpCompletedOn: todayISO() }); await load(); }
+    catch (e) { setErr(e.message); }
+  };
+
   const openEdit = (r) => { setEditing(r); setForm(studentReviewForm(r)); setFormErr(""); setModal(true); };
 
   const save = async () => {
@@ -8383,12 +8400,14 @@ function AdminStudentReviews({ store }) {
       { key: "unit", label: "Unit" }, { key: "date", label: "Date" }, { key: "progress", label: "Progress" },
       { key: "concerns", label: "Concerns" }, { key: "summary", label: "Summary of discussion" },
       { key: "actions", label: "Agreed actions" }, { key: "followUp", label: "Follow-up required" },
-      { key: "followUpDate", label: "Follow-up date" }, { key: "staff", label: "Submitted by" },
+      { key: "followUpDate", label: "Follow-up arranged for" },
+      { key: "followUpCompletedOn", label: "Follow-up happened" }, { key: "staff", label: "Submitted by" },
     ], list.map(r => ({
       ref: r.student?.studentRef || "", student: r.student?.name || "",
       unit: r.unit ? `${r.unit.code} — ${r.unit.name}` : "", date: r.date, progress: r.progress,
       concerns: (r.concerns || []).join("; "), summary: r.summary || "", actions: r.agreedActions || "",
-      followUp: r.followUp ? "Yes" : "No", followUpDate: r.followUpDate || "", staff: r.staffName || "",
+      followUp: r.followUp ? "Yes" : "No", followUpDate: r.followUpDate || "",
+      followUpCompletedOn: r.followUpCompletedOn || "", staff: r.staffName || "",
     })));
     store.notify(`Exported ${list.length} review${list.length === 1 ? "" : "s"}`);
   };
@@ -8452,9 +8471,23 @@ function AdminStudentReviews({ store }) {
                         </td>
                         <td className="px-5 py-3 text-slate-500">{r.staffName || <span className="text-slate-300">—</span>}</td>
                         <td className="px-5 py-3 text-center">
-                          {r.followUp
-                            ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">{r.followUpDate ? fmtDate(r.followUpDate) : "Yes"}</span>
-                            : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
+                          {/* WITHOUT THIS CONTROL THE WHOLE SIGNAL IS UNREACHABLE. The
+                              overdue-follow-up tripwire reads followUpCompletedOn, and
+                              until a college records its first completion the watermark
+                              stays null and the signal is silent for everybody. The
+                              lecturer who promised the follow-up is the person who holds
+                              it, so the button has to be where they already work. */}
+                          {r.followUpCompletedOn
+                            ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700" title={`Arranged for ${fmtDate(r.followUpDate)}`}>Done {fmtDate(r.followUpCompletedOn)}</span>
+                            : r.followUp
+                              ? <span className="inline-flex items-center gap-1.5">
+                                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${r.followUpDate && r.followUpDate < todayISO() ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{r.followUpDate ? fmtDate(r.followUpDate) : "Yes"}</span>
+                                  {r.followUpDate && (
+                                    <button onClick={(e) => { e.stopPropagation(); markFollowUpDone(r); }} title="Record that this follow-up happened"
+                                      className="press rounded-lg bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">Done</button>
+                                  )}
+                                </span>
+                              : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400" title={r.followUpDate ? `Was arranged for ${fmtDate(r.followUpDate)}` : undefined}>No</span>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-1 whitespace-nowrap">
@@ -8523,7 +8556,7 @@ function AdminStudentReviews({ store }) {
             <Field label="Follow-up required?">
               <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                 {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
-                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, followUp: o.v, followUpDate: o.v ? f.followUpDate : "" }))}
+                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
                     className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
                 ))}
               </div>

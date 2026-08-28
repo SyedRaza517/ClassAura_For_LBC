@@ -5,7 +5,7 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { sInteraction } = require("../serializers");
 const { requireAuth, requireAdmin, requirePage } = require("../auth");
-const { isRealDate } = require("../validate");
+const { isRealDate, isString } = require("../validate");
 // Best-effort outbound email: sendEmail(to, subject, text, { html }) -> { sent,
 // stubbed, error } and never throws (see ../email).
 const email = require("../email");
@@ -186,7 +186,29 @@ async function validate(body, partial, current = null, actorName = null) {
   // it. Read the incoming value when there is one, otherwise the stored one — checking
   // only the body made PUT {followUpDate} on an existing follow-up wipe what it set.
   const wantsFollowUp = data.followUpRequired !== undefined ? data.followUpRequired : undefined;
+  // RE-PROMISING CLEARS THE OLD COMPLETION. Moving the date to a NEW day is a new
+  // promise, and the completion attached to the old one does not carry over — leaving
+  // it would say the new follow-up was held on a date before it was arranged, and
+  // would make the re-promised follow-up permanently invisible to the overdue count,
+  // which only ever asks whether a completion is absent.
+  if (current && data.followUpDate !== undefined && data.followUpDate !== current.followUpDate
+      && body?.followUpCompletedOn === undefined) {
+    data.followUpCompletedOn = null;
+    data.followUpCompletedBy = null;
+  }
+
   // Marking a promised follow-up as HELD — the fact this whole change exists for.
+  // RE-PROMISING CLEARS THE OLD COMPLETION. Moving the date to a NEW day is a new
+  // promise, and a completion attached to the old one does not carry over — leaving it
+  // would say the new follow-up was held on a date before it was arranged, and would
+  // make the re-promised follow-up permanently invisible to the overdue count, which
+  // only ever asks whether a completion is ABSENT.
+  if (current && data.followUpDate !== undefined && data.followUpDate !== current.followUpDate
+      && body?.followUpCompletedOn === undefined) {
+    data.followUpCompletedOn = null;
+    data.followUpCompletedBy = null;
+  }
+
   if (body?.followUpCompletedOn !== undefined) {
     const done = isString(body.followUpCompletedOn) ? body.followUpCompletedOn.trim() : "";
     if (done && !isRealDate(done)) {

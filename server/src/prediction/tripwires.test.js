@@ -1183,3 +1183,54 @@ test("a null overdue count raises nothing", () => {
   const r = evaluate(input({ pastoral: { lastContactOn: "2026-03-12", overdueFollowUps: null } }), DEFAULTS);
   assert.equal(r.codes.includes(TRIP.FOLLOWUP_MISSED), false);
 });
+
+test("a still-outstanding follow-up WITH a completion recorded is not overdue", () => {
+  // THE TEST THAT WAS MISSING, on the one column the follow-up work added.
+  //
+  // Both existing "not overdue" cases set stillFlagged:false, so both returned before
+  // ever reaching the completion check. Deleting `if (!p.followUpCompletedOn)` and
+  // counting unconditionally left the whole suite green — the "a test passed while
+  // proving nothing" pattern, on exactly the line the change exists for.
+  //
+  // This is also the state a re-promised follow-up lands in, which the routes now
+  // clear: flagged outstanding, with a completion attached from an earlier promise.
+  const r = overdueFollowUps(
+    [{ followUpDate: "2026-02-01", followUpCompletedOn: "2026-02-03", stillFlagged: true }],
+    "2026-01-01", "2026-03-13", "2025-09-01");
+
+  assert.equal(r.judged, 1);
+  assert.equal(r.overdue, 0);
+});
+
+test("a promise older than the window no longer counts", () => {
+  const r = overdueFollowUps([promise("2025-01-10")], "2024-01-01", "2026-03-13", "2025-09-01");
+  assert.equal(r.overdue, null);
+  assert.equal(r.judged, 0);
+});
+
+test("a question nobody will ever answer stops being reported", () => {
+  const r = evaluate(input({
+    today: "2026-03-20",
+    queries: { oldestOpenQueryOn: "2024-01-01", openQueryCount: 1 },
+  }), { ...DEFAULTS, unansweredQueryDays: 5, unansweredQueryCeilingDays: 180 });
+
+  assert.equal(r.codes.includes(TRIP.QUERY_UNANSWERED), false);
+});
+
+test("a high-risk student in their first weeks is not yet a contact failure", () => {
+  const codes = contactDeficit({
+    riskLevel: "R4", lastContactOn: null, pastoralRecorded: true,
+    weeksIntoProgramme: 1, today: "2026-03-20",
+  }, { ...DEFAULTS, settlingInWeeks: 3 }).codes;
+
+  assert.deepEqual(codes, []);
+});
+
+test("the same student past the settling-in period IS a contact failure", () => {
+  const codes = contactDeficit({
+    riskLevel: "R4", lastContactOn: null, pastoralRecorded: true,
+    weeksIntoProgramme: 9, today: "2026-03-20",
+  }, { ...DEFAULTS, settlingInWeeks: 3 }).codes;
+
+  assert.ok(codes.includes(TRIP.CONTACT_DEFICIT));
+});
