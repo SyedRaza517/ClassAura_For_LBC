@@ -140,10 +140,35 @@ try {
     offCtx.status === 200 && offCtx.data?.enabled === false && offCtx.data?.now === null,
     `HTTP ${offCtx.status}`);
 
-  // Switch it on for the rest of the suite.
-  await db.attendanceTapConfig.create({
-    data: { tenantId, settings: { enabled: true, lateAfterMins: 15, earlyGraceMins: 0, armSeconds: 60, staffTapEnabled: true } },
+  // Switch it on THROUGH THE API, not by writing the row directly.
+  //
+  // Not a stylistic choice: the config is cached for 30 seconds per tenant, and the
+  // disabled assertions above have just populated that cache with enabled:false. A
+  // direct row write would leave the running API refusing every tap for half a minute,
+  // which is what the first run of this suite actually did. save() invalidates the
+  // cache, so going through the endpoint is also the only way to test the path a real
+  // administrator uses.
+  const turnedOn = await call("/tags/settings", {
+    method: "PUT", token: adminToken,
+    body: { enabled: true, lateAfterMins: 15, earlyGraceMins: 0, armSeconds: 60, staffTapEnabled: true },
   });
+  check("an administrator can switch tap check-in on",
+    turnedOn.status === 200 && turnedOn.data?.enabled === true,
+    `HTTP ${turnedOn.status}`);
+
+  const settingsSeen = await call("/tags/settings", { token: adminToken });
+  check("the settings read back as saved", settingsSeen.data?.lateAfterMins === 15 && settingsSeen.data?.enabled === true, "");
+
+  const studentReadsSettings = await call("/tags/settings", { token: sToken });
+  check("a student cannot read the tap settings", studentReadsSettings.status === 403, `HTTP ${studentReadsSettings.status}`);
+
+  // A patch, not a replacement: changing one key must not reset the others.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { lateAfterMins: 20 } });
+  const patched = await call("/tags/settings", { token: adminToken });
+  check("changing one setting does not reset the others",
+    patched.data?.lateAfterMins === 20 && patched.data?.enabled === true,
+    `lateAfterMins=${patched.data?.lateAfterMins} enabled=${patched.data?.enabled}`);
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { lateAfterMins: 15 } });
 
   /* ====================================================================== */
   console.log("\n--- registering a sticker ---");
@@ -277,11 +302,17 @@ try {
   });
   made.marks.push(plantedA.id);
 
-  const overTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode } });
+  // sessionId is explicit ON PURPOSE. Two sessions are running by now, so a bare tap
+  // comes back "ambiguous" and never reaches the overwrite guard at all — the A would
+  // survive for the wrong reason and this test would prove nothing. Naming the session
+  // is what forces the tap to actually attempt the overwrite.
+  const overTap = await call("/student/me/tap-check-in", {
+    method: "POST", token: sToken, body: { tagCode, sessionId: lecturerSession.id },
+  });
   const stillA = await db.attendanceMark.findUnique({ where: { id: plantedA.id } });
   check("a tap CANNOT overwrite a mark the lecturer already set",
-    stillA?.status === "A" && stillA?.takenBy === "Ms Lecturer",
-    `status=${stillA?.status} takenBy=${stillA?.takenBy} (tap HTTP ${overTap.status})`);
+    stillA?.status === "A" && stillA?.takenBy === "Ms Lecturer" && overTap.data?.alreadyMarked === true,
+    `status=${stillA?.status} takenBy=${stillA?.takenBy} alreadyMarked=${overTap.data?.alreadyMarked} (HTTP ${overTap.status})`);
   check("and it does not invent an arrival time for a mark it did not write",
     stillA?.checkedInAt === null,
     `checkedInAt=${stillA?.checkedInAt}`);
@@ -297,9 +328,14 @@ try {
   check("a later register save does NOT overwrite checkedInAt",
     saved.status === 200 && afterSave?.checkedInAt === beforeSave?.checkedInAt && afterSave?.status === "L",
     `HTTP ${saved.status}, ${beforeSave?.checkedInAt} -> ${afterSave?.checkedInAt}, status ${afterSave?.status}`);
-  check("but takenAt DOES move, which is why the two columns are separate",
-    !!afterSave && !!beforeSave && new Date(afterSave.takenAt) >= new Date(beforeSave.takenAt),
-    `${beforeSave?.takenAt} -> ${afterSave?.takenAt}`);
+  // takenBy, not takenAt. The two writes land inside the same second on a fast machine,
+  // so comparing timestamps proves nothing — the first version of this assertion passed
+  // with 22:21:41 on both sides. takenBy genuinely changes hands: the tap stamps
+  // "Self check-in (NFC)" and the register save stamps the administrator's name. That
+  // the row WAS rewritten while checkedInAt survived is the whole point of the pair.
+  check("the save really did rewrite the mark — provenance changed hands",
+    beforeSave?.takenBy === "Self check-in (NFC)" && afterSave?.takenBy && afterSave.takenBy !== "Self check-in (NFC)",
+    `takenBy ${beforeSave?.takenBy} -> ${afterSave?.takenBy}`);
 
   /* ====================================================================== */
   console.log("\n--- enrolment is what makes a student eligible ---");

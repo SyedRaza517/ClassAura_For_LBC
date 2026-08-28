@@ -11,6 +11,7 @@ const prisma = require("../db");
 const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
+const tapConfig = require("../attendanceTapConfig");
 
 router.use(requireAuth, requirePage("attendance-tags"));
 
@@ -27,6 +28,41 @@ const sTag = (t) => ({
   lastTapAt: t.lastTapAt ?? null,
   createdAt: t.createdAt,
   createdBy: t.createdBy ?? null,
+});
+
+// GET /api/tags/settings — this college's tap check-in settings.
+//
+// Declared BEFORE GET /:id/log and PATCH /:id so "settings" is never parsed as a tag id.
+// Express matches in declaration order, and a literal path that sorts after a parameter
+// route is a route that never runs.
+router.get("/settings", async (_req, res) => {
+  res.json(await tapConfig.get());
+});
+
+// PUT /api/tags/settings — switch tap check-in on, or tune it.
+//
+// A PATCH in behaviour: only the keys sent are changed, so switching the feature on does
+// not silently reset a lateness threshold somebody tuned last term. The allowlist and the
+// caps live in the settings module, so nothing written here reads back as unusable.
+router.put("/settings", async (req, res) => {
+  const patch = req.body;
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return res.status(400).json({ error: "Settings must be an object" });
+
+  const before = await tapConfig.get();
+  const { settings } = await tapConfig.save(patch, req.user?.name || null);
+
+  // Worth auditing on its own. Switching this on makes every register in the college
+  // writable by a student holding a phone, and switching it off silently stops
+  // attendance being recorded — both are decisions somebody should be able to trace.
+  audit.record(req, {
+    action: "attendance.tap.settings.updated", entity: "AttendanceTapConfig", entityId: null,
+    summary: before.enabled !== settings.enabled
+      ? `Tap check-in ${settings.enabled ? "switched ON" : "switched OFF"} by ${req.user?.name || "an administrator"}`
+      : `Tap check-in settings changed by ${req.user?.name || "an administrator"}`,
+    before, after: settings,
+  });
+
+  res.json(settings);
 });
 
 // GET /api/tags — every sticker this college has registered. Never the codes.
