@@ -24,6 +24,8 @@ const { isoDate } = require("../vle/isoDate");
 const attendance = require("../attendance");
 const tripwires = require("./tripwires");
 const adjustments = require("./adjustments");
+const coverage = require("./coverage");
+const cohort = require("./cohort");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -170,7 +172,8 @@ async function gather(studentIds, config) {
   // — none of them depends on any other, so serialising them would add round trips to
   // every chunk for no reason.
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
-         answeredQueryRows, firstClosedContact, firstClosedReview] = await Promise.all([
+         answeredQueryRows, firstClosedContact, firstClosedReview,
+         unmarkedSessions] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -207,11 +210,30 @@ async function gather(studentIds, config) {
     // updated with a completion before the migration existed.
     prisma.interaction.aggregate({ _min: { updatedAt: true }, where: { NOT: { followUpCompletedOn: null } } }),
     prisma.studentReview.aggregate({ _min: { updatedAt: true }, where: { NOT: { followUpCompletedOn: null } } }),
+    // THE TENTH OF THE SAME FAMILY, and it means TWO things at once, which is why it is
+    // a count of UNMARKED sessions rather than of sessions.
+    //
+    // Register coverage compares sessions a student should have been marked in against
+    // marks they carry. That comparison is only meaningful if a session can EXIST without
+    // a mark. At a college where sessions spring into being only when somebody takes a
+    // register, scheduled and marked are the same set by construction, coverage is 100%
+    // for everybody, and the screen prints manufactured reassurance -- the harder mirror
+    // of the failure this figure exists to catch.
+    //
+    // count(HndSession) > 0 does NOT answer that: AttendanceMark.sessionId is NOT NULL,
+    // so it is true at every college that ever took a single register. Only "a session
+    // exists that nobody marked" separates the two, and it implies sessions exist.
+    //
+    // Institution-wide and unfiltered by student, like the nine above. One student with
+    // no unmarked sessions is ordinary; a college with none has no timetable this can be
+    // measured against, and every code depending on coverage must fall silent.
+    prisma.hndSession.count({ where: { marks: { none: {} } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
   // about the integration, not about anybody's coursework.
   const submittedOnRecorded = submittedAtRows > 0;
+  const timetableRecorded = unmarkedSessions > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -253,7 +275,11 @@ async function gather(studentIds, config) {
   });
 
   const scopes = new Map();
-  for (const s of students) scopes.set(s.id, resolveScope(s, config));
+  const cohortIdByStudent = new Map();
+  for (const s of students) {
+    scopes.set(s.id, resolveScope(s, config));
+    cohortIdByStudent.set(s.id, s.cohortId || null);
+  }
 
   // How long this student has been on the programme, in weeks. The cohort's own start
   // date wins; the earliest term is the fallback. NEVER Student.createdAt — for a
@@ -279,7 +305,11 @@ async function gather(studentIds, config) {
     // on the same day (a six-hour day is Teaching then Seminar) to tell "attended the
     // morning, missed the afternoon" from the reverse. Widening this select costs
     // nothing — it is the same row, already being read.
-    select: { studentId: true, status: true, session: { select: { date: true, startTime: true, unitId: true } } },
+    // sessionId is carried because register coverage reconciles marks against the
+    // SESSIONS a student should have been marked in, and a mark that cannot be tied to a
+    // session cannot be reconciled. It comes free -- it is a column on the row already
+    // being read, not a join.
+    select: { studentId: true, status: true, sessionId: true, session: { select: { date: true, startTime: true, unitId: true } } },
   });
 
   const marksByStudent = new Map();
@@ -287,6 +317,7 @@ async function gather(studentIds, config) {
     if (!marksByStudent.has(m.studentId)) marksByStudent.set(m.studentId, []);
     marksByStudent.get(m.studentId).push({
       status: m.status,
+      sessionId: m.sessionId,
       date: m.session ? m.session.date : null,
       startTime: m.session ? m.session.startTime : null,
       unitId: m.session ? m.session.unitId : null,
@@ -352,6 +383,48 @@ async function gather(studentIds, config) {
   // hoisted probes are NOT. Nothing here asks whether the college uses the feature at
   // all, because nothing here needs to -- a college with no claims produces empty
   // coverage, and empty coverage returns every assessment's own dueDate unchanged.
+  // THE COHORT POPULATION, and this is the one the header of cohort.js is about.
+  //
+  // ONE QUERY PER RUN, INSTITUTION-WIDE, UNFILTERED BY THE STALE SET, HOISTED OUT OF THE
+  // CHUNK LOOP. gather() runs on chunks of 200 and the ordinary incremental path scores
+  // the handful markStale() flagged -- often one. A mean taken from that is a mean of the
+  // students who happen to be stale, which is not a cohort. This pipeline has got the
+  // same shape of question wrong three times.
+  //
+  // READ FROM StudentPredictionCurrent, which carries a one-run-behind figure for anybody
+  // being rescored in THIS run. That is a real weakness and it is the lesser one:
+  //   * The alternative -- recomputing every student's attendance from AttendanceMark in
+  //     SQL -- means a second implementation of the points model, which would drift from
+  //     the one in attendance.js and produce a cohort mean the screen cannot reconcile
+  //     with the figures it sits beside.
+  //   * With the cohort floor at 12, one stale peer moves a mean by at most a twelfth of
+  //     its own error, and percentile is a rank, which one value can move by one place.
+  //   * On a first-ever run nobody has a row, the population is empty, and cohort.js
+  //     returns null for everything rather than a confident figure from nothing.
+  // The staleness is bounded by how often the runner runs, not by how long a student has
+  // been drifting, so it cannot accumulate.
+  const cohortRows = await prisma.studentPredictionCurrent.findMany({
+    select: {
+      overallAttendance: true, averageGrade: true,
+      student: { select: { cohortId: true } },
+    },
+  });
+  const cohortPops = new Map();
+  for (const r of cohortRows) {
+    const key = r.student && r.student.cohortId;
+    // A student with no cohort has no peers to be ranked against. Falling back to the
+    // whole college would mix first-years with finalists across different courses and
+    // produce a confident-looking number about nothing, which is worse than a blank.
+    if (!key) continue;
+    if (!cohortPops.has(key)) cohortPops.set(key, { attendance: [], grades: [] });
+    const bucket = cohortPops.get(key);
+    // Nulls are DROPPED, not zeroed. A student whose register was never taken has no
+    // attendance figure, and scoring that as 0 would drag the cohort mean toward a
+    // measurement nobody made.
+    if (typeof r.overallAttendance === "number") bucket.attendance.push(r.overallAttendance);
+    if (typeof r.averageGrade === "number") bucket.grades.push(r.averageGrade);
+  }
+
   const claims = await prisma.mitigatingCircumstance.findMany({
     where: { studentId: { in: studentIds } },
     select: {
@@ -367,6 +440,26 @@ async function gather(studentIds, config) {
         select: { assessmentId: true, studentId: true, status: true, submittedOn: true },
       })
     : [];
+
+  // The sessions a student should have been marked in. Per chunk, because it is a
+  // question about these students' units -- not an institution-wide one.
+  //
+  // NOT filtered by HndSession.audience. A session addressed to a subset of a unit is
+  // counted for everyone on that unit, which UNDERSTATES coverage for the students it
+  // never applied to. That is the safe direction -- it can only ever say the register was
+  // taken less than it was -- but it is why lowCoverageLimit is deliberately generous,
+  // and it is the reason a coverage figure is reported rather than scored.
+  const sessions = unitIds.length
+    ? await prisma.hndSession.findMany({
+        where: { unitId: { in: unitIds } },
+        select: { id: true, unitId: true, date: true },
+      })
+    : [];
+  const sessionsByUnit = new Map();
+  for (const h of sessions) {
+    if (!sessionsByUnit.has(h.unitId)) sessionsByUnit.set(h.unitId, []);
+    sessionsByUnit.get(h.unitId).push(h);
+  }
 
   const claimsByStudent = new Map();
   for (const c of claims) {
@@ -845,6 +938,57 @@ async function gather(studentIds, config) {
       }
     }
 
+    // WHETHER THE ATTENDANCE PERCENTAGE IS WORTH ANYTHING.
+    //
+    // Computed from `rateMarks`, the same list the percentage itself comes from, so the
+    // observation count and the figure it qualifies can never disagree.
+    //
+    // The scheduled side is the student's own units clipped to the same scope window as
+    // the marks. A mismatched scope would report falsely low coverage, which reads as an
+    // accusation about a tutor.
+    const myScheduled = [];
+    for (const unitId of myUnits) {
+      for (const h of sessionsByUnit.get(unitId) || []) {
+        if (inWindow(h.date, scope.from, scope.to)) myScheduled.push(h);
+      }
+    }
+
+    const attendanceSummary = summariseAttendance(rateMarks, config.attendanceMode);
+    const reg = coverage.evaluate({
+      today,
+      overallAttendance: attendanceSummary.pct,
+      marks: rateMarks,
+      scheduledSessions: myScheduled,
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+      institution: { timetableRecorded },
+    }, config);
+
+    // WHERE THIS STUDENT STANDS AGAINST THEIR OWN COHORT.
+    //
+    // The population comes from the hoisted map above and is never derived from anything
+    // in this loop. A student with no cohort gets empty arrays and cohort.js returns null
+    // for everything, which is the honest answer: there are no peers to rank them against.
+    // The SAME definition engine.js uses at line 196 -- round1(mean(pcts)) over the
+    // scoped, graded pieces. It has to be, because the population above is read from the
+    // stored averageGrade column: a percentile is only meaningful if the value and the
+    // population were computed the same way, and a weighted figure ranked against plain
+    // means would be a comparison of two different things wearing one label.
+    const gradePcts = scopedGrades.map((g) => g.pct).filter((n) => typeof n === "number" && Number.isFinite(n));
+    const avgGrade = gradePcts.length
+      ? Math.round((gradePcts.reduce((a, b) => a + b, 0) / gradePcts.length) * 10) / 10
+      : null;
+
+    const myCohortId = cohortIdByStudent.get(id) || null;
+    const pop = (myCohortId && cohortPops.get(myCohortId)) || { attendance: [], grades: [] };
+    const standing = cohort.evaluate({
+      // The SANITISED figure, so a student is never ranked on a percentage this run has
+      // just decided is not reportable.
+      attendancePct: reg.overallAttendance,
+      cohortAttendancePcts: pop.attendance,
+      averageGrade: avgGrade,
+      cohortAverageGrades: pop.grades,
+    }, config);
+
     const trips = tripwires.evaluate({
       today,
       marks: overallMarks,
@@ -912,10 +1056,49 @@ async function gather(studentIds, config) {
         pastoralRecorded: pastoralInUse,
         weeksIntoProgramme: weeksByStudent.get(id) ?? null,
         assessmentsDueSoon: dueSoon,
+        // Register coverage. A STAFF signal beside the score: a register nobody took is a
+        // fact about a tutor, and the student sitting under it is the person whose figure
+        // is being spoiled by it.
+        registerCoverageRate: reg.coverageRate,
+        scheduledSessionCount: reg.scheduledSessions,
+        markedSessionCount: reg.markedSessions,
+        attendanceConfidence: reg.confidence,
+        attendanceObservations: reg.observations,
+        lastRegisterMarkOn: reg.lastMarkOn,
+        // Cohort standing. Context beside the score and never a replacement for it: a
+        // student at the 90th percentile of a failing cohort is still failing.
+        cohortAttendancePercentile: standing.attendance.percentile,
+        cohortAttainmentPercentile: standing.attainment.percentile,
+        cohortSize: standing.cohortAttendance.n,
+        cohortStruggling: standing.cohortStruggling,
+        // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
+        // no overlapping strings, all TRIP_-prefixed, all landing in the same
+        // riskDriverCodes column runner.js builds -- staff read one list of reasons, not
+        // three. And, like every other TRIP_ code, none of them can reach OVR-004:
+        // engine.js counts its own internal reds array and riskDriverCodes is a copy taken
+        // afterwards.
+        //
+        // cohortStruggling is deliberately NOT in here. It is true of every student in the
+        // cohort at once, and a hundred caseload rows carrying an identical reason is no
+        // caseload -- the same judgement metrics.js already made for assessmentsDueSoon.
+        codes: [...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || [])],
       },
       raw: {
         attendance: {
-          overall: summariseAttendance(rateMarks, config.attendanceMode),
+          // THE SANITISED FIGURE, and this is the point at which register coverage stops
+          // being a caption and starts changing scores.
+          //
+          // A percentage resting on three marks is not a measurement of a student; it is a
+          // measurement of how often somebody opened the register. Passing it to the engine
+          // as though it were evidence lets one absence walk a student across a band.
+          // coverage.evaluate() withholds it below the floor -- null, never a low number
+          // and never zero -- and engine.js already renormalises a component with no
+          // evidence out of both numerator and denominator, so the score becomes an honest
+          // one built on the components that ARE supported.
+          //
+          // `marked` is left as counted so the screen can still say what was withheld and
+          // why, rather than showing a blank nobody can account for.
+          overall: { ...summariseAttendance(rateMarks, config.attendanceMode), pct: reg.overallAttendance },
           recent: summariseAttendance(recentRateMarks, config.attendanceMode),
         },
         assessments: {

@@ -2105,6 +2105,38 @@ model StudentPredictionCurrent {
   /// Whether any approved claim excused attendance. Nullable rather than defaulting
   /// false: "no claim covers attendance" and "we have not looked" are different facts.
   attendanceMitigated      Boolean?
+  /// WHERE THIS STUDENT STANDS AGAINST THEIR OWN COHORT. 62% attendance is a different
+  /// situation at a cohort mean of 58 than at 91, and absolute thresholds cannot tell the
+  /// two apart. Context reported BESIDE the score, never replacing it: a student at the
+  /// 90th percentile of a failing cohort is still failing.
+  /// Null below the cohort floor -- a percentile from three peers is noise, and from one
+  /// it is meaningless. cohortSize is stored so a reader can see what the rank rests on;
+  /// a value exactly equal to the chunk size is the fingerprint of the population having
+  /// been built from the chunk, which is the recurring bug in this area.
+  cohortAttendancePercentile Float?
+  cohortAttainmentPercentile Float?
+  cohortSize                 Int?
+  /// The COHORT's own mean below the college's absolute threshold: the programme is in
+  /// trouble and this student's ordinary standing inside it is not reassurance. A FIGURE
+  /// and never a driver code, because it is true of every student at once and
+  /// riskDriverCodes is a per-student caseload array.
+  cohortStruggling           Boolean?
+  /// HOW MUCH OF THIS STUDENT'S TIMETABLE WAS ACTUALLY REGISTERED. Three marked sessions
+  /// and sixty read the same in an attendance column, and three-of-sixty-timetabled is a
+  /// fact about a tutor not taking registers rather than about the student.
+  /// Null when the college does not timetable at all: no scheduled sessions is unknown
+  /// coverage, not zero coverage.
+  registerCoverageRate   Float?
+  scheduledSessionCount  Int?
+  markedSessionCount     Int?
+  /// "none" | "low" | "moderate" | "high" -- how much the attendance percentage rests on.
+  attendanceConfidence   String?
+  attendanceObservations Int?
+  /// The most recent mark of ANY status, which is when the register was last TAKEN --
+  /// deliberately not lastAttendedOn, which counts only P and L. A date, so the day count
+  /// is derived at render: nothing here runs on a schedule and a day passing is not an
+  /// event.
+  lastRegisterMarkOn     String?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2331,6 +2363,38 @@ model StudentPredictionHistory {
   /// Whether any approved claim excused attendance. Nullable rather than defaulting
   /// false: "no claim covers attendance" and "we have not looked" are different facts.
   attendanceMitigated      Boolean?
+  /// WHERE THIS STUDENT STANDS AGAINST THEIR OWN COHORT. 62% attendance is a different
+  /// situation at a cohort mean of 58 than at 91, and absolute thresholds cannot tell the
+  /// two apart. Context reported BESIDE the score, never replacing it: a student at the
+  /// 90th percentile of a failing cohort is still failing.
+  /// Null below the cohort floor -- a percentile from three peers is noise, and from one
+  /// it is meaningless. cohortSize is stored so a reader can see what the rank rests on;
+  /// a value exactly equal to the chunk size is the fingerprint of the population having
+  /// been built from the chunk, which is the recurring bug in this area.
+  cohortAttendancePercentile Float?
+  cohortAttainmentPercentile Float?
+  cohortSize                 Int?
+  /// The COHORT's own mean below the college's absolute threshold: the programme is in
+  /// trouble and this student's ordinary standing inside it is not reassurance. A FIGURE
+  /// and never a driver code, because it is true of every student at once and
+  /// riskDriverCodes is a per-student caseload array.
+  cohortStruggling           Boolean?
+  /// HOW MUCH OF THIS STUDENT'S TIMETABLE WAS ACTUALLY REGISTERED. Three marked sessions
+  /// and sixty read the same in an attendance column, and three-of-sixty-timetabled is a
+  /// fact about a tutor not taking registers rather than about the student.
+  /// Null when the college does not timetable at all: no scheduled sessions is unknown
+  /// coverage, not zero coverage.
+  registerCoverageRate   Float?
+  scheduledSessionCount  Int?
+  markedSessionCount     Int?
+  /// "none" | "low" | "moderate" | "high" -- how much the attendance percentage rests on.
+  attendanceConfidence   String?
+  attendanceObservations Int?
+  /// The most recent mark of ANY status, which is when the register was last TAKEN --
+  /// deliberately not lastAttendedOn, which counts only P and L. A date, so the day count
+  /// is derived at render: nothing here runs on a schedule and a day passing is not an
+  /// event.
+  lastRegisterMarkOn     String?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

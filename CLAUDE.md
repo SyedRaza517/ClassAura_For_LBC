@@ -199,6 +199,68 @@ at one has twice landed on the other. Name the variable for which one you mean.
 column. A new figure must be nullable on **both** `StudentPredictionCurrent` and
 `StudentPredictionHistory`, and identically so.
 
+## Mitigating circumstances: the engine knows THAT, never WHY
+
+**A claim is Article 9 health data and the schema is split around that.** `status`,
+`coversFrom`, `coversTo`, `coversAttendance` and the adjustments say WHAT the college
+decided; `category` and `detail` say WHY. The prediction pipeline selects the first group
+and nothing else. `schema-contract.test.js` reads `metrics.js` as text and fails if
+`category` or `detail` appear in that select, because the rule lives in exactly one place
+and that is the kind of rule a later reader widens for a screen they are building. Same
+reason the audit summary names the student and the decision but never the reason — the
+audit log is read on Settings by admins never granted this page.
+
+**A suppressed assessment leaves BOTH sides of every fraction.** Never counted as
+submitted, never as on time, never as missing. This is null-is-not-zero pointed the other
+way, and getting it backwards is the MIRROR of the bug the feature fixes: counting an
+extended assessment as handed in on time inflates the score of a student in real
+difficulty and quietly removes them from the register. Excluded work must leave a list
+entirely rather than arrive with a null date — a null `dueDate` reads as "nothing to be
+late against", which counts the piece as on time.
+
+**Attendance cover keeps two lists.** Covered sessions leave the percentages. They stay in
+`lastAttendedOn`, the absence streak, the weekly pattern and every pastoral code: a student
+on approved mitigating circumstances is one the college should be speaking to MORE, and a
+sponsoring provider still has to evidence engagement.
+
+**An undecided claim suppresses, and that is a per-tenant setting rather than a constant.**
+`pendingClaimSuppresses`. With a claim pending, "did this student fail to hand work in" is
+not a question about the student — the answer depends on a decision the institution has not
+taken, and counting it against them punishes the student for the length of the college's
+own decision queue. But a college whose regulations say otherwise is entitled to say so,
+and hardcoding one reading of somebody else's regulations is the worse failure.
+
+## Cohort standing and register coverage
+
+**The cohort population and the timetable probe are both built ONCE per run, hoisted.** The
+population comes from `StudentPredictionCurrent`, institution-wide, unfiltered by the stale
+set — which is one run behind for students being rescored, and that is the lesser evil
+against a second implementation of the points model drifting from `attendance.js`.
+`cohortSize` is STORED so the classic failure stays detectable: a population size exactly
+equal to the chunk size is the fingerprint of it having been built from the chunk.
+
+**The timetable probe counts sessions with NO marks, not sessions.** `count(HndSession) > 0`
+is true at every college that ever took one register, because `AttendanceMark.sessionId` is
+NOT NULL. If sessions only exist once somebody takes a register, scheduled and marked are
+the same set by construction and coverage reads 100% for everybody — manufactured
+reassurance, which is the harder mirror of the failure the figure exists to catch.
+
+**`registerCoverage` needs `sessionId` on every mark and refuses without it.** A mark that
+cannot be tied to a session cannot be reconciled against the scheduled set, so it returns
+null rather than reporting a college with a perfect register as having taken none of it.
+The first wiring omitted `sessionId` from the select, and that guard is what caught it —
+the marks are flattened from `session.date`, so it is easy to forget the id comes from the
+mark itself.
+
+**A signal that fires for a whole cohort at once is a FIGURE, not a code.**
+`riskDriverCodes` is a per-student caseload array; a hundred rows carrying an identical
+reason is the same as no caseload. `assessmentsDueSoon` and `cohortStruggling` are both
+figures for this reason.
+
+**Being below average is not a risk.** Half of every cohort is below the median by
+definition, so a cohort signal needs BOTH a rank test and an absolute gap — the bottom
+decile of a cohort sitting between 88% and 92% is three points off the mean.
+
 ## Testing approach
 
 Pure logic lives in its own file with tests beside it and no database — see

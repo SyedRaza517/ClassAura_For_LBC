@@ -307,6 +307,46 @@ const DEFAULTS = {
   // belongs to the institution and the student underneath it is the one harmed by it.
   mitigationUndecidedDays: 14,
 
+  /* --- cohort standing ---------------------------------------------------- */
+
+  // How many measurable peers before a cohort may describe anybody. Below ten, "in the
+  // bottom 10%" and "is the worst student in the room" are the same statement, and
+  // exactly one student per group is the worst BY DEFINITION — a quota, not a finding.
+  cohortMinSize: 12,
+  // The tail that counts as outlying. Half of every cohort is below the median by
+  // definition, and the bottom quartile of a 900-student college is 225 people: a
+  // caseload nobody can work. The bottom decile of a 20-strong group is two students.
+  cohortOutlierPercentile: 10,
+  // AND an absolute gap, because a rank alone is not a finding. The bottom decile of a
+  // cohort sitting between 88% and 92% is three points off the mean, which is nothing.
+  cohortOutlierGap: 10,
+  // Below this spread the ordering inside a cohort is decided by rounding and reshuffles
+  // on every run. A near-uniform cohort is more dangerous than a flat one, because it
+  // still looks like a ranking.
+  cohortMinSpread: 2,
+
+  /* --- register coverage -------------------------------------------------- */
+
+  // The fewest marks before an attendance percentage may be PRINTED AT ALL. At five, one
+  // observation is worth twenty points and the band ladder is fifteen wide, so a single
+  // register moves a student more than a whole band: the figure measures how often
+  // somebody opened the register, not the student.
+  minMarksForRate: 6,
+  // Above this the figure is reported as confident. 100/12 is 8.3 points, inside the
+  // narrowest default band, so one register can no longer walk a student across one.
+  confidentMarks: 12,
+  // Below this share of a student's scheduled sessions carrying any mark, the register is
+  // reported as not being taken — a finding about STAFF. Deliberately generous:
+  // HndSession.audience means some scheduled sessions legitimately do not apply to a
+  // student and this pipeline cannot see which, so a tight limit would turn a timetabling
+  // quirk into an accusation.
+  lowCoverageLimit: 60,
+  minScheduledForCoverage: 4,
+  // How long a register may go untaken before it is reported. Longer than notSeenDays
+  // (14) on purpose, so the STUDENT-side code fires first and one event does not put two
+  // rows on the caseload. Three weeks cannot be a reading week plus a bank holiday.
+  staleRegisterDays: 21,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -664,6 +704,51 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The undecided-claim reporting threshold",
       why: "it is how long a claim may sit undecided before the delay is reported. The delay is the institution's and the student underneath it is the one harmed by it.",
+    }) ||
+    checkNumber(out, "cohortMinSize", pick("cohortMinSize"), {
+      min: 2, max: 1000, whole: true,
+      label: "The smallest cohort that may rank anybody",
+      why: "below ten students, \"in the bottom 10%\" and \"is the worst in the room\" are the same statement, and exactly one student per group is the worst by definition.",
+    }) ||
+    checkNumber(out, "cohortOutlierPercentile", pick("cohortOutlierPercentile"), {
+      min: 1, max: 50,
+      label: "The cohort outlier tail",
+      why: "half of every cohort is below the median by definition, so a signal set near 50 fires for half the college and produces no caseload at all.",
+    }) ||
+    checkNumber(out, "cohortOutlierGap", pick("cohortOutlierGap"), {
+      min: 0, max: 100,
+      label: "The cohort outlier gap",
+      why: "a rank alone is not a finding. The bottom decile of a cohort sitting between 88 and 92 percent is three points off the mean, which is nothing.",
+    }) ||
+    checkNumber(out, "cohortMinSpread", pick("cohortMinSpread"), {
+      min: 0, max: 100,
+      label: "The smallest cohort spread worth ranking",
+      why: "below it the ordering is decided by rounding and reshuffles on every run, while still looking like a ranking.",
+    }) ||
+    checkNumber(out, "minMarksForRate", pick("minMarksForRate"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest marks behind a printed attendance percentage",
+      why: "at five marks one observation is worth twenty points and the band ladder is fifteen wide, so a single register moves a student more than a whole band.",
+    }) ||
+    checkNumber(out, "confidentMarks", pick("confidentMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The marks needed for a confident attendance figure",
+      why: "it is where one more register stops being able to walk a student across a band.",
+    }) ||
+    checkNumber(out, "lowCoverageLimit", pick("lowCoverageLimit"), {
+      min: 0, max: 100,
+      label: "The register-coverage limit",
+      why: "below it the register is reported as not being taken, which is a finding about staff. Set too high it accuses a college of a timetabling quirk it cannot see.",
+    }) ||
+    checkNumber(out, "minScheduledForCoverage", pick("minScheduledForCoverage"), {
+      min: 1, max: 200, whole: true,
+      label: "The fewest scheduled sessions before coverage is judged",
+      why: "a coverage fraction over one or two sessions is not a measurement of anybody's register-keeping.",
+    }) ||
+    checkNumber(out, "staleRegisterDays", pick("staleRegisterDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The stale-register threshold",
+      why: "it is how long a register may go untaken before it is reported. Shorter than the not-seen threshold, one event puts two rows on the caseload.",
     });
   if (err) return err;
 
