@@ -297,27 +297,51 @@ those differ by weeks and a model trained on the latter learns when administrato
 paperwork. The calibration endpoint buckets outcomes by the band the student carried at
 the time — the only screen in the feature that can show the model to be wrong.
 
-**Verification status.** Demonstrated on 26 Aug 2026:
+**Tranches two to five** added: unexplained-absence share, lateness rate, fail and
+near-fail counts, grade volatility, unified engagement recency, per-unit attendance
+dispersion, units with nothing banked, weekly regularity, no-shows, the tutor's own
+"At Risk", days since pastoral contact, repeat concerns, overdue intervention reviews,
+late-submission rate and mean days late, weeks into programme, and work due soon.
+Fourteen `TRIP_*` codes and eighteen stored figures in total.
+
+`StudentOutcome` and `GET /prediction/outcomes/calibration` are the other half:
+nothing anywhere recorded what happened to a student, so every weight was reasoning
+rather than evidence and a future trained model had no labels. Calibration buckets
+outcomes by the band the student carried at the time — the only screen here that can
+show the model to be wrong.
+
+**Defects found and fixed during this work**, all after the first commit and mostly by
+adversarial review rather than by tests:
+
+| Was | Now |
+|---|---|
+| `POST /outcomes` called `audit.log`, which does not exist. The call sat after the row was written, Express does not catch async rejections there, and Node terminates on one — so the outcome was saved, no 201 returned, no audit entry made, and the API process died. A retry would have created a duplicate | `audit.record`, with a summary carrying no student name |
+| `lateRecorded` and `pastoralInUse` claimed institution-wide scope in their own comments and were computed from the 200-student chunk. A single-student rescore stored `latenessRate: null` ("not recorded") where a full rebuild stored `0.0` ("never late"), and the pastoral guard suppressed `TRIP_NO_PASTORAL_CONTACT` for precisely the students it exists to find | Existence probes over the whole institution, hoisted out of the chunk loop |
+| `submissionsRecorded` was the fifth guard of the same family and the one missed when the others were hoisted. Harmless only because `AssessmentSubmission` is empty everywhere, so it always failed safe | Hoisted with the rest |
+| `unexplainedShare` had no institution guard at all, though a commit message said it did. A college whose register has no "E" acronym made every absent student read as 100% unexplained | Gated on `excusedRecorded` |
+| `TRIP_UNMARKED_WORK` is derived from the absence of an `AssessmentSubmission` row, and nothing writes that table. At any college with coursework it would have fired for every student | Institution guard; the signal is withheld when the college records no submissions |
+| `TRIP_TREND_UNRELIABLE` tested the whole grade history rather than the last 2N the engine compares, and stripped undated grades before the length check — though an undated grade falls back to a row-creation timestamp, which is the most artefactual case of all. A test asserted the wrong behaviour | Slice of the compared window; a missing date counts as its own value; the test inverted |
+| The two windows either side of the attendance slope were 29 and 28 days | Equal |
+| `GET /outcomes` had no `studentId` filter behind a 500-row cap while the client filtered in the browser, so past 500 outcomes a student's record read "No outcome recorded" | Filtered server-side; unknown `?outcome=` refused; a future `effectiveOn` rejected |
+| `OUTCOMES` collided with the intervention-review vocabulary on server and client; the first fix repointed the review route at the wrong allowlist | Namespaced `STUDENT_OUTCOMES`; the review route validates against its own |
+
+**Verification status.** Demonstrated on 28 Aug 2026:
 
 | | |
 |---|---|
-| 237 unit tests | pass — the whole server, no database |
-| 63 tripwire tests | pass; **13 mutants** introduced and each caught by the intended test |
-| Client | **builds**; no test framework exists, so that is the whole claim |
-| Migrations | **three written, none applied.** `server/.env` points at the live database |
-| Smoke suites | **not run** — they need a live API and database |
+| 260 unit tests | pass |
+| 86 tripwire tests | pass; **18 mutants** introduced across five rounds, each caught by the test written for it |
+| Four migrations | **applied to the live database.** Columns 33→51 and 31→49, `StudentOutcome` created, row counts unchanged |
+| Real scoring | **10 students scored, 0 insufficient, 0 score/band disagreements** |
+| OVR-004 isolation | verified against live rows: no `TRIP_` code inflates `redIndicatorCount` |
+| Chunk-of-one rescore | verified — the case the scope bugs depended on |
+| Client | **builds**; there is no client test framework, so that is the whole claim |
+| `smoke-prediction.mjs` | **not run.** `assertDisposable.js` refuses a live database, correctly. Needs a scratch database |
 
-Two bugs found in this work and fixed: `OUTCOMES` collided with the existing
-intervention-review vocabulary on both server and client, and the first fix silently
-repointed the intervention review at the wrong allowlist. Neither was caught by a test —
-the review route has none.
-
-**What it still does not do.** No VLE engagement (the connectors carry grades and
-submissions only), no equity or algorithmic-governance surface, no safeguarding
-triggers, and nothing on a schedule. Roughly 37 of the 138 catalogued signals are
-implemented or unblocked; 7 are provably impossible without upstream data-quality
-fixes — `idDateOfExpiry` has no format validation, follow-ups have no completion field,
-and `SentNotification` is a dedupe ledger that never records an attendance letter.
+**Signals implemented: 42 of the 138 catalogued.** Seven are provably impossible without
+upstream data-quality fixes; roughly sixty need capture surfaces or VLE access logs that
+do not exist. The two highest-leverage unblocks are small: a `followUpCompletedOn` column
+on `Interaction`/`StudentReview`, and a `studentId` FK on `SlcApplication`.
 
 **What it deliberately does not do.** No student-facing route (the student app cannot
 reach the router). No automatic email — compare Attendance Emails, which *does* write to

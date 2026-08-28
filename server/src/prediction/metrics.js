@@ -172,6 +172,19 @@ async function gather(studentIds, config) {
   // about the integration, not about anybody's coursework.
   const submittedAtRows = await prisma.assessmentGrade.count({ where: { NOT: { submittedAt: null } } });
   const submittedOnRecorded = submittedAtRows > 0;
+
+  // The fifth of the same family, and the one that was missed when the other four were
+  // hoisted. It reads whether the college records submissions AT ALL, so it must be
+  // asked of the institution — the per-chunk version was filtered by studentId AND by
+  // this chunk's assessmentIds, which is two scopes narrower than the question.
+  //
+  // It happened to be harmless, because nothing in this codebase writes
+  // AssessmentSubmission and the count is therefore zero everywhere, so it always
+  // failed safe. That is luck, not design: the day something starts populating that
+  // table, a chunk of one student with no submission rows would conclude the college
+  // does not record submissions and silently switch TRIP_UNMARKED_WORK off for them.
+  const submissionRows = await prisma.assessmentSubmission.count();
+  const submissionsRecorded = submissionRows > 0;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
   const pastoralInUse = contactRows > 0 || reviewRows > 0;
@@ -309,8 +322,6 @@ async function gather(studentIds, config) {
   // never touches it. Without this, "work past due with no record either way" is true
   // of every assessment at every college whose feed does not populate that table, and
   // the tripwire fires for the whole institution.
-  const submissionsRecorded = submissions.length > 0;
-
   const interventionCount = new Map();
   const overdueReviews = new Map();
   for (const i of interventions) {
