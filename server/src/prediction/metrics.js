@@ -263,6 +263,14 @@ async function gather(studentIds, config) {
   const interventionByStudent = new Map();
   for (const i of interventions) if (!interventionByStudent.has(i.studentId)) interventionByStudent.set(i.studentId, i);
 
+  // Does this college record submissions AT ALL? Same shape of guard as lateRecorded,
+  // and for a sharper reason: NOTHING in this codebase writes AssessmentSubmission —
+  // the Canvas and Blackboard adapters make no Prisma call, and the Moodle importer
+  // never touches it. Without this, "work past due with no record either way" is true
+  // of every assessment at every college whose feed does not populate that table, and
+  // the tripwire fires for the whole institution.
+  const submissionsRecorded = submissions.length > 0;
+
   const interventionCount = new Map();
   for (const i of interventions) interventionCount.set(i.studentId, (interventionCount.get(i.studentId) || 0) + 1);
 
@@ -503,6 +511,7 @@ async function gather(studentIds, config) {
       recent: summariseAttendance(recentMarks, config.attendanceMode),
       prior: summariseAttendance(priorMarks, config.attendanceMode),
       dueUnmarked,
+      submissionsRecorded,
       gradeDates: myGrades.map((g) => g.gradedOn || null),
       attainment,
       pastoral,

@@ -398,9 +398,20 @@ function evaluate(raw, config) {
   // A grace period, because marking takes time. Without one this fires on every
   // assessment the morning after its deadline, and a column that is always lit is a
   // column staff stop reading.
+  //
+  // AND AN INSTITUTION GUARD, for a sharper version of the same failure. "Unmarked
+  // either way" is derived from the ABSENCE of an AssessmentSubmission row — but
+  // nothing in this codebase writes that table. The Canvas and Blackboard adapters
+  // issue no Prisma call at all, and the Moodle importer never touches it. So at a
+  // college with assessments and no submission sync, every past-due piece of work
+  // looks unmarked and this fires for the entire institution at once.
+  //
+  // That is a fact about the integration, not about anybody's coursework. Same shape
+  // of guard as lateRecorded: decided once for the batch, because ONE student having
+  // no submission rows is ordinary and every student having none is a broken feed.
   const cutoff = shiftDays(today, -config.unmarkedGraceDays);
   let oldestUnmarkedDueDate = null;
-  for (const a of raw.dueUnmarked || []) {
+  for (const a of (raw.submissionsRecorded ? raw.dueUnmarked : []) || []) {
     const due = a && a.dueDate;
     if (!due || due > cutoff) continue;
     if (!oldestUnmarkedDueDate || due < oldestUnmarkedDueDate) oldestUnmarkedDueDate = due;

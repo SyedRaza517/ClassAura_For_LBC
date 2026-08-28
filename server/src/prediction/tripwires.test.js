@@ -22,6 +22,7 @@ const input = (over = {}) => ({
   prior: { pct: null, marked: 0 },
   dueUnmarked: [],
   gradeDates: [],
+  submissionsRecorded: true,
   ...over,
 });
 
@@ -662,4 +663,37 @@ test("units with nothing banked raise a code the average grade cannot", () => {
 test("a student with no marked units anywhere raises no banked code", () => {
   const r = evaluate(input({ banked: { unpassed: null, measured: 0 } }), DEFAULTS);
   assert.equal(r.codes.includes(TRIP.UNITS_UNPASSED), false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* The institution guard on unmarked work                                      */
+/* -------------------------------------------------------------------------- */
+
+test("a college that records no submissions at all gets no unmarked-work finding", () => {
+  // NOTHING in this codebase writes AssessmentSubmission — the Canvas and Blackboard
+  // adapters issue no Prisma call at all, and the Moodle importer never touches it.
+  // So at a college with assessments and no submission sync, EVERY past-due piece of
+  // work looks "unmarked either way" and this fires for every student in the
+  // institution at once. That is a fact about the integration, not about anybody's
+  // coursework, and it is exactly the always-lit column this signal was designed to
+  // avoid becoming.
+  const r = evaluate(input({
+    today: "2026-03-20",
+    dueUnmarked: [{ dueDate: "2026-01-15" }, { dueDate: "2026-02-01" }],
+    submissionsRecorded: false,
+  }), DEFAULTS);
+
+  assert.equal(r.oldestUnmarkedDueDate, null);
+  assert.equal(r.codes.includes(TRIP.UNMARKED_WORK), false);
+});
+
+test("the same student IS reported at a college that does record submissions", () => {
+  const r = evaluate(input({
+    today: "2026-03-20",
+    dueUnmarked: [{ dueDate: "2026-01-15" }],
+    submissionsRecorded: true,
+  }), DEFAULTS);
+
+  assert.equal(r.oldestUnmarkedDueDate, "2026-01-15");
+  assert.ok(r.codes.includes(TRIP.UNMARKED_WORK));
 });
