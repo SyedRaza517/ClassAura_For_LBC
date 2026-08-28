@@ -437,6 +437,46 @@ const DEFAULTS = {
   // one event puts one row on the caseload rather than two.
   runRecencyDays: 21,
 
+  /* --- what the student said before they started ---------------------------- */
+
+  // A CEILING, running the opposite way to settlingInWeeks' floor. The entry profile is
+  // worth most in week one, when nothing else has any data, and must DECAY — because
+  // nothing ever updates an Ism. No route re-asks the questions, so a September answer
+  // would still be sitting on the row in year two with no event able to clear it.
+  entryProfileWeeks: 12,
+  // How much notice before a right to study runs out. Renewals take weeks, so a term of
+  // warning makes this an intervention rather than a report. Chosen structurally, NOT
+  // from any published Home Office turnaround.
+  idExpiryWarnDays: 90,
+  // And a ceiling on how long an expired date stays on the caseload, in the shape
+  // refusedWindowDays already carries. Admission stops being maintained the day somebody
+  // enrols, so an old expiry usually means "renewed, nobody updated the row". It costs
+  // nothing: the DATE is stored regardless, so a compliance list still sees every expiry
+  // for ever — only the caseload code ages out.
+  idExpiredCeilingDays: 365,
+
+  /* --- when the signals disagree -------------------------------------------- */
+
+  // How far apart two rates must be before the disagreement is a finding.
+  //
+  // DELIBERATELY LARGER than attendanceSlopeDrop (10) or cohortOutlierGap (10), and the
+  // reason is that those compare LIKE WITH LIKE — the same instrument and the same
+  // denominator, with only the window or the population moving. Nothing is held constant
+  // here, so ten points between an attendance percentage and a submission rate is the
+  // ordinary state of an ordinary student. 25 is more than one step of the band ladder
+  // (85/70/55/40) and less than two: 95/20 fires, 80/60 does not.
+  divergenceGap: 25,
+  // Floors on BOTH sides of every comparison. A floor on only the interesting number is
+  // a half-guard, which this codebase has shipped before. The asymmetry is deliberate:
+  // requiring six submissions would silence the comparison until the back half of a term.
+  minAttendanceObservations: 6,
+  minSubmissionObservations: 3,
+  minVleObservedDays: 5,
+  minGradedForAttainment: 4,
+  // The mark at which attainment counts as "holding up" despite falling attendance. A
+  // band rung rather than a number, and clear of a bare pass: 40 props nothing up.
+  attainingGradeFloor: 55,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -944,6 +984,51 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "How recent an unseen run must be to report",
       why: "empty weeks are transparent, which is what lets a reading week pass without breaking a run — and would otherwise keep one lit all summer.",
+    }) ||
+    checkNumber(out, "entryProfileWeeks", pick("entryProfileWeeks"), {
+      min: 1, max: 104, whole: true,
+      label: "How long the entry profile stays relevant",
+      why: "nothing ever updates an ISM — no route re-asks the questions — so without a ceiling a September answer sits on the record in year two with no event able to clear it.",
+    }) ||
+    checkNumber(out, "idExpiryWarnDays", pick("idExpiryWarnDays"), {
+      min: 1, max: 730, whole: true,
+      label: "The right-to-study warning window",
+      why: "renewals take weeks, so a warning shorter than that is a report rather than an intervention.",
+    }) ||
+    checkNumber(out, "idExpiredCeilingDays", pick("idExpiredCeilingDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "How long an expired document stays on the caseload",
+      why: "an admission record stops being maintained the day somebody enrols, so an old expiry usually means it was renewed and nobody updated the row. The date is stored regardless.",
+    }) ||
+    checkNumber(out, "divergenceGap", pick("divergenceGap"), {
+      min: 1, max: 100,
+      label: "The divergence threshold",
+      why: "it is how far two rates must disagree before that is a finding. Set near the like-for-like thresholds it fires for ordinary students, because nothing is held constant between two different measurements.",
+    }) ||
+    checkNumber(out, "minAttendanceObservations", pick("minAttendanceObservations"), {
+      min: 1, max: 500, whole: true,
+      label: "The attendance sample behind a divergence",
+      why: "a floor on only one side of a comparison is a half-guard.",
+    }) ||
+    checkNumber(out, "minSubmissionObservations", pick("minSubmissionObservations"), {
+      min: 1, max: 500, whole: true,
+      label: "The submission sample behind a divergence",
+      why: "deliberately lower than the attendance floor — requiring six would silence the comparison until the back half of a term.",
+    }) ||
+    checkNumber(out, "minVleObservedDays", pick("minVleObservedDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The VLE sample behind a divergence",
+      why: "the same floor engagement itself applies, restated because it answers a different question here.",
+    }) ||
+    checkNumber(out, "minGradedForAttainment", pick("minGradedForAttainment"), {
+      min: 1, max: 200, whole: true,
+      label: "The marks needed before attainment props anything up",
+      why: "it is the sample the engine already requires before calling a grade direction at all.",
+    }) ||
+    checkNumber(out, "attainingGradeFloor", pick("attainingGradeFloor"), {
+      min: 0, max: 100,
+      label: "The mark at which attainment is holding up",
+      why: "a bare pass props nothing up, so this sits a band rung clear of the pass mark.",
     });
   if (err) return err;
 

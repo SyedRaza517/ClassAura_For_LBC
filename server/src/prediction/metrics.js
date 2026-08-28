@@ -34,6 +34,8 @@ const funding = require("./funding");
 // tests could not see it -- they import evaluate directly -- and the first symptom was
 // "sessions.evaluate is not a function" on a live run.
 const sessionShape = require("./sessions");
+const intake = require("./intake");
+const historyShape = require("./history");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -181,7 +183,8 @@ async function gather(studentIds, config) {
   // every chunk for no reason.
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
          answeredQueryRows, firstClosedContact, firstClosedReview,
-         unmarkedSessions, linkedSlcRows, kindedSessions] = await Promise.all([
+         unmarkedSessions, linkedSlcRows, kindedSessions,
+         linkedIsmRows, linkedExpiryRows] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -245,6 +248,18 @@ async function gather(studentIds, config) {
     // Empty on every row in both databases today, so the kind figures are null
     // everywhere. That is the guard working, not the feature failing.
     prisma.hndSession.count({ where: { NOT: { kind: "" } } }),
+    // THE THIRTEENTH AND FOURTEENTH, and both count LINKED rows rather than rows.
+    //
+    // count(Ism) > 0 is true at a college holding four thousand interview records that
+    // were never attached to an enrolled student, and the pipeline would then report
+    // "never interviewed" about four thousand people who were. The same mistake
+    // funding.js documents for slcRecorded, and the same one coverage.js documents for
+    // its own probe: the naive count answers a different question.
+    //
+    // Both false everywhere today — nothing populates the links — so every intake figure
+    // stays null. Correct, not broken.
+    prisma.ism.count({ where: { admission: { linkedStudentId: { not: null } } } }),
+    prisma.admission.count({ where: { linkedStudentId: { not: null }, idExpiryOn: { not: null } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -260,6 +275,8 @@ async function gather(studentIds, config) {
   // Every funding figure therefore stays null, which is correct rather than broken.
   const slcRecorded = linkedSlcRows > 0;
   const kindRecorded = kindedSessions > 0;
+  const ismRecorded = linkedIsmRows > 0;
+  const idExpiryRecorded = linkedExpiryRows > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -508,6 +525,46 @@ async function gather(studentIds, config) {
     slcByStudent.get(r.studentId).push(r);
   }
 
+  // WHAT THE STUDENT SAID BEFORE THEY STARTED, and when their right to study runs out.
+  //
+  // REACHED ONLY BY FOREIGN KEY: Student.id <- Admission.linkedStudentId <-
+  // Ism.admissionId. Admission ALSO carries a plain string column literally called
+  // `studentId`, which is a college ID an administrator typed with no relation to
+  // anything — the schema comment there says the two names are ugly on purpose. Matching
+  // on it, or on a name, would attach one person's visa expiry to another, which is a
+  // data-protection incident rather than a bug.
+  //
+  // `ethnicity` and `religion` sit on Admission under an EDI heading and are READ BY
+  // NOTHING here. They are not in this select, they are not in the module, and three
+  // source-reading tests in intake.test.js assert it stays that way.
+  const ismRows = await prisma.ism.findMany({
+    where: { admission: { linkedStudentId: { in: studentIds } } },
+    select: {
+      interviewDate: true, wifiAccess: true, officeSkills: true, admitted: true,
+      courseUnderstanding: true, lastStudied: true, independentLearning: true,
+      educationExperience: true, strengthsWeaknesses: true, prioritiseWorkload: true,
+      working: true, teamworkExample: true,
+      admission: { select: { linkedStudentId: true } },
+    },
+  });
+  const ismByStudent = new Map();
+  for (const r of ismRows) {
+    const sid = r.admission && r.admission.linkedStudentId;
+    if (!sid) continue;
+    if (!ismByStudent.has(sid)) ismByStudent.set(sid, []);
+    ismByStudent.get(sid).push({ ...r, linkedStudentId: sid });
+  }
+
+  const admissionRows = await prisma.admission.findMany({
+    where: { linkedStudentId: { in: studentIds } },
+    select: { linkedStudentId: true, idExpiryOn: true, idExpiryStatus: true },
+  });
+  const admissionByStudent = new Map();
+  for (const r of admissionRows) {
+    if (!admissionByStudent.has(r.linkedStudentId)) admissionByStudent.set(r.linkedStudentId, []);
+    admissionByStudent.get(r.linkedStudentId).push(r);
+  }
+
   // VLE engagement observations. Per chunk -- "did this student open the course" is a
   // question about the student. There is deliberately NO institution probe here and none
   // is needed: a college that is not observable has written no rows at all, every
@@ -674,6 +731,37 @@ async function gather(studentIds, config) {
     orderBy: { calculationDateTime: "desc" },
     select: { studentId: true, progressionScore: true, calculationDateTime: true },
   });
+
+  // THE WHOLE TRAJECTORY, not just the nearest row. The existing read below fetches one
+  // snapshot for directionOfTravel; this one carries the shape.
+  //
+  // `on` is converted HERE, once, using the college's own zone. calculationDateTime is a
+  // DateTime and slicing ten characters off its ISO string is UTC — vle/isoDate.js
+  // documents at length why that dates a 00:30 BST event to the previous day. history.js
+  // is pure and takes the date already converted, exactly as engagementNormalise takes a
+  // toIsoDate.
+  //
+  // Ordered OLDEST FIRST, which is part of history.js's contract: two snapshots from one
+  // afternoon share a date, so nothing in `on` can order them and the module relies on
+  // this ordering to keep the settled one.
+  const historyRows = await prisma.studentPredictionHistory.findMany({
+    where: { studentId: { in: studentIds } },
+    orderBy: { calculationDateTime: "asc" },
+    select: {
+      studentId: true, riskLevel: true, progressionScore: true,
+      modelVersion: true, calculationDateTime: true,
+    },
+  });
+  const historyByStudent = new Map();
+  for (const h of historyRows) {
+    if (!historyByStudent.has(h.studentId)) historyByStudent.set(h.studentId, []);
+    historyByStudent.get(h.studentId).push({
+      on: isoDate(h.calculationDateTime.toISOString(), ZONE),
+      riskLevel: h.riskLevel,
+      progressionScore: h.progressionScore,
+      modelVersion: h.modelVersion,
+    });
+  }
 
   const previousByStudent = new Map();
   for (const h of history) if (!previousByStudent.has(h.studentId)) previousByStudent.set(h.studentId, h);
@@ -1109,6 +1197,19 @@ async function gather(studentIds, config) {
       institution: { kindRecorded },
     }, config);
 
+    const entry = intake.evaluate({
+      today,
+      isms: ismByStudent.get(id) || [],
+      admissions: admissionByStudent.get(id) || [],
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+      institution: { ismRecorded, idExpiryRecorded },
+    }, config);
+
+    const past = historyShape.evaluate({
+      today,
+      history: historyByStudent.get(id) || [],
+    }, config);
+
     const trips = tripwires.evaluate({
       today,
       marks: overallMarks,
@@ -1224,6 +1325,38 @@ async function gather(studentIds, config) {
         lastAttendedWeekOn: shape.lastAttendedWeekOn,
         longestUnseenWeekRun: shape.longestUnseenWeekRun,
         observedWeeks: shape.observedWeeks,
+        entryProfileRecorded: entry.entryProfileRecorded,
+        entryProfileOn: entry.entryProfileOn,
+        entryProfileAnswered: entry.entryProfileAnswered,
+        entryProfileQuestions: entry.entryProfileQuestions,
+        entryProfileBarriers: entry.entryProfileBarriers,
+        entryWifiAtHome: entry.entryWifiAtHome,
+        entryKnowsOfficeSoftware: entry.entryKnowsOfficeSoftware,
+        entryAdmittedOutcome: entry.entryAdmittedOutcome,
+        rightToStudyExpiresOn: entry.rightToStudyExpiresOn,
+        currentBandSince: past.currentBandSince,
+        worstBandHeld: past.worstBandHeld,
+        worstBandSince: past.worstBandSince,
+        observedDays: past.observedDays,
+        bandChanges: past.bandChanges,
+        bandsVisited: past.bandsVisited,
+        recoveredPoints: past.recoveredPoints,
+        recoveredBy: past.recoveredBy,
+        lowestScore: past.lowestScore,
+        lowestOn: past.lowestOn,
+        // Forwarded for the DIVERGENCE layer, which like contactDeficit cannot be
+        // computed here: it needs submissionRate, and engine.js derives that in measure()
+        // — downstream of gather(). Recomputing it here would be a second implementation
+        // of a stored figure, which is exactly the drift this pipeline keeps being bitten
+        // by. runner.js does the call, after score().
+        submittedCount: submitted,
+        notSubmittedCount: notSubmitted,
+        vleActiveDayRate: vle.activeDayRate,
+        vleObservedDaysForDivergence: vle.observedDays,
+        averageGradeForDivergence: avgGrade,
+        gradedCountForDivergence: gradePcts.length,
+        attendanceObservationsForDivergence: reg.observations,
+        submissionsRecorded,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
         // riskDriverCodes column runner.js builds -- staff read one list of reasons, not
@@ -1237,6 +1370,7 @@ async function gather(studentIds, config) {
         codes: [
           ...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || []),
           ...(load.codes || []), ...(money.codes || []), ...(shape.codes || []),
+          ...(entry.codes || []), ...(past.codes || []),
         ],
       },
       raw: {

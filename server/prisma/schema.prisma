@@ -2317,6 +2317,48 @@ model StudentPredictionCurrent {
   lastAttendedWeekOn   String?
   longestUnseenWeekRun Int?
   observedWeeks        Int?
+  /// WHAT THE STUDENT TOLD US BEFORE THEY STARTED. The pre-entry self-assessment is the
+  /// only evidence that exists in week one, when attendance, marks and pastoral contact
+  /// all have nothing in them — and every barrier it names is actionable: no wifi at
+  /// home, no office software, a reservation recorded at interview.
+  /// `entryProfileRecorded` is TRI-STATE. Null means the college has no linked ISM data
+  /// at all; false means it does and this student has none; true means a row. The middle
+  /// state is the finding — a student nobody interviewed at a college that interviews.
+  entryProfileRecorded     Boolean?
+  entryProfileOn           String?
+  entryProfileAnswered     Int?
+  entryProfileQuestions    Int?
+  entryProfileBarriers     Int?
+  entryWifiAtHome          Boolean?
+  entryKnowsOfficeSoftware Boolean?
+  entryAdmittedOutcome     String?
+  /// The date a student's right to study runs out. Stored for ever even when the
+  /// caseload code has aged out, because a compliance list needs every expiry and a
+  /// caseload needs only the ones worth acting on this term.
+  rightToStudyExpiresOn    String?
+  /// WHAT THE RISK HAS DONE, as opposed to what it is. A student stuck at the same band
+  /// all year and one who fell there last week sort identically without these: the first
+  /// has had an intervention that did not work, the second has had nothing tried.
+  /// Dates, never day counts — nothing here runs on a schedule.
+  currentBandSince   String?
+  worstBandHeld      String?
+  worstBandSince     String?
+  observedDays       Int?
+  bandChanges        Int?
+  bandsVisited       Int?
+  /// Evidence about the college's own interventions on THIS student: somebody who has
+  /// fallen and come back is somebody it has already helped successfully. Measured on the
+  /// score rather than the band, so a climb inside one band still counts.
+  recoveredPoints    Float?
+  recoveredBy        String?
+  lowestScore        Float?
+  lowestOn           String?
+  /// WHEN THE SIGNALS DISAGREE. A weighted mean is exactly the operation that destroys
+  /// disagreement: 95% attendance with 20% submission and 55% on both land close
+  /// together, and they need opposite conversations. At most one shape is named.
+  divergenceShape         String?
+  attendanceSubmissionGap Float?
+  attendanceVleGap        Float?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2655,6 +2697,48 @@ model StudentPredictionHistory {
   lastAttendedWeekOn   String?
   longestUnseenWeekRun Int?
   observedWeeks        Int?
+  /// WHAT THE STUDENT TOLD US BEFORE THEY STARTED. The pre-entry self-assessment is the
+  /// only evidence that exists in week one, when attendance, marks and pastoral contact
+  /// all have nothing in them — and every barrier it names is actionable: no wifi at
+  /// home, no office software, a reservation recorded at interview.
+  /// `entryProfileRecorded` is TRI-STATE. Null means the college has no linked ISM data
+  /// at all; false means it does and this student has none; true means a row. The middle
+  /// state is the finding — a student nobody interviewed at a college that interviews.
+  entryProfileRecorded     Boolean?
+  entryProfileOn           String?
+  entryProfileAnswered     Int?
+  entryProfileQuestions    Int?
+  entryProfileBarriers     Int?
+  entryWifiAtHome          Boolean?
+  entryKnowsOfficeSoftware Boolean?
+  entryAdmittedOutcome     String?
+  /// The date a student's right to study runs out. Stored for ever even when the
+  /// caseload code has aged out, because a compliance list needs every expiry and a
+  /// caseload needs only the ones worth acting on this term.
+  rightToStudyExpiresOn    String?
+  /// WHAT THE RISK HAS DONE, as opposed to what it is. A student stuck at the same band
+  /// all year and one who fell there last week sort identically without these: the first
+  /// has had an intervention that did not work, the second has had nothing tried.
+  /// Dates, never day counts — nothing here runs on a schedule.
+  currentBandSince   String?
+  worstBandHeld      String?
+  worstBandSince     String?
+  observedDays       Int?
+  bandChanges        Int?
+  bandsVisited       Int?
+  /// Evidence about the college's own interventions on THIS student: somebody who has
+  /// fallen and come back is somebody it has already helped successfully. Measured on the
+  /// score rather than the band, so a climb inside one band still counts.
+  recoveredPoints    Float?
+  recoveredBy        String?
+  lowestScore        Float?
+  lowestOn           String?
+  /// WHEN THE SIGNALS DISAGREE. A weighted mean is exactly the operation that destroys
+  /// disagreement: 95% attendance with 20% submission and 55% on both land close
+  /// together, and they need opposite conversations. At most one shape is named.
+  divergenceShape         String?
+  attendanceSubmissionGap Float?
+  attendanceVleGap        Float?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

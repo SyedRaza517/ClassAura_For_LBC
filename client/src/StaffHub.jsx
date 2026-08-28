@@ -2820,6 +2820,28 @@ const DRIVER_LABELS = {
   // Whole weeks in which the register ran and this student appeared in none of them.
   // Deliberately not the absence streak, which counts rows and breaks on a partial week.
   TRIP_WEEKS_UNSEEN: "Not seen at all for whole weeks the register was taken",
+
+  // What the student told us before they started. These are the only findings that
+  // exist in week one, when attendance, marks and pastoral contact all have nothing in
+  // them — and every one of them is something the college can actually fix.
+  TRIP_INTAKE_NO_WIFI: "Told us at interview they have no internet at home",
+  TRIP_INTAKE_DIGITAL_SKILLS: "Told us at interview they do not know office software",
+  TRIP_INTAKE_RESERVATION: "Admitted with a reservation recorded at interview",
+  TRIP_INTAKE_ID_EXPIRING: "Right to study runs out during the course",
+  TRIP_INTAKE_ID_EXPIRED: "Right to study has expired on the record",
+
+  // What the risk has DONE. Chronic is not the same finding as the band beside it: the
+  // band says the student is at risk, this says it has been true long enough that
+  // whatever was tried has not worked.
+  TRIP_CHRONIC_RISK: "At this level for a long time — what was tried has not worked",
+  TRIP_RISK_OSCILLATING: "Risk level keeps changing — the score has not settled",
+
+  // When the signals disagree. A weighted mean hides exactly this, and the four shapes
+  // need four different conversations.
+  TRIP_DIVERGENCE_ATTENDING_NOT_SUBMITTING: "Turning up but handing nothing in",
+  TRIP_DIVERGENCE_SUBMITTING_NOT_ATTENDING: "Handing work in but not attending",
+  TRIP_DIVERGENCE_ONLINE_NOT_ATTENDING: "Active online but not in the building",
+  TRIP_DIVERGENCE_ATTAINING_NOT_ATTENDING: "Marks holding up while attendance falls",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -2833,6 +2855,10 @@ const INSTITUTIONAL_TRIPS = new Set([
   // them is the person being harmed, not the person at fault.
   "TRIP_REGISTER_NOT_TAKEN", "TRIP_REGISTER_STALE", "TRIP_ATTENDANCE_UNRELIABLE",
   "TRIP_FUNDING_STALLED", "TRIP_FUNDING_EVIDENCE_OUTSTANDING",
+  // An expired right-to-study date is usually a record nobody updated after a renewal,
+  // not a student doing anything wrong. It belongs with the institutional findings so
+  // the wording never reads as an accusation.
+  "TRIP_INTAKE_ID_EXPIRED", "TRIP_INTAKE_ID_EXPIRING",
 ]);
 
 /** ISO weekday names, 1 = Monday, matching worstAbsenceWeekday. */

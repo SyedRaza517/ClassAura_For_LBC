@@ -22,6 +22,7 @@ const settings = require("./settings");
 const { gather } = require("./metrics");
 const { score } = require("./engine");
 const tripwires = require("./tripwires");
+const divergence = require("./divergence");
 
 // How many students are gathered and scored at a time. The gather issues a fixed
 // number of queries per chunk, each with an `IN (...)` of this size — large enough
@@ -233,6 +234,36 @@ async function recalculate(opts = {}) {
               }, config).codes
             : []),
         ],
+        // DIVERGENCE IS COMPUTED HERE, NOT IN gather(), for the same structural reason
+        // contactDeficit is. It compares the submission RATE against attendance, and
+        // engine.js derives submissionRate in measure() — which runs after gather(). The
+        // alternative is a second implementation of a stored figure in the wiring, and
+        // two definitions of one number on one screen is how they drift.
+        //
+        // It reads result.metrics.submissionRate, the engine's own output, so there is
+        // exactly one definition of it in the codebase.
+        ...(entry.tripwires
+          ? (() => {
+              const d = divergence.evaluate({
+                attendancePct: result.metrics.overallAttendance,
+                attendanceObservations: entry.tripwires.attendanceObservationsForDivergence,
+                submissionRate: result.metrics.submissionRate,
+                submissionObservations: (entry.tripwires.submittedCount || 0) + (entry.tripwires.notSubmittedCount || 0),
+                vleActiveDayRate: entry.tripwires.vleActiveDayRate,
+                vleObservedDays: entry.tripwires.vleObservedDaysForDivergence,
+                averageGrade: entry.tripwires.averageGradeForDivergence,
+                gradedCount: entry.tripwires.gradedCountForDivergence,
+                attendanceSlope: entry.tripwires.attendanceSlope,
+                weeksIntoProgramme: entry.tripwires.weeksIntoProgramme,
+                institution: { submissionsRecorded: entry.tripwires.submissionsRecorded === true },
+              }, config);
+              return {
+                divergenceShape: d.divergenceShape,
+                attendanceSubmissionGap: d.attendanceSubmissionGap,
+                attendanceVleGap: d.attendanceVleGap,
+              };
+            })()
+          : { divergenceShape: null, attendanceSubmissionGap: null, attendanceVleGap: null }),
         positiveDriverCodes: result.positiveDriverCodes,
         primaryRiskDriver: result.primaryRiskDriver,
         interventionRequired: result.interventionRequired,
@@ -307,6 +338,25 @@ async function recalculate(opts = {}) {
         lastAttendedWeekOn: entry.tripwires ? entry.tripwires.lastAttendedWeekOn : null,
         longestUnseenWeekRun: entry.tripwires ? entry.tripwires.longestUnseenWeekRun : null,
         observedWeeks: entry.tripwires ? entry.tripwires.observedWeeks : null,
+        entryProfileRecorded: entry.tripwires ? entry.tripwires.entryProfileRecorded : null,
+        entryProfileOn: entry.tripwires ? entry.tripwires.entryProfileOn : null,
+        entryProfileAnswered: entry.tripwires ? entry.tripwires.entryProfileAnswered : null,
+        entryProfileQuestions: entry.tripwires ? entry.tripwires.entryProfileQuestions : null,
+        entryProfileBarriers: entry.tripwires ? entry.tripwires.entryProfileBarriers : null,
+        entryWifiAtHome: entry.tripwires ? entry.tripwires.entryWifiAtHome : null,
+        entryKnowsOfficeSoftware: entry.tripwires ? entry.tripwires.entryKnowsOfficeSoftware : null,
+        entryAdmittedOutcome: entry.tripwires ? entry.tripwires.entryAdmittedOutcome : null,
+        rightToStudyExpiresOn: entry.tripwires ? entry.tripwires.rightToStudyExpiresOn : null,
+        currentBandSince: entry.tripwires ? entry.tripwires.currentBandSince : null,
+        worstBandHeld: entry.tripwires ? entry.tripwires.worstBandHeld : null,
+        worstBandSince: entry.tripwires ? entry.tripwires.worstBandSince : null,
+        observedDays: entry.tripwires ? entry.tripwires.observedDays : null,
+        bandChanges: entry.tripwires ? entry.tripwires.bandChanges : null,
+        bandsVisited: entry.tripwires ? entry.tripwires.bandsVisited : null,
+        recoveredPoints: entry.tripwires ? entry.tripwires.recoveredPoints : null,
+        recoveredBy: entry.tripwires ? entry.tripwires.recoveredBy : null,
+        lowestScore: entry.tripwires ? entry.tripwires.lowestScore : null,
+        lowestOn: entry.tripwires ? entry.tripwires.lowestOn : null,
         weightedAverageGrade: entry.tripwires ? entry.tripwires.weightedAverageGrade : null,
         gradeWasWeighted: entry.tripwires ? entry.tripwires.gradeWasWeighted : null,
         markingLatencyDays: entry.tripwires ? entry.tripwires.markingLatencyDays : null,
