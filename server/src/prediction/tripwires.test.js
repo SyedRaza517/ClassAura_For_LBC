@@ -799,16 +799,18 @@ test("everything on time reports zero, not null, when the feed does carry dates"
   ], { submittedOnRecorded: true });
 
   assert.equal(r.lateRate, 0);
-  assert.equal(r.meanDaysLate, 0);
+  // Null, not 0 — the mean is over the LATE pieces, and there are none. See the
+  // dedicated test below.
+  assert.equal(r.meanDaysLate, null);
 });
 
 /* --- the same concern raised twice ----------------------------------------- */
 
 test("a concern raised in two separate reviews is a repeat", () => {
   const r = repeatConcerns([
-    ["Attendance", "Wellbeing"],
-    ["Attendance"],
-  ]);
+    { date: "2026-01-10", concerns: ["Attendance", "Wellbeing"] },
+    { date: "2026-02-10", concerns: ["Attendance"] },
+  ], null);
 
   assert.deepEqual(r.repeated, ["Attendance"]);
 });
@@ -817,25 +819,28 @@ test('"No Concerns" is a value in the list and must never count as one', () => {
   // The allowlist at routes/studentReviews.js includes "No Concerns" as a member, so a
   // naive length check turns the strongest reassurance in the dataset into a warning —
   // and two clean reviews would read as a repeated concern.
-  const r = repeatConcerns([["No Concerns"], ["No Concerns"]]);
+  const r = repeatConcerns([
+    { date: "2026-01-10", concerns: ["No Concerns"] },
+    { date: "2026-02-10", concerns: ["No Concerns"] },
+  ], null);
 
   assert.deepEqual(r.repeated, []);
   assert.equal(r.reviewsWithConcerns, 0);
 });
 
 test("one review cannot establish a repeat", () => {
-  const r = repeatConcerns([["Attendance", "Attendance"]]);
+  const r = repeatConcerns([{ date: "2026-01-10", concerns: ["Attendance", "Attendance"] }], null);
   assert.deepEqual(r.repeated, []);
 });
 
 test("no reviews at all gives null, not an empty finding", () => {
-  const r = repeatConcerns([]);
+  const r = repeatConcerns([], null);
   assert.equal(r.repeated, null);
 });
 
 test("chronic late submission raises a code the on-time rate cannot", () => {
-  const r = evaluate(input({ timing: { lateRate: 60, meanDaysLate: 9 } }),
-    { ...DEFAULTS, lateSubmissionLimit: 40 });
+  const r = evaluate(input({ timing: { lateRate: 60, meanDaysLate: 9, gradedWithDates: 5 } }),
+    { ...DEFAULTS, lateSubmissionLimit: 40, lateSubmissionMinPieces: 3 });
 
   assert.ok(r.codes.includes(TRIP.CHRONIC_LATE));
 });
@@ -862,15 +867,16 @@ test("an intervention with no agreed review date is not overdue", () => {
   assert.equal(r.codes.includes(TRIP.REVIEW_OVERDUE), false);
 });
 
-test("a brand-new student is exempt from the disengagement codes", () => {
+test("a brand-new student who has started is exempt from the disengagement codes", () => {
   // Weeks-into-programme exists mainly to SUPPRESS. In week one a student has no
-  // attendance history, no marks and no pastoral record, and every "we have not seen
-  // this" code would fire on the whole intake at once — a caseload of everybody,
-  // which is the same as no caseload.
+  // pastoral record, and firing on that would put the whole intake on the caseload.
+  //
+  // The streak is exempt only because this student HAS attended — see the non-starter
+  // test below, which is the case the first version of this wrongly covered up.
   const r = evaluate(input({
     weeksIntoProgramme: 1,
     pastoral: { lastContactOn: null },
-    marks: [mark("2026-03-19", "A"), mark("2026-03-20", "A"), mark("2026-03-20", "A")],
+    marks: [mark("2026-03-16", "P"), mark("2026-03-19", "A"), mark("2026-03-20", "A"), mark("2026-03-20", "A")],
   }), { ...DEFAULTS, absenceStreakSessions: 3, settlingInWeeks: 3 });
 
   assert.equal(r.codes.includes(TRIP.NO_PASTORAL_CONTACT), false);
@@ -898,4 +904,100 @@ test("an unknown programme age is NOT treated as brand new", () => {
   }), { ...DEFAULTS, settlingInWeeks: 3 });
 
   assert.ok(r.codes.includes(TRIP.NO_PASTORAL_CONTACT));
+});
+
+/* ========================================================================== */
+/* Tranche 5 corrections                                                      */
+/* ========================================================================== */
+
+test("a student who enrolled and never turned up is NOT exempt in week one", () => {
+  // The settling-in exemption was justified by "a new student has no history" — true
+  // of the absence-of-record codes, and FALSE of this one. ABSENCE_STREAK needs N
+  // consecutive MARKED absences; attendanceShape returns null when no register exists,
+  // so it cannot fire on an intake nobody has taken a register for. It fires only when
+  // the register exists and says the student was not there, which is evidence.
+  //
+  // And this is the student a sponsoring provider is required to identify — the
+  // non-starter — inside exactly the window the exemption was covering up.
+  const r = evaluate(input({
+    weeksIntoProgramme: 1,
+    marks: [mark("2026-03-18", "A"), mark("2026-03-19", "A"), mark("2026-03-20", "A")],
+  }), { ...DEFAULTS, absenceStreakSessions: 3, settlingInWeeks: 3 });
+
+  assert.ok(r.codes.includes(TRIP.ABSENCE_STREAK));
+});
+
+test("a new student who HAS started still gets the settling-in grace", () => {
+  const r = evaluate(input({
+    weeksIntoProgramme: 1,
+    marks: [mark("2026-03-16", "P"), mark("2026-03-18", "A"), mark("2026-03-19", "A"), mark("2026-03-20", "A")],
+  }), { ...DEFAULTS, absenceStreakSessions: 3, settlingInWeeks: 3 });
+
+  assert.equal(r.codes.includes(TRIP.ABSENCE_STREAK), false);
+});
+
+test("a new student is still exempt from the no-contact code", () => {
+  // This one IS an absence-of-record code and nobody expects a one-to-one in week one.
+  const r = evaluate(input({ weeksIntoProgramme: 1, pastoral: { lastContactOn: null } }),
+    { ...DEFAULTS, settlingInWeeks: 3 });
+
+  assert.equal(r.codes.includes(TRIP.NO_PASTORAL_CONTACT), false);
+});
+
+test("one late assignment is not a pattern of lateness", () => {
+  // Every sibling rate in this file has a minimum denominator for exactly this reason.
+  // A single marked piece handed in a day late reads 100%, and the screen calls that
+  // "work is regularly handed in late".
+  const r = submissionTiming([{ submittedOn: "2026-03-02", dueDate: "2026-03-01" }], { submittedOnRecorded: true });
+
+  assert.equal(r.gradedWithDates, 1);
+
+  const codes = evaluate(input({ timing: r }), { ...DEFAULTS, lateSubmissionMinPieces: 3 });
+  assert.equal(codes.codes.includes(TRIP.CHRONIC_LATE), false);
+});
+
+test("enough late work over enough pieces does raise the code", () => {
+  const r = submissionTiming([
+    { submittedOn: "2026-03-02", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-09", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-01", dueDate: "2026-03-01" },
+  ], { submittedOnRecorded: true });
+
+  const codes = evaluate(input({ timing: r }), { ...DEFAULTS, lateSubmissionMinPieces: 3, lateSubmissionLimit: 40 });
+  assert.ok(codes.codes.includes(TRIP.CHRONIC_LATE));
+});
+
+test("nothing late is a null mean, not a mean of zero", () => {
+  // The denominator is the late pieces, so with none the mean is undefined. Zero is
+  // indistinguishable on the row from a real mean of 0, which cannot occur — being
+  // late by zero days is the definition of on time.
+  const r = submissionTiming([
+    { submittedOn: "2026-02-28", dueDate: "2026-03-01" },
+    { submittedOn: "2026-03-01", dueDate: "2026-03-01" },
+  ], { submittedOnRecorded: true });
+
+  assert.equal(r.lateRate, 0);
+  assert.equal(r.meanDaysLate, null);
+});
+
+test("a concern from two years ago no longer counts as repeated", () => {
+  // Every other pastoral signal here is windowed. This one read the student's whole
+  // history, so a concern raised twice in Year 1 stayed on the row for the rest of the
+  // programme and no number of clean reviews could clear it.
+  const r = repeatConcerns([
+    { date: "2024-10-01", concerns: ["Attendance"] },
+    { date: "2024-11-01", concerns: ["Attendance"] },
+    { date: "2026-03-01", concerns: ["No Concerns"] },
+  ], "2025-09-01");
+
+  assert.deepEqual(r.repeated, []);
+});
+
+test("a concern repeated inside the window still counts", () => {
+  const r = repeatConcerns([
+    { date: "2026-01-10", concerns: ["Wellbeing"] },
+    { date: "2026-02-10", concerns: ["Wellbeing"] },
+  ], "2025-09-01");
+
+  assert.deepEqual(r.repeated, ["Wellbeing"]);
 });

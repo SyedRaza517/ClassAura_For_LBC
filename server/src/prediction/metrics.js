@@ -140,6 +140,7 @@ async function gather(studentIds, config) {
   // slope compares two equal periods rather than a period against itself. Both are
   // inclusive at each end, so the span is recentAttendanceDays + 1 days on each side —
   // equal is what matters, not the exact count.
+  const concernSince = shiftDays(today, -config.concernWindowDays);
   const priorTo = shiftDays(recentFrom, -1);
   const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays);
 
@@ -160,17 +161,20 @@ async function gather(studentIds, config) {
   // students contains no contacts and therefore looks like a college with no pastoral
   // module at all.
   //
-  // Three cheap existence probes, once per run, unfiltered by student.
-  const [lateMarks, contactRows, reviewRows, excusedMarks] = await Promise.all([
+  // Six cheap existence probes, once per run, unfiltered by student and issued together
+  // — none of them depends on any other, so serialising them would add round trips to
+  // every chunk for no reason.
+  const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
     prisma.attendanceMark.count({ where: { status: "E" } }),
+    prisma.assessmentGrade.count({ where: { NOT: { submittedAt: null } } }),
+    prisma.assessmentSubmission.count(),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
   // about the integration, not about anybody's coursework.
-  const submittedAtRows = await prisma.assessmentGrade.count({ where: { NOT: { submittedAt: null } } });
   const submittedOnRecorded = submittedAtRows > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
@@ -183,7 +187,6 @@ async function gather(studentIds, config) {
   // failed safe. That is luck, not design: the day something starts populating that
   // table, a chunk of one student with no submission rows would conclude the college
   // does not record submissions and silently switch TRIP_UNMARKED_WORK off for them.
-  const submissionRows = await prisma.assessmentSubmission.count();
   const submissionsRecorded = submissionRows > 0;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
@@ -336,7 +339,7 @@ async function gather(studentIds, config) {
 
   /* --- pastoral contact --------------------------------------------------- */
 
-  // TWO NEW QUERIES PER CHUNK, taking the documented budget from eight to ten. They
+  // TWO MORE QUERIES PER CHUNK. They
   // earn it: low one-to-one contact with staff is directly linked to students
   // contemplating withdrawal, and neither fact is derivable from anything already
   // fetched. Both are batched over the whole chunk like everything else here.
@@ -376,7 +379,7 @@ async function gather(studentIds, config) {
     // whole chunk's gather, hence the try/catch the rest of the codebase also uses.
     let parsed = [];
     try { const j = JSON.parse(r.concerns || "[]"); if (Array.isArray(j)) parsed = j; } catch { /* leave empty */ }
-    (cur.concernSets = cur.concernSets || []).push(parsed);
+    (cur.concernSets = cur.concernSets || []).push({ date: r.date, concerns: parsed });
     pastoralByStudent.set(r.studentId, cur);
   }
 
@@ -562,7 +565,7 @@ async function gather(studentIds, config) {
     );
 
     const rawPastoral = pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null };
-    const concernRepeat = tripwires.repeatConcerns(rawPastoral.concernSets || []);
+    const concernRepeat = tripwires.repeatConcerns(rawPastoral.concernSets || [], concernSince);
     const pastoral = pastoralInUse
       ? { ...rawPastoral, repeated: concernRepeat.repeated || [] }
       : null;
@@ -583,7 +586,12 @@ async function gather(studentIds, config) {
     const soonCutoff = shiftDays(today, config.dueSoonDays);
     for (const unitId of myUnits) {
       for (const a of assessmentsByUnit.get(unitId) || []) {
-        if (!inScopeAssessment(a) || !a.dueDate) continue;
+        // NOT inScopeAssessment. Under the default current-term scope the 14-day
+        // horizon routinely runs past the end of term, and clipping it would report
+        // "nothing due" in the last fortnight of every term — when the student is most
+        // likely to have work waiting on the other side of the boundary. This figure is
+        // about the timetable, and the timetable does not stop at scope.to.
+        if (!a.dueDate) continue;
         if (a.dueDate >= today && a.dueDate <= soonCutoff) dueSoon += 1;
       }
     }
@@ -629,6 +637,7 @@ async function gather(studentIds, config) {
         attendanceRegularity: regularity,
         lateSubmissionRate: timing.lateRate,
         meanDaysLate: timing.meanDaysLate,
+        gradedWithDates: timing.gradedWithDates,
         weeksIntoProgramme: weeksByStudent.get(id) ?? null,
         assessmentsDueSoon: dueSoon,
       },

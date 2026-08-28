@@ -239,6 +239,7 @@ async function recalculate(opts = {}) {
         meanDaysLate: entry.tripwires ? entry.tripwires.meanDaysLate : null,
         weeksIntoProgramme: entry.tripwires ? entry.tripwires.weeksIntoProgramme : null,
         assessmentsDueSoon: entry.tripwires ? entry.tripwires.assessmentsDueSoon : null,
+        gradedWithDates: entry.tripwires ? entry.tripwires.gradedWithDates : null,
       };
 
       const current = existingByStudent.get(studentId);

@@ -394,7 +394,13 @@ function submissionTiming(marked, opts) {
 
   return {
     lateRate: round1((late / n) * 100),
-    meanDaysLate: late ? round1(totalDaysLate / late) : 0,
+    // The denominator here is the LATE pieces, so with none the mean is undefined
+    // rather than zero. A stored 0 is indistinguishable on the row from a real mean of
+    // nought days, which cannot occur — being late by zero days is the definition of
+    // on time.
+    meanDaysLate: late ? round1(totalDaysLate / late) : null,
+    // Returned so the caller can refuse to draw a conclusion from one assignment, and
+    // so the figure behind a percentage is visible at an appeal.
     gradedWithDates: n,
   };
 }
@@ -415,16 +421,23 @@ function submissionTiming(marked, opts) {
  * the strongest reassurance in the dataset into a warning, and two clean reviews would
  * read as a repeated concern. It is stripped before anything else happens.
  *
- * @param {Array<string[]>} perReview  the parsed concerns array from each review
+ * WINDOWED, because every other pastoral signal here is. Read over a whole programme
+ * this never clears: a concern raised twice in the first term stays on the row for two
+ * more years, and no number of subsequent clean reviews can lift it — "No Concerns" is
+ * stripped before counting, so the only evidence of resolution is invisible to it.
+ *
+ * @param {Array<{date, concerns:string[]}>} perReview
+ * @param {string|null} since  YYYY-MM-DD; reviews older than this are not counted
  */
-function repeatConcerns(perReview) {
-  const list = perReview || [];
+function repeatConcerns(perReview, since) {
+  const list = (perReview || []).filter((r) => r && (!since || !r.date || r.date >= since));
   if (!list.length) return { repeated: null, reviewsWithConcerns: 0 };
 
   const seen = new Map();
   let reviewsWithConcerns = 0;
 
-  for (const raw of list) {
+  for (const entry of list) {
+    const raw = entry.concerns;
     // Deduped WITHIN a review: the same concern twice on one form is one concern, and
     // counting it twice would let a single review manufacture a repeat.
     const concerns = [...new Set((raw || []).filter((c) => c && c !== "No Concerns"))];
@@ -494,12 +507,25 @@ function evaluate(raw, config) {
   // date and no terms cannot be placed on a calendar, and muting every code for them
   // would fail safe in the wrong direction — silence about the students the timetable
   // already cannot account for.
+  //
+  // AND IT DOES NOT COVER ABSENCE_STREAK, which the first version of this got wrong.
+  // The argument above is about codes that fire on the ABSENCE of a record. A streak is
+  // not one: attendanceShape returns null when no register exists, and the code needs
+  // several consecutive MARKED absences, so it cannot fire on an intake whose register
+  // nobody has taken. It fires only when the register exists and says the student was
+  // not there — evidence, not silence. Suppressing it hid the non-starter: somebody who
+  // enrolled and never once turned up, which is precisely who a sponsoring provider has
+  // to identify, inside precisely the window they have to do it in.
   const weeks = raw.weeksIntoProgramme;
   const settlingIn = isNum(weeks) && weeks < config.settlingInWeeks;
 
   const { absenceStreak, lastAttendedOn } = attendanceShape(raw.marks || []);
 
-  if (!settlingIn && isNum(absenceStreak) && absenceStreak >= config.absenceStreakSessions) {
+  // The grace applies only to somebody who has actually started. A new student with a
+  // run of absences and no attendance at all has not settled in slowly; they have not
+  // arrived, and that is the finding.
+  const streakGrace = settlingIn && Boolean(lastAttendedOn);
+  if (!streakGrace && isNum(absenceStreak) && absenceStreak >= config.absenceStreakSessions) {
     codes.push(TRIP.ABSENCE_STREAK);
   }
 
@@ -647,8 +673,15 @@ function evaluate(raw, config) {
 
   /* --- handing work in late ---------------------------------------------- */
 
+  // A MINIMUM DENOMINATOR, like every other rate in this file. One marked piece handed
+  // in a day late reads 100%, and the screen renders that as "work is regularly handed
+  // in late" — a pattern claimed from a single data point. The sample is smaller than
+  // it looks: Moodle reports no submission date for anything that is not
+  // submission-based, so quizzes and offline marks never reach this denominator at all.
   const timing = raw.timing || {};
-  if (isNum(timing.lateRate) && timing.lateRate >= config.lateSubmissionLimit) {
+  if (isNum(timing.lateRate)
+      && (timing.gradedWithDates || 0) >= config.lateSubmissionMinPieces
+      && timing.lateRate >= config.lateSubmissionLimit) {
     codes.push(TRIP.CHRONIC_LATE);
   }
 

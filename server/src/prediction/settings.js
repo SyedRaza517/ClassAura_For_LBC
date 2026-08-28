@@ -226,6 +226,16 @@ const DEFAULTS = {
   // the student, reported as a figure and never as a code.
   dueSoonDays: 14,
 
+  // The fewest marked, dated pieces of work before a late-submission percentage may
+  // raise a code. One piece handed in a day late reads 100%, and the screen calls that
+  // a pattern. Every other rate here carries the same kind of floor.
+  lateSubmissionMinPieces: 3,
+
+  // How far back a repeated concern is looked for. Unbounded, a concern raised twice in
+  // a student's first term would stay on their record for the rest of the programme,
+  // and no number of clean reviews since could clear it.
+  concernWindowDays: 180,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -523,6 +533,16 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The upcoming-work window",
       why: "it is how far ahead to count work falling due. At 0 nothing is ever upcoming and the figure is dead.",
+    }) ||
+    checkNumber(out, "lateSubmissionMinPieces", pick("lateSubmissionMinPieces"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum work for a late-submission pattern",
+      why: "it is how many marked, dated pieces are needed before lateness is called a pattern. At 1 a single late assignment reads as 100% late.",
+    }) ||
+    checkNumber(out, "concernWindowDays", pick("concernWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The repeated-concern window",
+      why: "it is how far back a repeated concern is looked for. Unbounded, a concern raised twice in a first term never clears.",
     });
   if (err) return err;
 

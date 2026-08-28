@@ -1940,6 +1940,12 @@ model StudentPredictionCurrent {
   /// Work falling due in the near term. A fact about the timetable rather than the
   /// student, so it is reported and never raises a code on its own.
   assessmentsDueSoon     Int?
+  /// How many marked pieces of work carried BOTH a submission date and a deadline —
+  /// the denominator behind lateSubmissionRate. Stored so a percentage on the screen
+  /// can be checked against the sample it came from: Moodle reports no submission date
+  /// for anything that is not submission-based, so quizzes and offline marks never
+  /// reach it, and "60% late" over three pieces is a different claim from over thirty.
+  gradedWithDates        Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2107,6 +2113,12 @@ model StudentPredictionHistory {
   /// Work falling due in the near term. A fact about the timetable rather than the
   /// student, so it is reported and never raises a code on its own.
   assessmentsDueSoon     Int?
+  /// How many marked pieces of work carried BOTH a submission date and a deadline —
+  /// the denominator behind lateSubmissionRate. Stored so a percentage on the screen
+  /// can be checked against the sample it came from: Moodle reports no submission date
+  /// for anything that is not submission-based, so quizzes and offline marks never
+  /// reach it, and "60% late" over three pieces is a different claim from over thirty.
+  gradedWithDates        Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
