@@ -23,6 +23,7 @@ const { localDate, ZONE } = require("../clock");
 const { isoDate } = require("../vle/isoDate");
 const attendance = require("../attendance");
 const tripwires = require("./tripwires");
+const adjustments = require("./adjustments");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -334,12 +335,44 @@ async function gather(studentIds, config) {
       })
     : [];
 
+  // WHAT THE ENGINE MAY KNOW ABOUT A MITIGATING CIRCUMSTANCE.
+  //
+  // The status, the window, whether it covers attendance, and the adjustments. NOT
+  // `category`. NOT `detail`. Those are Article 9 health data -- illness, mental health,
+  // bereavement, pregnancy -- collected so the college can support a student, and putting
+  // them into a risk score is a different processing purpose from the one they were
+  // collected for.
+  //
+  // The engine must know THAT a student has cover, never WHY. This select is the
+  // enforcement point and schema-contract.test.js reads this file and fails if either
+  // field ever appears in it.
+  //
+  // Per chunk rather than hoisted, unlike the institution probes above: "does this
+  // student have cover" is a question about the student, which is exactly the shape the
+  // hoisted probes are NOT. Nothing here asks whether the college uses the feature at
+  // all, because nothing here needs to -- a college with no claims produces empty
+  // coverage, and empty coverage returns every assessment's own dueDate unchanged.
+  const claims = await prisma.mitigatingCircumstance.findMany({
+    where: { studentId: { in: studentIds } },
+    select: {
+      studentId: true, status: true, raisedOn: true,
+      coversFrom: true, coversTo: true, coversAttendance: true,
+      adjustments: { select: { assessmentId: true, adjustmentType: true, revisedDueDate: true } },
+    },
+  });
+
   const submissions = assessmentIds.length
     ? await prisma.assessmentSubmission.findMany({
         where: { assessmentId: { in: assessmentIds }, studentId: { in: studentIds } },
         select: { assessmentId: true, studentId: true, status: true, submittedOn: true },
       })
     : [];
+
+  const claimsByStudent = new Map();
+  for (const c of claims) {
+    if (!claimsByStudent.has(c.studentId)) claimsByStudent.set(c.studentId, []);
+    claimsByStudent.get(c.studentId).push(c);
+  }
 
   const gradesByStudent = new Map();
   for (const g of grades) {
@@ -519,16 +552,40 @@ async function gather(studentIds, config) {
       return Boolean(scope.termId) && a.unit && a.unit.termId === scope.termId;
     };
 
+    // The deadlines this student was ACTUALLY given, and which sessions a claim excuses.
+    //
+    // With no claims this is empty, effectiveDeadline() hands back each assessment's own
+    // dueDate, and every count below is what it was before this feature existed.
+    const myClaims = claimsByStudent.get(id) || [];
+    const claimOpts = { pendingSuppresses: config.pendingClaimSuppresses !== false };
+    const cover = adjustments.buildCoverage(myClaims, claimOpts);
+    // Nullable rather than defaulting false: "no claim covers attendance" and "we have
+    // not looked" are different facts, and only the first is a finding. A student with no
+    // claims at all gets null, and every list below stays the raw one untouched.
+    const anyAttendanceCover = adjustments.coversAnyAttendance(myClaims, claimOpts);
+    const EXCLUDED = adjustments.STATE.EXCLUDED;
+    const effective = (a) => adjustments.effectiveDeadline(a, cover, today);
+
     const mySubs = (submissionsByStudent.get(id) || []).filter((s) => inScopeAssessment(assessmentById.get(s.assessmentId)));
 
     let submitted = 0, notSubmitted = 0, unknown = 0, onTime = 0, missing = 0;
     for (const s of mySubs) {
       const a = assessmentById.get(s.assessmentId);
+      const eff = effective(a);
+      // A SUPPRESSED ASSESSMENT LEAVES BOTH SIDES OF EVERY FRACTION. Never counted as
+      // submitted, never as on time, never as missing -- so the engine renormalises
+      // around it exactly as it does a component with no evidence, rather than being fed
+      // a fake success. Counting it as submitted-on-time would inflate the score of a
+      // student in genuine difficulty and quietly remove them from the register: the
+      // mirror-image harm of the bug this feature exists to fix, and the quieter one.
+      if (eff.state === EXCLUDED) continue;
       if (s.status === "submitted") {
         submitted += 1;
         // No due date means nothing to be late against, so it counts as on time
-        // rather than silently deflating the component.
-        if (!a.dueDate || (s.submittedOn && s.submittedOn <= a.dueDate)) onTime += 1;
+        // rather than silently deflating the component. An extension supplies a LATER
+        // date here, so work that arrived inside one is on time -- which is what the
+        // college decided when it granted the extension.
+        if (!eff.due || (s.submittedOn && s.submittedOn <= eff.due)) onTime += 1;
       } else if (s.status === "not_submitted") {
         // ONLY once the deadline has passed — for the rate as well as for the count.
         // Moodle reports "not submitted" for every open assignment, so counting work
@@ -539,7 +596,7 @@ async function gather(studentIds, config) {
         // An assessment with no due date cannot be judged late or missing at all, so
         // it counts as neither — it is left out of the rate rather than held against
         // anybody.
-        if (a.dueDate && a.dueDate < today) {
+        if (eff.due && eff.due < today) {
           notSubmitted += 1;
           missing += 1;
         }
@@ -602,12 +659,49 @@ async function gather(studentIds, config) {
       for (const a of assessmentsByUnit.get(unitId) || []) {
         if (!inScopeAssessment(a)) continue;
         // No due date means nothing can be overdue against it — the same rule the
-        // submission counts above already apply.
-        if (!a.dueDate || a.dueDate >= today) continue;
+        // submission counts above already apply. And an extension that has NOT yet run
+        // out means the same thing: an extension is a new deadline, not an exemption, so
+        // one that HAS run out puts the work back in this list.
+        const eff = effective(a);
+        if (eff.state === EXCLUDED) continue;
+        if (!eff.due || eff.due >= today) continue;
         if (decided.has(a.id)) continue;
-        dueUnmarked.push({ dueDate: a.dueDate });
+        dueUnmarked.push({ dueDate: eff.due });
       }
     }
+
+    // How many in-scope assessments a claim removed from the fractions. Counted once
+    // over the student's own assessments rather than inside the loops above, which walk
+    // overlapping sets and would double-count.
+    //
+    // It is REPORTED because the suppression must be visible on the screen it was
+    // performed for: without it, a submission rate of 100% from two assessments looks
+    // identical to one from twelve, and the reader has no way to tell that the
+    // denominator shrank.
+    let mitigatedAssessmentCount = 0;
+    for (const unitId of myUnits) {
+      for (const a of assessmentsByUnit.get(unitId) || []) {
+        if (!inScopeAssessment(a)) continue;
+        if (effective(a).state === EXCLUDED) mitigatedAssessmentCount += 1;
+      }
+    }
+
+    // A STAFF signal, in the family of markingLatencyDays and overdueFollowUpCount: a
+    // claim sitting undecided is a fact about the institution's decision queue, and the
+    // student underneath it is the person being harmed by the delay. Reported, never
+    // scored.
+    //
+    // Measured from raisedOn -- when the STUDENT asked -- and not from createdAt or
+    // updatedAt. This is deliberately the opposite choice from the follow-up watermark,
+    // which had to abandon a backdatable date. There the question was "when did this
+    // college become able to record a completion", an institutional fact that a
+    // backdated row would corrupt. Here the question is "how long has this student been
+    // waiting", and if they raised it on 1 March and an administrator typed it in on the
+    // 20th, they have been waiting since 1 March. Different questions, different dates.
+    const openClaims = myClaims.filter((c) => c.status === "open");
+    const oldestOpenMitigationOn = openClaims.length
+      ? openClaims.map((c) => c.raisedOn).filter(Boolean).sort()[0] || null
+      : null;
 
     const intervention = interventionByStudent.get(id) || null;
     const previous = previousByStudent.get(id) || null;
@@ -619,7 +713,36 @@ async function gather(studentIds, config) {
     // Raw status counts, which the two attendance MODELS deliberately discard — the
     // points model folds L and E into a single percentage. Lateness and unexplained
     // absence are orthogonal to both models and are reported as their own figures.
-    const counts = attendance.summarise(overallMarks);
+    // TWO LISTS, AND THE LINE BETWEEN THEM IS THE WHOLE DESIGN.
+    //
+    // `rateMarks` drops sessions an approved claim excuses and feeds the PERCENTAGES --
+    // the figures that reach the score. A session the college agreed to excuse is not
+    // evidence of disengagement, and leaving it in the denominator makes the
+    // accommodation invisible while it goes on depressing the number.
+    //
+    // `overallMarks` stays RAW and feeds everything else: lastAttendedOn, the absence
+    // streak, the weekly pattern, the first-session shape, and every pastoral code. A
+    // student on approved mitigating circumstances is one the college should be speaking
+    // to MORE, not one it should stop noticing -- and a sponsoring provider still has to
+    // evidence engagement, which those dates are what answers. Muting the dates would
+    // turn a support measure into a way of losing sight of the student it supports.
+    //
+    // With no attendance-covering claim the two lists are identical and nothing changes.
+    const rateMarks = anyAttendanceCover
+      ? overallMarks.filter((m) => !adjustments.attendanceCovered(m, myClaims, claimOpts))
+      : overallMarks;
+    const recentRateMarks = anyAttendanceCover
+      ? recentMarks.filter((m) => !adjustments.attendanceCovered(m, myClaims, claimOpts))
+      : recentMarks;
+    const priorRateMarks = anyAttendanceCover
+      ? priorMarks.filter((m) => !adjustments.attendanceCovered(m, myClaims, claimOpts))
+      : priorMarks;
+
+    // Unexplained absence is computed from the rate list too, and that is the point of
+    // it: an absence covered by an approved claim is, by definition, explained. Counting
+    // it as unexplained would have the screen report a student as unexplained-absent for
+    // precisely the period the college accepted an explanation for.
+    const counts = attendance.summarise(rateMarks);
     const quality = tripwires.attendanceQuality(counts, {
       lateRecorded, excusedRecorded, minAbsences: config.minAbsencesForShare,
     });
@@ -629,7 +752,7 @@ async function gather(studentIds, config) {
     // Attendance per unit, from the marks already in hand. Grouped in Node — the
     // session's unitId came along on the select that was already being issued.
     const byUnit = new Map();
-    for (const m of overallMarks) {
+    for (const m of rateMarks) {
       if (!m.unitId) continue;
       if (!byUnit.has(m.unitId)) byUnit.set(m.unitId, []);
       byUnit.get(m.unitId).push(m);
@@ -687,11 +810,20 @@ async function gather(studentIds, config) {
       repliesRecorded: queryRepliesRecorded,
     });
 
+    // THE LIVE HARM, and the reason this whole feature exists. moodle.js populates
+    // submittedAt from gradedatesubmitted and this comparison used the assessment's own
+    // dueDate, because nothing recorded that an extension had been granted -- so
+    // TRIP_CHRONIC_LATE fired on students for using an accommodation the college itself
+    // granted them, with nothing on the screen saying so.
+    //
+    // Excluded work leaves the list entirely rather than arriving with a null date: a
+    // null dueDate reads as "nothing to be late against", which counts the piece as ON
+    // TIME and inflates the very rate this is meant to correct.
     const timing = tripwires.submissionTiming(
-      scopedGrades.map((g) => ({
-        submittedOn: g.submittedAt || null,
-        dueDate: g.assessment ? g.assessment.dueDate : null,
-      })),
+      scopedGrades
+        .map((g) => ({ g, eff: effective(g.assessment) }))
+        .filter((x) => x.eff.state !== EXCLUDED)
+        .map(({ g, eff }) => ({ submittedOn: g.submittedAt || null, dueDate: eff.due })),
       { submittedOnRecorded }
     );
 
@@ -706,16 +838,18 @@ async function gather(studentIds, config) {
         // "nothing due" in the last fortnight of every term — when the student is most
         // likely to have work waiting on the other side of the boundary. This figure is
         // about the timetable, and the timetable does not stop at scope.to.
-        if (!a.dueDate) continue;
-        if (a.dueDate >= today && a.dueDate <= soonCutoff) dueSoon += 1;
+        const eff = effective(a);
+        if (eff.state === EXCLUDED) continue;
+        if (!eff.due) continue;
+        if (eff.due >= today && eff.due <= soonCutoff) dueSoon += 1;
       }
     }
 
     const trips = tripwires.evaluate({
       today,
       marks: overallMarks,
-      recent: summariseAttendance(recentMarks, config.attendanceMode),
-      prior: summariseAttendance(priorMarks, config.attendanceMode),
+      recent: summariseAttendance(recentRateMarks, config.attendanceMode),
+      prior: summariseAttendance(priorRateMarks, config.attendanceMode),
       dueUnmarked,
       submissionsRecorded,
       gradeDates: myGrades.map((g) => g.gradedOn || null),
@@ -760,6 +894,10 @@ async function gather(studentIds, config) {
         oldestOpenQueryOn: backlog.oldestOpenQueryOn,
         openQueryCount: backlog.openQueryCount,
         overdueFollowUpCount: missedFollowUps.overdue,
+        openMitigationCount: myClaims.length ? openClaims.length : null,
+        oldestOpenMitigationOn,
+        mitigatedAssessmentCount: myClaims.length ? mitigatedAssessmentCount : null,
+        attendanceMitigated: anyAttendanceCover,
         weightedAverageGrade: weighted.value,
         gradeWasWeighted: weighted.value === null ? null : weighted.weighted,
         markingLatencyDays: latency.meanDays,
@@ -777,8 +915,8 @@ async function gather(studentIds, config) {
       },
       raw: {
         attendance: {
-          overall: summariseAttendance(overallMarks, config.attendanceMode),
-          recent: summariseAttendance(recentMarks, config.attendanceMode),
+          overall: summariseAttendance(rateMarks, config.attendanceMode),
+          recent: summariseAttendance(recentRateMarks, config.attendanceMode),
         },
         assessments: {
           submitted, notSubmitted, unknown, onTime, missing,

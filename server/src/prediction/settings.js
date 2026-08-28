@@ -284,6 +284,29 @@ const DEFAULTS = {
   // rather than reporting every absent student as unable to get out of bed.
   firstSessionMinDays: 3,
 
+  // The longest window one mitigating-circumstances claim may cover, in days. An
+  // unbounded window is a permanent suppression, and a permanent suppression is
+  // indistinguishable from the student having been taken off the risk register
+  // altogether. A college needing longer -- a year out for treatment -- should record
+  // that as an interruption on StudentOutcome, which is what that table is for, rather
+  // than as a claim that silently mutes every signal for twelve months.
+  mitigationWindowMaxDays: 120,
+
+  // Whether an UNDECIDED claim suppresses. Default true, and the reasoning is set out at
+  // length in prediction/adjustments.js: with a claim pending, "did this student fail to
+  // hand work in" is not a question about the student, because the answer depends on a
+  // decision the institution has not taken.
+  //
+  // It is a SETTING rather than a constant because it is a policy judgement wearing code.
+  // If a college's academic regulations say a pending claim has no effect until
+  // determined, that college is entitled to say so, and the alternative -- hardcoding one
+  // reading of somebody else's regulations -- is the worse failure.
+  pendingClaimSuppresses: true,
+
+  // How long a claim may sit undecided before it is reported. A STAFF signal: the delay
+  // belongs to the institution and the student underneath it is the one harmed by it.
+  mitigationUndecidedDays: 14,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -631,6 +654,16 @@ function validate(input) {
       min: 1, max: 100, whole: true,
       label: "The minimum days for a first-session pattern",
       why: "it is how many multi-session teaching days are needed before morning absence is reported as a pattern. At 1 a single bad morning reads as an inability to get here.",
+    }) ||
+    checkNumber(out, "mitigationWindowMaxDays", pick("mitigationWindowMaxDays"), {
+      min: 1, max: 730, whole: true,
+      label: "The longest a mitigating-circumstances claim may cover",
+      why: "an unbounded window is a permanent suppression, which is indistinguishable from the student having been taken off the risk register altogether.",
+    }) ||
+    checkNumber(out, "mitigationUndecidedDays", pick("mitigationUndecidedDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The undecided-claim reporting threshold",
+      why: "it is how long a claim may sit undecided before the delay is reported. The delay is the institution's and the student underneath it is the one harmed by it.",
     });
   if (err) return err;
 
@@ -677,6 +710,26 @@ function validate(input) {
     );
   }
   out.scope = scope;
+
+  /* --- tickboxes -------------------------------------------------------- */
+
+  // The only boolean in the configuration, so it is checked here rather than through a
+  // checkBool helper that would have exactly one caller.
+  //
+  // STRICTLY typed, never coerced. Boolean("false") is true, and a config posted from a
+  // form that stringifies its fields would silently flip a college from "a pending claim
+  // has no effect" to "a pending claim suppresses" — which is a change to who appears on
+  // a risk register, made by nobody, visible on no screen. Refusing is the only safe
+  // reading of a value that is not already a boolean.
+  const pendingClaimSuppresses = pick("pendingClaimSuppresses");
+  if (typeof pendingClaimSuppresses !== "boolean") {
+    return fail(
+      `Whether a pending claim suppresses is "${pendingClaimSuppresses}", which is not true or false. ` +
+      `It decides whether a student with an undecided mitigating-circumstances claim is measured as though they had simply not handed the work in, ` +
+      `so a value that is not a tickbox must be refused rather than guessed at.`
+    );
+  }
+  out.pendingClaimSuppresses = pendingClaimSuppresses;
 
   /* --- modelVersion ----------------------------------------------------- */
 

@@ -89,6 +89,7 @@ const TRIPWIRE_COLUMNS = [
   "attendanceRegularity", "lateSubmissionRate", "meanDaysLate", "weeksIntoProgramme",
   "assessmentsDueSoon", "gradedWithDates", "oldestOpenQueryOn", "openQueryCount", "overdueFollowUpCount",
   "weightedAverageGrade", "gradeWasWeighted", "markingLatencyDays", "firstSessionAbsenceRate", "laterSessionAbsenceRate",
+  "openMitigationCount", "oldestOpenMitigationOn", "mitigatedAssessmentCount", "attendanceMitigated",
 ];
 
 /**
@@ -223,4 +224,55 @@ test("the institution probes destructure exactly as many names as they issue que
     `${names.length} names destructured from ${calls} queries — a probe was added without ` +
     `a name, or a name without a probe. The unbound one is undefined at runtime and ` +
     `throws on the first real recalculation, which no unit test performs.`);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Health data must not reach the risk score                                   */
+/* -------------------------------------------------------------------------- */
+
+// A mitigating circumstance is usually Article 9 special category data: illness, mental
+// health, bereavement, pregnancy, a caring responsibility. It is collected so a college
+// can SUPPORT a student. Scoring it is a different processing purpose from the one it was
+// collected for, and the separation is enforced in exactly one place — the select in
+// metrics.js — which makes it exactly the kind of rule that is quietly widened later by
+// somebody adding a field they happen to want on a screen.
+//
+// So it is asserted from the source text rather than trusted. The engine must know THAT a
+// student has cover, never WHY.
+test("the prediction pipeline never selects the reason for a mitigating circumstance", () => {
+  const src = fs.readFileSync(path.join(__dirname, "metrics.js"), "utf8");
+
+  // The claims select, isolated: from the model name to the closing of its call.
+  const at = src.indexOf("prisma.mitigatingCircumstance.findMany");
+  assert.notEqual(at, -1, "metrics.js no longer reads mitigating circumstances at all — if that is deliberate, delete this test deliberately too");
+  const block = src.slice(at, src.indexOf("});", at));
+
+  // Plain substring tests, deliberately. An earlier version of this used
+  // new RegExp(`\b${name}\s*:`) inside a TEMPLATE LITERAL, where \b is the backspace
+  // escape and \s is a bare "s" -- so it searched for a control character, matched
+  // nothing, and every forbidden field passed. The test proved nothing and looked
+  // thorough while doing it. The needed-fields half below is what exposed it, which is
+  // why both halves are here.
+  for (const forbidden of ["category:", "detail:"]) {
+    assert.ok(
+      !block.includes(forbidden),
+      `metrics.js selects "${forbidden}" from MitigatingCircumstance. That is health data, ` +
+      `collected for student support, and this select is the only thing keeping it out of a risk score.`
+    );
+  }
+
+  // And the fields it MAY read are all present, so a refactor that silently drops the
+  // window cannot leave the suppression looking as though it still works -- and so a
+  // broken matcher here fails loudly instead of passing everything.
+  for (const needed of ["status:", "coversFrom:", "coversTo:", "coversAttendance:"]) {
+    assert.ok(block.includes(needed), `the claims select lost "${needed}"`);
+  }
+});
+// The pure layer must never even be OFFERED the reason, so a future caller cannot pass a
+// whole claim row through and have it quietly work.
+test("adjustments.js reads nothing but the decision and the window", () => {
+  const src = fs.readFileSync(path.join(__dirname, "adjustments.js"), "utf8");
+  for (const forbidden of ["c.category", "c.detail", ".category", ".detail"]) {
+    assert.ok(!src.includes(forbidden), `adjustments.js touches ${forbidden}`);
+  }
 });

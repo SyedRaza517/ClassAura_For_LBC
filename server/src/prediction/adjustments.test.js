@@ -184,3 +184,30 @@ test("a rejected claim excuses no absence however broad its window", () => {
   const claims = [claim({ status: "rejected", coversAttendance: true })];
   assert.equal(attendanceCovered({ date: "2026-03-10" }, claims), false);
 });
+
+/* -------------------------------------------------------------------------- */
+/* The policy switch                                                           */
+/* -------------------------------------------------------------------------- */
+
+test("a college whose regulations say pending has no effect gets the narrower set", () => {
+  // pendingClaimSuppresses:false. The undecided claim stops suppressing and the work is
+  // measured as it always was -- which is a defensible reading of a set of academic
+  // regulations, and not ours to overrule.
+  const cov = buildCoverage([claim({ status: "open" })], { pendingSuppresses: false });
+  assert.equal(effectiveDeadline(work("a1", "2026-03-10"), cov, TODAY).state, STATE.MEASURED);
+});
+
+test("the switch narrows what suppresses and never widens it", () => {
+  // The failure to guard against is the flag accidentally letting a REJECTED claim
+  // through. Turning pending off must only ever remove a status from the live set.
+  const cov = buildCoverage([claim({ status: "rejected" })], { pendingSuppresses: false });
+  assert.equal(effectiveDeadline(work("a1", "2026-03-10"), cov, TODAY).state, STATE.MEASURED);
+  const approved = buildCoverage([claim({ status: "approved" })], { pendingSuppresses: false });
+  assert.equal(effectiveDeadline(work("a1", "2026-03-10"), approved, TODAY).state, STATE.EXCLUDED);
+});
+
+test("attendance cover honours the same switch", () => {
+  const claims = [claim({ status: "open", coversAttendance: true })];
+  assert.equal(attendanceCovered({ date: "2026-03-10" }, claims), true);
+  assert.equal(attendanceCovered({ date: "2026-03-10" }, claims, { pendingSuppresses: false }), false);
+});

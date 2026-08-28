@@ -125,13 +125,24 @@ function effectiveDeadline(assessment, coverage, today) {
  * belongs in settings.js as `pendingClaimSuppresses` rather than as a constant here.
  */
 const SUPPRESSING = new Set(["approved", "open"]);
+const APPROVED_ONLY = new Set(["approved"]);
 
-function buildCoverage(claims) {
+/** Which statuses suppress, under this college's regulations.
+ *
+ *  DEFAULTS TO INCLUDING PENDING, which is the argued position above. A college whose
+ *  academic regulations say a claim has no effect until determined sets
+ *  pendingClaimSuppresses false in its prediction settings and gets the narrower set. It
+ *  is a setting rather than a constant because it is a policy judgement wearing code, and
+ *  hardcoding one reading of somebody else's regulations is the worse failure. */
+const suppressing = (opts) => (opts && opts.pendingSuppresses === false ? APPROVED_ONLY : SUPPRESSING);
+
+function buildCoverage(claims, opts) {
+  const live = suppressing(opts);
   const byAssessment = new Map();
   const windows = [];
 
   for (const c of claims || []) {
-    if (!c || !SUPPRESSING.has(c.status)) continue;
+    if (!c || !live.has(c.status)) continue;
 
     const adjustments = c.adjustments || [];
     if (adjustments.length) {
@@ -167,13 +178,32 @@ function buildCoverage(claims) {
  * a sponsoring provider still has to evidence engagement, which those dates are what
  * answers.
  */
-function attendanceCovered(mark, claims) {
+function attendanceCovered(mark, claims, opts) {
   if (!mark || !mark.date) return false;
+  const live = suppressing(opts);
   for (const c of claims || []) {
-    if (!c || !c.coversAttendance || !SUPPRESSING.has(c.status)) continue;
+    if (!c || !c.coversAttendance || !live.has(c.status)) continue;
     if (inWindow(mark.date, c.coversFrom, c.coversTo)) return true;
   }
   return false;
 }
 
-module.exports = { effectiveDeadline, buildCoverage, attendanceCovered, STATE, SUPPRESSING };
+/** Does ANY live claim excuse attendance for this student?
+ *
+ *  Exists so the caller never has to ask which statuses count -- that question has one
+ *  answer and it lives in this file. A copy of the status test in metrics.js would be a
+ *  second place for the policy switch to be got wrong, and the two would drift.
+ *
+ *  Returns null for a student with NO CLAIMS AT ALL, which is not the same as false.
+ *  "No claim covers attendance" is a finding; "this student has nothing on file" is the
+ *  absence of one, and the column it feeds is nullable for exactly that reason. */
+function coversAnyAttendance(claims, opts) {
+  if (!claims || !claims.length) return null;
+  const live = suppressing(opts);
+  return claims.some((c) => c && c.coversAttendance && live.has(c.status));
+}
+
+module.exports = {
+  effectiveDeadline, buildCoverage, attendanceCovered, coversAnyAttendance,
+  STATE, SUPPRESSING, APPROVED_ONLY,
+};

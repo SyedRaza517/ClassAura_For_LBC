@@ -427,6 +427,8 @@ model Tenant {
   studentPredictionCurrent StudentPredictionCurrent[]
   studentPredictionHistory StudentPredictionHistory[]
   intervention             Intervention[]
+  mitigatingCircumstance   MitigatingCircumstance[]
+  assessmentAdjustment     AssessmentAdjustment[]
 
   @@index([active])
 }
@@ -969,6 +971,7 @@ model Assessment {
   createdAt DateTime @default(now())
 
   grades AssessmentGrade[]
+  adjustments AssessmentAdjustment[]
   // Whether the work was handed in, which a grade row cannot answer — a grade only
   // exists once the work has been MARKED. See AssessmentSubmission.
   submissions AssessmentSubmission[]
@@ -1053,6 +1056,7 @@ model Student {
   slcApplications   SlcApplication[]
   admissions        Admission[]
   interventions     Intervention[]
+  circumstances     MitigatingCircumstance[]
 
   @@index([cohortId])
 
@@ -2087,6 +2091,20 @@ model StudentPredictionCurrent {
   /// session: a single-register day has no later session to compare against.
   firstSessionAbsenceRate Float?
   laterSessionAbsenceRate Float?
+  /// A claim sitting undecided, and the date the oldest was raised. A STAFF signal in the
+  /// same family as markingLatencyDays: the delay is the institution's, and the student
+  /// underneath it is the one being harmed by it. Reported, never scored.
+  /// The DATE is stored and the day count derived at render -- nothing here runs on a
+  /// schedule, so "19 days" written to a column is wrong by the next morning.
+  openMitigationCount      Int?
+  oldestOpenMitigationOn   String?
+  /// How many assessments a claim removed from the fractions, so a reader can see that
+  /// the denominator shrank. Without it a 100%% submission rate from two assessments
+  /// looks identical to one from twelve.
+  mitigatedAssessmentCount Int?
+  /// Whether any approved claim excused attendance. Nullable rather than defaulting
+  /// false: "no claim covers attendance" and "we have not looked" are different facts.
+  attendanceMitigated      Boolean?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2299,6 +2317,20 @@ model StudentPredictionHistory {
   /// session: a single-register day has no later session to compare against.
   firstSessionAbsenceRate Float?
   laterSessionAbsenceRate Float?
+  /// A claim sitting undecided, and the date the oldest was raised. A STAFF signal in the
+  /// same family as markingLatencyDays: the delay is the institution's, and the student
+  /// underneath it is the one being harmed by it. Reported, never scored.
+  /// The DATE is stored and the day count derived at render -- nothing here runs on a
+  /// schedule, so "19 days" written to a column is wrong by the next morning.
+  openMitigationCount      Int?
+  oldestOpenMitigationOn   String?
+  /// How many assessments a claim removed from the fractions, so a reader can see that
+  /// the denominator shrank. Without it a 100%% submission rate from two assessments
+  /// looks identical to one from twelve.
+  mitigatedAssessmentCount Int?
+  /// Whether any approved claim excused attendance. Nullable rather than defaulting
+  /// false: "no claim covers attendance" and "we have not looked" are different facts.
+  attendanceMitigated      Boolean?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
@@ -2434,6 +2466,147 @@ model StudentOutcome {
   @@index([effectiveOn])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// A claim that something happened to a student which the college has agreed to take
+/// into account. Extensions, deferrals, and excused absence.
+///
+/// WHY THIS TABLE EXISTS. Nothing in this schema recorded that a college granted
+/// somebody extra time, so the prediction layer saw only that work arrived late or had
+/// not arrived. TRIP_CHRONIC_LATE is live today -- moodle.js populates submittedAt from
+/// gradedatesubmitted, and metrics.js compares it against the assessment's own dueDate --
+/// so the college was reporting a student as chronically late for using an accommodation
+/// the college itself granted them, with nothing on the screen saying so.
+///
+/// THIS IS SPECIAL CATEGORY DATA AND THE SCHEMA IS SHAPED AROUND THAT.
+///
+/// A mitigating circumstance is very often health data: illness, mental health,
+/// bereavement, pregnancy, a caring responsibility. Under UK GDPR Article 9 that is
+/// special category data, and it is being collected for student support -- not for
+/// building a risk score.
+///
+/// So the substance and the effect are SEPARATED IN THE ROW ITSELF:
+///
+///   - `status`, `coversFrom`, `coversTo`, `coversAttendance` and the adjustments say
+///     WHAT the college decided. The prediction pipeline selects these and only these.
+///   - `category` and `detail` say WHY. NOTHING in server/src/prediction/ may select
+///     them, and prediction/adjustments.js is a pure function that never receives them.
+///
+/// The engine must know THAT a student has cover, never WHY. That line is enforced by
+/// the select in metrics.js and asserted by a test; widening that select puts health
+/// data into a risk score, which is a different processing purpose from the one it was
+/// collected for.
+///
+/// The audit trail carries the fact of a decision and never the category -- the same
+/// rule interactions.js already applies to pastoral notes, and for the same reason: the
+/// audit log is read on Settings and Staff by admins never granted this page.
+model MitigatingCircumstance {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  /// "open" | "approved" | "rejected" | "withdrawn". Validated in the route layer
+  /// rather than by a Prisma enum, matching the rest of this schema.
+  ///
+  /// APPROVED and OPEN suppress; REJECTED and WITHDRAWN contribute nothing. The
+  /// undecided case is argued at length in prediction/adjustments.js -- briefly: with a
+  /// claim pending, "did this student fail to hand work in" is not a question about the
+  /// student, because the answer depends on a decision the institution has not taken.
+  /// Counting it against them would punish the student for the length of the college's
+  /// own decision queue.
+  status    String  @default("open")
+
+  /// The window covered, YYYY-MM-DD, inclusive at both ends.
+  ///
+  /// CAPPED AT VALIDATION. An unbounded window is a permanent suppression, and a
+  /// permanent suppression is indistinguishable from the student having been removed
+  /// from the risk register altogether. The cap is a per-tenant setting so a college
+  /// widens it deliberately rather than by leaving a field blank.
+  coversFrom String
+  coversTo   String
+
+  /// Whether this claim excuses ATTENDANCE as well as assessment deadlines.
+  ///
+  /// OPT-IN PER CLAIM, NEVER IMPLIED BY A CATEGORY. Suppressing attendance removes
+  /// sessions from BOTH sides of the percentage, which is a far larger act than
+  /// suppressing a submission count -- an extension on one deadline must not silently
+  /// also excuse three weeks of absence. And even when set it never reaches
+  /// lastAttendedOn, the absence streak or any pastoral code: a student on approved
+  /// mitigating circumstances is one the college should be speaking to MORE, and a
+  /// sponsoring provider still has to evidence engagement.
+  coversAttendance Boolean @default(false)
+
+  /// WHY -- special category data. Never selected by the prediction pipeline. Nullable
+  /// because a college that has not recorded a category should say so rather than be
+  /// forced into a guess, and because a claim can be actioned without one.
+  category String?
+  /// Free text. Same restriction, more strongly: this is where a student describes a
+  /// bereavement or a diagnosis in their own words.
+  detail   String  @default("")
+
+  /// When the student raised it, NOT when an administrator typed it in. Those differ by
+  /// days or weeks, and the gap between them is the college's own response time.
+  raisedOn     String
+  decidedOn    String?
+  decidedBy    String?
+  /// The reason for the decision, shown to staff. Not the student's account of events --
+  /// that is `detail`.
+  decisionNote String  @default("")
+
+  createdBy String?
+  createdAt DateTime @default(now())
+  /// Set on every write. The watermark for "how long has this been sitting undecided"
+  /// is taken from here and never from raisedOn, which is backdatable by design -- the
+  /// same fault that had to be fixed on Interaction.
+  updatedAt DateTime @updatedAt
+
+  adjustments AssessmentAdjustment[]
+
+  @@index([studentId])
+  @@index([status])
+  @@index([coversFrom])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// What a claim actually changed for one piece of work.
+///
+/// A claim with NO adjustment rows is not incomplete -- it is the ordinary state at the
+/// moment of approval, before anybody has sat down to set new dates, and it is precisely
+/// when the student most needs the suppression. prediction/adjustments.js treats such a
+/// claim as a blanket window over the work due inside it, so cover cannot be made to
+/// wait on administrative work that has not happened yet.
+model AssessmentAdjustment {
+  id             String                 @id @default(cuid())
+  circumstance   MitigatingCircumstance @relation(fields: [circumstanceId], references: [id], onDelete: Cascade)
+  circumstanceId String
+  assessment     Assessment             @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  assessmentId   String
+
+  /// "extension" -- a new deadline, which is a deadline and not an exemption: an
+  /// extension that has itself run out makes the work late again.
+  /// "exclusion" -- this piece is not required of this student in this scope, and leaves
+  /// BOTH sides of every fraction. Never counted as submitted, never as on time, never
+  /// as missing.
+  adjustmentType String
+  /// Required for an extension, null for an exclusion. An "extension" moving a deadline
+  /// EARLIER is refused at validation and, belt and braces, ignored by
+  /// prediction/adjustments.js -- so a mistyped row can only ever be harmless.
+  revisedDueDate String?
+
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@unique([circumstanceId, assessmentId])
+  @@index([assessmentId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
