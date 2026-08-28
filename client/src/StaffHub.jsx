@@ -2741,6 +2741,8 @@ const DRIVER_LABELS = {
   TRIP_CHRONIC_LATE: "Work is regularly handed in late",
   TRIP_REPEAT_CONCERN: "The same concern raised in more than one review",
   TRIP_REVIEW_OVERDUE: "An intervention is past its agreed review date",
+  TRIP_QUERY_UNANSWERED: "A question this student asked has gone unanswered",
+  TRIP_CONTACT_DEFICIT: "Flagged as at risk, and nobody has spoken to them",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -2748,6 +2750,7 @@ const DRIVER_LABELS = {
  *  worded so nobody mistakes an institutional failing for a student's. */
 const INSTITUTIONAL_TRIPS = new Set([
   "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
+  "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT",
 ]);
 
 /** A code that came from the tripwire layer rather than the engine's own indicators.
@@ -3189,7 +3192,10 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Last engaged", p.lastEngagedOn ? `${daysAgo(p.lastEngagedOn)} days ago` : "—"],
     ["Week-to-week spread", p.attendanceRegularity == null ? "—" : `±${p.attendanceRegularity}`],
     ["Units with nothing banked", p.unpassedUnitCount == null ? "—" : p.unpassedUnitCount],
-    ["Handed in late", pctOrDash(p.lateSubmissionRate)],
+    // The sample, beside the percentage. The column exists precisely so 100% from three
+    // pieces does not render identically to 100% from thirty.
+    ["Handed in late", p.lateSubmissionRate == null ? "—"
+      : `${p.lateSubmissionRate}%${p.gradedWithDates ? ` of ${p.gradedWithDates}` : ""}`],
     ["Work due soon", p.assessmentsDueSoon == null ? "—" : p.assessmentsDueSoon],
     ["Weeks on programme", p.weeksIntoProgramme == null ? "—" : p.weeksIntoProgramme],
   ];
@@ -3301,7 +3307,7 @@ function PredictionDetail({ detail, bands, onChanged }) {
                       )}
                       {c === "TRIP_CHRONIC_LATE" && p.lateSubmissionRate != null && (
                         <b className="ml-1 font-semibold">
-                          — {p.lateSubmissionRate}% of marked work{p.meanDaysLate ? `, ${p.meanDaysLate} days on average` : ""}
+                          — {p.lateSubmissionRate}% of {p.gradedWithDates ?? "marked"} pieces{p.meanDaysLate ? `, ${p.meanDaysLate} days on average` : ""}
                         </b>
                       )}
                       {INSTITUTIONAL_TRIPS.has(c) && (

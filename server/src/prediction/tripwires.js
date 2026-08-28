@@ -65,6 +65,10 @@ const TRIP = {
   REPEAT_CONCERN: "TRIP_REPEAT_CONCERN",
   // Institutional: an intervention nobody went back to.
   REVIEW_OVERDUE: "TRIP_REVIEW_OVERDUE",
+  // Institutional: a question the student asked and nobody answered.
+  QUERY_UNANSWERED: "TRIP_QUERY_UNANSWERED",
+  // Institutional: the engine flagged this student and nobody went.
+  CONTACT_DEFICIT: "TRIP_CONTACT_DEFICIT",
 };
 
 const TRIP_CODES = Object.values(TRIP);
@@ -175,7 +179,13 @@ function attendanceQuality(counts, opts) {
   // — makes every absent student read as 100% unexplained. That is the mirror image of
   // the lateness trap below and it errs the other way: it manufactures alarm rather
   // than reassurance. Same institution-level question, same null answer.
-  const unexplainedShare = opts && opts.excusedRecorded && absences > 0
+  // AND A MINIMUM DENOMINATOR, like every other rate in this file. One unexcused
+  // absence reads 100%, and the screen renders "Absence unexplained — 100%": a pattern
+  // claimed from a single data point. slopeMinMarks, disperseMinMarks,
+  // lateSubmissionMinPieces and the two-mark floor on volatility are all this same
+  // guard; this one was written without it.
+  const floor = (opts && opts.minAbsences) || 1;
+  const unexplainedShare = opts && opts.excusedRecorded && absences >= floor
     ? round1(((c.A || 0) / absences) * 100)
     : null;
 
@@ -375,8 +385,12 @@ function weeklyRegularity(marks) {
 function submissionTiming(marked, opts) {
   // The institution guard again, third of its kind. If nothing anywhere carries a
   // submission date, "0% late" describes the integration rather than the students.
+  // gradedWithDates is NULL here, not 0. This branch returns before counting anything,
+  // because the institution carries no submission dates at all — so a stored 0 would
+  // say "we counted and found none" about a sample nobody looked at. The migration
+  // that added the column says exactly this.
   if (!opts || !opts.submittedOnRecorded) {
-    return { lateRate: null, meanDaysLate: null, gradedWithDates: 0 };
+    return { lateRate: null, meanDaysLate: null, gradedWithDates: null };
   }
 
   let onTime = 0, late = 0, totalDaysLate = 0;
@@ -452,6 +466,110 @@ function repeatConcerns(perReview, since) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Questions the college has not answered                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The oldest question this student asked that nobody has answered.
+ *
+ * THE COLLEGE'S FAILING, NOT THE STUDENT'S. A student who used the one channel the
+ * college gave them and got silence back is the clearest evidence in the dataset of
+ * an institution failing a person, and no weighted mean of their attendance can
+ * express it.
+ *
+ * A DATE, NOT A DAY COUNT, like everything else here.
+ *
+ * @param {Array<{createdOn, status, respondedAt}>} queries  createdAt already
+ *        truncated to the college's own zone by the caller
+ * @param {{repliesRecorded:boolean}} opts
+ */
+function queryBacklog(queries, opts) {
+  const list = (queries || []).filter(Boolean);
+
+  // THE INSTITUTION GUARD, one level in from the obvious one. A college with no
+  // queries produces no open queries and cannot fire, so that case needs no guard.
+  // The case that does: staff who read queries in the app and reply in person never
+  // press Respond, so every query the college ever received sits at "open" for ever.
+  // That is a fact about the workflow, not about anybody's wait, and without this the
+  // code fires for the whole institution at once.
+  if (!opts || !opts.repliesRecorded) return { oldestOpenQueryOn: null, openQueryCount: null };
+
+  // NO QUERIES AT ALL IS NULL, NOT ZERO, and this is the trap. A student who sent
+  // three questions and had all three answered has an open count of ZERO, and that
+  // zero is real news: this college answers this person. A student who never asked
+  // anything also has nothing open, and reporting 0 for them claims the college
+  // answered questions that were never asked.
+  if (!list.length) return { oldestOpenQueryOn: null, openQueryCount: null };
+
+  let oldestOpenQueryOn = null;
+  let openQueryCount = 0;
+
+  for (const item of list) {
+    if (item.status === "answered" || item.respondedAt) continue;
+    openQueryCount += 1;
+    // Still open and still counted, but it cannot be placed on a calendar and so
+    // cannot be aged. Dropping it would hide a waiting student; dating it to the epoch
+    // would put them top of the list on no evidence.
+    if (!item.createdOn) continue;
+    if (!oldestOpenQueryOn || item.createdOn < oldestOpenQueryOn) oldestOpenQueryOn = item.createdOn;
+  }
+
+  return { oldestOpenQueryOn, openQueryCount };
+}
+
+/* -------------------------------------------------------------------------- */
+/* A high-risk student nobody has spoken to                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The college's own promise, unkept: this student sits at or below the band at which
+ * somebody is supposed to make contact, and nobody has.
+ *
+ * WHY THE RISK LEVEL IS A PARAMETER AND NOT READ FROM THE DATABASE — which is the
+ * whole reason this is not called from evaluate().
+ *
+ * StudentPredictionCurrent.riskLevel is stale BY CONSTRUCTION for anybody being
+ * scored: a student is in this batch BECAUSE stale is true, and the row is about to be
+ * overwritten by the very run asking the question. A deficit computed from it is a
+ * deficit against last month's risk, and it would be worst exactly where it matters —
+ * a student who has just deteriorated into the band would be measured against the
+ * comfortable band they held a fortnight ago, and stay silent. So this takes the band
+ * the engine produced THIS run, handed over by runner.js downstream of score().
+ *
+ * WHY IT MAY FIRE ALONGSIDE NO_PASTORAL_CONTACT. It may, and that is accepted rather
+ * than filtered. Overlap is already how this file behaves — ABSENCE_STREAK and
+ * NOT_SEEN both fire on one disappearance. These are two findings, and this one names
+ * an urgency the other does not: silence around a student the college's own engine has
+ * flagged is a different failure from silence around a student who is fine.
+ */
+function contactDeficit(state, config) {
+  const s = state || {};
+  const codes = [];
+
+  // The same institution guard NO_PASTORAL_CONTACT needs. A null lastContactOn means
+  // "nobody has spoken to them" OR "this college has no pastoral module", and at a
+  // college of the second kind EVERY student's date is null — so a per-chunk guard
+  // would look correct and be inverted.
+  if (!s.pastoralRecorded) return { codes };
+
+  const bands = config.bands || [];
+  const at = bands.findIndex((b) => b.key === s.riskLevel);
+  const threshold = bands.findIndex((b) => b.key === config.contactDeficitBand);
+  // Bands run best to worst, so a higher index is worse — the comparison engine.js
+  // already uses for interventionRequired. An unknown band raises nothing rather than
+  // assuming the worst: a null riskLevel is a configuration fault, not a finding about
+  // this student.
+  if (at < 0 || threshold < 0 || at < threshold) return { codes };
+
+  const never = !s.lastContactOn;
+  if (never || daysBetween(s.lastContactOn, s.today) >= config.contactDeficitDays) {
+    codes.push(TRIP.CONTACT_DEFICIT);
+  }
+
+  return { codes };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Engagement recency                                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -471,7 +589,14 @@ function repeatConcerns(perReview, since) {
  */
 function engagementRecency(dates) {
   const d = dates || {};
-  const known = [d.lastAttendedOn, d.lastGradedOn, d.lastPastoralOn].filter(Boolean);
+  // A query the STUDENT sent is the strongest of the four: the other three are things
+  // the college did to them — a register taken, work marked, a meeting logged — and a
+  // query is the one they initiated. Included for RECENCY only. How many queries a
+  // student sends is deliberately not built: high volume is an engaged student or a
+  // struggling one, the field that would separate them is free text this layer never
+  // reads, and the count varies by an order of magnitude between colleges purely by
+  // which channel each one told its students to use.
+  const known = [d.lastAttendedOn, d.lastGradedOn, d.lastPastoralOn, d.lastQueryOn].filter(Boolean);
   if (!known.length) return null;
   return known.reduce((max, cur) => (cur > max ? cur : max));
 }
@@ -671,6 +796,19 @@ function evaluate(raw, config) {
     if ((pastoral.repeated || []).length) codes.push(TRIP.REPEAT_CONCERN);
   }
 
+  /* --- a question nobody answered ---------------------------------------- */
+
+  // INSTITUTIONAL, and NOT covered by the settling-in exemption. That exemption
+  // suppresses codes firing on the ABSENCE of a record; this fires on the PRESENCE of
+  // an unanswered one, so it belongs with ABSENCE_STREAK. A student who asked
+  // something in week one and heard nothing for a fortnight is precisely who a
+  // settling-in grace must not silence.
+  const queries = raw.queries || {};
+  if (queries.oldestOpenQueryOn
+      && daysBetween(queries.oldestOpenQueryOn, today) >= config.unansweredQueryDays) {
+    codes.push(TRIP.QUERY_UNANSWERED);
+  }
+
   /* --- handing work in late ---------------------------------------------- */
 
   // A MINIMUM DENOMINATOR, like every other rate in this file. One marked piece handed
@@ -703,5 +841,6 @@ function evaluate(raw, config) {
 module.exports = {
   evaluate, attendanceShape, attendanceQuality, attainmentShape, engagementRecency,
   unitDispersion, unpassedUnits, weeklyRegularity, submissionTiming, repeatConcerns,
+  queryBacklog, contactDeficit,
   TRIP, TRIP_CODES,
 };

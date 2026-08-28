@@ -1001,3 +1001,107 @@ test("a concern repeated inside the window still counts", () => {
 
   assert.deepEqual(r.repeated, ["Wellbeing"]);
 });
+
+/* ========================================================================== */
+/* Tranche 6 — the college's side of the conversation                         */
+/* ========================================================================== */
+
+const { queryBacklog, contactDeficit } = require("./tripwires");
+
+const q = (createdOn, over = {}) => ({ createdOn, status: "open", respondedAt: null, ...over });
+
+test("the oldest unanswered question is reported, not the most recent", () => {
+  const r = queryBacklog([q("2026-03-01"), q("2026-01-15"), q("2026-02-20")], { repliesRecorded: true });
+  assert.equal(r.oldestOpenQueryOn, "2026-01-15");
+  assert.equal(r.openQueryCount, 3);
+});
+
+test("an answered question is not waiting, however long the college took", () => {
+  const r = queryBacklog([q("2025-01-01", { status: "answered", respondedAt: "2026-03-01" })],
+    { repliesRecorded: true });
+  assert.equal(r.oldestOpenQueryOn, null);
+  assert.equal(r.openQueryCount, 0);
+});
+
+test("a student who has never asked anything has a NULL count, not a count of zero", () => {
+  // Paired with the test above, which pins 0 as a REAL value meaning "the college
+  // answered everything they asked". A naive open.length returns 0 for both, printing
+  // reassurance about a student who never got the chance to be ignored.
+  const r = queryBacklog([], { repliesRecorded: true });
+  assert.equal(r.openQueryCount, null);
+  assert.equal(r.oldestOpenQueryOn, null);
+});
+
+test("a college that answers out of band does not accuse itself", () => {
+  // Staff who read queries in the app and reply in person never press Respond, so every
+  // query the college has ever received sits at "open" forever. That is a workflow
+  // fact, not a student's wait.
+  const r = queryBacklog([q("2025-01-01")], { repliesRecorded: false });
+  assert.equal(r.oldestOpenQueryOn, null);
+  assert.equal(r.openQueryCount, null);
+});
+
+test("a query marked open but carrying a response date is treated as answered", () => {
+  const r = queryBacklog([q("2025-01-01", { respondedAt: "2025-01-03" })], { repliesRecorded: true });
+  assert.equal(r.openQueryCount, 0);
+});
+
+test("an open query with no usable date is counted but never aged", () => {
+  const r = queryBacklog([q(null)], { repliesRecorded: true });
+  assert.equal(r.openQueryCount, 1);
+  assert.equal(r.oldestOpenQueryOn, null);
+});
+
+test("a question left unanswered beyond the window is the college's failing", () => {
+  const r = evaluate(input({
+    today: "2026-03-20",
+    queries: { oldestOpenQueryOn: "2026-03-01", openQueryCount: 1 },
+  }), { ...DEFAULTS, unansweredQueryDays: 5 });
+
+  assert.ok(r.codes.includes(TRIP.QUERY_UNANSWERED));
+});
+
+/* --- the contact deficit -------------------------------------------------- */
+
+const deficit = (over = {}) => contactDeficit({
+  riskLevel: "R4", lastContactOn: null, pastoralRecorded: true, today: "2026-03-20", ...over,
+}, DEFAULTS).codes;
+
+test("a high-risk student nobody has ever spoken to raises the deficit", () => {
+  assert.ok(deficit().includes(TRIP.CONTACT_DEFICIT));
+});
+
+test("a worse band raises it too, pinning the index direction", () => {
+  assert.ok(deficit({ riskLevel: "R5" }).includes(TRIP.CONTACT_DEFICIT));
+});
+
+test("the same silence at a comfortable risk level raises nothing", () => {
+  // Without the risk cross this is indistinguishable from NO_PASTORAL_CONTACT.
+  assert.deepEqual(deficit({ riskLevel: "R1" }), []);
+});
+
+test("a college with no pastoral module is not accused of ignoring its high-risk students", () => {
+  assert.deepEqual(deficit({ riskLevel: "R5", pastoralRecorded: false }), []);
+});
+
+test("a high-risk student spoken to inside the shorter window raises nothing", () => {
+  assert.deepEqual(deficit({ lastContactOn: "2026-03-18" }), []);
+});
+
+test("the deficit fires where the general contact code would not yet", () => {
+  // 19 days: past contactDeficitDays (14), well inside staleContactDays (42). This is
+  // the test that proves the signal adds something NO_PASTORAL_CONTACT does not.
+  assert.ok(deficit({ lastContactOn: "2026-03-01" }).includes(TRIP.CONTACT_DEFICIT));
+});
+
+test("an unknown band raises nothing rather than assuming the worst", () => {
+  assert.deepEqual(deficit({ riskLevel: null }), []);
+  assert.deepEqual(deficit({ riskLevel: "R9" }), []);
+});
+
+test("a query the student sent counts as engagement", () => {
+  const r = engagementRecency({
+    lastAttendedOn: "2026-03-01", lastGradedOn: null, lastPastoralOn: null, lastQueryOn: "2026-03-11",
+  });
+  assert.equal(r, "2026-03-11");
+});

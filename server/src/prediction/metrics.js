@@ -19,7 +19,8 @@
 // inventing "not submitted" from silence would raise a missing-work flag on every
 // student in a college that has never synced submissions.
 const prisma = require("../db");
-const { localDate } = require("../clock");
+const { localDate, ZONE } = require("../clock");
+const { isoDate } = require("../vle/isoDate");
 const attendance = require("../attendance");
 const tripwires = require("./tripwires");
 
@@ -141,6 +142,7 @@ async function gather(studentIds, config) {
   // inclusive at each end, so the span is recentAttendanceDays + 1 days on each side —
   // equal is what matters, not the exact count.
   const concernSince = shiftDays(today, -config.concernWindowDays);
+  const noShowSince = shiftDays(today, -config.noShowWindowDays);
   const priorTo = shiftDays(recentFrom, -1);
   const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays);
 
@@ -164,13 +166,21 @@ async function gather(studentIds, config) {
   // Six cheap existence probes, once per run, unfiltered by student and issued together
   // — none of them depends on any other, so serialising them would add round trips to
   // every chunk for no reason.
-  const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows] = await Promise.all([
+  const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
+         answeredQueryRows] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
     prisma.attendanceMark.count({ where: { status: "E" } }),
     prisma.assessmentGrade.count({ where: { NOT: { submittedAt: null } } }),
     prisma.assessmentSubmission.count(),
+    // Does this college answer queries THROUGH the system? Staff who read a query in
+    // the app and reply in person never press Respond, so every query the college has
+    // ever received sits at "open" for ever. That is a workflow fact, not a student's
+    // wait — and computing it from the chunk would suppress the code for exactly the
+    // students it exists to find, since a chunk of ignored students contains no
+    // answered queries. The pastoral pair failed this way once already.
+    prisma.studentQuery.count({ where: { status: "answered" } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -188,6 +198,7 @@ async function gather(studentIds, config) {
   // table, a chunk of one student with no submission rows would conclude the college
   // does not record submissions and silently switch TRIP_UNMARKED_WORK off for them.
   const submissionsRecorded = submissionRows > 0;
+  const queryRepliesRecorded = answeredQueryRows > 0;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
   const pastoralInUse = contactRows > 0 || reviewRows > 0;
@@ -361,11 +372,46 @@ async function gather(studentIds, config) {
     select: { studentId: true, date: true, progress: true, concerns: true },
   });
 
+  // A THIRD PASTORAL QUERY PER CHUNK, and it earns its round trip: a student who used
+  // the one channel the college gave them and got silence is not derivable from
+  // anything already fetched.
+  //
+  // THE SELECT IS NARROW ON PURPOSE. `subject`, `message` and `response` are free text
+  // a student wrote about their own circumstances — money, health, a disclosure — and
+  // they are gated behind the "studentqueries" page. This gather feeds a row read
+  // behind requirePage("prediction"), a DIFFERENT grant. Four scalars cross that
+  // boundary; nothing anybody wrote does. sAdmission is the standing warning.
+  const studentQueries = await prisma.studentQuery.findMany({
+    where: { studentId: { in: studentIds } },
+    select: { studentId: true, status: true, respondedAt: true, createdAt: true },
+  });
+
+  const queriesByStudent = new Map();
+  for (const sq of studentQueries) {
+    if (!queriesByStudent.has(sq.studentId)) queriesByStudent.set(sq.studentId, []);
+    queriesByStudent.get(sq.studentId).push({
+      status: sq.status,
+      respondedAt: sq.respondedAt,
+      // createdAt is the ONLY DateTime among these inputs, and everything downstream
+      // compares YYYY-MM-DD as strings, so it is truncated once, here.
+      //
+      // NOT .toISOString().slice(0,10), which is UTC. A query sent at 00:30 BST reads
+      // as 23:30 the night before, dating it a day early and making the college look a
+      // day slower than it was — and this signal exists to accuse the college, so it
+      // must never round in the direction of the accusation.
+      createdOn: sq.createdAt ? isoDate(sq.createdAt.toISOString(), ZONE) : null,
+    });
+  }
+
   const pastoralByStudent = new Map();
   for (const c of contacts) {
     const cur = pastoralByStudent.get(c.studentId) || { lastContactOn: null, noShowCount: 0, progress: null };
     if (c.date && (!cur.lastContactOn || c.date > cur.lastContactOn)) cur.lastContactOn = c.date;
-    if (NO_SHOW_TYPES.includes(c.queryType)) cur.noShowCount += 1;
+    // WINDOWED, like the repeated concern beside it. Unbounded, a student who missed
+    // two arranged meetings in their first term stays on the caseload for the rest of
+    // the programme however faithfully they attend afterwards — and no amount of good
+    // behaviour can decrement a count that only ever goes up.
+    if (NO_SHOW_TYPES.includes(c.queryType) && (!c.date || c.date >= noShowSince)) cur.noShowCount += 1;
     pastoralByStudent.set(c.studentId, cur);
   }
   for (const r of reviews) {
@@ -527,7 +573,9 @@ async function gather(studentIds, config) {
     // points model folds L and E into a single percentage. Lateness and unexplained
     // absence are orthogonal to both models and are reported as their own figures.
     const counts = attendance.summarise(overallMarks);
-    const quality = tripwires.attendanceQuality(counts, { lateRecorded, excusedRecorded });
+    const quality = tripwires.attendanceQuality(counts, {
+      lateRecorded, excusedRecorded, minAbsences: config.minAbsencesForShare,
+    });
 
     const attainment = tripwires.attainmentShape(scopedGrades.map((g) => g.pct), config);
 
@@ -572,6 +620,10 @@ async function gather(studentIds, config) {
 
     // Late submission, read from the marks rather than from AssessmentSubmission —
     // that table is written by nothing. Scoped like the average grade is.
+    const backlog = tripwires.queryBacklog(queriesByStudent.get(id) || [], {
+      repliesRecorded: queryRepliesRecorded,
+    });
+
     const timing = tripwires.submissionTiming(
       scopedGrades.map((g) => ({
         submittedOn: g.submittedAt || null,
@@ -609,6 +661,7 @@ async function gather(studentIds, config) {
       dispersion,
       banked,
       timing,
+      queries: backlog,
       weeksIntoProgramme: weeksByStudent.get(id) ?? null,
       interventions: { overdueReviews: overdueReviews.get(id) || 0 },
     }, config);
@@ -621,6 +674,9 @@ async function gather(studentIds, config) {
       lastAttendedOn: trips.lastAttendedOn,
       lastGradedOn,
       lastPastoralOn: pastoral ? pastoral.lastContactOn : null,
+      lastQueryOn: (queriesByStudent.get(id) || []).reduce(
+        (max, sq) => (sq.createdOn && (!max || sq.createdOn > max) ? sq.createdOn : max), null
+      ),
     });
 
     out.set(id, {
@@ -638,6 +694,15 @@ async function gather(studentIds, config) {
         lateSubmissionRate: timing.lateRate,
         meanDaysLate: timing.meanDaysLate,
         gradedWithDates: timing.gradedWithDates,
+        oldestOpenQueryOn: backlog.oldestOpenQueryOn,
+        openQueryCount: backlog.openQueryCount,
+        // Forwarded for the contact deficit, which crosses the risk level with these
+        // dates and therefore CANNOT be computed here: gather() runs before score(),
+        // so the only risk level visible to it is the previous run's — and every
+        // student in this batch is here precisely because that row is stale.
+        // runner.js does the cross, downstream of scoring.
+        lastPastoralOn: pastoral ? pastoral.lastContactOn : null,
+        pastoralRecorded: pastoralInUse,
         weeksIntoProgramme: weeksByStudent.get(id) ?? null,
         assessmentsDueSoon: dueSoon,
       },

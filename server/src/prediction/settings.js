@@ -236,6 +236,32 @@ const DEFAULTS = {
   // and no number of clean reviews since could clear it.
   concernWindowDays: 180,
 
+  // How far back a missed meeting counts. Unbounded, a student who missed two
+  // arranged meetings in their first term would sit on the caseload for the rest of
+  // the programme however faithfully they attended afterwards — the same failure the
+  // repeated-concern window above exists to prevent, in the signal beside it.
+  noShowWindowDays: 180,
+
+  // How long a question a student asked may sit unanswered before that is worth
+  // reporting. This one describes the COLLEGE, and is set shorter than
+  // staleContactDays because a query is a person who has already put their hand up.
+  unansweredQueryDays: 5,
+
+  // How long a student the model has placed in trouble may go without a logged
+  // conversation. Deliberately much shorter than staleContactDays: that asks the
+  // question of everybody at a leisurely pace, this asks it of the students the
+  // college's own engine has just flagged. Both describe the COLLEGE.
+  contactDeficitDays: 14,
+
+  // The band at which that shorter clock starts. A band KEY, validated against the
+  // ladder this same save is storing — a college that deletes R3 must not be left with
+  // a rule pointing at it.
+  contactDeficitBand: "R3",
+
+  // The fewest absences before the unexplained share is a percentage worth showing.
+  // One unexcused absence reads 100%, which is a pattern claimed from one data point.
+  minAbsencesForShare: 3,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -543,6 +569,26 @@ function validate(input) {
       min: 1, max: 3650, whole: true,
       label: "The repeated-concern window",
       why: "it is how far back a repeated concern is looked for. Unbounded, a concern raised twice in a first term never clears.",
+    }) ||
+    checkNumber(out, "noShowWindowDays", pick("noShowWindowDays"), {
+      min: 1, max: 3650, whole: true,
+      label: "The missed-meeting window",
+      why: "it is how far back a missed meeting counts. Unbounded, two missed meetings in a first term keep a student on the caseload for the rest of their programme.",
+    }) ||
+    checkNumber(out, "unansweredQueryDays", pick("unansweredQueryDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The unanswered-query window",
+      why: "it is how long a student's question may go unanswered before it is reported. At 0 every query is reported the moment it is sent, including the ones being answered that morning.",
+    }) ||
+    checkNumber(out, "contactDeficitDays", pick("contactDeficitDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The high-risk contact window",
+      why: "it is how long a student the model has flagged may go without a logged conversation before that is reported. At 0 every flagged student is reported every day, including those somebody spoke to this morning.",
+    }) ||
+    checkNumber(out, "minAbsencesForShare", pick("minAbsencesForShare"), {
+      min: 1, max: 100, whole: true,
+      label: "The minimum absences for an unexplained share",
+      why: "it is how many absences are needed before the unexplained share is shown. At 1 a single unexcused absence reads as 100% unexplained.",
     });
   if (err) return err;
 
@@ -557,6 +603,7 @@ function validate(input) {
     ["criticalAttendanceBand", "the critical-attendance override (OVR-002)"],
     ["lowGradeBand", "the below-pass-average override (OVR-003)"],
     ["interventionBand", "the intervention flag"],
+    ["contactDeficitBand", "the high-risk contact deficit"],
   ]) {
     const value = pick(key);
     if (typeof value !== "string" || !bandKeys.includes(value)) {

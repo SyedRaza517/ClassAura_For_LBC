@@ -21,6 +21,7 @@ const { localDate } = require("../clock");
 const settings = require("./settings");
 const { gather } = require("./metrics");
 const { score } = require("./engine");
+const tripwires = require("./tripwires");
 
 // How many students are gathered and scored at a time. The gather issues a fixed
 // number of queries per chunk, each with an `IN (...)` of this size — large enough
@@ -212,7 +213,25 @@ async function recalculate(opts = {}) {
         // riskDriverCodes, so what is added here is invisible to OVR-004. The TRIP_
         // prefix keeps that obvious to the next reader; the engine's own test suite
         // holds the guarantee.
-        riskDriverCodes: [...result.riskDriverCodes, ...(entry.tripwires ? entry.tripwires.codes : [])],
+        // THE CONTACT DEFICIT IS APPENDED HERE, NOT IN gather(), and the position is
+        // the point. It crosses the risk level with the pastoral dates, and the only
+        // risk level that is not stale is the one score() returned two lines above:
+        // StudentPredictionCurrent.riskLevel belongs to the PREVIOUS run for everybody
+        // in this batch, because being stale is why they are in it. Computing it
+        // upstream would measure a student who has just deteriorated against the
+        // comfortable band they held a fortnight ago, and stay silent.
+        riskDriverCodes: [
+          ...result.riskDriverCodes,
+          ...(entry.tripwires ? entry.tripwires.codes : []),
+          ...(entry.tripwires
+            ? tripwires.contactDeficit({
+                riskLevel: result.riskLevel,
+                lastContactOn: entry.tripwires.lastPastoralOn,
+                pastoralRecorded: entry.tripwires.pastoralRecorded,
+                today,
+              }, config).codes
+            : []),
+        ],
         positiveDriverCodes: result.positiveDriverCodes,
         primaryRiskDriver: result.primaryRiskDriver,
         interventionRequired: result.interventionRequired,
@@ -240,6 +259,8 @@ async function recalculate(opts = {}) {
         weeksIntoProgramme: entry.tripwires ? entry.tripwires.weeksIntoProgramme : null,
         assessmentsDueSoon: entry.tripwires ? entry.tripwires.assessmentsDueSoon : null,
         gradedWithDates: entry.tripwires ? entry.tripwires.gradedWithDates : null,
+        oldestOpenQueryOn: entry.tripwires ? entry.tripwires.oldestOpenQueryOn : null,
+        openQueryCount: entry.tripwires ? entry.tripwires.openQueryCount : null,
       };
 
       const current = existingByStudent.get(studentId);

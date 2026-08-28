@@ -1946,6 +1946,13 @@ model StudentPredictionCurrent {
   /// for anything that is not submission-based, so quizzes and offline marks never
   /// reach it, and "60% late" over three pieces is a different claim from over thirty.
   gradedWithDates        Int?
+  /// The oldest question this student asked that nobody has answered, and how many
+  /// are open. A DATE, so the screen derives the wait. NULL is not zero: 0 means the
+  /// college answered everything they asked, null means they asked nothing — or the
+  /// college does not answer through the system at all, in which case every query it
+  /// has ever received sits at open for ever and a count would report the workflow.
+  oldestOpenQueryOn      String?
+  openQueryCount         Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2119,6 +2126,13 @@ model StudentPredictionHistory {
   /// for anything that is not submission-based, so quizzes and offline marks never
   /// reach it, and "60% late" over three pieces is a different claim from over thirty.
   gradedWithDates        Int?
+  /// The oldest question this student asked that nobody has answered, and how many
+  /// are open. A DATE, so the screen derives the wait. NULL is not zero: 0 means the
+  /// college answered everything they asked, null means they asked nothing — or the
+  /// college does not answer through the system at all, in which case every query it
+  /// has ever received sits at open for ever and a count would report the workflow.
+  oldestOpenQueryOn      String?
+  openQueryCount         Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
