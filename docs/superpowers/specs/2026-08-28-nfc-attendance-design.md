@@ -1,135 +1,191 @@
-# NFC tap check-in for student attendance
+# NFC tap check-in — students and staff
 
 *Design, 28 Aug 2026. Status: awaiting review. Nothing here is built yet.*
 
-A student taps a printed NFC sticker on the classroom wall. Their phone opens a web
-page. They sign in once, tick "save on this phone", and from then on every class is one
-button press. The system finds the register they belong to and marks them present.
+A sticker on the classroom wall. The app is open and already signed in, and the
+**Check in** button is greyed out. Touching the sticker switches it on. One press and the
+register has them, with the minute they arrived.
 
-This document is the agreed design. `STATUS.md` remains the map of what is actually
-built; this is not a claim that any of it exists.
+The same sticker works for staff: tap, choose **Onsite** or **Online**, clocked in.
+
+`STATUS.md` remains the map of what is actually built. This is not a claim that any of
+it exists.
 
 ---
 
 ## 1. What already exists, and what this must not disturb
 
-Attendance in this platform is a chain of four models:
+Attendance is a chain of four models:
 
     Unit ──< HndSession ──< AttendanceMark >── Student
                                                   │
     Unit ──────< Enrolment >──────────────────────┘
 
 - `HndSession` is one timetabled class: `unitId` + `date` + `startTime`, unique together.
-- `AttendanceMark` is one student's mark for one session — `P` | `L` | `E` | `A`, unique
-  on `sessionId` + `studentId`.
+- `AttendanceMark` is one student's mark for one session — `P` | `L` | `E` | `A`.
 - `Enrolment` is what makes a student eligible for a unit's registers at all.
+- `Unit.tutorStaffId` names the lecturer, which is how the dashboard in §7 finds a
+  lecturer's own sessions.
 
-The arithmetic lives in `server/src/attendance.js`: P=2, L=1, E=1, A=0, and
-`pct = earned / (2 × marked)`. **Unmarked sessions are excluded from the denominator.**
-Nothing in this feature changes that file. A tap produces an ordinary `P` or `L` and the
-existing maths consumes it unchanged.
+The arithmetic in `server/src/attendance.js` — P=2, L=1, E=1, A=0,
+`pct = earned / (2 × marked)`, unmarked sessions excluded from the denominator — is
+**not changed by this feature**. A tap produces an ordinary `P` or `L` and the existing
+maths consumes it unchanged.
 
-Today exactly two things write an `AttendanceMark`:
+Staff attendance is a separate model entirely: `CheckIn`, one row per staff member per
+day, `timeIn` / `timeOut` as `HH:MM` strings and an optional `site`. Conflating the two is
+the easiest mistake to make in this area, so this document keeps them in separate
+sections and never shares a code path between them beyond reading the tag.
 
-1. A member of staff saving a whole register — `PUT /api/hnd/sessions/:id/register`.
-2. The Moodle importer, `moodleAttendance.js`, which stamps `takenBy: "Moodle import"`
-   and **never overwrites an existing mark**.
+Today exactly two things write an `AttendanceMark`: a member of staff saving a register
+(`PUT /api/hnd/sessions/:id/register`), and the Moodle importer, which stamps
+`takenBy: "Moodle import"` and never overwrites an existing mark. This feature adds a
+third writer and inherits that invariant.
 
-This feature adds a third writer. It inherits the importer's invariant, for the same
-reason: where two sources disagree about a student, the human who was in the room wins.
-
-### The rules this feature is bound by
-
-Carried over from `CLAUDE.md` and the code, listed here because each one is a way this
-feature could quietly do damage:
+### Rules this feature is bound by
 
 | Rule | How it binds this feature |
 |---|---|
-| A query with no tenant context throws (`db.js`) | The tap route runs before tenant middleware, so it must resolve the college from the tag and use `runInTenant` explicitly |
-| Null means "not measurable", zero means zero | A refused tap has no student and no session; both columns are nullable, never a sentinel |
-| Dates are strings, `YYYY-MM-DD`, compared as strings | Session matching uses `localDate()`/`localTime()` from `clock.js` — never the host clock |
-| Serialise through allowlists, never blocklists | The tap page is public; every field it returns is named explicitly |
-| Rate limiters and locks are in-process `Map`s | Correct for one Node process; the new limiter carries the same comment as its neighbours |
-| Never rename an applied migration directory | One migration, named once. P3009 has cost this project two outages |
-| `ADMIN_PAGES` exists twice and must not drift | The new page is added to `validate.js` **and** `StaffHub.jsx` in the same commit |
+| A query with no tenant context throws (`db.js`) | Every tap arrives on an authenticated session carrying `tid`, so the tenant is resolved by the normal middleware. No `crossTenant` anywhere in this feature |
+| Null means "not measurable", zero means zero | `checkedInAt` is NULL when nobody tapped. A refused tap has no student and no session; both columns nullable |
+| Dates are strings, `YYYY-MM-DD`; times `HH:MM` | Session matching and `checkedInAt` use `localDate()` / `localTime()` from `clock.js` — never the host clock |
+| Serialise through allowlists | `sMark` gains `checkedInAt` explicitly, or it does not reach the client |
+| Rate limiters are in-process `Map`s | The new limiter carries the same "needs Redis if clustered" comment as its neighbours |
+| Never rename an applied migration | One migration, named once. P3009 has cost this project two outages |
+| `ADMIN_PAGES` exists twice | The new page goes into `validate.js` **and** `StaffHub.jsx` in one commit |
 
 ---
 
-## 2. The flow
+## 2. The student flow
 
 ```
-  student taps the sticker
+  app open, already signed in
         │
         ▼
-  browser opens  https://<host>/tap/<code>
+  [ Check in ]   ← greyed out
+        │
+        │  touch the sticker
+        ▼
+  the app reads the tag's secret          Android: silent, reader mode
+  and arms the button for 60 seconds      iPhone:  Apple's scan sheet first
         │
         ▼
-  GET /api/tap/<code>          ← public; returns college name, branding, room label
+  [ Check in ]   ← live
+        │  student presses
+        ▼
+  POST /api/student/me/tap-check-in  { tagCode }
         │
-        ├── saved on this phone? ──── YES ──▶  [ Check in ]         (nothing typed)
-        │                                            │
-        └── NO ──▶ [ email ] [ password ]            │
-                   [x] Save on this phone            │
-                   [ Check in ]                      │
-                          │                          │
-                          └──────────┬───────────────┘
-                                     ▼
-                    POST /api/tap/<code>/check-in
-                                     │
-              ┌──────────────────────┼──────────────────────┐
-              ▼                      ▼                      ▼
-        who is this?          which register?          may it be written?
-        password, or          today's sessions on      window open, term
-        saved device          enrolled units, open     open, no existing
-        token                 for check-in, now        mark
-                                     │
-                                     ▼
-                     AttendanceMark  P (or L if late)
-                     takenBy = "Self check-in (NFC)"
-                                     │
-                                     ▼
-              "Marked present — Leadership & Management, 09:00–12:00"
+        ├── which session?  today's, on a unit they're enrolled on,
+        │                   whose start–end window contains now
+        │
+        ├── may it be written?  term open, no existing mark
+        │
+        ▼
+  AttendanceMark  P (or L past the late threshold)
+  checkedInAt     "09:07"
+  takenBy         "Self check-in (NFC)"
+        │
+        ▼
+  "Marked present — Leadership and Management, 09:00–12:00, at 09:07"
 ```
 
-### The lecturer's half
+**The tag holds an opaque secret, not a URL.** Because our own app reads it, there is no
+reason for the sticker to carry a working web address. Someone tapping it with a generic
+NFC reader app gets a meaningless string rather than a link they could save and fire from
+home. This is why plain, pennies-each NTAG213 stickers are sufficient — the argument for
+cryptographic tags was entirely about a readable URL, and there is not one.
 
-Taps are only accepted while the lecturer has **opened a check-in window** on the
-register screen. They press *Open check-in*, the window runs for ten minutes (a
-per-college setting), names appear on their screen as students tap, and it closes on
-its own.
+**No email, no password, no device token.** The app is already signed in; that session is
+the identity. The earlier design's device-binding machinery existed only to work around a
+browser having no session, and it is gone.
 
-This is what proves the student is in the room. The sticker's URL is plain text on a
-passive tag — any phone can read it, and a student could save the link and use it from
-home. The window shrinks that to ten minutes while the lecturer is watching the list
-fill up, which is a thing a person in the room can notice.
+**The endpoint lives under `/api/student`**, which is already in `STUDENT_ROUTERS`
+(`auth.js:39`). Nothing about the student portal's isolation changes, and no new public
+router is introduced.
 
-It also removes most of the ambiguity in matching. If a student's timetable has two
-sessions overlapping, ordinarily the server cannot tell which one they walked into —
-but only one lecturer has a window open, so the open window does the disambiguating.
+**One tag serves both students and staff.** The server branches on who is signed in, not
+on which sticker was touched, so a college prints one sticker per room rather than two.
 
 ---
 
-## 3. Schema
+## 3. When a tap is accepted
 
-Four new models and one new column. All additive; no existing column changes type or
-nullability, and nothing on `StudentPredictionCurrent` / `StudentPredictionHistory` is
-touched, so `schema-contract.test.js` is unaffected.
+**Taps are accepted whenever the lecture is running, and at no other time.** There is no
+button for a lecturer to press. A tap before the session starts is refused; so is a tap
+after it ends.
+
+```js
+// candidates: today's sessions on units this student is enrolled on
+// now:        { date: "2026-09-01", time: "09:07" }  ← clock.js, never the host clock
+
+resolveTapSession(candidates, now, { lateAfterMins, earlyGraceMins })
+  // → { kind: "one",       session, status: "P" | "L" }
+  // → { kind: "ambiguous", sessions: [...] }
+  // → { kind: "none",      reason: "no_session_now" | "term_locked" }
+```
+
+1. Keep sessions dated today whose unit the student is enrolled on. Enrolment is what
+   makes a student eligible for a register at all, and taking candidates from `Enrolment`
+   means a tap can never attach a student to a unit they were never on — the same reason
+   `hnd.js:1091` checks enrolment rather than mere existence.
+2. Keep those where `startTime − earlyGraceMins ≤ now ≤ endTime`.
+3. Zero → refused, naming the next session of theirs if there is one today. One → marked.
+   Two or more → the app lists them and the student picks; the choice returns as
+   `sessionId`.
+4. `P` if `now ≤ startTime + lateAfterMins`, otherwise `L`.
+
+Times are zero-padded `HH:MM` strings, so a plain string compare sorts chronologically —
+the convention already used throughout `checkins.js` and `hnd.js`.
+
+**`earlyGraceMins` defaults to `0`**, which is the rule as asked for: not before the
+lecture. It exists as a setting because a student standing outside the door at 08:58 for a
+09:00 class is a normal thing that will be reported as a bug in week one, and a college
+that decides five minutes is fine should not need a deploy to say so.
+
+**A tap never marks anyone absent.** There is no path from this feature to an `A`.
+Absence is what an untaken register already means, and `attendance.js` excludes unmarked
+sessions from the denominator on purpose. Writing `A` for "did not tap" would convert a
+flat battery, a forgotten phone or a handset with no NFC into a permanent academic
+record — most often for the students least able to argue about it. §7 covers how a
+lecturer records real absence.
+
+### What was dropped, and what it cost
+
+An earlier draft had the lecturer open a ten-minute window before taps were accepted. That
+is gone: the session's own times are the window, and nothing needs pressing.
+
+Worth recording once, because it is the trade: **the lecturer's press was the human
+attestation.** Without it, a mark is the student's own assertion that they were present,
+and a student who tapped from the corridor — or from home, if they are on the college
+network — produces a mark nobody witnessed. What replaces it is §7: the lecturer sees the
+whole thing live, with times, and can correct any of it. That is supervision after the
+fact rather than consent before it. It is a real reduction in how defensible a single
+mark is, and it is the right call only because the alternative — a press per session,
+forever — is the kind of friction that gets a feature switched off.
+
+---
+
+## 4. Schema
+
+Three new models, two new columns. All additive. Nothing on `StudentPredictionCurrent` /
+`StudentPredictionHistory` is touched, so `schema-contract.test.js` is unaffected.
 
 ### `AttendanceTag` — a registered sticker
 
 ```prisma
 model AttendanceTag {
-  id           String    @id @default(cuid())
-  // Globally unique, NOT unique-per-tenant: this code is what identifies the college,
-  // because the phone that reads it sends no X-Tenant header. Opaque and random, so
-  // it cannot be guessed from a neighbouring room's tag. ~16 chars of base32url.
-  code         String    @unique
-  label        String                        // "Room 101", "Main entrance"
-  active       Boolean   @default(true)      // deactivate a lost or peeled-off sticker
-  lastTappedAt DateTime?                     // null until first use — never zero
-  createdAt    DateTime  @default(now())
-  createdBy    String?                       // staff name, for the admin list
-  checkIns     SelfCheckIn[]
+  id        String    @id @default(cuid())
+  // The secret written onto the sticker. Opaque and random — NOT a URL, because our own
+  // app reads it, so there is nothing to gain from it being clickable and a lot to lose:
+  // a readable link is one a student can save and replay from anywhere. Globally unique
+  // so a tap can be resolved without first knowing the college.
+  code      String    @unique
+  label     String                       // "Room 101", "Reception"
+  active    Boolean   @default(true)     // deactivate a peeled-off or lost sticker
+  lastTapAt DateTime?                    // NULL until first use — never a zero date
+  createdAt DateTime  @default(now())
+  createdBy String?
+  taps      TagTap[]
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -137,57 +193,28 @@ model AttendanceTag {
 }
 ```
 
-### `TapDevice` — "save on this phone"
+### `TagTap` — the log, for students and staff alike
 
 ```prisma
-model TapDevice {
-  id         String    @id @default(cuid())
-  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  studentId  String
-  // The secret is stored HASHED, like PasswordReset does. A leaked database row must
-  // not let anyone check in as this student.
-  tokenHash  String    @unique
-  label      String    @default("")          // coarse user-agent, e.g. "Android · Chrome"
-  createdAt  DateTime  @default(now())
-  lastUsedAt DateTime?
-  revokedAt  DateTime?                       // set by the student, an admin, or a password change
-
-  @@index([studentId])
-  tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  @@index([tenantId])
-}
-```
-
-**Why this is not a saved session token.** `JWT_EXPIRES` defaults to `"1d"`
-(`auth.js:26`), so a stored login token would stop working every morning and the student
-would type their password daily — which defeats the point. Raising `JWT_EXPIRES`
-globally is the wrong fix: it would lengthen every staff and student session in the
-product to buy a convenience for one screen.
-
-So the saved credential is a separate secret with exactly one power: check in at a tag.
-A lost phone therefore does not hand over the student portal — not their grades, not
-their timetable, not their queries. It cannot read anything at all.
-
-### `SelfCheckIn` — the tap log
-
-```prisma
-model SelfCheckIn {
+model TagTap {
   id        String   @id @default(cuid())
   tag       AttendanceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId     String
-  // Null when the tap was refused before a student was identified — a wrong password,
-  // an unknown address. "Not measurable", not a blank string standing in for a student.
+  // Exactly one of these is set on an accepted tap; both are NULL when the tap was
+  // refused before anyone was identified. Not measurable, not a blank string standing
+  // in for a person.
   studentId String?
-  sessionId String?
-  outcome   String   // see the table below
-  status    String?  // "P" | "L" when a mark was actually written; null otherwise
+  staffId   String?
+  sessionId String?                      // the register, for a student tap
+  outcome   String                       // see the table below
+  status    String?                      // "P" | "L" when a mark was written
+  site      String?                      // "Onsite" | "Online" for a staff tap
   at        DateTime @default(now())
   ip        String?
-  userAgent String?
 
   @@index([tagId, at])
   @@index([studentId])
+  @@index([staffId])
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
@@ -196,282 +223,262 @@ model SelfCheckIn {
 
 **Every tap is logged, accepted or refused, and the refusals are the valuable half.**
 Attendance is the record this college is asked to evidence most often — funding, visa
-compliance, a student disputing a mark — and "she says she tapped" is a question the
-system must be able to answer. It is also the only place a pattern shows up: one IP
-marking six students in forty seconds is invisible in `AttendanceMark` and obvious here.
-
-The e-mail address as typed is deliberately **not** stored. A failed tap logs that a
-sign-in failed at that tag at that time, not a list of addresses somebody was guessing.
-
-Outcomes:
+compliance, a student disputing a mark — and "I did tap, it didn't work" is a question the
+system must be able to answer. It is also the only place a pattern shows up: one address
+checking in six students inside a minute is invisible in `AttendanceMark` and obvious here.
 
 | `outcome` | Meaning |
 |---|---|
-| `marked` | A mark was written. `status` says `P` or `L` |
-| `already_marked` | The lecturer (or an earlier tap) had already marked them. Register untouched |
-| `bad_credentials` | Wrong password, unknown address, or a revoked device token |
-| `no_open_window` | No session of theirs currently has check-in open |
-| `ambiguous` | Two open sessions; the page asked them to choose |
+| `marked` | A mark was written; `status` says `P` or `L` |
+| `checked_in` | A staff clock-in was recorded; `site` says which |
+| `already_marked` | A mark already existed. The register was not touched |
+| `already_checked_in` | Staff had already clocked in today |
+| `no_session_now` | No session of theirs is running at this moment |
+| `ambiguous` | Two sessions running; the app asked them to choose |
 | `term_locked` | The unit's term is over or has not started |
 | `tag_unknown` | The code matched no active tag |
-| `rate_limited` | Too many attempts at this tag or for this account |
+| `rate_limited` | Too many taps from this account |
 
 ### `AttendanceTapConfig` — per-college settings
 
 Follows the pattern `attendanceBandConfig.js` established, which is the reference
-implementation: platform defaults in code, one JSON column per tenant merged over them,
-no row until a college edits something, an allowlist on the way out, a short cache
-invalidated on save.
-
-```prisma
-model AttendanceTapConfig {
-  id        String @id @default(cuid())
-  settings  Json   @default("{}")
-  updatedAt DateTime @updatedAt
-  tenantId  String @unique
-  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-}
-```
+implementation: defaults in code, one JSON column per tenant merged over them, no row
+until a college edits something, an allowlist on the way out, a short cache invalidated
+on save.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | **Ships switched off**, like attendance emails. No college gets this by surprise |
-| `windowMins` | `10` | How long *Open check-in* accepts taps |
-| `lateAfterMins` | `15` | Past this many minutes after the session start, a tap records `L` not `P` |
-| `requireStaffConfirmForNewDevice` | `false` | When true, binding a *second* phone needs a lecturer's confirmation (see §6) |
+| `lateAfterMins` | `15` | Past this many minutes after the start, a tap records `L` not `P` |
+| `earlyGraceMins` | `0` | Minutes before the start that taps begin to be accepted |
+| `armSeconds` | `60` | How long a tag read keeps the button live |
+| `staffTapEnabled` | `true` | Whether the same stickers also clock staff in |
 
-### `HndSession.checkInOpenUntil`
+### `AttendanceMark.checkedInAt`
 
 ```prisma
-  // When the lecturer's check-in window closes. NULL means closed, which is the
-  // resting state for every register ever taken by hand — hence nullable, not a
-  // default of now(). Stored as an instant, not a duration: a duration would need
-  // something to tick it down, and nothing here runs on a schedule.
-  checkInOpenUntil DateTime?
+  // When the student actually tapped in. NULL when nobody self-checked-in — the lecturer
+  // marked them by hand — which is "not measurable", not an early arrival.
+  //
+  // Written ONCE and never again. A later register save must not overwrite it: takenAt
+  // is already reset on every update (hnd.js:1167 writes takenAt: new Date()), so it
+  // means "when this mark was last edited", and a lecturer correcting the register at
+  // four o'clock would otherwise destroy the only record of the 09:07 arrival.
+  //
+  // A string, not a DateTime, matching CheckIn.timeIn: the session carries the date, so
+  // the two reconstruct the instant, and a time written through clock.localTime() is
+  // right when stored and stays right. STATUS.md records D8 — the 08:00 notifications
+  // firing at 09:00 through BST because something read the host clock — which is the
+  // bug a stored instant re-zoned at every render invites back.
+  checkedInAt String?   // "HH:MM", London
+```
+
+`sMark` in `serializers.js:117` must add it explicitly. That serialiser is an allowlist,
+so a new column stays private until someone publishes it deliberately.
+
+### `CheckIn.tagId`
+
+```prisma
+  // The sticker this clock-in was made at. NULL for one made by pressing the button in
+  // the app, which stays available. Distinguishes "was in the building" from "said they
+  // were", without a second boolean that could disagree with it.
+  tagId String?
 ```
 
 ---
 
-## 4. The API
+## 5. The student API
 
-`/api/tap` mounts **above** `tenantMiddleware` in `index.js`, next to `/api/registrations`
-and for the same reason: the phone reading a sticker is not yet inside a college. The
-router resolves the tenant from the tag code inside a `crossTenant()` block — the only
-cross-tenant read in the feature, deliberately conspicuous — and then does every
-subsequent read and write inside `runInTenant(tenantId, …)`.
+### `POST /api/student/me/tap-check-in`
 
-It never touches `STUDENT_ROUTERS`, so the student portal's isolation is unchanged.
+Body `{ tagCode, sessionId? }`. `sessionId` is only sent after an `ambiguous` reply.
 
-### `GET /api/tap/:code` — public
+Order of checks:
 
-Returns only what a wall sticker may safely announce: the college's display name and
-branding colours, and the tag's label. It does **not** say which classes are running,
-who is enrolled, or whether any window is open — that would let anyone holding the URL
-survey the timetable.
-
-An unknown or deactivated code returns **404 without distinguishing the two**, matching
-how an unknown tenant is handled: no confirmation that a code exists.
-
-### `POST /api/tap/:code/check-in`
-
-Accepts **either**
-
-- `{ email, password, remember }` — the first time on a handset, or
-- `{ deviceToken }` — every time after that,
-
-plus an optional `sessionId` when the previous call came back `ambiguous`.
-
-Order of checks, and what each refuses:
-
-1. **Rate limit.** In-process `Map`s, module-level, with the standard "needs Redis if
-   this is ever clustered" comment. Generous per tag — thirty students arriving inside
-   five minutes is a normal class, not abuse. Tight per address, to blunt password
-   guessing at a public endpoint — the address is a key in an in-memory `Map` that is
-   gone on restart, which is not the same thing as writing it to `SelfCheckIn`, and the
-   distinction is the point of not logging it.
-2. **Tag.** Active, and its tenant resolved. Otherwise `tag_unknown`.
-3. **Identity.** `verifyPassword` against `Student.passwordHash`, reusing the same
-   comparison as the student branch of `auth.js` — no second identity system, so a
-   deactivated account or a bumped `tokenVersion` stops working here at the same moment
-   it stops working everywhere else. Or `TapDevice.tokenHash`, unrevoked.
-   A failure runs one bcrypt against a fixed dummy hash regardless, matching the timing
-   defence already in `routes/auth.js`, so this endpoint cannot be used to discover
-   which addresses are on the roll.
-4. **Session.** See §5.
-5. **Term lock.** `PUT /sessions/:id/register` returns 423 outside the term window
-   (`hnd.js:1091`). A tap must not become a back door around it — same check, same refusal.
-6. **Existing mark.** If one exists, `already_marked` and the register is left alone.
-7. **Write.** `AttendanceMark` with `status` `P` or `L` and
+1. **Rate limit.** In-process `Map`, module-level, with the standard clustering comment.
+   Keyed on the student, since the caller is authenticated — a handful of taps a minute is
+   generous for a person and stops a loop.
+2. **Tag** active, and belonging to the caller's college. A tag from another tenant is
+   simply not found: `db.js` scopes the lookup, so this needs no special handling and
+   cannot be got wrong later.
+3. **Session** — §3.
+4. **Term lock.** `PUT /sessions/:id/register` returns 423 outside the term window
+   (`hnd.js:1091`). A tap must not become a back door around it: same check, same refusal.
+5. **Existing mark** → `already_marked`, register untouched.
+6. **Write.** `AttendanceMark` with `P` or `L`, `checkedInAt` from `localTime()`,
    `takenBy: "Self check-in (NFC)"`. Then, exactly as a register save does:
    `flagStale([studentId], "an NFC self check-in")` so progression risk rescores, and an
    `audit.record` naming the student, the session and the tag.
 
-`remember: true` mints a `TapDevice` secret and returns it once. The page stores it in
-`localStorage`. The raw secret is never stored server-side and never returned again.
+Every path writes a `TagTap` row, including every refusal.
 
-### Staff endpoints, on the existing `/api/hnd` router
+### `GET /api/student/me/tap-context`
 
-- `POST /sessions/:id/open-check-in` — sets `checkInOpenUntil = now + windowMins`.
-  Pressing again extends it. Requires the `registers` page, like every other write there.
-- `POST /sessions/:id/close-check-in` — sets it back to `NULL`.
-- `GET /sessions/:id/register` — extended, not replaced, with `checkInOpenUntil` and a
-  per-row flag for marks whose `takenBy` is the self check-in stamp.
-
-### Admin endpoints, new `/api/tags` router
-
-`GET` / `POST` / `PATCH` (deactivate) for tags, and `GET /api/tags/:id/log` for that
-sticker's recent taps. Gated by a new grantable page, `attendance-tags`, added to
-`ADMIN_PAGES` in **both** `server/src/validate.js` and `client/src/StaffHub.jsx` in the
-same commit.
+What the check-in screen shows before a tap: the student's next or current session today,
+and whether taps are being accepted right now. Read-only, own data only, keyed on
+`req.user.id` like every other route in that file — no id parameter exists.
 
 ---
 
-## 5. Choosing the register
+## 6. The staff flow
 
-A pure function in `server/src/attendanceTap.js`, tests beside it, no database — the
-pattern `src/prediction/` and `src/vle/*Normalise.js` already set. It takes a list of
-candidate sessions and the current local date and time; it returns a decision. Every
-interesting case is then a unit test with no fixtures.
+Same sticker, different half of the building.
 
-```js
-// candidates: the student's sessions for today, each with startTime, endTime,
-//             checkInOpenUntil, and its unit's term window
-// now:        { date: "2026-09-01", time: "09:07" }  ← from clock.js, never the host
-
-resolveTapSession(candidates, now, { lateAfterMins })
-  // → { kind: "one",       session, status: "P" | "L" }
-  // → { kind: "ambiguous", sessions: [...] }
-  // → { kind: "none",      reason: "no_open_window" | "term_locked" }
+```
+  staff app, signed in
+        │
+        │  touch the sticker
+        ▼
+  button arms
+        │
+        ▼
+  Where are you working today?
+     [ Onsite ]   [ Online ]
+        │
+        ▼
+  POST /api/checkins/tap-check-in  { tagCode, site }
+        │
+        ▼
+  CheckIn  timeIn = "08:41", site, tagId
 ```
 
-The rules:
+This reuses the existing `CheckIn` model unchanged: one row per staff member per day,
+`@@unique([staffId, date])`, `timeIn` as `HH:MM` from `localTime()`. The existing
+`POST /api/checkins/check-in` already takes a `site` validated against
+`SITES = ["Onsite", "Online"]` in `validate.js:52`, and already handles the
+summary-first row whose `timeIn` is `""`. The tap endpoint is a thin sibling that adds
+`tagId` and logs a `TagTap`; it does not fork that logic.
 
-1. Keep sessions dated today whose unit the student is enrolled on. Enrolment is what
-   makes a student eligible for a register at all, and taking it from `Enrolment` means
-   a tap can never attach a student to a unit they were never on — the same reason
-   `hnd.js:1091` checks enrolment rather than mere existence.
-2. Of those, keep the ones with `checkInOpenUntil > now`.
-3. Zero → `none`. One → `one`. Two or more → `ambiguous`; the page lists them and the
-   student picks, and the choice comes back as `sessionId`.
-4. `P` if `now <= startTime + lateAfterMins`, otherwise `L`.
+**Checking out is unchanged** — `POST /api/checkins/:id/check-out`, and still final on
+first use. Tapping out is deliberately not built: the existing rule is that the first
+check-out stands, and a tag by the door that a member of staff walks past twice would
+break that quietly.
 
-Times are `HH:MM` 24-hour strings, zero-padded, so a plain string compare sorts
-chronologically — the convention already used throughout `checkins.js` and `hnd.js`.
+### One thing to decide
 
-**A tap never marks anyone absent.** There is no path from this feature to an `A`.
-Absence is what an untaken register already means, and the maths in `attendance.js`
-excludes unmarked sessions from the denominator on purpose. Writing `A` for "did not
-tap" would convert a phone that was flat, or forgotten, or out of NFC range, into a
-permanent academic record — and it would do so most often to the students least able to
-argue about it.
+**Tapping a sticker in the building and choosing "Online" is a contradiction.** They are
+demonstrably on site — that is what the tap proves. Three ways to go, and I would take
+the first:
 
----
+1. A tap records **Onsite** without asking, and **Online** stays available through the
+   existing button. Fastest, and the data means what it says.
+2. Ask anyway, and accept that `site` records intent rather than fact — "I am here now but
+   teaching remotely later".
+3. Ask, but record both: the tag says onsite, the answer says how they are working.
 
-## 6. Losing a phone
-
-The awkward case, stated plainly because it will happen in the first week.
-
-`TapDevice` binds a student to one handset. A student on a new phone signs in with email
-and password as they did the first time, which mints a device token for the new phone.
-That is all that is needed, and it is why the default posture works.
-
-The risk it leaves is a student who hands their password to a friend so the friend can
-tap for them. Nothing on a phone solves that — it is the oldest problem in attendance and
-it predates computers. What the design does instead is make it visible: the tap log
-records each device, so one handset checking in for several students, or an account whose
-device changes every week, is a query away rather than invisible.
-
-`requireStaffConfirmForNewDevice` is available for a college that wants the tighter
-posture: binding a *second* device requires a lecturer to confirm it once on the register
-screen. It defaults to `false` — off — because the friction lands almost entirely on
-students who have simply changed phone.
+Nothing else in this document depends on which is chosen.
 
 ---
 
-## 7. What the student sees
+## 7. The lecturer's dashboard
 
-A public SPA route `/tap/:code`, outside the authenticated shell — no app install, no
-Capacitor, plain mobile web. It renders the college's own branding via the existing
-per-tenant `branding.js`, the room label from the tag, and then one of three states:
+A live view of one session: who is in, who is late, who has not appeared, and the minute
+each of them arrived.
 
-- **Saved phone:** the student's first name and a single large *Check in* button.
-- **First time:** email, password, a *Save on this phone* checkbox ticked by default,
-  and *Check in*.
-- **Result:** a large "Marked present — Leadership and Management, 09:00–12:00", or a
-  refusal in plain words: *"Check-in isn't open for any of your classes right now."*
+```
+  Leadership and Management · Tue 1 Sep · 09:00–12:00
+  Taps accepted until 12:00                          ● open
 
-Nothing on this page is reachable without the tag's code, and nothing on it reveals a
-student's record beyond the class they just checked into.
+  ┌──────────────────────────────────────────────────┐
+  │  18 present    3 late    5 not tapped            │
+  └──────────────────────────────────────────────────┘
 
-## 8. What the lecturer sees
+  Adams, C.        Present   09:02   tapped
+  Ali, D.          Late      09:24   tapped
+  Khan, A.         Present   09:01   tapped
+  Osei, B.         —         —       not tapped
+  Reyes, M.        Present   —       marked by you
 
-On the existing register screen for a session: an *Open check-in* button, a countdown
-while the window is live, and the register filling in as students tap — polled every few
-seconds, since this codebase has no websocket layer and a ten-minute window does not
-justify introducing one.
+  [ Mark the 5 remaining absent ]     [ Open full register ]
+```
 
-Self-marked rows are **visibly distinguished** from ones the lecturer took. The lecturer
-keeps the final word: any mark can be corrected in the normal way, and because a tap
-never overwrites an existing mark, a correction stays corrected.
+Built on the existing register screen rather than beside it, so there is one place a
+lecturer edits attendance and one set of rules governing it.
+
+**"Not tapped" is a display state, not a mark.** Nothing is written for those students
+until the lecturer says so. The button that writes them makes that explicit — it says how
+many and it goes through the ordinary register save, with its term lock, its audit record
+and its `flagStale`. This is the only route from this feature to an `A`, and a named human
+is on the end of it.
+
+Rows the lecturer marked by hand are distinguished from tapped ones, because `takenBy`
+already carries provenance this way for the Moodle importer.
+
+### Endpoints
+
+- `GET /api/hnd/sessions/:id/live` — the roll with tap states and times. Polled every few
+  seconds while the session is running; this codebase has no websocket layer and one
+  three-hour class does not justify introducing one.
+- `GET /api/hnd/my-sessions/today` — the sessions this lecturer is teaching today, via
+  `Unit.tutorStaffId`, so the dashboard opens on the right one without hunting.
+- `POST /api/hnd/sessions/:id/mark-remaining-absent` — writes `A` for enrolled students
+  with no mark. Requires the `registers` page, respects the term lock, audited.
+
+Both read endpoints sit behind the existing `registers` / `students` / `executive` gate at
+`hnd.js:81`.
 
 ---
 
-## 9. Testing
+## 8. Testing
 
-**Unit** — `attendanceTap.test.js`, no database:
+**Unit** — `attendanceTap.test.js`, pure, no database:
 
-- no sessions today; sessions today but none open; exactly one open; two open
-- a tap before the window opens, and after it closes
+- no sessions today; one running; two running; one that has ended; one not yet started
+- a tap one minute before the start with `earlyGraceMins: 0`, and with it set to `5`
 - the late boundary exactly at `lateAfterMins`, and one minute either side
 - a session whose term has ended
-- a student enrolled on a unit with a session running but not open
+- a session running whose unit the student is not enrolled on
 
 **Smoke** — `scripts/smoke-nfc-tap.mjs`, weighted toward negative assertions as the house
-style requires. Who is refused, what never leaves the building, what cannot be done twice:
+style requires:
 
-- an unknown tag code 404s, and does not distinguish "never existed" from "deactivated"
-- `GET /api/tap/:code` returns the college name and nothing about classes or people
-- a tag belonging to college A cannot mark a student of college B
-- a wrong password is refused, and takes about as long as a right one
-- a tap with no open window is refused
+- a tag from college A cannot be used by a student of college B
+- a tap before the lecture starts is refused, and after it ends is refused
 - a tap cannot overwrite a mark the lecturer already set — including an `A`
-- a tap outside the term window is refused, exactly as the register save is
-- two taps in a row produce one mark, not two
-- a revoked `TapDevice` no longer works
-- the tap endpoint works with no `Authorization` header and no `X-Tenant` header at all
-- the feature refuses everything while `enabled` is `false`
+- a tap outside the term window is refused, exactly as a register save is
+- two taps in a row produce one mark, not two, and the second does not move `checkedInAt`
+- a later register save does **not** overwrite `checkedInAt`
+- a student session still reaches nothing but `/api/student`
+- `mark-remaining-absent` writes nothing for a student who already has a mark
+- the whole feature refuses everything while `enabled` is `false`
+- a staff tap creates a `CheckIn` with `tagId` set; a second tap the same day does not
+  create a second row
 
-Per `CLAUDE.md`: each regression test is proved able to fail by reintroducing the bug
+Per `CLAUDE.md`, each regression test is proved able to fail by reintroducing the bug
 before it is trusted. Two tests in recent work passed while discriminating nothing.
 
-The client has no test framework, so the tap page and the register changes are verified
-by building and by hand.
+The client has no test framework, so the check-in screen and the dashboard are verified by
+building and by hand.
 
 ---
 
-## 10. Deliberately not in scope
+## 9. Deliberately not in scope
 
-- **Check-out and duration.** Attendance here is a mark per session, not hours.
-- **NFC for staff clock-in.** `CheckIn` is a separate model and a separate feature;
-  conflating them is the single easiest mistake to make in this area.
-- **Rotating-code tags (NTAG 424 DNA).** Considered and set aside in favour of the
-  lecturer's window, which costs nothing in hardware. If the window proves too loose,
-  this is the upgrade, and it needs no change to the student's experience.
-- **Geofencing.** Wi-Fi and GPS on a phone are both spoofable and both leak location.
-- **Marking absence from a missing tap.** See §5.
+- **Tapping out.** The first check-out is final, and a doorway tag walked past twice
+  would quietly break that.
+- **A web page fallback.** The app reads the tag; there is no browser path. Dropping it
+  removes the readable URL, the email-and-password screen and the device-token machinery
+  in one go.
+- **Rotating-code tags.** The argument for them was a readable URL on the sticker. There
+  isn't one.
+- **GPS geofencing.** 20–100m indoors, mock location is a settings toggle, and it costs a
+  privacy conversation to get a worse answer than the tap already gives.
+- **Bluetooth beacons.** The only option that knows the *room*, but cheap ones broadcast a
+  fixed ID anyone can clone. Revisit only if room-level precision proves necessary.
+- **Marking absence from a missing tap.** See §3 and §7.
 
-## 11. Rollout dependencies
+## 10. Rollout dependencies
 
-Not code, but the feature does not work without them:
-
-1. **Every student needs a password.** `Student.passwordHash` is `NULL` until claimed.
-   Two existing routes: the student signs up and an admin approves, or an admin sets one
-   at the desk — `passwords.js:59` already lists students with a "Has not set a password
-   yet" note for exactly this purpose.
-2. **Blank NTAG stickers**, one per classroom, written with the tag's URL using any
-   phone app. Nothing to build; the admin screen shows the URL and a QR fallback for
-   phones without NFC, using the `qrcode` dependency the client already has.
-3. **`enabled: true`** set for the college, since the feature ships off.
-4. **One migration**, applied to staging and production. It is named once and never
-   renamed: a rename makes an applied migration look new, it re-runs, and P3009 then
-   blocks every later deploy. That has happened twice on this project.
+1. **The app, installed and signed in**, on each student's phone. This is now the whole
+   identity story — there is no browser path — so it is the long pole.
+2. **A phone with NFC.** Some budget Androids and any iPhone older than the 7 cannot use
+   this at all. Those students are marked by the lecturer in the ordinary way.
+3. **`@capgo/capacitor-nfc`**, `8.2.5` at the time of writing, MPL-2.0, peer-depending on
+   `@capacitor/core >=8.0.0` against this client's `^8.4.2`. Android uses
+   `NfcAdapter.enableReaderMode`, which is the silent path §2 depends on.
+4. **iOS entitlement.** `NFCReaderUsageDescription` in `Info.plist` and the NFC reader
+   session capability on the provisioning profile. Apple's scan sheet cannot be
+   suppressed, so the iPhone flow has one press the Android flow does not.
+5. **Blank NTAG213 stickers**, one per room, written with the tag's secret.
+6. **`enabled: true`** for the college, since the feature ships off.
+7. **One migration**, applied to staging and production, named once and never renamed.
