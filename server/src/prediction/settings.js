@@ -262,6 +262,12 @@ const DEFAULTS = {
   // One unexcused absence reads 100%, which is a pattern claimed from one data point.
   minAbsencesForShare: 3,
 
+  // How long after its promised date a follow-up stops being "arranged for this week"
+  // and starts being one nobody kept. Without a grace period this fires the morning
+  // after every date in the diary, cohort-wide in any week a tutor arranged a batch --
+  // and a column that is always lit is a column staff stop reading.
+  followUpGraceDays: 7,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -589,6 +595,11 @@ function validate(input) {
       min: 1, max: 100, whole: true,
       label: "The minimum absences for an unexplained share",
       why: "it is how many absences are needed before the unexplained share is shown. At 1 a single unexcused absence reads as 100% unexplained.",
+    }) ||
+    checkNumber(out, "followUpGraceDays", pick("followUpGraceDays"), {
+      min: 0, max: 365, whole: true,
+      label: "The follow-up grace period",
+      why: "it is how long after its promised date a follow-up may go unrecorded before it is reported. At 0 every follow-up is reported the morning after its date, including the ones being held that afternoon.",
     });
   if (err) return err;
 

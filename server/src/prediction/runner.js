@@ -261,6 +261,7 @@ async function recalculate(opts = {}) {
         gradedWithDates: entry.tripwires ? entry.tripwires.gradedWithDates : null,
         oldestOpenQueryOn: entry.tripwires ? entry.tripwires.oldestOpenQueryOn : null,
         openQueryCount: entry.tripwires ? entry.tripwires.openQueryCount : null,
+        overdueFollowUpCount: entry.tripwires ? entry.tripwires.overdueFollowUpCount : null,
       };
 
       const current = existingByStudent.get(studentId);

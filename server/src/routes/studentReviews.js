@@ -55,6 +55,8 @@ const sReview = (r) => ({
   agreedActions: r.agreedActions,
   followUp: r.followUp,
   followUpDate: r.followUpDate,
+  followUpCompletedOn: r.followUpCompletedOn ?? null,
+  followUpCompletedBy: r.followUpCompletedBy ?? null,
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
@@ -152,7 +154,7 @@ router.get("/", async (req, res) => {
 });
 
 // Validate a create/update body. `partial` allows omitted fields on update.
-async function validate(body, partial, current) {
+async function validate(body, partial, current, actorName = null) {
   const data = {};
   const need = (k) => !partial || body?.[k] !== undefined;
 
@@ -224,14 +226,37 @@ async function validate(body, partial, current) {
     if (on && d < on) return { error: "The follow-up date can't be before the date of the conversation" };
     data.followUpDate = d;
   } else if (wantsFollowUp === false) {
-    data.followUpDate = null;
+    // The date is NOT cleared any more. See routes/interactions.js for the argument:
+    // clearing it was the only way to close a follow-up and it destroyed the record
+    // that one had ever been due, which is why `followUpDate < today` was true for
+    // ever and the overdue signal could not be built. Retracting the promise itself is
+    // still possible with an explicit `followUpDate: ""`.
+  }
+
+  if (body?.followUpCompletedOn !== undefined) {
+    const done = isString(body.followUpCompletedOn) ? body.followUpCompletedOn.trim() : "";
+    if (done && !isRealDate(done)) {
+      return { error: "Enter a real date for when the follow-up happened (YYYY-MM-DD)." };
+    }
+    // Nothing can be completed that was never promised — see routes/interactions.js.
+    const due = data.followUpDate !== undefined ? data.followUpDate : (current ? current.followUpDate : null);
+    if (done && !due) return { error: "There is no follow-up on this review to mark as done." };
+    const on = data.date !== undefined ? data.date : (current ? current.date : null);
+    if (done && on && done < on) {
+      return { error: "The follow-up can't have happened before the conversation." };
+    }
+    data.followUpCompletedOn = done || null;
+    // From the token, never the body, exactly as staffName is.
+    data.followUpCompletedBy = done ? (actorName || null) : null;
+    // Recording a completion closes it, or the row says both done and outstanding.
+    if (done) data.followUp = false;
   }
   return { data };
 }
 
 router.post("/", async (req, res) => {
   if (req.user?.kind === "student") return res.status(403).json({ error: "Students can't file reviews" });
-  const v = await validate(req.body, false, null);
+  const v = await validate(req.body, false, null, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   const row = await prisma.studentReview.create({
     // staffId always comes from the token — never the body.
@@ -267,7 +292,7 @@ router.put("/:id", async (req, res) => {
   if (req.user?.kind === "student") return res.status(403).json({ error: "Students can't edit reviews" });
   const found = await mayEdit(req, req.params.id);
   if (found.error) return res.status(404).json({ error: "Review not found" });
-  const v = await validate(req.body, true, found.row);
+  const v = await validate(req.body, true, found.row, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   try {
     const row = await prisma.studentReview.update({ where: { id: found.row.id }, data: v.data, include: INCLUDE });

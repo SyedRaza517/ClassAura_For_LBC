@@ -141,7 +141,7 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 // Validate a create/update body. `partial` allows omitted fields on update.
-async function validate(body, partial) {
+async function validate(body, partial, current = null, actorName = null) {
   const data = {};
   const need = (k) => !partial || body?.[k] !== undefined;
 
@@ -186,13 +186,62 @@ async function validate(body, partial) {
   // it. Read the incoming value when there is one, otherwise the stored one — checking
   // only the body made PUT {followUpDate} on an existing follow-up wipe what it set.
   const wantsFollowUp = data.followUpRequired !== undefined ? data.followUpRequired : undefined;
-  if (wantsFollowUp === false) data.followUpDate = null;
+  // Marking a promised follow-up as HELD — the fact this whole change exists for.
+  if (body?.followUpCompletedOn !== undefined) {
+    const done = isString(body.followUpCompletedOn) ? body.followUpCompletedOn.trim() : "";
+    if (done && !isRealDate(done)) {
+      return { error: "followUpCompletedOn must be a real date in YYYY-MM-DD form." };
+    }
+
+    // Nothing can be completed that was never promised. Without this a client could
+    // write a completion onto a row with no due date, where it means nothing and where
+    // the overdue count — which counts PROMISES, not completions — cannot see it. The
+    // incoming date wins over the stored one, so arranging and closing a follow-up in
+    // one request works; reading only the stored row would refuse it.
+    const due = data.followUpDate !== undefined ? data.followUpDate : (current ? current.followUpDate : null);
+    if (done && !due) return { error: "There is no follow-up on this interaction to mark as done." };
+
+    // A follow-up cannot have happened before the meeting it follows. Deliberately NOT
+    // checked against followUpDate: holding it early is good practice, and refusing
+    // that would push staff to type the promised date instead of the real one.
+    const on = data.date !== undefined ? data.date : (current ? current.date : null);
+    if (done && on && done < on) {
+      return { error: "The follow-up can't have happened before the interaction itself." };
+    }
+
+    data.followUpCompletedOn = done || null;
+    // Stamped from the token, never the body. Cleared alongside the date, so an undo
+    // cannot leave a name attached to a completion that no longer exists.
+    data.followUpCompletedBy = done ? (actorName || null) : null;
+    // DERIVED, not asked for. followUpRequired means "still outstanding", so recording
+    // a completion closes it — otherwise the row would say the follow-up is both done
+    // and outstanding, and the screens reading the flag would disagree with the one
+    // reading the date.
+    if (done) data.followUpRequired = false;
+  }
+
+  // WHY THE DATE IS NO LONGER CLEARED HERE.
+  //
+  // This read `if (wantsFollowUp === false) data.followUpDate = null;`, and that one
+  // line is why "overdue follow-ups" could not be built. Unticking the flag was the
+  // only way to close a follow-up, and it destroyed the only record that one had ever
+  // been due — so a promise kept on the day became indistinguishable from a promise
+  // never made, and the only follow-ups still carrying a date were the ones nobody had
+  // touched. `followUpDate < today` was then true for ever, for all of them.
+  //
+  // The date is now permanent and says a follow-up WAS arranged for that day.
+  // followUpRequired says whether it is still outstanding; followUpCompletedOn says
+  // whether it happened. Retracting the promise entirely is still possible and is
+  // still a real event — send `followUpDate: ""`, which the block above turns to null.
+  //
+  // Nothing else reads an unguarded followUpDate: the email builder, the admin table
+  // and the CSV export all test followUpRequired first.
   if (body?.tutor !== undefined) data.tutor = str(body.tutor).slice(0, 200);
   return { data };
 }
 
 router.post("/", requireAuth, requireAdmin, async (req, res) => {
-  const v = await validate(req.body, false);
+  const v = await validate(req.body, false, null, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   const row = await prisma.interaction.create({
     data: { ...v.data, loggedBy: req.user?.name || null },
@@ -230,7 +279,7 @@ router.post("/", requireAuth, requireAdmin, async (req, res) => {
 router.put("/:id", requireAuth, requireAdmin, async (req, res) => {
   const existing = await prisma.interaction.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "Interaction not found" });
-  const v = await validate(req.body, true);
+  const v = await validate(req.body, true, existing, req.user?.name || null);
   if (v.error) return res.status(400).json({ error: v.error });
   const row = await prisma.interaction.update({ where: { id: existing.id }, data: v.data, include: { student: true } });
   audit.record(req, {

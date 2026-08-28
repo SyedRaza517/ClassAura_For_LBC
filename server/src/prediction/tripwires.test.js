@@ -1105,3 +1105,81 @@ test("a query the student sent counts as engagement", () => {
   });
   assert.equal(r, "2026-03-11");
 });
+
+/* ========================================================================== */
+/* Tranche 7 — promises the college made and did not keep                     */
+/* ========================================================================== */
+
+const { overdueFollowUps } = require("./tripwires");
+
+const promise = (due, over = {}) => ({ followUpDate: due, followUpCompletedOn: null, stillFlagged: true, ...over });
+
+test("a promised follow-up past its date with nothing recording it happened is overdue", () => {
+  const r = overdueFollowUps([promise("2026-02-01")], "2026-01-01", "2026-03-13");
+  assert.equal(r.overdue, 1);
+  assert.equal(r.judged, 1);
+});
+
+test("a follow-up that was held is not overdue, however late it was held", () => {
+  const r = overdueFollowUps([promise("2026-02-01", { followUpCompletedOn: "2026-02-20", stillFlagged: false })],
+    "2026-01-01", "2026-03-13");
+  assert.equal(r.overdue, 0);
+  assert.equal(r.judged, 1);
+});
+
+test("a follow-up inside the grace period is not yet a failure", () => {
+  // Without a grace period this fires the morning after every date in the diary, and a
+  // column that is always lit is one staff stop reading.
+  const r = overdueFollowUps([promise("2026-03-18")], "2026-01-01", "2026-03-13");
+  // NULL, not 0. Nothing about this promise has been judged yet, and the file is
+  // consistent that an unjudged thing has no figure rather than a figure of zero — a
+  // 0 here would read as "we looked and the college kept every promise".
+  assert.equal(r.overdue, null);
+  assert.equal(r.judged, 0);
+});
+
+test("a promise the college explicitly stood down is not a broken one", () => {
+  // The student withdrew, or the concern resolved itself. The row keeps its date so the
+  // retraction stays visible to anyone auditing the practice, but nobody failed.
+  const r = overdueFollowUps([promise("2026-02-01", { stillFlagged: false })], "2026-01-01", "2026-03-13");
+  assert.equal(r.overdue, 0);
+});
+
+test("a college that has never closed a follow-up reports NULL, not a backlog", () => {
+  // THE MIGRATION TRAP, and it is the sharpest here. Every row written before
+  // followUpCompletedOn existed carries null, for follow-ups held on the day exactly as
+  // much as for ones nobody made. Reading that null as "not done" would put the
+  // college's entire history on the caseload the morning the column shipped.
+  const r = overdueFollowUps([promise("2026-02-01"), promise("2026-01-10")], null, "2026-03-13");
+  assert.equal(r.overdue, null);
+  assert.equal(r.judged, 0);
+});
+
+test("promises made before the college could record a closure are not judged", () => {
+  // The watermark is the earliest closure this college ever recorded — an observed
+  // lower bound on when it became ABLE to record one. Anything older cannot be judged.
+  const r = overdueFollowUps([promise("2025-06-01"), promise("2026-02-01")], "2026-01-01", "2026-03-13");
+  assert.equal(r.judged, 1);
+  assert.equal(r.overdue, 1);
+});
+
+test("a row with no promise on it is not a kept promise either", () => {
+  const r = overdueFollowUps([promise(null)], "2026-01-01", "2026-03-13");
+  assert.equal(r.overdue, null);
+  assert.equal(r.judged, 0);
+});
+
+test("nothing judgeable is null, not zero missed", () => {
+  const r = overdueFollowUps([], "2026-01-01", "2026-03-13");
+  assert.equal(r.overdue, null);
+});
+
+test("a missed promise raises the code", () => {
+  const r = evaluate(input({ pastoral: { lastContactOn: "2026-03-12", overdueFollowUps: 2 } }), DEFAULTS);
+  assert.ok(r.codes.includes(TRIP.FOLLOWUP_MISSED));
+});
+
+test("a null overdue count raises nothing", () => {
+  const r = evaluate(input({ pastoral: { lastContactOn: "2026-03-12", overdueFollowUps: null } }), DEFAULTS);
+  assert.equal(r.codes.includes(TRIP.FOLLOWUP_MISSED), false);
+});

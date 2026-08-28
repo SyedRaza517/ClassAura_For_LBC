@@ -1101,6 +1101,30 @@ model Interaction {
   followUpActions  String   @default("")
   followUpRequired Boolean  @default(false)
   followUpDate     String?  // YYYY-MM-DD, only meaningful when followUpRequired
+  /// WHEN THE PROMISED FOLLOW-UP ACTUALLY HAPPENED. YYYY-MM-DD.
+  ///
+  /// Nothing recorded this before, so "overdue" had to be faked as
+  /// `followUpDate < today` — true for ever, for a follow-up held on the morning it
+  /// fell due exactly as much as for one nobody ever made. Every student therefore
+  /// accumulated overdue follow-ups monotonically, and the most-wanted signal in the
+  /// progression feature could not be built at all.
+  ///
+  /// A DATE, NOT A BOOLEAN. A follow-up promised for 1 March and held on 30 April
+  /// happened, and the two-month gap is the part worth seeing; a boolean throws it
+  /// away irrecoverably. Same argument as lastAttendedOn over a stored day count.
+  ///
+  /// NULLABLE, and the null carries two meanings this row alone cannot separate: no
+  /// follow-up was ever promised, and a promised one that has not happened.
+  /// followUpDate is what separates them, which is why the route stopped destroying
+  /// it. A third meaning applies to every row written before this column existed —
+  /// "could not have been recorded" — and the prediction layer refuses to read those
+  /// as "not done"; see the watermark in prediction/tripwires.js.
+  followUpCompletedOn String?
+  /// Who recorded that it happened. A plain string, not a relation, exactly like
+  /// loggedBy: closing a safeguarding follow-up is an act the record must still
+  /// attribute after that person has left, and a SetNull relation erases precisely
+  /// the fact worth keeping. Stamped from the token, never from the body.
+  followUpCompletedBy String?
   tutor            String   @default("")  // staff member who conducted the meeting
   loggedBy         String?                // who recorded the interaction
   createdAt        DateTime @default(now())
@@ -1317,6 +1341,14 @@ model StudentReview {
   agreedActions String   @default("")
   followUp      Boolean  @default(false)
   followUpDate  String?  // YYYY-MM-DD, only when followUp is true
+  /// When the promised follow-up actually happened, YYYY-MM-DD. See the identical
+  /// pair on Interaction for the full argument — the two must stay the same shape,
+  /// because the prediction layer counts missed follow-ups across BOTH tables and a
+  /// signal that could see only half of them would be worse than none, since which
+  /// half depends on which screen a tutor happens to use.
+  followUpCompletedOn String?
+  /// Who recorded it. A plain string, for the reason staffName above is one.
+  followUpCompletedBy String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -1953,6 +1985,15 @@ model StudentPredictionCurrent {
   /// has ever received sits at open for ever and a count would report the workflow.
   oldestOpenQueryOn      String?
   openQueryCount         Int?
+  /// Follow-ups this college promised, past their date by more than the grace period,
+  /// with nothing recording that they happened.
+  ///
+  /// NULL IS NOT ZERO AND THE DIFFERENCE IS THE WHOLE SIGNAL. Until this college has
+  /// recorded a completed follow-up ANYWHERE, nothing distinguishes "promised and not
+  /// done" from "promised, done, and never written down" — which is what every row
+  /// written before followUpCompletedOn existed looks like. A zero would report the
+  /// migration; a null reports that we cannot yet tell.
+  overdueFollowUpCount   Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2133,6 +2174,15 @@ model StudentPredictionHistory {
   /// has ever received sits at open for ever and a count would report the workflow.
   oldestOpenQueryOn      String?
   openQueryCount         Int?
+  /// Follow-ups this college promised, past their date by more than the grace period,
+  /// with nothing recording that they happened.
+  ///
+  /// NULL IS NOT ZERO AND THE DIFFERENCE IS THE WHOLE SIGNAL. Until this college has
+  /// recorded a completed follow-up ANYWHERE, nothing distinguishes "promised and not
+  /// done" from "promised, done, and never written down" — which is what every row
+  /// written before followUpCompletedOn existed looks like. A zero would report the
+  /// migration; a null reports that we cannot yet tell.
+  overdueFollowUpCount   Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)

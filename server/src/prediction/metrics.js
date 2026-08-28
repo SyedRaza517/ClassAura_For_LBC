@@ -143,6 +143,7 @@ async function gather(studentIds, config) {
   // equal is what matters, not the exact count.
   const concernSince = shiftDays(today, -config.concernWindowDays);
   const noShowSince = shiftDays(today, -config.noShowWindowDays);
+  const followUpCutoff = shiftDays(today, -config.followUpGraceDays);
   const priorTo = shiftDays(recentFrom, -1);
   const priorFrom = shiftDays(priorTo, -config.recentAttendanceDays);
 
@@ -167,7 +168,7 @@ async function gather(studentIds, config) {
   // — none of them depends on any other, so serialising them would add round trips to
   // every chunk for no reason.
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
-         answeredQueryRows] = await Promise.all([
+         answeredQueryRows, firstClosedContact, firstClosedReview] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -181,6 +182,18 @@ async function gather(studentIds, config) {
     // students it exists to find, since a chunk of ignored students contains no
     // answered queries. The pastoral pair failed this way once already.
     prisma.studentQuery.count({ where: { status: "answered" } }),
+    // THE WATERMARK, and the seventh guard of the same family. followUpCompletedOn did
+    // not exist before its migration, so it is null on every row written earlier -- for
+    // follow-ups held on the day exactly as much as for ones nobody made. Reading that
+    // null as "not done" would put the college's whole historic backlog on the caseload
+    // the morning the column shipped.
+    //
+    // Derived, never stamped: a constant would be a DEPLOY date, and the two databases
+    // migrate on different days, so a value right for one is silently wrong for the
+    // other. The earliest completion this college has EVER recorded is an observed
+    // lower bound on when it became able to record one.
+    prisma.interaction.aggregate({ _min: { followUpCompletedOn: true } }),
+    prisma.studentReview.aggregate({ _min: { followUpCompletedOn: true } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -199,6 +212,18 @@ async function gather(studentIds, config) {
   // does not record submissions and silently switch TRIP_UNMARKED_WORK off for them.
   const submissionsRecorded = submissionRows > 0;
   const queryRepliesRecorded = answeredQueryRows > 0;
+
+  // Null means the signal stays SILENT: this college has never closed a follow-up
+  // anywhere, so nothing distinguishes an unkept promise from a kept one nobody wrote
+  // down. The bedding-in gap is stated rather than hidden -- follow-ups falling due
+  // between the migration and the first use of the button stay excluded for ever. That
+  // under-reports, which is the safe direction, it is bounded, and it converges. The
+  // alternative over-reports the entire history at once.
+  const closureDates = [
+    firstClosedContact._min.followUpCompletedOn,
+    firstClosedReview._min.followUpCompletedOn,
+  ].filter(Boolean);
+  const followUpClosureFrom = closureDates.length ? closureDates.reduce((a, b) => (a < b ? a : b)) : null;
   const lateRecorded = lateMarks > 0;
   const excusedRecorded = excusedMarks > 0;
   const pastoralInUse = contactRows > 0 || reviewRows > 0;
@@ -363,13 +388,15 @@ async function gather(studentIds, config) {
 
   const contacts = await prisma.interaction.findMany({
     where: { studentId: { in: studentIds } },
-    select: { studentId: true, date: true, queryType: true },
+    select: { studentId: true, date: true, queryType: true,
+              followUpRequired: true, followUpDate: true, followUpCompletedOn: true },
   });
 
   const reviews = await prisma.studentReview.findMany({
     where: { studentId: { in: studentIds } },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    select: { studentId: true, date: true, progress: true, concerns: true },
+    select: { studentId: true, date: true, progress: true, concerns: true,
+              followUp: true, followUpDate: true, followUpCompletedOn: true },
   });
 
   // A THIRD PASTORAL QUERY PER CHUNK, and it earns its round trip: a student who used
@@ -412,6 +439,11 @@ async function gather(studentIds, config) {
     // the programme however faithfully they attend afterwards — and no amount of good
     // behaviour can decrement a count that only ever goes up.
     if (NO_SHOW_TYPES.includes(c.queryType) && (!c.date || c.date >= noShowSince)) cur.noShowCount += 1;
+    // Promises, from BOTH tables. A signal that could see only half of them would be
+    // worse than none, because which half depends on the screen a tutor happens to use.
+    (cur.promises = cur.promises || []).push({
+      followUpDate: c.followUpDate, followUpCompletedOn: c.followUpCompletedOn, stillFlagged: c.followUpRequired,
+    });
     pastoralByStudent.set(c.studentId, cur);
   }
   for (const r of reviews) {
@@ -426,6 +458,9 @@ async function gather(studentIds, config) {
     let parsed = [];
     try { const j = JSON.parse(r.concerns || "[]"); if (Array.isArray(j)) parsed = j; } catch { /* leave empty */ }
     (cur.concernSets = cur.concernSets || []).push({ date: r.date, concerns: parsed });
+    (cur.promises = cur.promises || []).push({
+      followUpDate: r.followUpDate, followUpCompletedOn: r.followUpCompletedOn, stillFlagged: r.followUp,
+    });
     pastoralByStudent.set(r.studentId, cur);
   }
 
@@ -614,8 +649,11 @@ async function gather(studentIds, config) {
 
     const rawPastoral = pastoralByStudent.get(id) || { lastContactOn: null, noShowCount: 0, progress: null };
     const concernRepeat = tripwires.repeatConcerns(rawPastoral.concernSets || [], concernSince);
+    const missedFollowUps = tripwires.overdueFollowUps(
+      rawPastoral.promises || [], followUpClosureFrom, followUpCutoff
+    );
     const pastoral = pastoralInUse
-      ? { ...rawPastoral, repeated: concernRepeat.repeated || [] }
+      ? { ...rawPastoral, repeated: concernRepeat.repeated || [], overdueFollowUps: missedFollowUps.overdue }
       : null;
 
     // Late submission, read from the marks rather than from AssessmentSubmission —
@@ -696,6 +734,7 @@ async function gather(studentIds, config) {
         gradedWithDates: timing.gradedWithDates,
         oldestOpenQueryOn: backlog.oldestOpenQueryOn,
         openQueryCount: backlog.openQueryCount,
+        overdueFollowUpCount: missedFollowUps.overdue,
         // Forwarded for the contact deficit, which crosses the risk level with these
         // dates and therefore CANNOT be computed here: gather() runs before score(),
         // so the only risk level visible to it is the previous run's — and every

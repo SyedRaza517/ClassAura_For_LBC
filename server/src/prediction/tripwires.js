@@ -69,6 +69,8 @@ const TRIP = {
   QUERY_UNANSWERED: "TRIP_QUERY_UNANSWERED",
   // Institutional: the engine flagged this student and nobody went.
   CONTACT_DEFICIT: "TRIP_CONTACT_DEFICIT",
+  // Institutional: a follow-up the college promised and did not hold.
+  FOLLOWUP_MISSED: "TRIP_FOLLOWUP_MISSED",
 };
 
 const TRIP_CODES = Object.values(TRIP);
@@ -570,6 +572,70 @@ function contactDeficit(state, config) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Promises the college made and did not keep                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Follow-ups this college arranged, whose date has passed by more than the grace
+ * period, with nothing recording that they happened.
+ *
+ * INSTITUTIONAL. The student did not fail to turn up to it — that is a No Show, it is
+ * already TRIP_NO_SHOW, and it is a signal about them. This one is about us.
+ *
+ * THE MIGRATION TRAP, and it is the sharpest in this file.
+ *
+ * `followUpCompletedOn` did not exist before the migration that added it, so it is
+ * null on every row written earlier — for follow-ups held on the morning they fell due
+ * exactly as much as for ones nobody ever made. Reading that null as "not done" would
+ * put the college's entire accumulated history on the caseload the day the column
+ * shipped: the same monotonic pile the column exists to end, delivered all at once.
+ *
+ * So the caller passes a WATERMARK: the earliest completion this college has ever
+ * recorded anywhere. It is an observed lower bound on when the college became ABLE to
+ * record one, and anything promised before it cannot be judged. Derived from the data
+ * rather than stamped as a constant, because a constant would be a DEPLOY date and the
+ * two databases are migrated on different days — a value right for one would be
+ * silently wrong for the other.
+ *
+ * Until a college closes its first follow-up the watermark is null and this returns
+ * null, exactly as latenessRate is null where the register has no "L". That will look
+ * broken to whoever ships it, and somebody will be tempted to fix it with a stamped
+ * date or a backfill. Both reintroduce the mass alarm this design exists to avoid.
+ *
+ * @param {Array<{followUpDate, followUpCompletedOn, stillFlagged}>} promises  from BOTH
+ *        Interaction and StudentReview — a signal that could see only half would be
+ *        worse than none, because which half depends on the screen a tutor happens to use
+ * @param {string|null} closureFrom  the earliest completion this college ever recorded
+ * @param {string} cutoff  YYYY-MM-DD; a promise is judged only once its date is this old
+ */
+function overdueFollowUps(promises, closureFrom, cutoff) {
+  // The institution guard. Not a zero: before this college closed its first follow-up,
+  // "promised and not done" and "promised, done, never written down" are the same row.
+  if (!closureFrom) return { overdue: null, judged: 0 };
+
+  let overdue = 0, judged = 0;
+
+  for (const p of promises || []) {
+    const due = p && p.followUpDate;
+    if (!due) continue;               // no promise — nothing to keep
+    if (due < closureFrom) continue;  // promised before a closure could be recorded
+    if (due > cutoff) continue;       // still inside the grace period
+    judged += 1;
+    // Retraction is not failure. A follow-up the college explicitly stood down — the
+    // student withdrew, the concern resolved — was not missed, and the row still
+    // carries its date so the retraction stays visible to anyone auditing the practice.
+    if (!p.stillFlagged) continue;
+    if (!p.followUpCompletedOn) overdue += 1;
+  }
+
+  // NOTHING JUDGEABLE IS NOT ZERO MISSED. One rule covers both a student who was never
+  // promised anything and one whose only promises predate the watermark: there is no
+  // evidence, so there is no figure. Exactly unpassedUnits()'s `if (!measured)`.
+  if (!judged) return { overdue: null, judged: 0 };
+  return { overdue, judged };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Engagement recency                                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -794,6 +860,18 @@ function evaluate(raw, config) {
     // The same concern in two separate reviews. One is a conversation; two is a problem
     // nobody has resolved, and no figure the engine computes can see the difference.
     if ((pastoral.repeated || []).length) codes.push(TRIP.REPEAT_CONCERN);
+
+    // A PROMISE THE COLLEGE MADE AND DID NOT KEEP. Institutional, like the contact
+    // codes around it. `isNum` is what keeps the migration null out — a later reader
+    // coercing it would put the whole historic backlog on the caseload at once.
+    //
+    // NOT muted by settlingIn, for the reason ABSENCE_STREAK is not: the exemption is
+    // for codes firing on the ABSENCE of a record, and this fires on the PRESENCE of a
+    // promise. A follow-up arranged in week one and missed in week two is exactly what
+    // a settling-in grace must not hide — week one is when a non-starter gets one.
+    if (isNum(pastoral.overdueFollowUps) && pastoral.overdueFollowUps >= 1) {
+      codes.push(TRIP.FOLLOWUP_MISSED);
+    }
   }
 
   /* --- a question nobody answered ---------------------------------------- */
@@ -841,6 +919,6 @@ function evaluate(raw, config) {
 module.exports = {
   evaluate, attendanceShape, attendanceQuality, attainmentShape, engagementRecency,
   unitDispersion, unpassedUnits, weeklyRegularity, submissionTiming, repeatConcerns,
-  queryBacklog, contactDeficit,
+  queryBacklog, contactDeficit, overdueFollowUps,
   TRIP, TRIP_CODES,
 };

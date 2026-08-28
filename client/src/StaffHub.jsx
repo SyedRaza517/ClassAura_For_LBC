@@ -2743,6 +2743,7 @@ const DRIVER_LABELS = {
   TRIP_REVIEW_OVERDUE: "An intervention is past its agreed review date",
   TRIP_QUERY_UNANSWERED: "A question this student asked has gone unanswered",
   TRIP_CONTACT_DEFICIT: "Flagged as at risk, and nobody has spoken to them",
+  TRIP_FOLLOWUP_MISSED: "A follow-up the college promised has not happened",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -2750,7 +2751,7 @@ const DRIVER_LABELS = {
  *  worded so nobody mistakes an institutional failing for a student's. */
 const INSTITUTIONAL_TRIPS = new Set([
   "TRIP_NO_PASTORAL_CONTACT", "TRIP_UNMARKED_WORK", "TRIP_REVIEW_OVERDUE",
-  "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT",
+  "TRIP_QUERY_UNANSWERED", "TRIP_CONTACT_DEFICIT", "TRIP_FOLLOWUP_MISSED",
 ]);
 
 /** A code that came from the tripwire layer rather than the engine's own indicators.
