@@ -26,6 +26,22 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 
 /* ============================== NFC tap check-in ============================== */
 
+// WHAT A TAP PROVES, STATED HONESTLY
+//
+// That somebody was at that sticker once, with this account signed in. NOT that they are
+// there now: the code on a sticker is static and any phone with a generic NFC reader app
+// can lift it, so a student who notes one down can mark themselves present from home for
+// the rest of the year — and the ten-per-minute limiter is no obstacle at one request per
+// class. The lecturer's live view and the TagTap log, which carries the IP, are what make
+// that visible after the fact. Nothing here prevents it.
+//
+// This is a real improvement on a button anybody could press, and it is not proof of
+// presence. Closing the gap properly means a tag that rotates its code, or a tag bound to
+// a room with the session required to match it. Both are recorded in the design note under
+// docs/superpowers/specs/. Comments elsewhere in this feature once claimed more than this;
+// they have been corrected, because an overclaim in an attendance record is worse than a
+// gap somebody knows about.
+
 // In-process, module-level, and therefore correct for ONE Node process — a clustered
 // deployment needs Redis. Keyed on the student because the caller is already
 // authenticated: this is not a login endpoint, so the point is to stop a runaway loop,
@@ -197,9 +213,22 @@ router.post("/me/tap-check-in", async (req, res) => {
     return res.json({ ok: true, alreadyMarked: true, status: existing.status, checkedInAt: existing.checkedInAt ?? null, session: sTapSession(chosen) });
   }
 
-  const mark = await prisma.attendanceMark.create({
-    data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time },
-  });
+  let mark;
+  try {
+    mark = await prisma.attendanceMark.create({
+      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time },
+    });
+  } catch (e) {
+    // P2002 on @@unique([sessionId, studentId]): two taps raced past the existence check
+    // above, or a lecturer saved the register in between. Either way a mark now exists
+    // and this request must not have written it — report what stands rather than a 500.
+    const standing = await prisma.attendanceMark.findUnique({
+      where: { sessionId_studentId: { sessionId: chosen.id, studentId: req.user.id } },
+    });
+    if (!standing) throw e;
+    await logTap(req, { ...base, sessionId: chosen.id, outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: standing.status, checkedInAt: standing.checkedInAt ?? null, session: sTapSession(chosen) });
+  }
 
   await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });
   await logTap(req, { ...base, sessionId: chosen.id, outcome: "marked", status });

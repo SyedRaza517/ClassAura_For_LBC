@@ -13,7 +13,7 @@
 // The generated code appears exactly once. There is no endpoint that reads one back, on
 // purpose: a leaked code is a sticker anyone can simulate from anywhere, and the remedy
 // is to retire it and register another, not to look the old one up.
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Nfc, Plus, Loader2, AlertTriangle, CheckCircle2, Copy, Power, RefreshCw,
   ScanLine, Clock3, ShieldCheck, X,
@@ -73,7 +73,11 @@ export default function AdminNfcTags() {
 
   return (
     <div className="space-y-5 p-4 md:p-6">
-      {err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}
+      <header>
+        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Nfc size={18} style={{ color: NAVY }} />NFC Tags</h2>
+        <p className="mt-0.5 text-[13px] text-slate-500">The stickers students and staff tap, and how check-in behaves.</p>
+      </header>
+      <div role="alert" aria-live="assertive">{err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}</div>
 
       <TapSettings settings={settings} onSaved={(s) => setSettings(s)} />
       <RegisterTag onCreated={load} />
@@ -81,11 +85,11 @@ export default function AdminNfcTags() {
       <section className="rounded-2xl border border-slate-200 bg-white">
         <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><Nfc size={16} style={{ color: NAVY }} />Registered stickers</h3>
-          <button onClick={load} className="press rounded-lg p-1.5 text-slate-400 hover:bg-slate-50" title="Refresh"><RefreshCw size={15} /></button>
+          <button onClick={load} aria-label="Refresh the tag list" className="press rounded-lg p-2.5 text-slate-500 hover:bg-slate-50" title="Refresh"><RefreshCw size={15} /></button>
         </header>
 
         {!tags?.length ? (
-          <p className="px-5 py-8 text-center text-sm text-slate-400">No stickers registered yet.</p>
+          <p className="px-5 py-8 text-center text-sm text-slate-500">No stickers registered yet.</p>
         ) : (
           <ul className="divide-y divide-slate-100">
             {tags.map((t) => (
@@ -100,10 +104,10 @@ export default function AdminNfcTags() {
                   </p>
                 </div>
                 {!t.active && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 ring-1 ring-slate-200">Retired</span>}
-                <button onClick={() => setOpenLog(t)} className="press rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] font-semibold text-slate-600">Taps</button>
+                <button onClick={() => setOpenLog(t)} className="press rounded-lg border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600">Taps</button>
                 <button
                   onClick={async () => { await api.updateTag(t.id, { active: !t.active }).catch((e) => setErr(e.message)); load(); }}
-                  className="press flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[12px] font-semibold text-slate-600"
+                  className="press flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2.5 text-[12px] font-semibold text-slate-600"
                   title={t.active ? "Retire this sticker" : "Bring it back into use"}
                 >
                   <Power size={13} />{t.active ? "Retire" : "Restore"}
@@ -146,11 +150,13 @@ function TapSettings({ settings, onSaved }) {
     finally { setSaving(false); }
   };
 
-  const num = (key, label, hint) => (
+  // armSeconds is SECONDS and capped server-side at 600; the two minute fields are
+  // capped at 120. One shared max="120" silently refused a legitimate arming window.
+  const num = (key, label, hint, max = 120) => (
     <label className="block">
       <span className="text-[12px] font-semibold text-slate-700">{label}</span>
       <input
-        type="number" min="0" max="120" value={draft[key]}
+        type="number" min="0" max={max} value={draft[key]}
         onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) })}
         onBlur={(e) => { const v = Number(e.target.value); if (v !== settings[key]) save({ [key]: v }); }}
         className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm tabular-nums"
@@ -186,7 +192,7 @@ function TapSettings({ settings, onSaved }) {
       <div className="grid gap-4 sm:grid-cols-3">
         {num("lateAfterMins", "Late after (minutes)", "A tap this long after the start records Late instead of Present.")}
         {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts taps are accepted. Zero means not before it starts.")}
-        {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.")}
+        {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.", 600)}
       </div>
 
       <label className="mt-4 flex items-start gap-3">
@@ -210,14 +216,19 @@ function RegisterTag({ onCreated }) {
   const [err, setErr] = useState("");
   const [created, setCreated] = useState(null);   // { label, code } — shown once
   const [copied, setCopied] = useState(false);
+  // Mirrors `label` so an in-flight scan reads what is on screen now, not what was there
+  // when the scan started.
+  const labelRef = useRef("");
+  useEffect(() => { labelRef.current = label; }, [label]);
 
   useEffect(() => { nfcStatus().then(setNfc); }, []);
 
-  const create = async (code) => {
-    if (!label.trim()) { setErr("Give the sticker a name first — the room it will live in."); return; }
+  const create = async (code, labelOverride) => {
+    const name = (labelOverride ?? label).trim();
+    if (!name) { setErr("Give the sticker a name first — the room it will live in."); return; }
     setSaving(true); setErr("");
     try {
-      const t = await api.createTag(label.trim(), code);
+      const t = await api.createTag(name, code);
       setCreated(t); setLabel(""); onCreated();
     } catch (e) { setErr(e?.message || "Could not register that sticker."); }
     finally { setSaving(false); }
@@ -228,7 +239,10 @@ function RegisterTag({ onCreated }) {
     setScanning(true); setErr("");
     try {
       const code = await scanOnce({ alertMessage: "Hold your phone near the new sticker" });
-      await create(code);
+      // From the ref, not the closure. A scan can take thirty seconds, the input stays
+      // editable throughout, and a name corrected while holding the phone to the sticker
+      // was silently discarded — the tag registered under the old one.
+      await create(code, labelRef.current);
     } catch (e) { setErr(e?.message || "Could not read that sticker."); }
     finally { setScanning(false); }
   };
@@ -249,7 +263,19 @@ function RegisterTag({ onCreated }) {
               <div className="mt-2 flex items-center gap-2">
                 <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-[12px] ring-1 ring-emerald-200">{created.code}</code>
                 <button
-                  onClick={() => { navigator.clipboard?.writeText(created.code); setCopied(true); setTimeout(() => setCopied(false), 1800); }}
+                  onClick={async () => {
+                    // The promise can reject even where the API exists — denied permission,
+                    // or a non-secure context. Claiming "Copied" when nothing was is worse
+                    // here than anywhere else: this code is shown exactly once, so a false
+                    // confirmation loses the sticker.
+                    try {
+                      await navigator.clipboard.writeText(created.code);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1800);
+                    } catch (_) {
+                      setErr("Could not copy. Select the code and copy it by hand before leaving this screen.");
+                    }
+                  }}
                   className="press flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-[12px] font-semibold text-emerald-800 ring-1 ring-emerald-200"
                 >
                   <Copy size={13} />{copied ? "Copied" : "Copy"}
@@ -305,23 +331,31 @@ function RegisterTag({ onCreated }) {
 function TapLog({ tag, onClose }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  useEffect(() => { api.tagLog(tag.id).then(setData).catch((e) => setErr(e.message)); }, [tag.id]);
+  useEffect(() => { api.tagLog(tag.id).then(setData).catch((e) => setErr(e?.message || "Could not load the taps for this sticker.")); }, [tag.id]);
+  // Escape closes it. Without this the only way out on a keyboard was to tab to a close
+  // button that had no accessible name either.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={"Taps on " + tag.label}
+        className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <div>
             <h3 className="text-sm font-bold text-slate-800">{tag.label}</h3>
             <p className="text-[12px] text-slate-500">Recent taps, including the ones that were refused</p>
           </div>
-          <button onClick={onClose} className="press rounded-lg p-1.5 text-slate-400 hover:bg-slate-50"><X size={17} /></button>
+          <button onClick={onClose} aria-label="Close" className="press rounded-lg p-2.5 text-slate-500 hover:bg-slate-50"><X size={17} /></button>
         </header>
 
         <div className="max-h-[70vh] overflow-y-auto">
           {err && <p className="p-5 text-sm text-rose-600">{err}</p>}
           {!data && !err && <div className="flex justify-center p-10"><Loader2 className="animate-spin text-slate-300" size={24} /></div>}
-          {data && !data.taps.length && <p className="p-8 text-center text-sm text-slate-400">Nobody has tapped this sticker yet.</p>}
+          {data && !data.taps.length && <p className="p-8 text-center text-sm text-slate-500">Nobody has tapped this sticker yet.</p>}
           {data && data.taps.length > 0 && (
             <ul className="divide-y divide-slate-100">
               {data.taps.map((t) => {
@@ -329,8 +363,8 @@ function TapLog({ tag, onClose }) {
                 return (
                   <li key={t.id} className="flex flex-wrap items-center gap-2.5 px-5 py-3">
                     <Clock3 size={13} className="shrink-0 text-slate-300" />
-                    <span className="w-[128px] shrink-0 text-[12px] tabular-nums text-slate-500">{fmtWhen(t.at)}</span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-slate-800">
+                    <span className="w-[104px] shrink-0 text-[12px] tabular-nums text-slate-500">{fmtWhen(t.at)}</span>
+                    <span className="min-w-[6.5rem] flex-1 truncate text-[13px] font-medium text-slate-800">
                       {/* A refused tap can have no name at all — nobody was identified.
                           That is a real state and reads better than a blank. */}
                       {t.who || <span className="italic text-slate-400">not identified</span>}

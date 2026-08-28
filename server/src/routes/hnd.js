@@ -1226,7 +1226,7 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
   const sessions = await prisma.hndSession.findMany({
     where: { date, unit: { tutorStaffId: req.user.id } },
     include: {
-      unit: { select: { id: true, code: true, name: true } },
+      unit: { select: { id: true, code: true, name: true, term: { select: { start: true, end: true } } } },
       _count: { select: { marks: true } },
     },
     orderBy: { startTime: "asc" },
@@ -1246,9 +1246,13 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
       // Whether taps are being accepted for this class RIGHT NOW. Derived at read time
       // rather than stored: "is it running" changes every minute, and a column holding
       // it would be wrong within one and have nothing to correct it.
+      // The term is part of this, matching what the tap route will actually do. Without
+      // it the dashboard advertised "Open now" for a session inside a closed term while
+      // every tap on it came back 409, which reads as the app being broken.
       acceptingTaps: settings.enabled
         && time >= subMinutes(s.startTime, settings.earlyGraceMins)
-        && time <= s.endTime,
+        && time <= s.endTime
+        && (!s.unit?.term || (date >= s.unit.term.start && date <= s.unit.term.end)),
     })),
   });
 });
@@ -1346,6 +1350,15 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, requireRegisters
     if (today < term.start || today > term.end) {
       return res.status(423).json({ error: `${term.name} is ${today > term.end ? "over" : "not open yet"} — reopen it to edit this register.`, locked: true });
     }
+  }
+
+  // A register for a class that has not happened yet cannot be closed off. Nothing
+  // stopped this before, so one press marked a whole cohort absent for next Tuesday —
+  // and because a tap can never overwrite a mark, those students would then be unable to
+  // check in when the class actually ran. PUT /register has the same hole, but this is a
+  // single button and reaches every enrolled student at once.
+  if (session.date > localDate()) {
+    return res.status(400).json({ error: "That class hasn't happened yet — its register can't be closed off." });
   }
 
   const [enrolments, marks] = await Promise.all([
