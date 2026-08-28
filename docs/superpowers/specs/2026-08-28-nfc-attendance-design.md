@@ -54,6 +54,38 @@ third writer and inherits that invariant.
 | Never rename an applied migration | One migration, named once. P3009 has cost this project two outages |
 | `ADMIN_PAGES` exists twice | The new page goes into `validate.js` **and** `StaffHub.jsx` in one commit |
 
+### How this sits with the register-coverage work of 28 Aug
+
+`1f10179` landed after this design was first drafted and changes what it is for.
+`registerCoverage` in `prediction/metrics.js` now reports `coverageRate`, `scheduled`,
+`marked`, `confidence` and `observations` per student, and — the substantive part — an
+attendance percentage resting on too few marks is **sanitised to `null` before it reaches
+the engine**, rather than passed on as evidence.
+
+Two consequences for this feature:
+
+1. **Every tap raises coverage.** A register that would have gone untaken gets marks on
+   it, so `coverageRate` is the natural measure of whether this feature actually worked.
+   It is worth recording the figure per unit before switching taps on, because that
+   before-and-after is the only honest evidence the feature earned its place.
+2. **The probe's rule binds any query written here.** That module counts *sessions with no
+   marks*, not sessions, because `count(HndSession) > 0` is true at every college that
+   ever took one register. Any coverage-shaped query added by the dashboard in §7 has to
+   count the same way, or it manufactures reassurance.
+
+`registerCoverage` also refuses to work without `sessionId` on every mark it is given.
+Nothing here changes that select, but the dashboard reads marks and must carry `sessionId`
+through for the same reason.
+
+### How this sits with mitigating circumstances
+
+A tap writes an ordinary `AttendanceMark`, and nothing about mitigating circumstances
+changes that: a student on approved cover who turns up and taps is present, and the
+record should say so. The cover logic acts downstream — covered sessions leave the
+percentages but stay in `lastAttendedOn`, the absence streak and the pastoral codes,
+because a student on approved circumstances is one the college should be speaking to
+*more*. This feature adds facts; it does not decide what they count towards.
+
 ---
 
 ## 2. The student flow

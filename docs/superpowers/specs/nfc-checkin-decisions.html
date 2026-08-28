@@ -1032,16 +1032,20 @@ footer {
       </div>
 
       <div class="decision">
-        <h3>Which comes first &mdash; this, or the missing registers?</h3>
-        <p>Everything here hardens attendance that gets <em>recorded</em>. None of it touches
-          sessions where no register was taken at all, where the maths quietly excludes them and
-          nobody's percentage moves. That is the failure that costs you at a funding or visa
-          audit. It is already counted in <code>routes/hnd.js</code> as <code>registersDue</code>,
-          buried in one lecturer's profile screen, and surfacing it is the smallest build on this
-          whole page.</p>
+        <h3>Do the untaken registers still come first?</h3>
+        <p>I said they did, three times. <strong>Half of that landed while we were talking.</strong>
+          The commit on the evening of 28 August added register coverage to the prediction
+          pipeline: an attendance percentage resting on too few marks is now sanitised to
+          <em>null</em> before it reaches the engine, rather than passed on as evidence. The
+          measurement problem &mdash; a student mis-scored because nobody opened the register
+          &mdash; is largely solved.</p>
+        <p>What is still missing is the operational half: nobody is <em>told</em> which registers
+          were never taken, so nobody chases them. That is now a much smaller job than the one I
+          described, and it changes the answer &mdash; tap check-in raises coverage directly, so
+          building it is itself a fix for the same problem.</p>
         <div class="opts">
-          <span class="opt lean">Untaken registers first</span>
-          <span class="opt">Tap check-in first</span>
+          <span class="opt lean">Tap check-in first, coverage view alongside</span>
+          <span class="opt">Coverage view first</span>
         </div>
       </div>
     </div>
