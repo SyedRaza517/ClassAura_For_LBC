@@ -129,7 +129,11 @@ function LiveSession({ sessionId, onBack }) {
   const [closing, setClosing] = useState(false);
   const [note, setNote] = useState("");
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
+  // and a ref only ever set false leaves every guarded setState skipped for the
+  // component's real life — the screen would spin forever with data it had already
+  // fetched.
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const load = useCallback(async () => {
     try {

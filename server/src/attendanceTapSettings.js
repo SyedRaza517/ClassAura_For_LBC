@@ -45,17 +45,28 @@ function minutes(v, max) {
 }
 
 /**
- * The settings this college actually runs on: the defaults, with any stored value
- * merged over them.
+ * The settings this college actually runs on: `base`, with any usable value from
+ * `stored` merged over it.
  *
  * Always complete and always valid, so no caller needs a fallback of its own and no
  * caller can be handed a half-configured object. A stored blob can predate a rule or be
- * edited by hand in a console; an unusable value falls back to the platform default
- * rather than reaching the resolver, where a NaN comparison would silently mark nobody
- * and look exactly like a quiet day.
+ * edited by hand in a console; an unusable value falls back rather than reaching the
+ * resolver, where a NaN comparison would silently mark nobody and look exactly like a
+ * quiet day.
+ *
+ * WHAT `base` IS FOR, AND WHY IT IS NOT ALWAYS DEFAULTS
+ *
+ * Reading a stored row falls back to the platform defaults, which is right: nothing else
+ * is known. But saving a PATCH must fall back to what the college ALREADY had, or a
+ * single bad key silently undoes a neighbouring setting somebody tuned last term — send
+ * `{ lateAfterMins: "twenty" }` and a carefully chosen 30 reverts to 15, answering 200 OK.
+ * Worse, `{ enabled: null }` is reachable from JSON and would switch a whole college OFF
+ * while reporting success. So save() passes the current settings as the base, which makes
+ * an unusable key IGNORED rather than reset. That is what the PATCH contract in
+ * attendanceTapConfig.save() actually promises.
  */
-function merge(stored) {
-  const out = { ...DEFAULTS };
+function merge(stored, base = DEFAULTS) {
+  const out = { ...base };
   if (!stored || typeof stored !== "object") return out;
 
   // Booleans are compared identically, not coerced. "false" and 0 are both mistakes

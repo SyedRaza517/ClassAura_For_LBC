@@ -1288,8 +1288,15 @@ model AttendanceTag {
 // six students inside a minute — is invisible in AttendanceMark and obvious here.
 model TagTap {
   id        String        @id @default(cuid())
-  tag       AttendanceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagId     String
+  // NULLABLE, and that is the whole point of this column's existence being awkward.
+  // The refusals an administrator is most often asked about — "I tapped and it didn't
+  // work" — happen BEFORE any tag is identified: an unknown code matches nothing, a
+  // retired sticker is filtered out by the lookup, a rate-limited or switched-off tap
+  // never reaches the lookup at all. A required foreign key made those three outcomes
+  // literally unwritable, so the vocabulary below listed them and nothing ever produced
+  // one. A tap with no tag is a real event and now leaves a real row.
+  tag       AttendanceTag? @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     String?
   // Exactly one of these is set on an accepted tap; BOTH are null when the tap was
   // refused before anybody was identified. Not measurable — never a blank string
   // standing in for a person.

@@ -457,6 +457,9 @@ export const api = {
   // Clocking in by touching a sticker. No site is sent: the tap proves Onsite, and the
   // server refuses to record anything else for this route.
   tapCheckIn: (tagCode) => request("/checkins/tap-check-in", { method: "POST", body: { tagCode } }),
+  // Reachable by ANY signed-in staff member, unlike api.tapSettings() below, whose whole
+  // router needs the NFC Tags admin page. The check-in screen asks this one.
+  staffTapSettings: () => request("/checkins/tap-settings"),
   checkOut: (id) => request(`/checkins/${id}/check-out`, { method: "POST" }),
   upsertCheckin: (data) => request("/checkins", { method: "PUT", body: data }),
   saveSummary: (date, summary) => request("/checkins/summary", { method: "PUT", body: { date, summary } }),

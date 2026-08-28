@@ -61,7 +61,13 @@ async function get() {
 async function save(patch, updatedBy) {
   const tenantId = currentTenantId();
   const existing = await prisma.attendanceTapConfig.findFirst();
-  const next = merge({ ...(existing?.settings || {}), ...(patch || {}) });
+  // The current settings are the BASE, and the patch is merged over them. Spreading the
+  // two together and merging over DEFAULTS looked equivalent and was not: merge() drops
+  // an unusable value and falls back to its base, so with DEFAULTS as the base a single
+  // malformed key reset a neighbouring setting the college had tuned — which is exactly
+  // what the paragraph below promises will not happen.
+  const current = merge(existing?.settings);
+  const next = merge(patch, current);
 
   if (existing) {
     await prisma.attendanceTapConfig.update({ where: { id: existing.id }, data: { settings: next, updatedBy: updatedBy || null } });

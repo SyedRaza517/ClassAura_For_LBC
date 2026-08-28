@@ -69,6 +69,13 @@ const requireStudentAdmin = requireAnyPage(["students"]);    // the student dire
 // The handful of routes that genuinely serve both screens (enrolments link a student
 // to a unit, so either side may legitimately edit them).
 const requireHndWrite = requireAnyPage(["registers", "students"]);
+// The live attendance dashboard. Its own grantable page, because the audience differs
+// from the Registers page: a lecturer watching their class fill in is not the person who
+// restructures a course. "registers" is included so an administrator who already has the
+// registers themselves does not have to be granted a second page to watch one being
+// taken — but a college can now grant the watching WITHOUT the editing, which is the
+// point of the key existing at all.
+const requireLiveAttendance = requireAnyPage(["live-attendance", "registers"]);
 const { isStatus, summarise, summariseCounts } = require("../attendance");
 
 // DEF-01: HND registers are an admin-only feature (they live entirely in the admin
@@ -1211,7 +1218,7 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
 // through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
 // on: a name typed into a box is not an identity, and matching on it would hand one
 // lecturer another's register whenever two people share a surname.
-router.get("/my-sessions/today", requireAuth, async (req, res) => {
+router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req, res) => {
   const date = localDate();
   const time = localTime();
   const settings = await tapConfig.get();
@@ -1255,7 +1262,7 @@ router.get("/my-sessions/today", requireAuth, async (req, res) => {
 // "Not tapped" is a DISPLAY state, not a mark. Nothing is written for those students
 // here — the roll simply has no row for them yet. The only route from this feature to an
 // A is POST /mark-remaining-absent below, with a named human on the end of it.
-router.get("/sessions/:id/live", requireAuth, async (req, res) => {
+router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
     include: { unit: { select: { id: true, code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },

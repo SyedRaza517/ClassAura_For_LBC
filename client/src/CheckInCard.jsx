@@ -19,6 +19,12 @@ import { Nfc, CheckCircle2, Loader2, AlertTriangle, Clock3, Wifi, WifiOff, Smart
 import { nfcStatus, scanOnce, cancelScan } from "./nfc";
 import { NAVY } from "./branding";
 
+// How many consecutive genuine failures before the silent Android re-arm gives up, and
+// how long to wait before each attempt. The delay is what makes a tight loop impossible
+// even if a rejection is instantaneous.
+const MAX_REARM_FAILURES = 3;
+const REARM_DELAY_MS = 400;
+
 /** mm:ss remaining, for the arming countdown. */
 const secsLeft = (until) => Math.max(0, Math.ceil((until - Date.now()) / 1000));
 
@@ -50,8 +56,19 @@ export default function CheckInCard({
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
   const alive = useRef(true);
+  // Consecutive real failures, so a broken adapter stops the silent re-arm instead of
+  // retrying until the battery dies.
+  const failures = useRef(0);
 
-  useEffect(() => () => { alive.current = false; cancelScan(); }, []);
+  // alive is set to true on EVERY mount, not just declared true once. React StrictMode
+  // (main.jsx) mounts, unmounts and remounts in development: with only a cleanup here,
+  // the first unmount set this false and it stayed false for the component's whole real
+  // life, so every guarded setState was skipped and the card rendered a permanently dead
+  // button. It looked exactly like the feature being broken, in development only.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; cancelScan(); };
+  }, []);
 
   useEffect(() => { nfcStatus().then((s) => { if (alive.current) setStatus(s); }); }, []);
 
@@ -73,16 +90,25 @@ export default function CheckInCard({
     if (armedUntil && armedUntil <= now) { setCode(null); setArmedUntil(0); }
   }, [now, armedUntil]);
 
-  const startScan = useCallback(async () => {
-    setError(""); setResult(null); setScanning(true);
+  const startScan = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setError("");
+    setResult(null); setScanning(true);
     try {
       const c = await scanOnce({ alertMessage: "Hold your phone near the sticker" });
       if (!alive.current) return;
       setCode(c);
       setArmedUntil(Date.now() + armSeconds * 1000);
       setNow(Date.now());
+      failures.current = 0;
     } catch (e) {
-      if (alive.current) setError(e?.message || "Could not read the sticker.");
+      if (!alive.current) return;
+      // A cancel is the user saying no. A timeout on the silent Android path is just
+      // "nobody has tapped yet" — the card re-arms and waits again. Painting either as
+      // an error meant a red banner flashed on screen roughly every thirty seconds,
+      // forever, on a screen where nothing was actually wrong.
+      const benign = e?.cancelled || (silent && e?.timedOut);
+      if (!benign) setError(e?.message || "Could not read the sticker.");
+      if (!e?.timedOut && !e?.cancelled) failures.current += 1;
     } finally {
       if (alive.current) setScanning(false);
     }
@@ -92,9 +118,17 @@ export default function CheckInCard({
   // lapses, so a student who walks up and holds their phone to the wall never presses
   // anything first. iOS cannot do this — Apple's sheet needs a gesture.
   useEffect(() => {
-    if (!status?.ok || status.needsPrompt) return;
-    if (armed || scanning || busy || disabled) return;
-    startScan();
+    if (!status?.ok || status.needsPrompt) return undefined;
+    if (armed || scanning || busy || disabled) return undefined;
+    // Give up after a few consecutive REAL failures rather than re-arming forever. If
+    // startScanning rejects promptly — the adapter switched off since nfcStatus ran, a
+    // session already open, reader mode refused — the effect would otherwise re-run as
+    // fast as the promise settles, pegging the bridge and strobing the banner. Timeouts
+    // and cancels do not count towards this; only failures that mean something is wrong.
+    if (failures.current >= MAX_REARM_FAILURES) return undefined;
+    // A beat before re-arming, so even the fastest rejection cannot become a tight loop.
+    const t = setTimeout(() => startScan({ silent: true }), REARM_DELAY_MS);
+    return () => clearTimeout(t);
   }, [status, armed, scanning, busy, disabled, startScan]);
 
   async function submit() {
@@ -145,7 +179,7 @@ export default function CheckInCard({
       {subtitle}
 
       {result && (
-        <div className="mb-3 flex gap-2.5 rounded-xl bg-emerald-50 p-3 ring-1 ring-emerald-200">
+        <div role="status" aria-live="polite" className="mb-3 flex gap-2.5 rounded-xl bg-emerald-50 p-3 ring-1 ring-emerald-200">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
           <div className="text-[13px] leading-relaxed text-emerald-900">
             {renderResult ? renderResult(result) : "Checked in."}
@@ -154,7 +188,7 @@ export default function CheckInCard({
       )}
 
       {error && (
-        <div className="mb-3 flex gap-2.5 rounded-xl bg-rose-50 p-3 ring-1 ring-rose-200">
+        <div role="alert" aria-live="assertive" className="mb-3 flex gap-2.5 rounded-xl bg-rose-50 p-3 ring-1 ring-rose-200">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-600" />
           <p className="text-[13px] leading-relaxed text-rose-900">{error}</p>
         </div>

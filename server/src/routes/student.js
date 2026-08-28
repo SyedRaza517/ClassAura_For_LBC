@@ -123,19 +123,35 @@ router.get("/me/tap-context", async (req, res) => {
 //   * bypass the term lock, which the register save enforces with a 423.
 router.post("/me/tap-check-in", async (req, res) => {
   const settings = await tapConfig.get();
-  if (!settings.enabled) return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
+  // Logged with no tag, like the two refusals below it. A college that switched this off
+  // while students were still tapping needs to be able to see that happening, and until
+  // TagTap.tagId became nullable none of these three could be recorded at all.
+  if (!settings.enabled) {
+    await logTap(req, { studentId: req.user.id, outcome: "disabled" });
+    return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
+  }
 
   const code = req.body?.tagCode;
   if (!isString(code) || !code.trim()) return res.status(400).json({ error: "A tag is required" });
   const chosenId = req.body?.sessionId;
   if (chosenId != null && !isString(chosenId)) return res.status(400).json({ error: "sessionId must be text" });
 
-  if (!tapAllowed(req.user.id)) return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+  if (!tapAllowed(req.user.id)) {
+    await logTap(req, { studentId: req.user.id, outcome: "rate_limited" });
+    return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+  }
 
   // Tenant-scoped by db.js, so a tag belonging to another college is simply not found.
   // That is the isolation working; it needs no special case here.
   const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
-  if (!tag) return res.status(404).json({ error: "That tag isn't recognised." });
+  if (!tag) {
+    // The code itself is NOT stored. It is a secret, and a log an administrator can read
+    // must not become a list of the codes somebody has been trying. What is worth
+    // keeping is that an unrecognised tap happened, when, and from where — which is what
+    // makes a run of them visible as a run.
+    await logTap(req, { studentId: req.user.id, outcome: "tag_unknown" });
+    return res.status(404).json({ error: "That tag isn't recognised." });
+  }
 
   const date = localDate();
   const time = localTime();

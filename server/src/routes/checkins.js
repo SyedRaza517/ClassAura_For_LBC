@@ -125,6 +125,22 @@ router.post("/check-in", requireAuth, async (req, res) => {
   res.status(201).json(sCheckin(rec));
 });
 
+// GET /api/checkins/tap-settings — may I offer the tap button, and for how long?
+//
+// requireAuth ONLY, and that is the entire reason it exists. The full settings live on
+// /api/tags/settings, whose router is gated on the attendance-tags admin page — so an
+// ordinary lecturer asking whether they may tap got a 403, the client swallowed it, and
+// the check-in card rendered nothing. The feature worked and was invisible to everybody
+// it was built for.
+//
+// An allowlist of three booleans and a number. Nothing here is sensitive: it says only
+// whether the college has switched the feature on. The lateness threshold, the grace
+// window and who last changed them stay on the admin route.
+router.get("/tap-settings", requireAuth, async (_req, res) => {
+  const s = await tapConfig.get();
+  res.json({ enabled: s.enabled, staffTapEnabled: s.staffTapEnabled, armSeconds: s.armSeconds });
+});
+
 // POST /api/checkins/tap-check-in — clock in by touching an NFC sticker.
 //
 // `site` is NOT accepted and NOT asked for. Someone who touched a sticker in the

@@ -44,6 +44,10 @@ const RUN = Date.now().toString(36);
 const A_ID = "st-100121";
 const A_EMAIL = "100121@edtech.co.uk";
 const A_PASSWORD = "nfc-tap-suite-2026";
+// A second seeded student, used only for the term-lock block, where the point is that
+// exactly one class is running for them.
+const B_ID = "st-100122";
+const B_EMAIL = "100122@edtech.co.uk";
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => {
@@ -74,7 +78,7 @@ const shift = (hhmm, mins) => {
 // Everything this run creates, so the finally block puts the database back exactly as
 // the seed left it — the suites share one seeded database and it is not re-run between
 // them.
-const made = { tags: [], sessions: [], units: [], enrolments: [], marks: [], taps: [], checkIns: [] };
+const made = { tags: [], sessions: [], units: [], enrolments: [], marks: [], taps: [], checkIns: [], terms: [], cohorts: [], courses: [] };
 let tenantId = null, otherTenantId = null, configExisted = false, priorConfig = null;
 
 async function cleanup() {
@@ -87,6 +91,10 @@ async function cleanup() {
     for (const id of made.sessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
     for (const id of made.units) await db.unit.delete({ where: { id } }).catch(() => {});
+    // Terms after units (a unit points at one), then the cohort and course they hang off.
+    for (const id of made.terms) await db.term.delete({ where: { id } }).catch(() => {});
+    for (const id of made.cohorts) await db.cohort.delete({ where: { id } }).catch(() => {});
+    for (const id of made.courses) await db.course.delete({ where: { id } }).catch(() => {});
 
     // Put the tap config back exactly as it was. Leaving a college switched ON is the
     // one piece of state here that would change how the product behaves for real users.
@@ -99,6 +107,7 @@ async function cleanup() {
     // The seeded students have NO password and tokenVersion 0. Restore both — a student
     // left signable-in by a test run is a real account with a known password.
     await db.student.update({ where: { id: A_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
+    await db.student.update({ where: { id: B_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
   } catch (e) {
     console.error("cleanup problem:", e.message);
   }
@@ -349,10 +358,20 @@ try {
     data: { tenantId, unitId: strangerUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "not enrolled" },
   });
   made.sessions.push(strangerSession.id);
+  // This block previously made NO HTTP call at all: it created a session and asserted no
+  // mark existed for it, which is true of any session nobody has tapped. Deleting the
+  // whole enrolment filter from candidateSessions() left it green. It now actually taps,
+  // naming the session explicitly so the request cannot be brushed off as ambiguous.
+  const strangerTap = await call("/student/me/tap-check-in", {
+    method: "POST", token: sToken, body: { tagCode, sessionId: strangerSession.id },
+  });
   const strangerMark = await db.attendanceMark.findFirst({ where: { sessionId: strangerSession.id, studentId: A_ID } });
-  check("a session on a unit the student is not enrolled on is never a candidate",
-    strangerMark === null,
-    strangerMark ? "a mark was written on a unit they are not on" : "");
+  check("a tap naming a unit the student is not enrolled on writes nothing",
+    strangerTap.status === 409 && strangerMark === null,
+    `HTTP ${strangerTap.status}${strangerMark ? " — A MARK WAS WRITTEN on a unit they are not on" : ""}`);
+  check("...and the refusal never names that session back to them",
+    !JSON.stringify(strangerTap.data || {}).includes(strangerSession.id),
+    "");
 
   /* ====================================================================== */
   console.log("\n--- the tap log ---");
@@ -369,6 +388,87 @@ try {
 
   const studentReadsLog = await call(`/tags/${created.data?.id}/log`, { token: sToken });
   check("a student cannot read a tag's log", studentReadsLog.status === 403, `HTTP ${studentReadsLog.status}`);
+
+  /* ====================================================================== */
+  console.log("\n--- a closed term closes the register ---");
+  /* ====================================================================== */
+
+  // The single highest-value gap this suite had. resolveTapSession has six unit tests for
+  // the term rule, but NOTHING exercised the plumbing: every unit created above has no
+  // term, so `s.unit?.term` was null everywhere and term_locked never fired over HTTP.
+  // Deleting the `term:` include from candidateSessions() in routes/student.js left all
+  // 30 unit tests and every assertion green while every closed term in the college became
+  // tappable — and bypassing the term lock is one of the three things the route's own
+  // comment says a tap must never do.
+  // A Term needs a Cohort, which needs a Course — and this database seeds none of the
+  // three. Built explicitly rather than reused, so the fixture cannot collide with
+  // whatever another suite left behind.
+  const termCourse = await db.course.create({ data: { tenantId, name: `Tap Suite Course ${RUN}` } }).catch(() => null);
+  if (termCourse) made.courses.push(termCourse.id);
+  const termCohort = termCourse
+    ? await db.cohort.create({ data: { tenantId, courseId: termCourse.id, name: `Tap Intake ${RUN}` } }).catch(() => null)
+    : null;
+  if (termCohort) made.cohorts.push(termCohort.id);
+  const closedTerm = termCohort
+    ? await db.term.create({
+        data: { tenantId, cohortId: termCohort.id, year: 1, index: 1, name: `Closed Term ${RUN}`, start: "2020-01-06", end: "2020-06-30" },
+      }).catch(() => null)
+    : null;
+
+  if (!closedTerm) {
+    console.log("SKIP  could not create a Term fixture — the term lock is NOT exercised in this run");
+  } else {
+    const termUnit = await db.unit.create({
+      data: { tenantId, code: `TRM${RUN}`.slice(0, 12), name: `Term Locked ${RUN}`, termId: closedTerm.id },
+    });
+    made.units.push(termUnit.id);
+    // A DIFFERENT student, enrolled on this unit and nothing else. A_ID has several
+    // classes running by now, so the resolver would filter the locked one out and report
+    // `ambiguous` for the rest — which is correct behaviour and useless as a test of the
+    // lock. Isolation is what makes term_locked the only possible answer.
+    const termEnrol = await db.enrolment.create({ data: { tenantId, studentId: B_ID, unitId: termUnit.id } });
+    made.enrolments.push(termEnrol.id);
+    await db.student.update({ where: { id: B_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0 } });
+    const bLogin = await login(B_EMAIL, A_PASSWORD);
+    const bToken = bLogin.data?.token;
+    const termSession = await db.hndSession.create({
+      data: { tenantId, unitId: termUnit.id, date: today, startTime: shift(now, -1), endTime: shift(now, 119), description: "term locked" },
+    });
+    made.sessions.push(termSession.id);
+
+    const lockedTap = await call("/student/me/tap-check-in", {
+      method: "POST", token: bToken, body: { tagCode },
+    });
+    const lockedMark = await db.attendanceMark.findFirst({ where: { sessionId: termSession.id, studentId: B_ID } });
+    check("a tap on a session whose term has closed is refused",
+      lockedTap.status === 409 && lockedTap.data?.reason === "term_locked",
+      `HTTP ${lockedTap.status} ${lockedTap.data?.reason || ""}`);
+    check("...and writes no mark",
+      lockedMark === null,
+      lockedMark ? "A MARK WAS WRITTEN into a closed term" : "");
+
+    // The other half of the pair. Without this, a resolver that returned term_locked for
+    // EVERYTHING would pass the assertion above — the two together are what prove the term
+    // data actually reached the comparison rather than simply being absent.
+    await db.term.update({ where: { id: closedTerm.id }, data: { end: "2099-12-31" } });
+    const openTap = await call("/student/me/tap-check-in", {
+      method: "POST", token: bToken, body: { tagCode },
+    });
+    const openMark = await db.attendanceMark.findFirst({ where: { sessionId: termSession.id, studentId: B_ID } });
+    if (openMark) made.marks.push(openMark.id);
+    check("the same tap succeeds once the term window includes today",
+      openTap.status === 201 && !!openMark?.status,
+      `HTTP ${openTap.status} status=${openMark?.status}`);
+
+    // The refusal is recorded, which is the whole stated purpose of the tap log.
+    const termLog = await call(`/tags/${created.data?.id}/log`, { token: adminToken });
+    check("the closed-term refusal appears in the tag's log",
+      (termLog.data?.taps || []).some((t) => t.outcome === "term_locked"),
+      `outcomes: ${[...new Set((termLog.data?.taps || []).map((t) => t.outcome))].join(", ")}`);
+
+    made.terms = made.terms || [];
+    made.terms.push(closedTerm.id);
+  }
 
   /* ====================================================================== */
   console.log("\n--- the lecturer's live view ---");
@@ -402,8 +502,12 @@ try {
   check("a row the student tapped DOES read as self-marked",
     freshRow?.selfMarked === true && freshRow?.checkedInAt,
     `selfMarked=${freshRow?.selfMarked} checkedInAt=${freshRow?.checkedInAt}`);
-  check("the counts add up to the roll",
-    live1.data && (live1.data.counts.P + live1.data.counts.L + live1.data.counts.E + live1.data.counts.A + live1.data.counts.notMarked) === live1.data.rows.length,
+  // Asserting the counts SUM to rows.length is a tautology — every row increments exactly
+  // one counter, so it holds for any input and would not notice an L counted as a P.
+  // These are the known fixture contents at this point: A_ID was corrected to L by the
+  // register save above, and nobody else on this unit has a mark.
+  check("the counts describe the roll rather than merely summing to it",
+    live1.data?.counts?.L === 1 && live1.data?.counts?.P === 0 && live1.data?.counts?.A === 0,
     JSON.stringify(live1.data?.counts));
   check("a student cannot read the lecturer's live view", (await call(`/hnd/sessions/${live.id}/live`, { token: sToken })).status === 403, "");
 
@@ -472,11 +576,18 @@ try {
     ciAfter?.timeIn === ciRow?.timeIn,
     `${ciRow?.timeIn} -> ${ciAfter?.timeIn}`);
 
+  // The row MUST be cleared first. With a clock-in already present the route returns
+  // early on already_checked_in and never reaches the upsert, which is the only place
+  // `site` is written — so this assertion used to read back a site written by an earlier
+  // tap. Changing the route to `site: req.body?.site || "Onsite"` left it green while a
+  // staff member could record Online while standing at the sticker.
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
   const staffTapNoSite = await call("/checkins/tap-check-in", { method: "POST", token: adminToken, body: { tagCode, site: "Online" } });
   const ciSite = adminId ? await db.checkIn.findFirst({ where: { staffId: adminId, date: staffDate } }) : null;
+  if (ciSite && !made.checkIns.includes(ciSite.id)) made.checkIns.push(ciSite.id);
   check("a tap ignores any site the caller sends — the tap proves Onsite",
-    ciSite?.site === "Onsite",
-    `site=${ciSite?.site} (HTTP ${staffTapNoSite.status})`);
+    staffTapNoSite.status === 201 && ciSite?.site === "Onsite",
+    `HTTP ${staffTapNoSite.status} site=${ciSite?.site}`);
 
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");

@@ -721,10 +721,12 @@ const HOME_SITES = ["HND", "FE", "SL"];
 function StaffTapCheckIn({ store }) {
   const [settings, setSettings] = useState(null);
   useEffect(() => {
-    // Deliberately silent on failure. A member of staff who is not granted the NFC Tags
-    // page gets a 403 here, and that is not an error worth showing them on a screen
-    // whose actual job is the two buttons above.
-    api.tapSettings().then(setSettings).catch(() => setSettings({ enabled: false }));
+    // The STAFF-reachable settings route, not the admin one. api.tapSettings() lives on a
+    // router gated by the NFC Tags page, so asking it here 403'd for every ordinary
+    // lecturer and this card silently rendered nothing — the feature worked and was
+    // invisible to everybody it was built for. Still silent on failure: a college that
+    // has not migrated yet should show the two buttons above, not an error.
+    api.staffTapSettings().then(setSettings).catch(() => setSettings({ enabled: false }));
   }, []);
   if (!settings?.enabled || !settings?.staffTapEnabled) return null;
 

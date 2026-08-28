@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "TagTap" ALTER COLUMN "tagId" DROP NOT NULL;
+
