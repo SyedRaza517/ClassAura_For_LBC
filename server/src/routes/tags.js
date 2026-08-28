@@ -8,7 +8,7 @@
 const crypto = require("crypto");
 const router = require("express").Router();
 const prisma = require("../db");
-const { crossTenant } = require("../db");
+const { crossTenant, currentTenantId } = require("../db");
 const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
@@ -93,6 +93,29 @@ router.get("/", async (_req, res) => {
 // which is 8–14 hex characters, so this admits a real UID and refuses "room1".
 const MIN_SUPPLIED_CODE = 8;
 
+// How fast one college may claim codes that came from OUTSIDE it — see the squatting
+// note on POST below. Deliberately generous: registering a blank sticker means walking to
+// it, holding a phone against it and typing a room name, so one every fifteen seconds is
+// a brisk rollout and sixty in ten minutes is well clear of it. What it is not clear of
+// is a script, which is the only version of this that scales.
+//
+// In-process and module-level, so it is correct for ONE Node process; a clustered
+// deployment needs Redis. Same shape and same caveat as the tap limiter in
+// routes/student.js. Keyed on the TENANT rather than the administrator, because claiming
+// somebody else's stickers is something an institution does, and a college with five
+// admins should not get five times the allowance for doing it.
+const claimHits = new Map(); // tenantId -> number[] of timestamps
+const CLAIM_WINDOW_MS = 10 * 60_000;
+const CLAIM_MAX = 60;
+function claimAllowed(tenantId) {
+  const now = Date.now();
+  const recent = (claimHits.get(tenantId) || []).filter((t) => now - t < CLAIM_WINDOW_MS);
+  if (recent.length >= CLAIM_MAX) { claimHits.set(tenantId, recent); return false; }
+  recent.push(now);
+  claimHits.set(tenantId, recent);
+  return true;
+}
+
 // POST /api/tags — register a sticker. The code comes back ONCE, to be written onto it.
 //
 // `code` is optional and exists for the second way of registering a sticker: an admin on
@@ -100,6 +123,15 @@ const MIN_SUPPLIED_CODE = 8;
 // tool at all — buy stickers, tap each one, name the room — which is a materially easier
 // rollout than writing a generated secret onto every tag with a separate app. When it is
 // omitted we generate a secret instead, for an admin working at a desktop with no NFC.
+//
+// A supplied code may already exist, and the three answers are deliberately different
+// because they are three different situations wearing the same 409:
+//
+//   * OUR OWN RETIRED sticker — restored, relabelled and handed back. Retiring a sticker
+//     must take it out of service, not destroy it.
+//   * OUR OWN LIVE sticker — refused, but named, because the admin is entitled to know
+//     which of their own rows they are looking at.
+//   * ANOTHER COLLEGE'S sticker — refused without a word about whose.
 router.post("/", async (req, res) => {
   const label = req.body?.label;
   if (!isString(label) || !label.trim()) return res.status(400).json({ error: "A label is required — the room this sticker lives in" });
@@ -117,13 +149,126 @@ router.post("/", async (req, res) => {
   // already registered — possibly to another institution, which is exactly the case we
   // must not paper over by generating a different code and pretending it worked.
   if (code !== null) {
-    const clash = await crossTenantTagExists(code);
-    if (clash) return res.status(409).json({ error: "That tag is already registered." });
+    // OURS? Asked first, and tenant-scoped: db.js merges tenantId into the unique
+    // selector, so this finds our row or nothing — a sticker held elsewhere is simply not
+    // found, which is the isolation working and needs no special case. Asking this before
+    // the cross-tenant probe is what separates the question we may answer in full from the
+    // question we may answer only with a boolean.
+    //
+    // `code` is not selected. Nothing here needs it — we were handed it — and a variable
+    // holding a live tag's secret is a variable that ends up in a log line one day.
+    const ours = await prisma.attendanceTag.findUnique({
+      where: { code },
+      select: { id: true, label: true, active: true },
+    });
+
+    if (ours && !ours.active) {
+      // RESTORE, rather than refuse. Retiring is meant to take a peeled-off or lost
+      // sticker out of service; before this, it destroyed the sticker — the code is
+      // globally unique so no second row can ever be created for the same physical tag,
+      // and the 409 said "already registered" with no route back. The Retire button was
+      // quietly a Destroy button.
+      //
+      // Reuse also keeps the tap log attached to the object it describes. A fresh row
+      // would orphan it: the log that answers "I did tap and it didn't work" would start
+      // again at nothing, while the sticker's real history sat under a tag nobody can see.
+      //
+      // THE ALTERNATIVE — refuse with "this is your tag ‘Room 101’, restore it from the
+      // list" — is defensible and was rejected on where the administrator is standing.
+      // They are in a corridor with a phone held against a sticker. The list cannot tell
+      // them WHICH retired row this is, because a code is never shown on it: they would be
+      // asked to identify one row among two hundred from a label somebody typed last year.
+      // The server is the only party that can make that identification, and it is making
+      // it right here. A refusal that names the tag would be an improvement on today and
+      // still an instruction to go and do by hand what we have already worked out.
+      //
+      // The label comes from THIS request: they have just typed where the sticker is
+      // going, and one retired from Room 101 and put up in Room 202 is Room 202. createdAt
+      // and createdBy are deliberately left alone — they record when this sticker first
+      // entered service and who put it there, which restoring does not change. Who
+      // restored it is in the audit entry.
+      const restored = await prisma.attendanceTag.update({
+        where: { id: ours.id },
+        data: { active: true, label: label.trim() },
+      });
+
+      audit.record(req, {
+        action: "attendance.tag.restored", entity: "AttendanceTag", entityId: restored.id,
+        summary: `Retired NFC tag "${ours.label}" brought back into use as "${restored.label}" by ${req.user?.name || "an administrator"}`,
+        // Never the code, for the reason given on the create below: this log is read on
+        // Settings by admins who were never granted this page.
+        before: { label: ours.label, active: ours.active },
+        after: { label: restored.label, active: restored.active },
+      });
+
+      // 200 and no `code`, both on purpose. Nothing was created, and nothing needs writing
+      // onto a sticker that already carries its own identifier — the one place in this
+      // feature that emits a code stays the one place. `restored` distinguishes the two
+      // outcomes so a screen can say "brought back into use" instead of claiming a
+      // registration that did not happen; the client ignores what it does not know.
+      return res.json({ ...sTag(restored), restored: true });
+    }
+
+    if (ours) {
+      // Ours and live. Naming it is the entire value of this message: "already registered"
+      // sends an admin hunting for something they own, and it is our own label, so there
+      // is nothing to protect by withholding it.
+      //
+      // NOT relabelled silently. A live sticker is on a wall being tapped, and quietly
+      // renaming it through an endpoint the administrator believes is creating something
+      // would move a room's attendance under a name nobody chose. Renaming is PATCH.
+      return res.status(409).json({ error: `That sticker is already registered here, as "${ours.label}". Rename it from the list if it has moved.` });
+    }
+
+    // From here the code is one this college does not hold, so this request either claims
+    // it or is refused as somebody else's — which is exactly the population worth pacing.
+    // A first rollout of genuinely blank stickers lands here too, hence the generous cap.
+    if (!claimAllowed(currentTenantId())) {
+      return res.status(429).json({ error: "Too many new stickers in a short time. Wait a few minutes and carry on." });
+    }
+
+    if (await crossTenantTagExists(code)) {
+      // Still a boolean's worth of information, and that property is load-bearing — see
+      // crossTenantTagExists. Saying "another institution" adds nothing the caller could
+      // not already work out: it is not in their own list, and their own retired stickers
+      // now come back rather than clashing, so "somewhere else" is all that is left. What
+      // it adds is a next step, where before there was a dead end that read like a fault
+      // in our software.
+      //
+      // It does NOT solve squatting: a college that pre-registers a UID read off somebody
+      // else's blank sticker still holds it, and the rightful owner still cannot have it.
+      // Releasing it means proving possession of a physical object, which no request to
+      // this endpoint can do — hence support, and hence the platform-operator tier, rather
+      // than a self-service override that would BE the attack.
+      return res.status(409).json({
+        error: "That sticker is already registered to another institution on this platform, so it cannot be registered here. If it came from your own pack, contact support to have it released.",
+      });
+    }
   }
 
-  const tag = await prisma.attendanceTag.create({
-    data: { code: code || newCode(), label: label.trim(), createdBy: req.user?.name || null },
-  });
+  // The checks above are a read followed by a write, so two administrators tapping the
+  // same sticker in the same second both get past them and the second create loses on the
+  // unique index. That is the same answer as the check found it, arriving a moment later —
+  // and answering it with a 500 would tell somebody their sticker is broken when it is
+  // merely already registered. Caught narrowly: only P2002, only on `code`, so any other
+  // failure still surfaces as a failure.
+  let tag;
+  try {
+    tag = await prisma.attendanceTag.create({
+      data: { code: code || newCode(), label: label.trim(), createdBy: req.user?.name || null },
+    });
+  } catch (e) {
+    // Only for a SUPPLIED code. A generated one colliding would be 128 random bits landing
+    // on a value already taken, which is not a thing that happens — and if it somehow did,
+    // "somebody registered this a moment ago" would be a lie told confidently, which is
+    // worse than the 500. meta.target is an array of column names on PostgreSQL and the
+    // constraint's name on some other connectors, so it is matched as text: "code" appears
+    // in both spellings.
+    if (code !== null && e?.code === "P2002" && String(e?.meta?.target ?? "").includes("code")) {
+      return res.status(409).json({ error: "That sticker was registered a moment ago. Refresh the list and check it is not already there." });
+    }
+    throw e;
+  }
 
   audit.record(req, {
     action: "attendance.tag.created", entity: "AttendanceTag", entityId: tag.id,

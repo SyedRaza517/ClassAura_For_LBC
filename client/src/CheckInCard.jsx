@@ -14,6 +14,14 @@
 // Android arms itself the moment the screen opens — reader mode is silent. iPhone cannot:
 // Apple's scan sheet is compulsory, so there is a "Scan the sticker" button first. The
 // difference is read from nfc.js rather than restated here.
+//
+// NOT SHOWN HERE, DELIBERATELY: that an iPhone cannot read an unwritten sticker
+// (`nfcStatus().readsUnwritten`). This screen is where somebody taps a sticker the
+// college has already put on a wall, and by then it has been written to or the rollout
+// failed — so a standing warning would be a permanent caveat about a case that almost
+// never applies, on the one screen students see every day. Where it does apply, scanOnce
+// rejects with an UnwrittenTagError whose message says so and the banner below shows it.
+// The screen that should say it UP FRONT is the admin one that registers the stickers.
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Nfc, CheckCircle2, Loader2, AlertTriangle, Clock3, Wifi, WifiOff, Smartphone } from "lucide-react";
 import { nfcStatus, scanOnce, cancelScan } from "./nfc";
@@ -108,7 +116,12 @@ export default function CheckInCard({
       // forever, on a screen where nothing was actually wrong.
       const benign = e?.cancelled || (silent && e?.timedOut);
       if (!benign) setError(e?.message || "Could not read the sticker.");
-      if (!e?.timedOut && !e?.cancelled) failures.current += 1;
+      // An unwritten sticker is not a device fault, so it must not count towards the
+      // give-up threshold — retrying is exactly the right thing for a student who has
+      // just walked up to the right wall with the wrong sticker on it. It only reaches
+      // this branch on iPhone, which does not silently re-arm anyway; the guard is here
+      // so that stays true if the platform rules ever change.
+      if (!e?.timedOut && !e?.cancelled && !e?.unwrittenTag) failures.current += 1;
     } finally {
       if (alive.current) setScanning(false);
     }

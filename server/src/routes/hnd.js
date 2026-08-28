@@ -17,7 +17,7 @@ function requireTenant() {
 // later cannot quietly turn this into an injection.
 const sqlTenant = () => "'" + String(requireTenant()).replace(/'/g, "''") + "'";
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
-const { requireAuth, requireAnyPage } = require("../auth");
+const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
 const predictionRunner = require("../prediction/runner");
 
@@ -1212,7 +1212,15 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
 
 /* ========================= the lecturer's live view ========================= */
 
-// GET /api/hnd/my-sessions/today — the classes this lecturer is teaching today.
+// GET /api/hnd/my-sessions/today — the classes this account is teaching today.
+//
+// WHO CAN ACTUALLY SEE THIS. Everything on this router is admin-only by design —
+// see DEF-01 at the top of the file — so "lecturer" here means a member of staff
+// who also holds an admin account with live-attendance or registers. An ordinary
+// teaching account cannot reach registers at all and never could. That is a
+// deliberate decision recorded above, not an oversight, but it does mean this
+// screen is narrower than "the lecturer's dashboard" would suggest: a college
+// wanting every tutor to watch their own register has to grant them the page.
 //
 // Via Unit.tutorStaffId, so the dashboard opens on the right register without hunting
 // through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
@@ -1223,10 +1231,37 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
   const time = localTime();
   const settings = await tapConfig.get();
 
+  // ?scope=all — every session running today, not only the caller's own.
+  //
+  // Without this the screen was empty for almost everybody who can reach it. It filters
+  // on Unit.tutorStaffId, and an administrator, a head of department or anyone covering a
+  // colleague's class tutors nothing — so a page they had been deliberately granted
+  // showed "no classes of yours today" and looked broken. Watching a register fill is
+  // exactly what a manager wants during an inspection or a funding visit.
+  //
+  // Gated harder than the default view: seeing YOUR OWN classes follows from teaching
+  // them, but seeing the whole college's is an administrative act, so it needs one of the
+  // pages that already carry that authority rather than live-attendance alone.
+  const wantsAll = String(req.query.scope || "") === "all";
+  const maySeeAll = hasPage(req.user, ["registers", "students", "executive"]);
+  if (wantsAll && !maySeeAll) {
+    return res.status(403).json({ error: "You can only see the classes you teach." });
+  }
+
   const sessions = await prisma.hndSession.findMany({
-    where: { date, unit: { tutorStaffId: req.user.id } },
+    where: { date, ...(wantsAll ? {} : { unit: { tutorStaffId: req.user.id } }) },
     include: {
-      unit: { select: { id: true, code: true, name: true, term: { select: { start: true, end: true } } } },
+      unit: {
+        select: {
+          id: true, code: true, name: true,
+          term: { select: { start: true, end: true } },
+          // Only a name and only for display. NOT the staff email — GET /staff already
+          // denies colleagues' addresses to page-scoped admins, and a session list must
+          // not become a way around that.
+          tutorStaff: { select: { name: true } },
+          tutor: true,
+        },
+      },
       _count: { select: { marks: true } },
     },
     orderBy: { startTime: "asc" },
@@ -1235,6 +1270,11 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
   res.json({
     date,
     tapEnabled: settings.enabled,
+    scope: wantsAll ? "all" : "mine",
+    // Whether to OFFER the toggle. The client cannot work this out for itself without
+    // duplicating the page check above, and a control that always 403s is worse than no
+    // control at all.
+    canSeeAll: maySeeAll,
     sessions: sessions.map((s) => ({
       id: s.id,
       unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
@@ -1242,6 +1282,10 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
       endTime: s.endTime,
       description: s.description,
       kind: s.kind,
+      // Free text `tutor` is the fallback for a visiting lecturer with no account, and
+      // null when neither is set — which is a real state (nobody has been assigned) and
+      // not an empty string pretending otherwise.
+      tutor: s.unit?.tutorStaff?.name || s.unit?.tutor || null,
       marked: s._count.marks,
       // Whether taps are being accepted for this class RIGHT NOW. Derived at read time
       // rather than stored: "is it running" changes every minute, and a column holding

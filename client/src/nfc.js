@@ -17,6 +17,11 @@
 // closes. One extra press, and there is no way to remove it.
 //
 // Callers get `needsPrompt` and render the right thing rather than discovering this.
+//
+// There is a SECOND difference, and it is not cosmetic: iPhone cannot read a sticker
+// that has nothing written on it, which is exactly the sticker the "register a blank one
+// by tapping it" rollout depends on. `READS_UNWRITTEN_TAGS` below is that fact, with the
+// reasoning; callers get it from there and from `nfcStatus().readsUnwritten`.
 
 import { Capacitor } from "@capacitor/core";
 
@@ -27,6 +32,42 @@ const PLATFORM = Capacitor?.getPlatform?.() || "web";
 // started by a deliberate press. Android reader mode is silent and can be armed as soon
 // as the screen appears.
 export const NEEDS_PROMPT = PLATFORM === "ios";
+
+// THE SECOND PLATFORM DIFFERENCE: BLANK STICKERS DO NOT WORK ON IPHONE
+//
+// codeFromTag falls back to a tag's factory UID so a college can buy blank stickers and
+// register each one by tapping it — no encoder, no tooling. That rollout works on
+// Android and cannot work on iPhone, and this constant is that fact made checkable
+// before a user wastes a scan on it.
+//
+// WHY. Core NFC offers two session kinds and the plugin picks one at startScanning():
+//   - NFCNDEFReaderSession ('ndef', the plugin's default) detects only tags carrying an
+//     NDEF message, and hands back the message — never the chip's UID.
+//   - NFCTagReaderSession ('tag') talks to the chip directly and does expose the UID,
+//     which is what a blank sticker needs.
+//
+// We deliberately stay on 'ndef'. A raw tag session requires TAG added to
+// `com.apple.developer.nfc.readersession.formats` in ios/App/App/App.entitlements, and
+// that file argues against it at length and on purpose: reading the chip directly is a
+// broader permission than reading a check-in sticker warrants, and every extra
+// entitlement is one more thing App Review asks about. Without the entitlement the
+// session does not merely degrade — startScanning rejects with NO_NFC, so quietly
+// passing iosSessionType:'tag' would break scanning on iPhone *entirely*, including the
+// written stickers that work today.
+//
+// So the limitation stands, and the job here is to make it loud instead of silent. An
+// iPhone pointed at a blank sticker used to sit on Apple's sheet doing nothing until it
+// timed out; scanOnce now says what happened. If a college genuinely needs the
+// blank-sticker rollout on iOS, the entitlement is the decision to revisit — not this
+// constant.
+export const READS_UNWRITTEN_TAGS = PLATFORM !== "ios";
+
+// Said in one place because it is said from three: an empty tag that iOS did surface, an
+// Apple sheet that timed out having surfaced nothing, and our own outer ceiling. All
+// three are the same event from the user's side — they held the phone to a sticker and
+// nothing happened — so they must not offer three different explanations.
+const UNWRITTEN_ON_IOS =
+  "Nothing has been written to this sticker yet, and an iPhone can only read stickers that have a code on them. Ask for a written sticker, or register this one with an Android phone.";
 
 // Loaded lazily and only on a native platform. A static import would pull the plugin
 // into the web bundle, where its only job is to throw "unimplemented" — and the admin
@@ -46,7 +87,11 @@ async function plugin() {
  *   { ok: false, reason: "no-hardware" } the handset has no NFC chip
  *   { ok: false, reason: "disabled" }    NFC is switched off in system settings
  *   { ok: false, reason: "error" }       the plugin said something we did not expect
- *   { ok: true, needsPrompt }            good to go
+ *   { ok: true, needsPrompt, readsUnwritten }   good to go
+ *
+ * `readsUnwritten` is false on iPhone: scanning works, but only for stickers that have
+ * had a code written to them. A screen that offers the blank-sticker rollout should read
+ * this and say so BEFORE the user tries, rather than letting them discover it by tapping.
  *
  * The reasons are separate because the remedies are: "disabled" is something the student
  * can fix in ten seconds and should be told about, while "no-hardware" means they will
@@ -69,7 +114,7 @@ export async function nfcStatus() {
       if (v === "NO_NFC") return { ok: false, reason: "no-hardware" };
       if (v === "NFC_DISABLED") return { ok: false, reason: "disabled" };
     } catch (_) { /* state unknown — fall through to ok */ }
-    return { ok: true, needsPrompt: NEEDS_PROMPT };
+    return { ok: true, needsPrompt: NEEDS_PROMPT, readsUnwritten: READS_UNWRITTEN_TAGS };
   } catch (e) {
     return { ok: false, reason: "error", detail: e?.message || String(e) };
   }
@@ -138,7 +183,9 @@ export function codeFromTag(tag) {
 /**
  * Listen for one tag, then stop.
  *
- * Resolves with the tag's code, or rejects with a message meant for a person. Always
+ * Resolves with the tag's code, or rejects with a message meant for a person — including
+ * an `UnwrittenTagError` on iPhone, where a sticker with nothing written on it is
+ * unreadable and used to produce a silent thirty-second wait. Always
  * tears the session down — on iOS a session left open holds Apple's sheet on screen, and
  * on Android reader mode left armed keeps consuming the radio behind other screens.
  *
@@ -190,6 +237,13 @@ export async function scanOnce({ alertMessage = "Hold your phone near the sticke
       // A tag that yields no code is a dead end on iOS, where the session has already
       // closed itself after the first read. Saying so beats leaving the button disabled
       // until the timeout with the screen still reading "hold your phone against it".
+      //
+      // On iOS this is not "blank OR damaged", it is specifically blank, and we know
+      // that. An NDEF session surfaces a factory-blank NTAG as an event with an empty
+      // message and — because an NDEF session never exposes the chip — no id either, so
+      // the UID fallback has nothing to fall back TO. Reporting "may be damaged" sends
+      // an admin off to test a sticker that is fine.
+      else if (!READS_UNWRITTEN_TAGS) settle(new UnwrittenTagError());
       else settle(new Error("That sticker could not be read. It may be blank or damaged."));
     };
 
@@ -209,14 +263,30 @@ export async function scanOnce({ alertMessage = "Hold your phone near the sticke
     p.addListener("nfcSessionEnd", (ev) => {
       const reason = ev?.reason;
       if (reason === "userCancelled") settle(new CancelledError());
+      // Apple's own ~20s timeout, and the single most likely way a blank sticker shows
+      // up: an NDEF session does not merely fail to decode an unwritten tag, it never
+      // reports it at all, so the sheet stays open until iOS closes it. The user held
+      // the phone against something and the app saw nothing — indistinguishable, from
+      // here, from them not having tapped. Say both, rather than the vaguer thing.
+      else if (reason === "sessionTimeout" && !READS_UNWRITTEN_TAGS) settle(new UnwrittenTagError(true));
       else if (!finished) settle(new Error("The scan ended before a sticker was read."));
     }).then((h) => { if (finished) h?.remove?.(); else handles.push(h); }).catch(() => {});
 
-    p.startScanning({ alertMessage }).catch((e) => {
+    // iosSessionType is passed explicitly even though 'ndef' is the plugin's default.
+    // The choice is load-bearing — it is the whole reason READS_UNWRITTEN_TAGS exists —
+    // and a default is a bad place to keep a decision somebody may need to revisit. The
+    // alternative, 'tag', is rejected in the comment on READS_UNWRITTEN_TAGS above; it
+    // also cannot be switched on from here alone, because without TAG in the app's
+    // entitlements it rejects with NO_NFC and breaks scanning outright.
+    // Ignored on Android, whose reader mode already detects unformatted tags.
+    p.startScanning({ alertMessage, iosSessionType: "ndef" }).catch((e) => {
       settle(new Error(e?.message || "Could not start the NFC reader."));
     });
 
-    timer = setTimeout(() => settle(new TimeoutError()), timeoutMs);
+    // Our own ceiling, above Apple's. On iOS this normally loses the race to
+    // nfcSessionEnd; it wins on Android, and on an iPhone where the session end event
+    // never arrives — so it carries the same explanation rather than a vaguer one.
+    timer = setTimeout(() => settle(READS_UNWRITTEN_TAGS ? new TimeoutError() : new UnwrittenTagError(true)), timeoutMs);
   });
 }
 
@@ -232,6 +302,30 @@ export class CancelledError extends Error {
 }
 export class TimeoutError extends Error {
   constructor() { super("No sticker detected. Try again, holding the phone still against it."); this.name = "TimeoutError"; this.timedOut = true; }
+}
+
+/**
+ * The iPhone-cannot-read-a-blank-sticker case, said out loud.
+ *
+ * Raised only where READS_UNWRITTEN_TAGS is false. It exists as its own class rather
+ * than a plain Error with a long message so a screen can react to the *situation* —
+ * offering the admin the written-sticker route, say — instead of matching on prose.
+ *
+ * `afterWaiting` is the honest hedge. When iOS hands us an empty tag we know a sticker
+ * was there; when the sheet merely times out we know only that nothing NDEF appeared,
+ * which is also what not tapping looks like. The second phrasing admits that.
+ *
+ * It sets `timedOut` in that case for a concrete reason: CheckInCard counts consecutive
+ * real failures to stop its silent re-arm loop, and excludes timeouts. A user who has
+ * not tapped yet is not a broken adapter, and must not be counted as one.
+ */
+export class UnwrittenTagError extends Error {
+  constructor(afterWaiting = false) {
+    super(afterWaiting ? `No sticker was read. ${UNWRITTEN_ON_IOS}` : UNWRITTEN_ON_IOS);
+    this.name = "UnwrittenTagError";
+    this.unwrittenTag = true;
+    if (afterWaiting) this.timedOut = true;
+  }
 }
 
 /** Stop any scan this module started. Safe to call when nothing is running. */

@@ -299,7 +299,7 @@ function RegisterTag({ onCreated }) {
       </label>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        {nfc?.ok && (
+        {nfc?.ok && nfc.readsUnwritten && (
           <button
             onClick={tapToRegister} disabled={scanning || saving}
             className="press flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
@@ -317,10 +317,16 @@ function RegisterTag({ onCreated }) {
         </button>
       </div>
 
+      {/* Three genuinely different situations, and collapsing them would leave an admin
+          hunting for a button that is missing for a reason. An iPhone can scan perfectly
+          well; it just cannot see a sticker with nothing written on it, because Core NFC
+          is held to an NDEF session here deliberately — see nfc.js. */}
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-        {nfc?.ok
+        {nfc?.ok && nfc.readsUnwritten
           ? "Tapping a blank sticker is the quicker route — nothing to write and nothing to transcribe."
-          : "On a phone with NFC you can register a blank sticker just by tapping it, with nothing to write."}
+          : nfc?.ok
+            ? "An iPhone can't read a blank sticker, so generate a code here and write it on with an NFC writing app — or register the sticker on an Android phone, where tapping a blank one is enough."
+            : "On an Android phone with NFC you can register a blank sticker just by tapping it, with nothing to write."}
       </p>
     </section>
   );

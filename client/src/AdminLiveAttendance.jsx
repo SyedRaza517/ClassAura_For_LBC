@@ -1,5 +1,11 @@
 // Live Attendance — the register as it fills, during the class.
 //
+// Reached only by staff who hold an admin account with the live-attendance or
+// registers page: /api/hnd is admin-only by design (DEF-01 in server/src/routes/
+// hnd.js). A tutor without that grant sees no tab and could not load it if they
+// did, so a college that wants every tutor watching their own class has to grant
+// them the page deliberately.
+//
 // Who is in, who is late, who has not appeared, and the minute each of them tapped. It
 // polls while a class is running and stops when it is not, because a screen left open on
 // a lecturer's desk overnight should not keep asking the server a question whose answer
@@ -33,7 +39,14 @@ const STATUS = {
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
-export default function AdminLiveAttendance({ store }) {
+export default function AdminLiveAttendance() {
+  // "mine" is the default because a lecturer opening this wants their own class, and
+  // making the whole college the default would bury it. Remembered per browser so an
+  // administrator who lives on the college-wide view is not re-choosing it every day.
+  const [scope, setScope] = useState(() => {
+    try { return localStorage.getItem("edtech.liveAttendanceScope") === "all" ? "all" : "mine"; }
+    catch { return "mine"; }
+  });
   const [today, setToday] = useState(null);
   const [chosen, setChosen] = useState(null);
   const [err, setErr] = useState("");
@@ -41,10 +54,10 @@ export default function AdminLiveAttendance({ store }) {
 
   const loadToday = useCallback(async () => {
     setBusy(true); setErr("");
-    try { setToday(await api.mySessionsToday()); }
+    try { setToday(await api.mySessionsToday(scope)); }
     catch (e) { setErr(e?.message || "Could not load today's classes."); }
     finally { setBusy(false); }
-  }, []);
+  }, [scope]);
   useEffect(() => { loadToday(); }, [loadToday]);
 
   if (busy && !today) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={28} /></div>;
@@ -52,13 +65,37 @@ export default function AdminLiveAttendance({ store }) {
   if (chosen) return <LiveSession sessionId={chosen} onBack={() => { setChosen(null); loadToday(); }} />;
 
   const sessions = today?.sessions || [];
+  const chooseScope = (next) => {
+    setScope(next);
+    try { localStorage.setItem("edtech.liveAttendanceScope", next); } catch { /* private mode */ }
+  };
 
   return (
     <div className="space-y-4 p-4 md:p-6">
       <header>
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Radio size={18} style={{ color: NAVY }} />Live Attendance</h2>
-        <p className="mt-0.5 text-[13px] text-slate-500">Your classes today, and the registers as they fill.</p>
+        <p className="mt-0.5 text-[13px] text-slate-500">
+          {scope === "all" ? "Every class running today, and the registers as they fill." : "Your classes today, and the registers as they fill."}
+        </p>
       </header>
+
+      {/* Offered only when the server says this account may ask for it. A control that
+          always answers 403 is worse than no control. */}
+      {today?.canSeeAll && (
+        <div role="group" aria-label="Which classes to show" className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+          {[
+            { key: "mine", label: "My classes" },
+            { key: "all", label: "All classes" },
+          ].map((o) => (
+            <button
+              key={o.key} onClick={() => chooseScope(o.key)}
+              aria-pressed={scope === o.key}
+              className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition-colors"
+              style={scope === o.key ? { background: NAVY, color: "#fff" } : { color: "#475569" }}
+            >{o.label}</button>
+          ))}
+        </div>
+      )}
 
       {err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}
 
@@ -72,12 +109,16 @@ export default function AdminLiveAttendance({ store }) {
       {!sessions.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
           <CalendarX size={26} className="mx-auto mb-3 text-slate-300" />
-          <p className="text-sm font-semibold text-slate-700">No classes of yours today</p>
+          <p className="text-sm font-semibold text-slate-700">
+            {scope === "all" ? "No classes anywhere today" : "No classes of yours today"}
+          </p>
           {/* Said plainly, because the alternative reading — "the screen is broken" — is
-              the one a lecturer will otherwise reach for. */}
+              the one a lecturer will otherwise reach for. The two scopes have genuinely
+              different causes, so they get genuinely different explanations. */}
           <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-slate-500">
-            This lists sessions on units where you are recorded as the tutor. If you teach a unit
-            that is not here, ask an administrator to set you as its tutor on the Registers page.
+            {scope === "all"
+              ? "Nothing is timetabled for today at all. Registers are generated from a unit's teaching dates on the Registers page."
+              : "This lists sessions on units where you are recorded as the tutor. If you teach a unit that is not here, ask an administrator to set you as its tutor on the Registers page."}
           </p>
         </div>
       ) : (
@@ -97,6 +138,9 @@ export default function AdminLiveAttendance({ store }) {
                   <p className="mt-0.5 text-[12px] tabular-nums text-slate-500">
                     {s.startTime}–{s.endTime}
                     {s.description ? ` · ${s.description}` : ""}
+                    {/* Only in the college-wide view: in your own list every row is
+                        yours, and repeating your name on each one is noise. */}
+                    {scope === "all" && s.tutor ? ` · ${s.tutor}` : ""}
                     {` · ${s.marked} marked`}
                   </p>
                 </div>

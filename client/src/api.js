@@ -538,7 +538,10 @@ export const api = {
   // The lecturer's live view: who is in, who is late, who has not appeared, and the
   // minute each of them tapped. Polled while a class is running.
   sessionLive: (sessionId) => request(`/hnd/sessions/${sessionId}/live`),
-  mySessionsToday: () => request("/hnd/my-sessions/today"),
+  // scope "all" asks for every class running today rather than only the caller's own.
+  // Refused with 403 unless they hold registers/students/executive, so the screen only
+  // offers it when the server says it may.
+  mySessionsToday: (scope) => request("/hnd/my-sessions/today" + (scope === "all" ? "?scope=all" : "")),
   // The ONLY route from tap check-in to an absence, and it takes a named human.
   markRemainingAbsent: (sessionId, override) => request(`/hnd/sessions/${sessionId}/mark-remaining-absent`, { method: "POST", body: override ? { override: true } : {} }),
 

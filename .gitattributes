@@ -1,0 +1,61 @@
+# Line endings, pinned.
+#
+# WHY THIS FILE EXISTS
+#
+# `core.autocrlf=true` on a Windows checkout rewrites every text file to CRLF on the way
+# out of git and back to LF on the way in. That is invisible in a diff and harmless right
+# up until something reads a file as TEXT rather than as lines — and this project does
+# exactly that in two places:
+#
+#   * `prediction/divergence.test.js` strips comments out of `divergence.js` and asserts
+#     the remaining source contains no `|| 0`, `??`, `Number(`, `parseFloat(` or
+#     `parseInt(`. Its stripper is `line.replace(/\/\/.*$/, "")`, and in JavaScript `.`
+#     does not match `\r` while `$` without the `m` flag means end-of-string. On a CRLF
+#     tree every line ends `\r`, so NOT ONE comment was stripped, the header — which
+#     discusses all five idioms by name — was scanned as if it were code, and the test
+#     failed on this machine while passing on every LF checkout including CI.
+#
+#   * `prediction/schema-contract.test.js` parses `schema.prisma` as text for the same
+#     class of reason.
+#
+# A test that is red locally and green on CI is worse than one that is simply red: it
+# teaches whoever sees it that local failures do not mean anything. 149 files under
+# server/src and client/src were CRLF in the working tree when this was written.
+#
+# `text=auto eol=lf` tells git to normalise to LF in the repository AND to check out LF
+# everywhere, on every platform, regardless of what core.autocrlf says. The tooling here
+# is Node, Prisma and Vite; none of them wants CRLF, and nothing in this repo is edited by
+# a Windows tool that requires it.
+#
+# AFTER ADDING THIS, the working tree must be refreshed once — the files are already
+# LF in the index, so this only rewrites what is checked out:
+#
+#     git add --renormalize .
+#     git status          # expect no changes: the index was LF all along
+#
+* text=auto eol=lf
+
+# Windows-only scripts, if any are ever added, genuinely do want CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary. Marking these explicitly stops git guessing, which it gets wrong often enough
+# to corrupt an icon or a PDF on checkout.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svg text eol=lf
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.keystore binary
+*.jks binary
+*.p12 binary

@@ -48,6 +48,18 @@ const A_PASSWORD = "nfc-tap-suite-2026";
 // exactly one class is running for them.
 const B_ID = "st-100122";
 const B_EMAIL = "100122@edtech.co.uk";
+// A THIRD seeded student, and the reason is the rate limiter rather than tidiness.
+//
+// The student tap route allows 10 taps per 60 seconds per student, and A_ID makes
+// EXACTLY ten of them above — the suite already sits on the ceiling, so an eleventh tap
+// anywhere in this file would come back 429 and the assertion it belongs to would be
+// testing the limiter instead of whatever it was written for. C_ID starts a fresh
+// budget, and the blocks below spend six of its ten. C_ID is also seeded with no
+// sessions today, which is what lets those blocks build an exact timetable: "two classes
+// running" has to mean two and not two-plus-whatever-the-seed-had, or the ambiguous
+// response cannot be counted.
+const C_ID = "st-100126";
+const C_EMAIL = "100126@edtech.co.uk";
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => {
@@ -108,6 +120,7 @@ async function cleanup() {
     // left signable-in by a test run is a real account with a known password.
     await db.student.update({ where: { id: A_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
     await db.student.update({ where: { id: B_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
+    await db.student.update({ where: { id: C_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
   } catch (e) {
     console.error("cleanup problem:", e.message);
   }
@@ -177,6 +190,23 @@ try {
   check("changing one setting does not reset the others",
     patched.data?.lateAfterMins === 20 && patched.data?.enabled === true,
     `lateAfterMins=${patched.data?.lateAfterMins} enabled=${patched.data?.enabled}`);
+
+  // The other half of the PATCH contract, and the sharper half: what happens to a key
+  // that arrives UNUSABLE. `{ enabled: null }` is reachable from any JSON client, and
+  // merge() drops it and falls back to its base — so the answer depends entirely on
+  // whether save() passes the college's CURRENT settings as that base or the platform
+  // defaults. With DEFAULTS as the base, this single null switches the whole college
+  // OFF while answering 200 OK, and the neighbouring 30 somebody tuned reverts to 15.
+  // Both halves are asserted together on purpose: `enabled` alone would pass against a
+  // save() that ignored the patch entirely, and `lateAfterMins` alone would pass against
+  // one that never looked at `enabled`.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { lateAfterMins: 30 } });
+  const nulled = await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: null } });
+  const afterNull = await call("/tags/settings", { token: adminToken });
+  check("an unusable setting is IGNORED, not reset to the platform default",
+    nulled.status === 200 && afterNull.data?.lateAfterMins === 30 && afterNull.data?.enabled === true,
+    `HTTP ${nulled.status} lateAfterMins=${afterNull.data?.lateAfterMins} enabled=${afterNull.data?.enabled}`);
+
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { lateAfterMins: 15 } });
 
   /* ====================================================================== */
@@ -197,6 +227,38 @@ try {
 
   const studentMakesTag = await call("/tags", { method: "POST", token: sToken, body: { label: "nope" } });
   check("a student token cannot reach the tag admin at all", studentMakesTag.status === 403, `HTTP ${studentMakesTag.status}`);
+
+  /* ---------------------------------------------------------------------- */
+  // Registering a BLANK sticker: the admin taps a factory tag on a phone and the app
+  // sends its UID as `code`, rather than a secret being generated here and written onto
+  // the tag with a separate NFC tool. Nothing exercised this path at all — every tag in
+  // this suite was previously created without a code — so the whole `supplied` branch of
+  // POST /tags, its two guards and its cross-tenant clash check, shipped unread.
+  /* ---------------------------------------------------------------------- */
+
+  const codeNotText = await call("/tags", { method: "POST", token: adminToken, body: { label: `Numeric ${RUN}`, code: 12345678 } });
+  check("a code that is not text is refused", codeNotText.status === 400, `HTTP ${codeNotText.status}`);
+
+  // "room1" is the shape of the mistake this guard exists for: a human-chosen code short
+  // enough to guess is a check-in anybody can manufacture from the corridor.
+  const codeTooShort = await call("/tags", { method: "POST", token: adminToken, body: { label: `Short ${RUN}`, code: "room1" } });
+  check("a code shorter than eight characters is refused", codeTooShort.status === 400, `HTTP ${codeTooShort.status}`);
+
+  // Twelve characters, the length of a real 6-byte tag UID in hex.
+  const suppliedCode = ("uid" + RUN + "000000").slice(0, 12);
+  const byUid = await call("/tags", { method: "POST", token: adminToken, body: { label: `Blank Sticker ${RUN}`, code: suppliedCode } });
+  if (byUid.data?.id) made.tags.push(byUid.data.id);
+  // Equality with the code SENT, not merely "a code came back". A route that ignored the
+  // supplied value and generated a secret instead would answer 201 with a perfectly
+  // plausible body, and every sticker registered by tapping it would then be unusable —
+  // the tag on the wall holds the UID, and the database would hold something else.
+  check("a supplied code is stored as given, not quietly regenerated",
+    byUid.status === 201 && byUid.data?.code === suppliedCode,
+    `HTTP ${byUid.status} code=${byUid.data?.code}`);
+  const uidRow = byUid.data?.id ? await db.attendanceTag.findUnique({ where: { id: byUid.data.id } }) : null;
+  check("...and that is the code the database actually holds",
+    uidRow?.code === suppliedCode,
+    `stored=${uidRow?.code}`);
 
   /* ====================================================================== */
   console.log("\n--- an unknown or retired tag ---");
@@ -221,8 +283,33 @@ try {
     made.tags.push(foreign.id);
     const foreignTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: foreign.code } });
     check("a tag from another college cannot be used here", foreignTap.status === 404, `HTTP ${foreignTap.status}`);
+
+    // Registering a sticker somebody else already holds. This is the ONE deliberately
+    // cross-tenant read in the feature, and the awkward one: the honest answer is "that
+    // sticker is spoken for", which is information about an institution this
+    // administrator cannot see. crossTenantTagExists() returns a boolean and nothing
+    // else, so the assertion below is about what the 409 does NOT contain.
+    const clash = await call("/tags", { method: "POST", token: adminToken, body: { label: `Clash ${RUN}`, code: foreign.code } });
+    if (clash.data?.id) made.tags.push(clash.data.id); // should never exist; tracked so a bug does not leak a row
+    check("a sticker another college already registered is refused rather than duplicated",
+      clash.status === 409, `HTTP ${clash.status}`);
+    // Keys EXACTLY ["error"] — not "no tenant name appears", which would pass against a
+    // body carrying the other college's id, label or registration date.
+    check("...and the refusal carries nothing but the message",
+      JSON.stringify(Object.keys(clash.data || {})) === '["error"]',
+      `keys: ${Object.keys(clash.data || {}).join(", ")}`);
+    // And no row was created here under a code this college does not own — a 409 that
+    // still wrote would hand the other college's sticker to this one.
+    const clashRows = await db.attendanceTag.count({ where: { tenantId, code: foreign.code } });
+    check("...and no tag was created for it in this college",
+      clashRows === 0, `${clashRows} row(s)`);
   } else {
-    console.log("SKIP  only one tenant in this database — cross-college tag isolation not exercised");
+    // Five assertions live behind this branch, not one: a foreign tag cannot be tapped,
+    // cannot be renamed or retired through PATCH, and cannot be re-registered here — and
+    // the 409 that says so must carry nothing but its message. All of that is the one
+    // deliberately cross-tenant read in this feature, so a database with a single college
+    // in it leaves the isolation entirely unproven rather than partly proven.
+    console.log("SKIP  only one tenant in this database — cross-college tag isolation, the PATCH scope and the already-registered 409 are NOT exercised");
   }
 
   /* ====================================================================== */
@@ -374,6 +461,48 @@ try {
     "");
 
   /* ====================================================================== */
+  /* ====================================================================== */
+  console.log("\n--- a retired sticker can be brought back ---");
+  /* ====================================================================== */
+
+  // Retiring a sticker used to destroy it. The code is globally unique, so re-registering
+  // the same physical tag hit "already registered" forever with no route out — the Retire
+  // button paused a sticker in the UI and permanently consumed it in the database. Nobody
+  // would notice until a college tried to put a peeled-off sticker back on the wall.
+  const reuseCode = `reuse-${RUN}-${Math.abs(RUN.length * 7919)}`;
+  const firstReg = await call("/tags", { method: "POST", token: adminToken, body: { label: `Reusable ${RUN}`, code: reuseCode } });
+  if (firstReg.data?.id) made.tags.push(firstReg.data.id);
+  check("a sticker can be registered by its own identifier",
+    firstReg.status === 201 && firstReg.data?.code === reuseCode,
+    `HTTP ${firstReg.status}`);
+
+  await call(`/tags/${firstReg.data?.id}`, { method: "PATCH", token: adminToken, body: { active: false } });
+
+  const restored = await call("/tags", { method: "POST", token: adminToken, body: { label: `Reusable ${RUN} (back)`, code: reuseCode } });
+  check("re-registering our own RETIRED sticker restores it rather than refusing",
+    restored.status === 200 && restored.data?.restored === true && restored.data?.id === firstReg.data?.id,
+    `HTTP ${restored.status} restored=${restored.data?.restored} sameRow=${restored.data?.id === firstReg.data?.id}`);
+  check("...and the restore response still does not carry the code",
+    !("code" in (restored.data || {})),
+    Object.keys(restored.data || {}).join(","));
+
+  const rowsForCode = await db.attendanceTag.count({ where: { code: reuseCode } });
+  check("...and it reused the row rather than creating a second one",
+    rowsForCode === 1,
+    `${rowsForCode} row(s) hold that code`);
+
+  const backTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: reuseCode } });
+  check("...and the restored sticker is usable again",
+    backTap.status === 201 || backTap.status === 409,
+    `HTTP ${backTap.status} — 404 would mean it is still retired`);
+
+  // A LIVE sticker of ours is a different situation and must not be silently relabelled.
+  const liveClash = await call("/tags", { method: "POST", token: adminToken, body: { label: `Renamed ${RUN}`, code: reuseCode } });
+  const afterClash = await db.attendanceTag.findFirst({ where: { code: reuseCode } });
+  check("re-registering our own LIVE sticker is refused, and does not rename it",
+    liveClash.status === 409 && afterClash?.label !== `Renamed ${RUN}`,
+    `HTTP ${liveClash.status} label=${afterClash?.label}`);
+
   console.log("\n--- the tap log ---");
   /* ====================================================================== */
 
@@ -588,6 +717,239 @@ try {
   check("a tap ignores any site the caller sends — the tap proves Onsite",
     staffTapNoSite.status === 201 && ciSite?.site === "Onsite",
     `HTTP ${staffTapNoSite.status} site=${ciSite?.site}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the check-in screen before a tap ---");
+  /* ====================================================================== */
+
+  // Everything from here runs against C_ID, who is seeded with no classes today, so this
+  // block builds the timetable one session at a time and asserts what the screen says
+  // after each. Only tap-context knows how to say "nothing on now, your next class is at
+  // 13:00" rather than presenting a dead button, and until now it was tested only in the
+  // one state where it answers nothing at all — the feature switched off.
+  await db.student.update({ where: { id: C_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0 } });
+  const cLogin = await login(C_EMAIL, A_PASSWORD);
+  const cToken = cLogin.data?.token;
+  if (!cToken) throw new Error(`third student sign-in failed (HTTP ${cLogin.status}) — cannot run the tap-context and ambiguity blocks`);
+
+  const cUnit = await db.unit.create({
+    data: { tenantId, code: `CTX${RUN}`.slice(0, 12), name: `Context Suite Unit ${RUN}`, startDate: today, endDate: today },
+  });
+  made.units.push(cUnit.id);
+  const cEnrol = await db.enrolment.create({ data: { tenantId, studentId: C_ID, unitId: cUnit.id } });
+  made.enrolments.push(cEnrol.id);
+
+  // Nothing on now, one class later today.
+  const cFuture = await db.hndSession.create({
+    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, 60), endTime: shift(now, 180), description: "ctx future" },
+  });
+  made.sessions.push(cFuture.id);
+  const ctxNone = await call("/student/me/tap-context", { token: cToken });
+  check("with nothing running the screen says so AND names the next class",
+    ctxNone.status === 200 && ctxNone.data?.enabled === true
+      && Array.isArray(ctxNone.data?.now) && ctxNone.data.now.length === 0
+      && ctxNone.data?.reason === "no_session_now"
+      && ctxNone.data?.next?.id === cFuture.id,
+    `HTTP ${ctxNone.status} now=${ctxNone.data?.now?.length} reason=${ctxNone.data?.reason} next=${ctxNone.data?.next?.id}`);
+
+  // One class running.
+  const cLive1 = await db.hndSession.create({
+    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "ctx live 1" },
+  });
+  made.sessions.push(cLive1.id);
+  const ctxOne = await call("/student/me/tap-context", { token: cToken });
+  // The id is asserted, not merely the count. A route that returned the whole day's
+  // timetable as `now` would also answer with a length of one at this point.
+  check("one class running is offered, by id, with no reason to refuse",
+    ctxOne.status === 200 && ctxOne.data?.now?.length === 1
+      && ctxOne.data.now[0]?.id === cLive1.id && ctxOne.data?.reason === null,
+    `HTTP ${ctxOne.status} now=${JSON.stringify((ctxOne.data?.now || []).map((s) => s.id))} reason=${ctxOne.data?.reason}`);
+
+  // Two classes running at once — a real timetable clash, and a question only the
+  // student can answer.
+  const cLive2 = await db.hndSession.create({
+    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -6), endTime: shift(now, 116), description: "ctx live 2" },
+  });
+  made.sessions.push(cLive2.id);
+  const ctxTwo = await call("/student/me/tap-context", { token: cToken });
+  check("two overlapping classes are BOTH offered, so the student can choose",
+    ctxTwo.status === 200 && ctxTwo.data?.now?.length === 2
+      && new Set(ctxTwo.data.now.map((s) => s.id)).size === 2
+      && ctxTwo.data.now.every((s) => [cLive1.id, cLive2.id].includes(s.id)),
+    `now=${JSON.stringify((ctxTwo.data?.now || []).map((s) => s.id))}`);
+
+  /* ====================================================================== */
+  console.log("\n--- two classes at once ---");
+  /* ====================================================================== */
+
+  // The `ambiguous` 409 was never once returned by this suite: every tap that could have
+  // provoked it passes an explicit sessionId, and three of those comments say so. That
+  // made the branch that BUILDS the response — the one that decides what a student who
+  // has not chosen yet is shown — entirely unread over HTTP.
+  const ambiguous = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode } });
+  check("a tap with two classes running refuses to guess",
+    ambiguous.status === 409 && ambiguous.data?.reason === "ambiguous" && ambiguous.data?.sessions?.length === 2,
+    `HTTP ${ambiguous.status} reason=${ambiguous.data?.reason} sessions=${ambiguous.data?.sessions?.length}`);
+  // The choices are rendered on a student's own phone, so the serialiser is the boundary
+  // between "which of your two classes" and a slice of the register. Asserting the key
+  // set EXACTLY, rather than the absence of a named field, is what makes a column added
+  // to HndSession tomorrow fail here instead of shipping.
+  const shape = (ambiguous.data?.sessions || []).map((s) => Object.keys(s).sort().join(","));
+  check("...and each choice carries only the five fields the screen needs",
+    shape.length === 2 && shape.every((k) => k === "endTime,id,startTime,unitCode,unitName"),
+    `keys: ${JSON.stringify(shape)}`);
+  const ambigMarks = await db.attendanceMark.count({
+    where: { studentId: C_ID, sessionId: { in: [cLive1.id, cLive2.id] } },
+  });
+  check("...and it marks NEITHER class while the question is open",
+    ambigMarks === 0,
+    ambigMarks ? `${ambigMarks} mark(s) written by a tap that refused to choose` : "");
+
+  // Park the second class in the past so exactly one is running again. That is what makes
+  // the next case reachable at all: naming a session while two are running lands in the
+  // ambiguous branch, and only a SINGLE resolved session reaches the guard below.
+  await db.hndSession.update({ where: { id: cLive2.id }, data: { startTime: shift(now, -180), endTime: shift(now, -120) } });
+
+  // A stale screen, or a tampered body: the student is shown one class and sends the id
+  // of another. Marking the class they named would put a student in a lecture the
+  // timetable says is not happening; marking the one that IS running would record an
+  // attendance they did not ask for.
+  const staleChoice = await call("/student/me/tap-check-in", {
+    method: "POST", token: cToken, body: { tagCode, sessionId: cFuture.id },
+  });
+  const staleMarks = await db.attendanceMark.count({
+    where: { studentId: C_ID, sessionId: { in: [cFuture.id, cLive1.id] } },
+  });
+  check("a tap naming a class that is not the one running is refused",
+    staleChoice.status === 409 && /no longer running/i.test(staleChoice.data?.error || ""),
+    `HTTP ${staleChoice.status} ${staleChoice.data?.error || staleChoice.data?.reason || ""}`);
+  check("...and marks neither the class named nor the class running",
+    staleMarks === 0,
+    staleMarks ? `${staleMarks} mark(s) written` : "");
+
+  /* ====================================================================== */
+  console.log("\n--- retiring a sticker through the API ---");
+  /* ====================================================================== */
+
+  // PATCH /api/tags/:id had no coverage of any kind. It is the endpoint an administrator
+  // reaches for when a sticker is peeled off a wall and walks out of the building, so
+  // "the retired flag actually stops taps" is the assertion that matters — the route
+  // could write `active: false` perfectly and mean nothing if the tap lookup did not
+  // filter on it. The existing retired-tag test plants `active: false` directly in the
+  // database, which proves the tap side and nothing about this route.
+  const patchTag = await call("/tags", { method: "POST", token: adminToken, body: { label: `Peel Off ${RUN}` } });
+  const patchCode = patchTag.data?.code;
+  if (patchTag.data?.id) made.tags.push(patchTag.data.id);
+
+  const patchUnknown = await call(`/tags/no-such-tag-${RUN}`, { method: "PATCH", token: adminToken, body: { active: false } });
+  check("patching a tag that does not exist is a 404", patchUnknown.status === 404, `HTTP ${patchUnknown.status}`);
+
+  if (otherTenantId) {
+    // The same 404, for a tag that exists but belongs elsewhere. db.js filters findUnique
+    // as well as findFirst, so this must be indistinguishable from the line above rather
+    // than a 403 that confirms the id is real.
+    const foreignRow = await db.attendanceTag.findFirst({ where: { tenantId: otherTenantId, code: `foreign-${RUN}` } });
+    if (foreignRow) {
+      const patchForeign = await call(`/tags/${foreignRow.id}`, { method: "PATCH", token: adminToken, body: { label: "mine now" } });
+      const foreignAfter = await db.attendanceTag.findUnique({ where: { id: foreignRow.id } });
+      check("another college's tag cannot be renamed or retired from here",
+        patchForeign.status === 404 && foreignAfter?.label === foreignRow.label,
+        `HTTP ${patchForeign.status} label=${foreignAfter?.label}`);
+    }
+  }
+
+  // "no" is the string a form sends when a checkbox is serialised carelessly, and
+  // coercing it would retire a tag on a truthy value that means the opposite.
+  const activeNotBool = await call(`/tags/${patchTag.data?.id}`, { method: "PATCH", token: adminToken, body: { active: "no" } });
+  check("active must be a boolean, not a string that looks like one",
+    activeNotBool.status === 400, `HTTP ${activeNotBool.status}`);
+  const emptyPatch = await call(`/tags/${patchTag.data?.id}`, { method: "PATCH", token: adminToken, body: {} });
+  check("a patch that changes nothing is refused rather than answering OK",
+    emptyPatch.status === 400, `HTTP ${emptyPatch.status}`);
+  const stillActive = await db.attendanceTag.findUnique({ where: { id: patchTag.data?.id } });
+  check("...and neither refusal touched the tag",
+    stillActive?.active === true && stillActive?.label === `Peel Off ${RUN}`,
+    `active=${stillActive?.active} label=${stillActive?.label}`);
+
+  // Exactly one class of C's is running now, so a bare tap resolves.
+  const beforeRetire = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode: patchCode } });
+  const beforeRetireMark = await db.attendanceMark.findFirst({ where: { sessionId: cLive1.id, studentId: C_ID } });
+  if (beforeRetireMark) made.marks.push(beforeRetireMark.id);
+  check("the new sticker works before it is retired",
+    beforeRetire.status === 201 && !!beforeRetireMark,
+    `HTTP ${beforeRetire.status} status=${beforeRetireMark?.status}`);
+
+  const retiredByApi = await call(`/tags/${patchTag.data?.id}`, { method: "PATCH", token: adminToken, body: { active: false } });
+  check("an administrator can retire a sticker",
+    retiredByApi.status === 200 && retiredByApi.data?.active === false && !("code" in (retiredByApi.data || {})),
+    `HTTP ${retiredByApi.status} active=${retiredByApi.data?.active}`);
+
+  // THE ONE THAT MATTERS in this block. A sticker somebody walked off with must stop
+  // working, and must read exactly as if it had never been registered — a distinct
+  // message would tell whoever holds it that they are holding something real.
+  const retiredTapByApi = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode: patchCode } });
+  check("retiring a sticker through the API actually stops taps working",
+    retiredTapByApi.status === 404, `HTTP ${retiredTapByApi.status}`);
+  check("...and it reads identically to a code that never existed",
+    retiredTapByApi.data?.error === unknown.data?.error,
+    `"${retiredTapByApi.data?.error}" vs "${unknown.data?.error}"`);
+
+  // And back. Without this the assertion above would pass against a route that broke
+  // every tap, or against a tap route that had stopped finding tags at all.
+  const unretired = await call(`/tags/${patchTag.data?.id}`, { method: "PATCH", token: adminToken, body: { active: true } });
+  check("and it can be brought back", unretired.status === 200 && unretired.data?.active === true, `HTTP ${unretired.status}`);
+
+  // A fresh session, so "works again" means a mark was WRITTEN rather than an
+  // already_marked answered off the row the first tap left. sessionId is explicit
+  // because two of C's classes are running once this one exists.
+  const cLive3 = await db.hndSession.create({
+    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -4), endTime: shift(now, 116), description: "ctx live 3" },
+  });
+  made.sessions.push(cLive3.id);
+  const afterUnretire = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode: patchCode, sessionId: cLive3.id } });
+  const afterUnretireMark = await db.attendanceMark.findFirst({ where: { sessionId: cLive3.id, studentId: C_ID } });
+  if (afterUnretireMark) made.marks.push(afterUnretireMark.id);
+  check("taps on the restored sticker write marks again",
+    afterUnretire.status === 201 && afterUnretireMark?.takenBy === "Self check-in (NFC)",
+    `HTTP ${afterUnretire.status} takenBy=${afterUnretireMark?.takenBy}`);
+
+  /* ====================================================================== */
+  console.log("\n--- switching off the staff half only ---");
+  /* ====================================================================== */
+
+  // Two flags gate a staff tap — `enabled` and `staffTapEnabled` — and the suite only
+  // ever moved them together, so nothing distinguished them. A college that wants
+  // students tapping into registers but does not want the same stickers running its
+  // timesheets sets exactly this pair, and a route reading the wrong flag serves them
+  // the opposite of what they asked for in BOTH directions at once.
+  const staffOff = await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: false } });
+  check("the staff half can be switched off on its own",
+    staffOff.status === 200 && staffOff.data?.staffTapEnabled === false && staffOff.data?.enabled === true,
+    `staffTapEnabled=${staffOff.data?.staffTapEnabled} enabled=${staffOff.data?.enabled}`);
+
+  const staffRefused = await call("/checkins/tap-check-in", { method: "POST", token: adminToken, body: { tagCode } });
+  check("a staff tap is refused while only the staff half is off",
+    staffRefused.status === 403, `HTTP ${staffRefused.status}`);
+
+  // The pairing is the test. A staff tap alone would pass against a route reading
+  // `enabled`, because that would refuse everybody — this student tap in the same window
+  // is what proves the college is still switched ON and only the staff half is closed.
+  const cLive4 = await db.hndSession.create({
+    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "ctx live 4" },
+  });
+  made.sessions.push(cLive4.id);
+  const studentStillTaps = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode, sessionId: cLive4.id } });
+  const studentStillMark = await db.attendanceMark.findFirst({ where: { sessionId: cLive4.id, studentId: C_ID } });
+  if (studentStillMark) made.marks.push(studentStillMark.id);
+  check("...while a student tap in the same window still marks the register",
+    studentStillTaps.status === 201 && !!studentStillMark,
+    `HTTP ${studentStillTaps.status} ${studentStillTaps.data?.error || ""}`);
+
+  const staffRestored = await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: true } });
+  const staffWorksAgain = await call("/checkins/tap-check-in", { method: "POST", token: adminToken, body: { tagCode } });
+  check("switching the staff half back on lets staff tap again",
+    staffRestored.data?.staffTapEnabled === true && staffWorksAgain.status === 200 && staffWorksAgain.data?.alreadyCheckedIn === true,
+    `HTTP ${staffWorksAgain.status} ${staffWorksAgain.data?.error || ""}`);
 
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");

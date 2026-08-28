@@ -2170,7 +2170,35 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
 const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+
+// A grantable page is named in THREE hand-maintained places and nothing joins them:
+// ADMIN_PAGES above (which the server duplicates a fourth time in validate.js),
+// PAGE_LABELS above (the wording beside each checkbox on the Access tab) and allNav
+// inside the dashboard (the sidebar entry). Add a page to one and forget another and
+// nothing breaks loudly: a key missing from PAGE_LABELS renders as a checkbox with no
+// words next to it, so a Super Admin grants a permission whose name they cannot read,
+// and a key missing from allNav is grantable but reaches no screen. The first of those
+// shipped — "prediction" and "mitigations" had no label for as long as they existed.
+// This is the cheapest possible join: one pass at first render, dev only.
+// import.meta.env.DEV is substituted at build time, so the whole block is eliminated
+// from the production bundle; the flag keeps it to one warning rather than one per render.
+let pageListsChecked = false;
+const warnOnPageListDrift = (allNav) => {
+  if (!import.meta.env.DEV || pageListsChecked) return;
+  pageListsChecked = true;
+  const navKeys = new Set(allNav.map(n => n.key));
+  const noLabel = ADMIN_PAGES.filter(k => !(k in PAGE_LABELS));
+  const noNav = ADMIN_PAGES.filter(k => !navKeys.has(k));
+  // The reverse direction too: a label for a page nobody can be granted is dead weight,
+  // usually the fossil of a page renamed in one list only. allNav is deliberately NOT
+  // checked in reverse — "audit" and "access" are meant to be absent from ADMIN_PAGES
+  // (see the comments on each), so flagging them would train people to ignore this.
+  const orphanLabels = Object.keys(PAGE_LABELS).filter(k => !ADMIN_PAGES.includes(k));
+  if (noLabel.length) console.warn("[StaffHub] ADMIN_PAGES keys with no PAGE_LABELS entry (they render as an unlabelled checkbox on the Access tab):", noLabel);
+  if (noNav.length) console.warn("[StaffHub] ADMIN_PAGES keys with no allNav entry (grantable, but they reach no screen):", noNav);
+  if (orphanLabels.length) console.warn("[StaffHub] PAGE_LABELS entries for pages that are not in ADMIN_PAGES:", orphanLabels);
+};
 
 // Can this user see/use a given admin page? The Super Admin gets everything,
 // including the Super-Admin-only Access tab. A page-scoped admin gets only their
@@ -2631,6 +2659,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "audit", label: "Audit Trail", I: History },
     { key: "access", label: "Access", I: ShieldCheck },
   ];
+  warnOnPageListDrift(allNav);   // dev-only three-list drift check; see warnOnPageListDrift
   // Only the pages this admin may see. Super Admin sees all + the Access tab.
   //
   // "audit" is not a grantable page and so is not in ADMIN_PAGES: it is derived from
