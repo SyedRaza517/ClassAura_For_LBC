@@ -1050,6 +1050,8 @@ model Student {
   prediction        StudentPredictionCurrent?
   predictionHistory StudentPredictionHistory[]
   outcomes          StudentOutcome[]
+  slcApplications   SlcApplication[]
+  admissions        Admission[]
   interventions     Intervention[]
 
   @@index([cohortId])
@@ -1448,6 +1450,37 @@ model Admission {
   signature              String?
   declarationDate        String?
 
+  /// The enrolled Student this application became.
+  ///
+  /// DISTINCT FROM `studentId` above, which is the college ID an admin TYPED — a
+  /// string, not a reference, and the field this one exists because of. The name is
+  /// ugly on purpose: two columns called studentId on one table, one a foreign key and
+  /// one a typed label, is how somebody later attaches the wrong person's document
+  /// expiry to a student.
+  ///
+  /// NULLABLE. Most applicants never become students — they are rejected, they
+  /// withdraw, or they go elsewhere. NOT NULL would make the table unwritable at the
+  /// only moment it is written.
+  linkedStudent     Student?  @relation(fields: [linkedStudentId], references: [id], onDelete: SetNull)
+  linkedStudentId   String?
+  studentLinkSource String?
+  studentLinkedAt   DateTime?
+
+  /// The parsed, VALIDATED form of idDateOfExpiry above, which is free text with no
+  /// format check and legitimately holds "12/05/2027", "May 2027" or "N/A". Comparing
+  /// that against YYYY-MM-DD produces confident WRONG answers rather than errors —
+  /// "12/05/2027" sorts before "2026-09-01" and reads as already expired, while
+  /// "May 2027" sorts after and reads as never expiring. Two of the three commonest
+  /// junk values give a false all-clear.
+  ///
+  /// EVERY CONSUMER READS THIS AND NEVER THAT ONE. The rule is greppable, and it is
+  /// the point of having two columns. Null unless exactly one date was possible.
+  idExpiryOn        String?
+  /// "parsed" | "ambiguous" | "unparseable" | "confirmed". "confirmed" is a human's
+  /// assertion and outranks a machine parse, matching AssessmentGrade.source. Null
+  /// means not yet examined.
+  idExpiryStatus    String?
+
   // --- Document upload (after the application is entered) ---
   // Set when an admin emails the applicant asking them to upload their documents.
   docsRequestedAt   DateTime?
@@ -1702,6 +1735,34 @@ model SentNotification {
 model SlcApplication {
   id              String   @id @default(cuid())
   admissionId     String?  // optional link to an Admission (applicant), for convenience
+  /// The enrolled student this finance record belongs to, once somebody has asserted
+  /// that they are the same person.
+  ///
+  /// NULLABLE, permanently. An SLC record legitimately exists for someone who is not a
+  /// student yet — applying for a loan is something you do BEFORE you enrol, which is
+  /// why admissionId above exists. A NOT NULL column would make the table unwritable
+  /// for its primary use. It is also nullable for the reason everything else here is:
+  /// null means "we do not know which student this is", and for most historic rows
+  /// that is the honest answer. studentRef below is free text with a "" default, and a
+  /// guess made from it is not knowledge.
+  ///
+  /// NOT UNIQUE. One student legitimately holds several rows — a tuition loan and a
+  /// maintenance loan are separate applications, and a resubmission after a decline is
+  /// another. A unique index would fail on correct data and push somebody into
+  /// deleting a real financial record to satisfy it.
+  student   Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  studentId String?
+  /// How the link was made: "manual", "enrolment", or "backfill:<rule>". A link made by
+  /// a script and a link asserted by a named human do not carry the same weight at an
+  /// appeal — and this is the only thing that makes a backfill reversible. Without it,
+  /// "undo the backfill" is indistinguishable from "delete everyone's links".
+  studentLinkSource String?
+  studentLinkedAt   DateTime?
+  /// YYYY-MM-DD, the date `status` last actually CHANGED. NOT derivable from updatedAt,
+  /// which moves when somebody corrects a typo in `notes` — so "days stalled awaiting
+  /// evidence" computed from updatedAt is a confidently wrong number. Null on every
+  /// existing row and never backfilled: it starts being true at the next real change.
+  statusChangedOn String?
   studentName     String
   studentRef      String   @default("")   // college/student ID
   course          String   @default("")
@@ -1718,6 +1779,7 @@ model SlcApplication {
   updatedAt       DateTime @updatedAt
 
   @@index([status])
+  @@index([studentId])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
