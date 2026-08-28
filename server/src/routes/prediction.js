@@ -67,6 +67,7 @@ const PREDICTION_OUT = [
   "weightedAverageGrade", "gradeWasWeighted", "markingLatencyDays", "firstSessionAbsenceRate", "laterSessionAbsenceRate",
   "openMitigationCount", "oldestOpenMitigationOn", "mitigatedAssessmentCount", "attendanceMitigated",
   "registerCoverageRate", "scheduledSessionCount", "markedSessionCount", "attendanceConfidence", "attendanceObservations", "lastRegisterMarkOn", "cohortAttendancePercentile", "cohortAttainmentPercentile", "cohortSize", "cohortStruggling",
+  "vleLastAccessOn", "vleActiveDayRate", "vleObservedDays", "vleUnitsObserved",
 ];
 
 const pick = (row, keys) => {

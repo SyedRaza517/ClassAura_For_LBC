@@ -118,4 +118,67 @@ function coverage(attempted, observed) {
   return Math.round((observed / attempted) * 1000) / 10;
 }
 
-module.exports = { observeUser, accessDate, classifyFailure, coverage, DENIED_CODES };
+
+/**
+ * What a run of stored observations says about one student.
+ *
+ * @param {Array<{observedOn, accessed, lastAccessOn, unitId}>} rows every VleEngagement
+ *        row for this student in scope. AN EMPTY ARRAY IS NOT ZERO ENGAGEMENT -- it is a
+ *        student nobody could observe, and everything comes back null.
+ * @param {{minObservedDays?: number}} [opts]
+ * @returns {{lastAccessOn, activeDayRate, observedDays, unitsObserved}}
+ *
+ * THE DENOMINATOR IS DAYS, NOT ROWS. A student on four units gets four rows a day, and
+ * counting rows would make somebody who opened one course out of four on every single day
+ * look 75% disengaged. The question this figure answers is "did they turn up to the VLE
+ * today", and a day is a day however many courses it contains.
+ *
+ * AND A MINIMUM DENOMINATOR, like every other rate in this codebase. One observed day
+ * where the student did not log in reads 0% and the screen renders "never active" -- a
+ * pattern claimed from a single data point, and the first day of observation is exactly
+ * when that data point exists. Below the floor the RATE is null while the DATES are still
+ * reported, because a date is true from one observation and a rate is not.
+ */
+function summariseEngagement(rows, opts) {
+  const floor = (opts && opts.minObservedDays) || 5;
+  const observed = (rows || []).filter((r) => r && r.observedOn);
+
+  // Never observable: no rows at all. Not "never accessed" -- see the header. Zero here
+  // would be a claim about a college nobody looked at.
+  if (!observed.length) {
+    return { lastAccessOn: null, activeDayRate: null, observedDays: null, unitsObserved: null };
+  }
+
+  // Did they reach ANY course on that day. Reduced by day before anything is counted.
+  const byDay = new Map();
+  const units = new Set();
+  let lastAccessOn = null;
+  for (const r of observed) {
+    byDay.set(r.observedOn, (byDay.get(r.observedOn) || false) || r.accessed === true);
+    if (r.unitId) units.add(r.unitId);
+    // The latest access the SITE reported, which may predate every observation -- a
+    // student last seen in July, observed daily through September, was last active in
+    // July and the row for today says so.
+    if (r.lastAccessOn && (!lastAccessOn || r.lastAccessOn > lastAccessOn)) lastAccessOn = r.lastAccessOn;
+  }
+
+  const observedDays = byDay.size;
+  let activeDays = 0;
+  for (const active of byDay.values()) if (active) activeDays += 1;
+
+  return {
+    // A DATE, never a day count. Nothing in this feature runs on a schedule, so "19 days
+    // since last access" written to a column is wrong by the next morning with nothing to
+    // correct it, while the date is true for ever. The screen subtracts.
+    lastAccessOn,
+    activeDayRate: observedDays >= floor
+      ? Math.round((activeDays / observedDays) * 1000) / 10
+      : null,
+    observedDays,
+    unitsObserved: units.size || null,
+  };
+}
+
+module.exports = {
+  observeUser, accessDate, classifyFailure, coverage, summariseEngagement, DENIED_CODES,
+};

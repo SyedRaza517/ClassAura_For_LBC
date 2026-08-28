@@ -803,7 +803,16 @@ function engagementRecency(dates) {
   // struggling one, the field that would separate them is free text this layer never
   // reads, and the count varies by an order of magnitude between colleges purely by
   // which channel each one told its students to use.
-  const known = [d.lastAttendedOn, d.lastGradedOn, d.lastPastoralOn, d.lastQueryOn].filter(Boolean);
+  // VLE ACCESS IS THE FIFTH, and it is the one that most changes the answer. The other
+  // four all require somebody at the college to have done something -- taken a register,
+  // marked work, logged a meeting, received a query. A student who has stopped coming in
+  // but is opening the course and reading the material is ENGAGED, and every one of the
+  // other four would report them as silent. A sponsoring provider is now required to
+  // evidence academic engagement rather than attendance, and this is what answers it.
+  //
+  // Null when the college is not observable at all, which drops out of the filter below
+  // exactly as the other four do when they are missing.
+  const known = [d.lastAttendedOn, d.lastGradedOn, d.lastPastoralOn, d.lastQueryOn, d.lastVleAccessOn].filter(Boolean);
   if (!known.length) return null;
   return known.reduce((max, cur) => (cur > max ? cur : max));
 }

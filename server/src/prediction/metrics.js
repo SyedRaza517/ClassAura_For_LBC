@@ -26,6 +26,7 @@ const tripwires = require("./tripwires");
 const adjustments = require("./adjustments");
 const coverage = require("./coverage");
 const cohort = require("./cohort");
+const engagement = require("../vle/engagementNormalise");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -459,6 +460,21 @@ async function gather(studentIds, config) {
   for (const h of sessions) {
     if (!sessionsByUnit.has(h.unitId)) sessionsByUnit.set(h.unitId, []);
     sessionsByUnit.get(h.unitId).push(h);
+  }
+
+  // VLE engagement observations. Per chunk -- "did this student open the course" is a
+  // question about the student. There is deliberately NO institution probe here and none
+  // is needed: a college that is not observable has written no rows at all, every
+  // student's list is empty, and summariseEngagement returns null for everything. Absence
+  // IS the guard, which is the whole reason the table stores absence rather than zero.
+  const engagementRows = await prisma.vleEngagement.findMany({
+    where: { studentId: { in: studentIds } },
+    select: { studentId: true, unitId: true, observedOn: true, accessed: true, lastAccessOn: true },
+  });
+  const engagementByStudent = new Map();
+  for (const r of engagementRows) {
+    if (!engagementByStudent.has(r.studentId)) engagementByStudent.set(r.studentId, []);
+    engagementByStudent.get(r.studentId).push(r);
   }
 
   const claimsByStudent = new Map();
@@ -953,6 +969,13 @@ async function gather(studentIds, config) {
       }
     }
 
+    // Scoped like everything else. An observation from last term says nothing about
+    // whether the student is opening the course now.
+    const vle = engagement.summariseEngagement(
+      (engagementByStudent.get(id) || []).filter((r) => inWindow(r.observedOn, scope.from, scope.to)),
+      { minObservedDays: config.minObservedDays },
+    );
+
     const attendanceSummary = summariseAttendance(rateMarks, config.attendanceMode);
     const reg = coverage.evaluate({
       today,
@@ -1015,6 +1038,7 @@ async function gather(studentIds, config) {
       lastAttendedOn: trips.lastAttendedOn,
       lastGradedOn,
       lastPastoralOn: pastoral ? pastoral.lastContactOn : null,
+      lastVleAccessOn: vle.lastAccessOn,
       lastQueryOn: (queriesByStudent.get(id) || []).reduce(
         (max, sq) => (sq.createdOn && (!max || sq.createdOn > max) ? sq.createdOn : max), null
       ),
@@ -1071,6 +1095,12 @@ async function gather(studentIds, config) {
         cohortAttainmentPercentile: standing.attainment.percentile,
         cohortSize: standing.cohortAttendance.n,
         cohortStruggling: standing.cohortStruggling,
+        // VLE engagement. All null where the college was never observable -- see the
+        // table's own comment for why no count can reconstruct that distinction later.
+        vleLastAccessOn: vle.lastAccessOn,
+        vleActiveDayRate: vle.activeDayRate,
+        vleObservedDays: vle.observedDays,
+        vleUnitsObserved: vle.unitsObserved,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
         // riskDriverCodes column runner.js builds -- staff read one list of reasons, not

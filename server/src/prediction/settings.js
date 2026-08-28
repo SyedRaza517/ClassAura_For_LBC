@@ -347,6 +347,14 @@ const DEFAULTS = {
   // rows on the caseload. Three weeks cannot be a reading week plus a bank holiday.
   staleRegisterDays: 21,
 
+  /* --- VLE engagement ------------------------------------------------------ */
+
+  // The fewest observed DAYS before an active-day rate is reported. One observed day on
+  // which the student did not log in reads 0% and the screen renders "never active" -- a
+  // pattern claimed from a single data point, on the first day of observation, which is
+  // exactly when that data point exists and nothing else does.
+  minObservedDays: 5,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -749,6 +757,11 @@ function validate(input) {
       min: 1, max: 365, whole: true,
       label: "The stale-register threshold",
       why: "it is how long a register may go untaken before it is reported. Shorter than the not-seen threshold, one event puts two rows on the caseload.",
+    }) ||
+    checkNumber(out, "minObservedDays", pick("minObservedDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The fewest observed days behind a VLE engagement rate",
+      why: "one observed day on which a student did not log in reads 0% and renders as \"never active\" — a pattern claimed from a single data point on the first day of observation.",
     });
   if (err) return err;
 

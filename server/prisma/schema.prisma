@@ -428,6 +428,7 @@ model Tenant {
   studentPredictionHistory StudentPredictionHistory[]
   intervention             Intervention[]
   mitigatingCircumstance   MitigatingCircumstance[]
+  vleEngagement            VleEngagement[]
   assessmentAdjustment     AssessmentAdjustment[]
 
   @@index([active])
@@ -940,6 +941,7 @@ model Unit {
   sessions    HndSession[]
   enrolments  Enrolment[]
   assessments Assessment[]
+  vleEngagement VleEngagement[]
   studentReviews StudentReview[]
   timetableSlots TimetableSlot[] @relation("UnitTimetable")
 
@@ -1057,6 +1059,7 @@ model Student {
   admissions        Admission[]
   interventions     Intervention[]
   circumstances     MitigatingCircumstance[]
+  vleEngagement     VleEngagement[]
 
   @@index([cohortId])
 
@@ -2137,6 +2140,17 @@ model StudentPredictionCurrent {
   /// is derived at render: nothing here runs on a schedule and a day passing is not an
   /// event.
   lastRegisterMarkOn     String?
+  /// VLE ENGAGEMENT. Attendance says whether a student came to the room; this says
+  /// whether they opened the course at all. A sponsoring provider now has to evidence
+  /// academic ENGAGEMENT rather than attendance, and a student who is not in class but is
+  /// working online is a different case from one who has vanished.
+  /// All null where the college was never observable -- a Moodle hiding lastaccess, or one
+  /// nobody uses. Zero would say "we looked at the whole college and found nothing", which
+  /// is the opposite of "we could not look".
+  vleLastAccessOn   String?
+  vleActiveDayRate  Float?
+  vleObservedDays   Int?
+  vleUnitsObserved  Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2395,6 +2409,17 @@ model StudentPredictionHistory {
   /// is derived at render: nothing here runs on a schedule and a day passing is not an
   /// event.
   lastRegisterMarkOn     String?
+  /// VLE ENGAGEMENT. Attendance says whether a student came to the room; this says
+  /// whether they opened the course at all. A sponsoring provider now has to evidence
+  /// academic ENGAGEMENT rather than attendance, and a student who is not in class but is
+  /// working online is a different case from one who has vanished.
+  /// All null where the college was never observable -- a Moodle hiding lastaccess, or one
+  /// nobody uses. Zero would say "we looked at the whole college and found nothing", which
+  /// is the opposite of "we could not look".
+  vleLastAccessOn   String?
+  vleActiveDayRate  Float?
+  vleObservedDays   Int?
+  vleUnitsObserved  Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
@@ -2669,6 +2694,62 @@ model AssessmentAdjustment {
 
   @@unique([circumstanceId, assessmentId])
   @@index([assessmentId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+/// One day's observation of whether a student reached a course in the VLE.
+///
+/// A ROW MEANS "WE LOOKED". An observed-but-inactive student gets a row saying
+/// `accessed: false`. A student we could not observe gets NO ROW AT ALL. Absence is the
+/// null, and that encoding is the whole design -- see server/src/vle/engagementNormalise.js
+/// for the argument at length.
+///
+/// WHY IT CANNOT BE INFERRED FROM COUNTS LATER. Every other institution guard in this
+/// codebase works by counting: zero "L" attendance marks across a whole college can only
+/// mean the register has no lateness code, because a college where nobody was ever late
+/// does not exist. Engagement breaks that trick. Zero engagement across a college is
+/// EXACTLY what a genuinely disengaged cohort looks like, AND what a Moodle with
+/// $CFG->hiddenuserfields set looks like, AND what a college that teaches face to face and
+/// uses Moodle as a filing cabinet looks like. No count can separate them, so the
+/// distinction has to be recorded at the moment of the pull by the code that saw the HTTP
+/// response.
+///
+/// COSTS NO EXTRA MOODLE CALLS. core_enrol_get_enrolled_users is already issued once per
+/// course by syncFromMoodle, and `lastcourseaccess` is already in the response being
+/// thrown away.
+///
+/// observedOn is the day the observation is ABOUT, in the college's own timezone, and the
+/// unique constraint means re-running a sync on the same day corrects the row rather than
+/// duplicating it. Nothing here is a day count: day counts are derived at render, because
+/// nothing in this feature runs on a schedule and a day passing is not an event.
+model VleEngagement {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+  unit      Unit    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  unitId    String
+
+  /// YYYY-MM-DD in the college's own zone -- the day this observation is about.
+  observedOn String
+  /// Did they reach the course ON that day. FALSE is a real observation of inactivity and
+  /// is what makes an active-days denominator possible at all; the not-observed case is
+  /// the absence of the row.
+  accessed   Boolean
+  /// The last access the site reported, which may be long before observedOn. Null means
+  /// the site reported 0 -- Moodle's "never" -- and NOT the epoch. Treating that zero as a
+  /// timestamp dates the student to 1 January 1970 and sorts them to the top of every risk
+  /// list in the college.
+  lastAccessOn String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([studentId, unitId, observedOn])
+  @@index([studentId])
+  @@index([observedOn])
 
   // Which institution this row belongs to. Enforced centrally -- see db.js.
   tenantId String

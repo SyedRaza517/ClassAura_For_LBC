@@ -22,6 +22,9 @@ const { importAttendance } = require("./moodleAttendance");
 // enrolments, attendance — so whoever it touched has to be flagged for rescoring, or
 // the dashboard goes on showing last night's score against tonight's data.
 const predictionRunner = require("./prediction/runner");
+const engagement = require("./vle/engagementNormalise");
+const { isoDate } = require("./vle/isoDate");
+const { localDate, ZONE } = require("./clock");
 
 // Prefer what THIS institution saved over the server-wide environment. Primed once
 // per request in call() below; integrationConfig.peek() falls back to process.env, so
@@ -174,6 +177,11 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     gradesCreated: 0, gradesUpdated: 0, gradesSkippedManual: 0,
     attendanceSessionsCreated: 0, attendanceMarksCreated: 0,
     attendanceSkippedConflict: 0, attendanceSkippedNoStudent: 0,
+    // Engagement observations written, and users this Moodle would not let us observe.
+    // The second is reported rather than swallowed: it is the difference between "nobody
+    // is using the VLE" and "this site hides lastaccess", and no later count can
+    // reconstruct it.
+    engagementObserved: 0, engagementNotObservable: 0,
   };
   const issues = [];
   const note = (m) => { if (issues.length < 300) issues.push(m); };
@@ -472,6 +480,49 @@ async function syncFromMoodle({ dryRun = false } = {}) {
         : []
       ).map((e) => `${e.studentId}|${e.unitId}`)
     );
+    /* --- VLE engagement -------------------------------------------------------
+     *
+     * COSTS NOTHING EXTRA. core_enrol_get_enrolled_users was already called above for
+     * this course and `lastcourseaccess` is already in the response; until now it was
+     * being thrown away.
+     *
+     * A ROW MEANS "WE LOOKED". A student the site reports on gets a row, `accessed`
+     * true or false. A student whose site hides the field gets NO ROW, and the counter
+     * above records that we could not see them. Absence is the null, and it has to be
+     * decided HERE, by the code that saw the HTTP response, because no later count can
+     * separate "a disengaged cohort" from "a Moodle with hiddenuserfields set" from "a
+     * college that teaches face to face" -- all three are zero.
+     *
+     * The observation is dated in the COLLEGE'S OWN ZONE, not UTC and not the host
+     * clock: a sync run at 00:30 London on the 28th is an observation about the 28th,
+     * and a UTC slice would file it under the 27th and put two observations on one day.
+     */
+    const observedOn = localDate();
+    const engagementRows = [];
+    for (const u of studentUsers) {
+      const st = studentByMoodleId.get(u.id);
+      if (!st) continue;
+      const seen = engagement.observeUser(u, observedOn, (iso) => isoDate(iso, ZONE));
+      if (!seen.observable) { summary.engagementNotObservable += 1; continue; }
+      for (const unitId of courseUnitIds) {
+        engagementRows.push({
+          studentId: st.id, unitId, observedOn,
+          accessed: seen.accessed, lastAccessOn: seen.lastAccessOn,
+        });
+      }
+    }
+    summary.engagementObserved += engagementRows.length;
+    if (!dryRun && engagementRows.length) {
+      // skipDuplicates rather than an upsert loop: the unique key is
+      // (studentId, unitId, observedOn), so a second sync on the same day keeps the
+      // FIRST observation of that day. That is the honest one -- lastcourseaccess only
+      // moves forward, so a later run on the same day can only ever make a student look
+      // more active than they were when we first looked, and re-running a sync must not
+      // be a way to improve somebody's engagement figure.
+      await prisma.vleEngagement.createMany({ data: engagementRows, skipDuplicates: true });
+      for (const r of engagementRows) touched.add(r.studentId);
+    }
+
     const toEnrol = [...wantEnrol].filter((k) => !already.has(k));
     summary.enrolmentsCreated += toEnrol.length;
     if (!dryRun && toEnrol.length) {

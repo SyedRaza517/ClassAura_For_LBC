@@ -9,7 +9,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { observeUser, accessDate, classifyFailure, coverage } = require("./engagementNormalise");
+const { observeUser, accessDate, classifyFailure, coverage, summariseEngagement } = require("./engagementNormalise");
 const { isoDate } = require("./isoDate");
 
 const toIso = (s) => isoDate(s, "Europe/London");
@@ -133,4 +133,73 @@ test("attempting nothing is null coverage, not zero", () => {
 
 test("a complete run reports one hundred", () => {
   assert.equal(coverage(12, 12), 100);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Summarising a run of observations                                           */
+/* -------------------------------------------------------------------------- */
+
+const obs = (day, accessed, unitId, lastAccessOn) => ({ observedOn: day, accessed, unitId, lastAccessOn });
+
+test("no observations is NULL engagement, not zero", () => {
+  // The rule the whole table exists to make expressible. Zero would say "we looked at
+  // this student every day and they never came", which is a finding. No rows says
+  // nobody could look, which is not.
+  const r = summariseEngagement([]);
+  assert.deepEqual(r, { lastAccessOn: null, activeDayRate: null, observedDays: null, unitsObserved: null });
+});
+
+test("the denominator is DAYS, not rows", () => {
+  // A student on four units gets four rows a day. Counting rows would make somebody who
+  // opened one course out of four EVERY day look 75% disengaged, when the question is
+  // whether they turned up to the VLE at all.
+  const rows = [];
+  for (const day of ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"]) {
+    rows.push(obs(day, true, "u1"), obs(day, false, "u2"), obs(day, false, "u3"), obs(day, false, "u4"));
+  }
+  const r = summariseEngagement(rows);
+  assert.equal(r.observedDays, 5, "five days, not twenty rows");
+  assert.equal(r.activeDayRate, 100, "they reached the VLE on every one of them");
+  assert.equal(r.unitsObserved, 4);
+});
+
+test("a genuinely dormant student who WAS observed reads zero, and that zero is real", () => {
+  const rows = ["2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"]
+    .map((d) => obs(d, false, "u1"));
+  const r = summariseEngagement(rows);
+  assert.equal(r.observedDays, 5);
+  assert.equal(r.activeDayRate, 0, "observed five times and never came — a finding, not an absence");
+});
+
+test("a rate is withheld below the minimum denominator, but the dates are not", () => {
+  // One observed day where the student did not log in reads 0% and the screen renders
+  // "never active" — a pattern claimed from one data point, on the first day of
+  // observation. The DATE survives, because a date is true from one observation.
+  const r = summariseEngagement([obs("2026-08-28", false, "u1", "2026-07-01")]);
+  assert.equal(r.activeDayRate, null);
+  assert.equal(r.observedDays, 1);
+  assert.equal(r.lastAccessOn, "2026-07-01");
+});
+
+test("the floor is configurable and honoured", () => {
+  const rows = [obs("2026-08-27", true, "u1"), obs("2026-08-28", false, "u1")];
+  assert.equal(summariseEngagement(rows).activeDayRate, null);
+  assert.equal(summariseEngagement(rows, { minObservedDays: 2 }).activeDayRate, 50);
+});
+
+test("last access is the latest the SITE reported, which may predate every observation", () => {
+  // A student last seen in July, observed daily through September, was last active in
+  // July — and today's row is what says so. Reporting the observation date instead would
+  // claim they had just been on.
+  const rows = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]
+    .map((d) => obs(d, false, "u1", "2026-07-14"));
+  const r = summariseEngagement(rows);
+  assert.equal(r.lastAccessOn, "2026-07-14");
+  assert.equal(r.activeDayRate, 0);
+});
+
+test("a never-accessed student carries no last-access date rather than a fake one", () => {
+  const rows = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]
+    .map((d) => obs(d, false, "u1", null));
+  assert.equal(summariseEngagement(rows).lastAccessOn, null);
 });
