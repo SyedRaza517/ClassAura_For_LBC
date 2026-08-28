@@ -430,6 +430,9 @@ model Tenant {
   mitigatingCircumstance   MitigatingCircumstance[]
   vleEngagement            VleEngagement[]
   assessmentAdjustment     AssessmentAdjustment[]
+  attendanceTags           AttendanceTag[]
+  tagTaps                  TagTap[]
+  attendanceTapConfig      AttendanceTapConfig?
 
   @@index([active])
 }
@@ -634,6 +637,10 @@ model CheckIn {
   timeOut   String?
   summary   String   @default("")
   site      String?  // HND | FE | Online — where this clock-in happened
+  // The NFC sticker this clock-in was made at. NULL for one made by pressing the button
+  // in the app, which stays available. Distinguishes "was in the building" from "said
+  // they were", without a second boolean that could disagree with it.
+  tagId     String?
   createdAt DateTime @default(now())
 
   @@unique([staffId, date])
@@ -1224,6 +1231,20 @@ model AttendanceMark {
   remark    String     @default("")
   takenBy   String?    // staff name who took the register
   takenAt   DateTime   @default(now())
+  // When the student actually tapped in. NULL when nobody self-checked-in — the lecturer
+  // marked them by hand — which is "not measurable", not an early arrival.
+  //
+  // Written ONCE and never again. A later register save must not overwrite it: takenAt
+  // is already reset on every update (the register save writes `takenAt: new Date()`),
+  // so it means "when this mark was last edited", and a lecturer correcting the register
+  // at four o'clock would otherwise destroy the only record of the 09:07 arrival.
+  //
+  // A string, not a DateTime, matching CheckIn.timeIn: the session carries the date, so
+  // the two reconstruct the instant, and a time written through clock.localTime() is
+  // right when stored and stays right. STATUS.md records D8 — the 08:00 notifications
+  // firing at 09:00 through BST because something read the host clock — which is the bug
+  // a stored instant re-zoned at every render invites back.
+  checkedInAt String?  // "HH:MM", London
 
   @@unique([sessionId, studentId])
   @@index([studentId])
@@ -1232,6 +1253,82 @@ model AttendanceMark {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+}
+
+// A registered NFC sticker. One per room, and the SAME sticker serves students and
+// staff — the server branches on who is signed in, not on which tag was touched, so a
+// college prints one sticker per room rather than two.
+model AttendanceTag {
+  id        String    @id @default(cuid())
+  // The secret written onto the sticker. Opaque and random, and deliberately NOT a URL.
+  // Our own app reads it, so there is nothing to gain from it being clickable and a lot
+  // to lose: a readable link is one a student can read off the wall with any phone and
+  // replay from home. Globally unique rather than unique-per-tenant so a code is never
+  // ambiguous about which college it belongs to.
+  code      String    @unique
+  label     String                       // "Room 101", "Reception"
+  active    Boolean   @default(true)     // deactivate a peeled-off or lost sticker
+  // NULL until the first tap. "Never used" is not a zero date, and a college auditing
+  // its stickers needs to tell the two apart.
+  lastTapAt DateTime?
+  createdAt DateTime  @default(now())
+  createdBy String?
+  taps      TagTap[]
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Every tap, accepted or refused, for students and staff alike.
+//
+// The refusals are the valuable half. "I did tap and it didn't work" is a question
+// attendance evidence has to be able to answer, and a pattern — one address checking in
+// six students inside a minute — is invisible in AttendanceMark and obvious here.
+model TagTap {
+  id        String        @id @default(cuid())
+  tag       AttendanceTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagId     String
+  // Exactly one of these is set on an accepted tap; BOTH are null when the tap was
+  // refused before anybody was identified. Not measurable — never a blank string
+  // standing in for a person.
+  studentId String?
+  staffId   String?
+  sessionId String?       // the register a student tap landed on
+  // marked | checked_in | already_marked | already_checked_in | no_session_now |
+  // ambiguous | term_locked | tag_unknown | rate_limited | disabled
+  outcome   String
+  status    String?       // "P" | "L" when a mark was actually written
+  site      String?       // "Onsite" for a staff tap — the tap itself proves that
+  at        DateTime      @default(now())
+  ip        String?
+
+  @@index([tagId, at])
+  @@index([studentId])
+  @@index([staffId])
+
+  // Which institution this row belongs to. Enforced centrally — see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Per-college settings for tap check-in.
+//
+// Same shape as AttendanceBandConfig, which is the reference implementation: platform
+// defaults in code, one JSON column merged over them, no row until a college edits
+// something, an allowlist on the way out, and a short cache invalidated on save. The
+// defaults have enabled:false, so an unconfigured college behaves exactly as it did
+// before this feature existed.
+model AttendanceTapConfig {
+  id        String   @id @default(cuid())
+  settings  Json     @default("{}")
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  tenantId String @unique
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 // One line on a staff member's timesheet: a class or work session on a given day,
