@@ -165,7 +165,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | **Student queries** | `/api/student-queries` | ✅ Two states (open/answered). No threading, no close/reopen, and **still no notification to the student on reply** — `routes/studentQueries.js` contains no notify or email call at all |
 | **Attendance Emails** | `/api/attendance-emails` | ⚠️ Built and complete, but the automation still ships switched off (`autoEnabled` defaults false) and the default template contact details ship blank for an admin to fill |
 | **Moodle / VLE sync** | `/api/moodle` | ✅ One-way and non-destructive, with a dry-run preview. Unit matching is heuristic by design. Now reads the institution's own URL, token and auto-sync switch |
-| **Predictive Analysis** (progression risk) | `/api/prediction` | ✅ Added 25 Aug 2026. Seven weighted components → a 0–100 progression score → R1–R5, with four override rules on top. Per-college weights, bands and thresholds (`PredictionModelSettings`), an append-only history, and an intervention record. Behind the new `prediction` page grant, so it is inert until a college grants it. **Nothing runs on a schedule and no student is ever emailed.** See §3.8 |
+| **Predictive Analysis** (progression risk) | `/api/prediction` | ✅ Added 25 Aug 2026. Seven weighted components → a 0–100 progression score → R1–R5, with four override rules on top. Per-college weights, bands and thresholds (`PredictionModelSettings`), an append-only history, and an intervention record. Behind the new `prediction` page grant, so it is inert until a college grants it. **Nothing runs on a schedule and no student is ever emailed.** See §3.8, §3.8.1 and §3.8.2. **Extended substantially 28-29 Aug 2026** — mitigating circumstances (which fixed a live harm), register coverage, cohort standing, VLE engagement, workload, student finance and the shape of the absence. About half of it renders null on both databases for want of data; §3.8.2 says exactly which half and why. |
 
 ### 3.4 Admissions
 
@@ -342,6 +342,109 @@ adversarial review rather than by tests:
 upstream data-quality fixes; roughly sixty need capture surfaces or VLE access logs that
 do not exist. The two highest-leverage unblocks are small: a `followUpCompletedOn` column
 on `Interaction`/`StudentReview`, and a `studentId` FK on `SlcApplication`.
+
+
+### 3.8.2 Mitigating circumstances, cohort standing, coverage, VLE, workload, finance and absence shape (28–29 Aug 2026)
+
+Six more layers beside the score, one live harm fixed, and a screen that finally shows
+any of it. The honest headline is at the bottom: **about half of what is described here
+renders as a dash on both databases today, because the tables behind it are empty.**
+
+**The live harm.** `TRIP_CHRONIC_LATE` was firing on real students. `moodle.js` populates
+`AssessmentGrade.submittedAt` from `gradedatesubmitted`, `metrics.js` compared it against
+the assessment's own `dueDate`, and nothing in the schema recorded that a college had
+granted an extension — so a college reported a student as chronically late for using an
+accommodation it had granted them itself, with nothing on the screen saying so.
+`MitigatingCircumstance` + `AssessmentAdjustment` + `prediction/adjustments.js` fix it.
+
+The governing rule: **a suppressed assessment leaves BOTH sides of every fraction.** Never
+counted as submitted, never as on time, never as missing. That is null-is-not-zero pointed
+the other way, and getting it backwards is the *mirror* harm — counting an extended piece
+as handed in on time inflates the score of a student in real difficulty and quietly
+removes them from the register. Proven end to end in an isolated schema: the same student
+scored three times, `TRIP_CHRONIC_LATE` present with no claim, gone with approved
+extensions, and `lateSubmissionRate` **null rather than 0** under a pending blanket claim.
+
+**Health data never reaches the score.** A claim is Article 9 data — illness, bereavement,
+mental health — collected for student support, not for scoring. `status` / the window /
+`coversAttendance` / the adjustments say WHAT was decided and are the only fields the
+prediction pipeline selects; `category` and `detail` say WHY and are selected by nothing
+under `src/prediction/`. Enforced in one place, so `schema-contract.test.js` reads
+`metrics.js` as text and fails if either appears. Its own page grant (`mitigations`), and
+the audit summary names the student and the decision but never the reason — the audit log
+is read on Settings by admins never granted this page.
+
+**The other five layers.**
+
+| Module | Answers | Codes |
+|---|---|---|
+| `coverage.js` | is the attendance % worth anything — how much of the timetable was registered | 3 |
+| `cohort.js` | where the student stands against their own cohort | 2 |
+| `workload.js` | where deadlines bunch, crossed with this student's own backlog or absence | 2 |
+| `funding.js` | is student finance a reason they may not continue | 3 |
+| `sessions.js` | the SHAPE of the absence — worst weekday, whole weeks unseen | 1 |
+| `vle/engagementNormalise.js` | did they open the course at all | — |
+
+Two design rules held throughout. **A signal that fires for a whole cohort at once is a
+FIGURE, not a code** — `riskDriverCodes` is a per-student caseload array, and a hundred
+rows carrying an identical reason is the same as no caseload. `assessmentsDueSoon` set the
+precedent; `cohortStruggling` follows it, and every workload code is structurally guarded
+by a per-student conjunction so a busy fortnight alone can never fire. And **the sanitised
+attendance figure reaches the ENGINE, not just the screen**: a percentage resting on three
+marks is a measurement of how often somebody opened the register, so below the floor it is
+null and `engine.js` renormalises around it.
+
+**VLE engagement costs no extra Moodle calls.** `core_enrol_get_enrolled_users` was already
+issued once per course and `lastcourseaccess` was already in the response, being discarded.
+A ROW MEANS "WE LOOKED": observed-but-inactive is `accessed: false`, unobservable is no row.
+This is the one place where absence *is* the institution guard, because no count separates
+a disengaged cohort from a Moodle with `hiddenuserfields` set from a college that teaches
+face to face — all three are zero. The denominator is DAYS, not rows.
+
+**Defects found and fixed in this work**
+
+| | |
+|---|---|
+| `SlcApplication.statusChangedOn` was **dead schema** — `routes/slc.js` never wrote it, nor `studentId`, `studentLinkSource`, `studentLinkedAt`. `funding.js` measures a stall from it | Written, and only when the status actually moves: stamping it on every save would turn "how long at Awaiting evidence" into "when did somebody last fix a typo" |
+| `registerCoverage` received marks with no `sessionId` — they are flattened from `session.date`, and the id comes from the mark itself | Carried through. The module's own guard caught it by returning null rather than reporting a perfect register as untaken |
+| `const sessions = require("./sessions")` was silently shadowed by `gather()`'s local `sessions` array. **All 697 unit tests passed** — they import `evaluate` directly | Renamed. First symptom was a live run failing |
+| `kindsMeasured` returned 0 where a college records no session kinds. Zero claims a sample that was never taken | Null. It survived a 32-mutant run because the test was **titled** "every kind figure is NULL" while asserting 0 |
+| A health-data guard used `new RegExp(\`\\b${name}\\s*:\`)` inside a **template literal**, where `\b` is backspace and `\s` is a bare "s". It searched for a control character and passed everything | Substring tests, mutation-checked three ways |
+| Eleven codes reached the client with no label, so a tutor would have read `TRIP_WORKLOAD_PILEUP` where a sentence should be | Labelled; `schema-contract.test.js` now reads `StaffHub.jsx` as text — the `ADMIN_PAGES` problem again |
+
+**Verification status.** Demonstrated on 29 Aug 2026:
+
+| | |
+|---|---|
+| 699 unit tests | pass |
+| Mutation testing | every new guard broken deliberately and caught; survivors reported as equivalent rather than counted as kills |
+| Six migrations | **applied to BOTH databases.** `edtech_staging` was 12 behind and is now level. Row counts identical on both |
+| Full smoke suite | **25 passed, 0 failed, 1 skipped**, in an isolated schema. `public` row counts identical before and after; schema dropped |
+| `smoke-mitigations.mjs` | **new, 13 checks, passed.** Mostly refusals, and two that matter: the audit trail carries no category or detail, and the prediction payload carries neither |
+| Real scoring | 10 students on each database, **no score moved**, weekday shape populated for all 20 |
+| End-to-end suppression | **proven discriminating** — code fires without cover, gone with it, rate null under a pending claim |
+| Client | **builds**; there is no client test framework, so that is the whole claim |
+
+**Signals implemented: about 101 of the 138 catalogued** — but the number flatters the
+state of things and should be read with the next paragraph.
+
+**What is inert, and why.** Both databases hold **zero** assessments, grades, submissions,
+SLC rows and admissions; `HndSession.kind` is empty on all 32 rows; every student has
+`cohortId` null; and no Moodle sync has run since the VLE capture was added. So workload,
+funding, cohort standing, submission timing, VLE engagement and the session-kind figures
+all render null. That is the modules refusing to invent figures from nothing — the correct
+behaviour, and the new screen shows *why* a figure is missing rather than a bare dash — but
+nobody should read those columns as working until there is data behind them. The
+attendance-derived layers (coverage, weekday shape, weeks unseen) **do** produce real
+values today: 10/10 students on both databases carry a measurable weekday pattern.
+
+**The highest-leverage unblock is a Moodle sync**, which lights up assessments, grades and
+VLE engagement together. After that: assigning students to cohorts, and the SLC backfill —
+still dry-run, and staying that way until the CSV is read per database, because a wrong
+match attaches one student's loan status to another.
+
+**Equity monitoring is deliberately not built.** It means processing protected
+characteristics, and it needs a DPO rather than a developer's judgement.
 
 **What it deliberately does not do.** No student-facing route (the student app cannot
 reach the router). No automatic email — compare Attendance Emails, which *does* write to
