@@ -1,0 +1,104 @@
+// Which register an NFC tap belongs to, and whether it is Present or Late.
+//
+// Pure: it takes the candidate sessions the route has already read, plus the current
+// local date and time, and returns a decision. No database, no clock — the caller reads
+// the clock through clock.js and passes it in, so every boundary case in here is an
+// ordinary unit test rather than something that only reproduces at 09:15 on a Tuesday.
+//
+// The rule, in one line: taps are accepted while the lecture is running and at no other
+// time. There is no window for a lecturer to open and nothing to remember to switch off
+// — the timetable already knows when the class is.
+
+/** "HH:MM" → minutes since midnight, or null when the string is not a time. */
+function toMins(hhmm) {
+  const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm ?? ""));
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/** minutes since midnight → "HH:MM", clamped to the day. */
+function toHHMM(mins) {
+  const n = Math.max(0, Math.min(23 * 60 + 59, Math.round(mins)));
+  return String(Math.floor(n / 60)).padStart(2, "0") + ":" + String(n % 60).padStart(2, "0");
+}
+
+// Clamped rather than wrapped, deliberately. A lecture does not cross midnight, and
+// wrapping would turn "fifteen minutes before 00:05" into 23:50 — a string that sorts
+// LATER than every other time of day, which would accept taps around the clock.
+//
+// An unparseable time is handed back untouched rather than becoming "NaN:NaN". A
+// malformed startTime should refuse that one session visibly, not compare false against
+// everything and look like an empty timetable.
+const addMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ? hhmm : toHHMM(b + mins); };
+const subMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ? hhmm : toHHMM(b - mins); };
+
+/**
+ * Decide which of a student's sessions a tap lands on.
+ *
+ * @param candidates today's sessions on units this student is enrolled on. Enrolment is
+ *   what makes a student eligible for a register at all, so the caller builds this list
+ *   from Enrolment — the same reason the register save checks enrolment rather than mere
+ *   existence, and what stops a tap attaching a student to a unit they were never on.
+ * @param now { date: "YYYY-MM-DD", time: "HH:MM" } in the college's zone, from clock.js
+ * @param settings { lateAfterMins, earlyGraceMins }
+ * @returns { kind: "one", session, status } | { kind: "ambiguous", sessions } |
+ *          { kind: "none", reason: "no_session_now" | "term_locked" }
+ */
+function resolveTapSession(candidates, now, settings) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  const grace = Number(settings?.earlyGraceMins) || 0;
+  // Not `|| 0`: a lateAfterMins of 0 is a real setting — a college that treats any
+  // lateness as late — and `||` would quietly replace it with 0 anyway, but the
+  // intent matters if the default ever changes.
+  const late = Number.isFinite(Number(settings?.lateAfterMins)) ? Number(settings.lateAfterMins) : 0;
+
+  // Running right now. Both ends inclusive: a student who tapped as the class ended did
+  // arrive, and excluding the closing minute would refuse a real attendance.
+  const running = list.filter((s) => {
+    if (s.date !== now.date) return false;
+    const from = toMins(subMinutes(s.startTime, grace));
+    const to = toMins(s.endTime);
+    const t = toMins(now.time);
+    if (from === null || to === null || t === null) return false;
+    return t >= from && t <= to;
+  });
+
+  // Nothing running is "no class on", whatever the terms say. Reported BEFORE the term
+  // check so a student who tapped at the wrong time of day is not told their term is
+  // closed — two different problems with two different remedies.
+  if (running.length === 0) return { kind: "none", reason: "no_session_now" };
+
+  // The term gate, matching PUT /sessions/:id/register, which returns 423 outside the
+  // window. A tap must not become a back door around a locked term. Both boundary days
+  // are inclusive: a term running "to 2026-09-01" includes that day's teaching.
+  const open = running.filter((s) => !s.term || (now.date >= s.term.start && now.date <= s.term.end));
+  if (open.length === 0) return { kind: "none", reason: "term_locked" };
+
+  // Two lectures genuinely running at once is a question only the student can answer.
+  if (open.length > 1) return { kind: "ambiguous", sessions: open };
+
+  const s = open[0];
+  // Zero-padded HH:MM sorts chronologically, so a plain string compare is enough — the
+  // convention already used throughout checkins.js and hnd.js. Inclusive: arriving
+  // exactly on the threshold is not late, and an off-by-one here is somebody's mark.
+  const status = now.time <= addMinutes(s.startTime, late) ? "P" : "L";
+  return { kind: "one", session: s, status };
+}
+
+/**
+ * Present or Late for one already-chosen session.
+ *
+ * Exported separately because the route needs it after an ambiguous result: the student
+ * picked the second of two overlapping classes, and that class may have started at a
+ * different time than the first. Reusing the first candidate's verdict would mark a
+ * punctual student late.
+ */
+function statusFor(session, now, settings) {
+  const late = Number.isFinite(Number(settings?.lateAfterMins)) ? Number(settings.lateAfterMins) : 0;
+  return now.time <= addMinutes(session.startTime, late) ? "P" : "L";
+}
+
+module.exports = { addMinutes, subMinutes, resolveTapSession, statusFor };
