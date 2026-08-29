@@ -157,21 +157,36 @@ test("weekdayOf refuses anything that is not a YYYY-MM-DD date", () => {
   }
 });
 
-test("an impossible calendar date ROLLS OVER, exactly as every other date helper here does", () => {
-  // Written down as behaviour rather than fixed, and the reason is consistency rather
-  // than laziness. V8 rejects a 13th month and silently rolls a 30th of February forward
-  // to the 2nd of March, and `Date.parse` is what tripwires.daysBetween,
-  // coverage.daysBetween, workload.isDate and shiftDays all rest on — so every module in
-  // this pipeline already treats "2026-02-30" as the 2nd of March.
+test("an impossible calendar date is REFUSED, not rolled forward", () => {
+  // THIS REVERSES AN EARLIER DECISION IN THIS FILE, and the earlier one is worth keeping
+  // on the record because it was well argued.
   //
-  // A strict calendar check HERE would make sessions.js the one module that disagrees:
-  // the same string would be bucketed into a week by consecutiveWeeks and refused by the
-  // weekday, and the mark would land in one figure and not the other. Two modules
-  // disagreeing about what a date is, is worse than both rolling it over in the same
-  // direction — and the input is a NOT NULL string column written by a date picker, so
-  // the case is defensive to begin with.
-  assert.equal(weekdayOf("2026-02-30"), weekdayOf("2026-03-02"));
-  assert.equal(weekStartOf("2026-02-30"), weekStartOf("2026-03-02"));
+  // It said: V8 silently rolls "2026-02-30" forward to 2 March, and Date.parse is what
+  // tripwires.daysBetween, coverage.daysBetween and workload.isDate all rest on — so
+  // every module already treats it that way. A strict check HERE would make sessions.js
+  // the one module that disagrees, the mark landing in one figure and not the other.
+  //
+  // Two things settle it the other way.
+  //
+  // First, that specific harm does not occur: isDate gates BOTH weekdayOf and
+  // weekStartOf, so an impossible date now leaves both figures together rather than one.
+  // The module stays internally consistent, which was the real point.
+  //
+  // Second, the consequences are not comparable. A rolled-over date changes daysBetween
+  // by two days; here it puts a March mark into the TUESDAY BUCKET of a weekday
+  // comparison that exists precisely to say which weekday a student misses. That is a
+  // confident wrong answer inside the one thing the module measures, and "null means not
+  // measurable" is the rule the whole codebase runs on. A date that does not exist is not
+  // measurable.
+  //
+  // The input is a NOT NULL column written by a date picker, so this stays defensive
+  // either way — which is exactly why the cheaper, safer reading wins.
+  assert.equal(weekdayOf("2026-02-30"), null);
+  assert.equal(weekStartOf("2026-02-30"), null);
+  // 2026 is not a leap year, so this one is impossible too and V8 rolls it to 1 March.
+  assert.equal(weekdayOf("2026-02-29"), null);
+  // And a real date still works, so the guard has not simply refused everything.
+  assert.equal(weekdayOf("2026-03-02"), 1);
 });
 
 test("weekStartOf returns the Monday, and a Monday is its own week start", () => {

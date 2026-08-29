@@ -38,6 +38,7 @@ const intake = require("./intake");
 const historyShape = require("./history");
 const assessmentType = require("./assessmentType");
 const timetableShape = require("./timetable");
+const earlyWindow = require("./earlyWindow");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -340,10 +341,16 @@ async function gather(studentIds, config) {
   // rather than when the student arrived. Null when neither exists, and null is
   // deliberately NOT treated as "brand new" downstream.
   const weeksByStudent = new Map();
+  // The same date, KEPT rather than discarded. earlyWindow.js needs the programme start
+  // itself and not the weeks derived from it, and computing it twice from the same
+  // expression in two places is how the two come to disagree — so it is built here, once,
+  // in the loop that already has it.
+  const startByStudent = new Map();
   for (const s of students) {
     const terms = (s.cohort && s.cohort.terms) || [];
     const start = (s.cohort && s.cohort.startDate)
       || (terms.length ? terms.reduce((min, t) => (t.start < min ? t.start : min), terms[0].start) : null);
+    startByStudent.set(s.id, start || null);
     weeksByStudent.set(s.id, start ? Math.max(0, Math.floor(daysBetween(start, today) / 7)) : null);
   }
 
@@ -1234,6 +1241,22 @@ async function gather(studentIds, config) {
       weeksIntoProgramme: weeksByStudent.get(id) ?? null,
     }, config);
 
+    // HOW THEY STARTED. Raw marks, like sessions.js and timetable.js: a session an
+    // approved claim excuses is still a session the student was not at, and the opening
+    // weeks are exactly what a claim explains rather than erases.
+    //
+    // Excluded assessments are OMITTED rather than passed with a null date — a null date
+    // would make them undatable rather than suppressed, and the two mean different things
+    // to this module.
+    const opening = earlyWindow.evaluate({
+      marks: overallMarks,
+      grades: scopedGrades
+        .map((g) => ({ g, eff: effective(g.assessment) }))
+        .filter((x) => x.eff.state !== EXCLUDED)
+        .map(({ g, eff }) => ({ pct: g.pct, dueDate: eff.due })),
+      programmeStartOn: startByStudent.get(id) ?? null,
+    }, config);
+
     const entry = intake.evaluate({
       today,
       isms: ismByStudent.get(id) || [],
@@ -1418,6 +1441,19 @@ async function gather(studentIds, config) {
         longGapSessions: dayShapeTimetable.longGapSessions,
         daysWithoutSessionEnd: dayShapeTimetable.daysWithoutSessionEnd,
         singleSessionDays: dayShapeTimetable.singleSessionDays,
+        earlyAttendance: opening.earlyAttendance,
+        earlyAttendanceMarked: opening.earlyAttendanceMarked,
+        subsequentAttendance: opening.subsequentAttendance,
+        subsequentAttendanceMarked: opening.subsequentAttendanceMarked,
+        earlyAttendanceGap: opening.earlyAttendanceGap,
+        earlyWindowEndsOn: opening.earlyWindowEndsOn,
+        preStartMarked: opening.preStartMarked,
+        firstAssessmentPct: opening.firstAssessmentPct,
+        firstAssessmentOn: opening.firstAssessmentOn,
+        subsequentAverageGrade: opening.subsequentAverageGrade,
+        subsequentGradeCount: opening.subsequentGradeCount,
+        firstAssessmentGap: opening.firstAssessmentGap,
+        undatedGradeCount: opening.undatedGradeCount,
         submissionsRecorded,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
@@ -1437,6 +1473,8 @@ async function gather(studentIds, config) {
           // cohort-wide facts a college has. Spread anyway so that a future decision to
           // add one does not need this line found and changed.
           ...(byType.codes || []), ...(dayShapeTimetable.codes || []),
+          // earlyWindow.js emits none either, for a stronger version of the same reason.
+          ...(opening.codes || []),
         ],
       },
       raw: {

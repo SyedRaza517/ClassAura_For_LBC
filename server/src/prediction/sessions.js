@@ -124,10 +124,21 @@ const round1 = (n) => Math.round(n * 10) / 10;
  *  decoration: `Date.parse` accepts "2026-8-4" and a dozen other shapes, and this module
  *  compares dates as strings, where "2026-8-4" sorts BEFORE "2026-10-01" and after
  *  "2026-07-31" — a silently wrong ordering rather than a loud failure. */
-const isDate = (s) =>
-  typeof s === "string"
-  && /^\d{4}-\d{2}-\d{2}$/.test(s)
-  && Number.isFinite(Date.parse(`${s}T00:00:00Z`));
+const isDate = (s) => {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  if (!Number.isFinite(t)) return false;
+  // AND A ROUND TRIP, because the shape check and the parse together are still not
+  // enough. The ISO grammar validates the SHAPE of the day field, not the day:
+  // Date.parse("2026-02-31T00:00:00Z") SUCCEEDS and rolls forward to 3 March, and
+  // "2026-02-29" in a non-leap year rolls to 1 March. Before this, weekdayOf("2026-02-31")
+  // returned Tuesday — a confident weekday for a date that does not exist, which would
+  // put a mark in the wrong bucket of the very comparison this module is built on.
+  //
+  // Found by the agent writing earlyWindow.js, which hit the same trap in its own code
+  // and looked here.
+  return new Date(t).toISOString().slice(0, 10) === s;
+};
 
 /**
  * Whole days between two YYYY-MM-DD dates, `to` minus `from`, or NULL if either cannot

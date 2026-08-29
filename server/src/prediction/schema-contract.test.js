@@ -96,6 +96,7 @@ const TRIPWIRE_COLUMNS = [
   "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
   "entryProfileRecorded", "entryProfileOn", "entryProfileAnswered", "entryProfileQuestions", "entryProfileBarriers", "entryWifiAtHome", "entryKnowsOfficeSoftware", "entryAdmittedOutcome", "rightToStudyExpiresOn", "currentBandSince", "worstBandHeld", "worstBandSince", "observedDays", "bandChanges", "bandsVisited", "recoveredPoints", "recoveredBy", "lowestScore", "lowestOn", "divergenceShape", "attendanceSubmissionGap", "attendanceVleGap",
   "worstAssessmentType", "worstAssessmentTypePassRate", "worstAssessmentTypeMeanPct", "assessmentTypePassRateGap", "assessmentTypeMeanGap", "assessmentTypesMeasured", "assessmentTypesSeen", "untypedGradeCount", "earlyStartAbsenceRate", "laterStartAbsenceRate", "earlyStartAbsenceGap", "earlyStartLatenessRate", "laterStartLatenessRate", "earlyStartLatenessGap", "earlyStartDays", "longDayMissedRate", "shortDayMissedRate", "longDayMissedGap", "longDaysMeasured", "afterLongGapAbsenceRate", "afterShortGapAbsenceRate", "longGapAbsenceGap", "longGapSessions", "daysWithoutSessionEnd", "singleSessionDays",
+  "earlyAttendance", "earlyAttendanceMarked", "subsequentAttendance", "subsequentAttendanceMarked", "earlyAttendanceGap", "earlyWindowEndsOn", "preStartMarked", "firstAssessmentPct", "firstAssessmentOn", "subsequentAverageGrade", "subsequentGradeCount", "firstAssessmentGap", "undatedGradeCount",
 ];
 
 /**
@@ -300,7 +301,7 @@ test("adjustments.js reads nothing but the decision and the window", () => {
 //
 // Each module tests its own vocabulary. Nothing tested them TOGETHER, which is the only
 // place a collision can exist.
-test("the eleven tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
+test("the twelve tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
   const all = ALL_VOCABULARIES;
 
   const seen = new Map();
@@ -335,6 +336,7 @@ const ALL_VOCABULARIES = [
   ["divergence", require("./divergence").DIVERGENCE_CODES],
   ["assessmentType", require("./assessmentType").ASSESSMENT_TYPE_CODES],
   ["timetable", require("./timetable").TIMETABLE_CODES],
+  ["earlyWindow", require("./earlyWindow").EARLY_WINDOW_CODES],
 ];
 
 // EVERY CODE THE SERVER CAN EMIT MUST HAVE A LABEL ON THE SCREEN.
@@ -353,4 +355,46 @@ test("every tripwire code the server emits is labelled in the client", () => {
 
   assert.deepEqual(missing, [],
     `these codes would render as their own constant on a tutor's screen: ${missing.join(", ")}`);
+});
+
+// NO TWO MODULES MAY DISAGREE ABOUT WHAT A CONFIG KEY MEANS.
+//
+// Every prediction module is handed the SAME config object — one merged settings row —
+// and each spreads its own defaults under it. So two modules using one key name for two
+// different questions do not conflict loudly; whichever value reaches settings.js wins
+// for both, and the loser runs on a threshold nobody chose for it.
+//
+// This is not hypothetical. `earlyMinMarks` meant "marks in early-STARTING sessions" to
+// timetable.js (6) and "marks in the opening WINDOW of the programme" to earlyWindow.js
+// (4). Wiring the second would have silently raised its floor by half, making it stricter
+// than the argument written above it — visible nowhere, in a figure that would simply
+// have appeared less often. CLAUDE.md records that the OUTCOMES collision of this exact
+// shape cost three bugs.
+//
+// Identical values are allowed: `settlingInWeeks` and `attendanceSlopeDrop` are
+// deliberately restated by modules that must stay correct when called bare.
+test("no two prediction modules define the same config key with different defaults", () => {
+  const MODULES = [
+    "coverage", "workload", "funding", "sessions", "intake",
+    "history", "divergence", "assessmentType", "timetable", "earlyWindow",
+  ];
+
+  const seen = new Map();      // key -> { module, value }
+  const clashes = [];
+  for (const name of MODULES) {
+    const mod = require(`./${name}`);
+    const defaultsKey = Object.keys(mod).find((k) => /DEFAULTS$/.test(k));
+    assert.ok(defaultsKey, `${name} exports no DEFAULTS, so its thresholds cannot be checked`);
+
+    for (const [key, value] of Object.entries(mod[defaultsKey])) {
+      const prior = seen.get(key);
+      if (prior && prior.value !== value) {
+        clashes.push(`${key}: ${prior.module}=${JSON.stringify(prior.value)} vs ${name}=${JSON.stringify(value)}`);
+      }
+      if (!prior) seen.set(key, { module: name, value });
+    }
+  }
+
+  assert.deepEqual(clashes, [],
+    `these keys mean different things to different modules and share one config object:\n  ${clashes.join("\n  ")}`);
 });

@@ -2414,6 +2414,31 @@ model StudentPredictionCurrent {
   /// from a finding.
   daysWithoutSessionEnd    Int?
   singleSessionDays        Int?
+  /// HOW THEY STARTED. The best-evidenced family in the progression literature: attendance
+  /// in the opening weeks predicts withdrawal better than almost anything measured later.
+  /// Nothing else here captures it — every other attendance figure is lifetime-to-date or
+  /// a rolling recent window, and both wash out the start.
+  /// UNLIKE EVERY OTHER FIGURE IN THIS TABLE, these stop moving. A student's week 1-4
+  /// attendance is the same number in June as it was in October, because the window is
+  /// date-bounded. If one drifts, something is wrong.
+  earlyAttendance            Float?
+  earlyAttendanceMarked      Int?
+  subsequentAttendance       Float?
+  subsequentAttendanceMarked Int?
+  earlyAttendanceGap         Float?
+  earlyWindowEndsOn          String?
+  /// Marks dated BEFORE the programme started. Not folded into either side: they are
+  /// usually a cohort start date that is wrong, and silently counting them as "early"
+  /// would hide the data-quality problem inside a student's figure.
+  preStartMarked             Int?
+  /// The first marked piece, against everything after it. A distinct early predictor from
+  /// the average, which by construction contains it.
+  firstAssessmentPct         Float?
+  firstAssessmentOn          String?
+  subsequentAverageGrade     Float?
+  subsequentGradeCount       Int?
+  firstAssessmentGap         Float?
+  undatedGradeCount          Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2842,6 +2867,31 @@ model StudentPredictionHistory {
   /// from a finding.
   daysWithoutSessionEnd    Int?
   singleSessionDays        Int?
+  /// HOW THEY STARTED. The best-evidenced family in the progression literature: attendance
+  /// in the opening weeks predicts withdrawal better than almost anything measured later.
+  /// Nothing else here captures it — every other attendance figure is lifetime-to-date or
+  /// a rolling recent window, and both wash out the start.
+  /// UNLIKE EVERY OTHER FIGURE IN THIS TABLE, these stop moving. A student's week 1-4
+  /// attendance is the same number in June as it was in October, because the window is
+  /// date-bounded. If one drifts, something is wrong.
+  earlyAttendance            Float?
+  earlyAttendanceMarked      Int?
+  subsequentAttendance       Float?
+  subsequentAttendanceMarked Int?
+  earlyAttendanceGap         Float?
+  earlyWindowEndsOn          String?
+  /// Marks dated BEFORE the programme started. Not folded into either side: they are
+  /// usually a cohort start date that is wrong, and silently counting them as "early"
+  /// would hide the data-quality problem inside a student's figure.
+  preStartMarked             Int?
+  /// The first marked piece, against everything after it. A distinct early predictor from
+  /// the average, which by construction contains it.
+  firstAssessmentPct         Float?
+  firstAssessmentOn          String?
+  subsequentAverageGrade     Float?
+  subsequentGradeCount       Int?
+  firstAssessmentGap         Float?
+  undatedGradeCount          Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
