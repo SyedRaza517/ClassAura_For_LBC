@@ -23,6 +23,7 @@ const { importAttendance } = require("./moodleAttendance");
 // the dashboard goes on showing last night's score against tonight's data.
 const predictionRunner = require("./prediction/runner");
 const engagement = require("./vle/engagementNormalise");
+const { assessmentTypeFor: itemType } = require("./vle/moodleItemType");
 const { isoDate } = require("./vle/isoDate");
 const { localDate, ZONE } = require("./clock");
 
@@ -446,7 +447,18 @@ async function syncFromMoodle({ dryRun = false } = {}) {
         if (!dryRun && unit.id) {
           try {
             row = await prisma.assessment.create({
-              data: { unitId: unit.id, title, type: "Assignment", maxMarks: max, moodleItemId: itemId, moodleCmid: item.cmid || null },
+              // ON CREATE ONLY, and only where the mapping is confident. Moodle's
+              // itemmodule is already in hand -- the filter above reads it to drop
+              // attendance items -- and this line used to throw it away, so every piece
+              // of work at a synced college became coursework and
+              // prediction/assessmentType.js could never find a student who fails exams.
+              //
+              // Unmapped modules keep the old default, so this can only add information.
+              // And it is NOT applied on update: staff can correct a type on the
+              // Assessments page, and a sync that re-flattened their correction every
+              // night would be worse than never having mapped anything -- the correction
+              // would appear to work and silently revert.
+              data: { unitId: unit.id, title, type: itemType(item.itemmodule) || "Assignment", maxMarks: max, moodleItemId: itemId, moodleCmid: item.cmid || null },
             });
           } catch (e) { note(`${label} / ${unit.code}: could not create the assessment "${title}" — ${e.message}`); continue; }
           // A brand-new assessment is work nobody has done yet, so it enlarges the

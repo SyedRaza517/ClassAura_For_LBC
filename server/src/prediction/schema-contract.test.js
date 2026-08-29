@@ -95,6 +95,7 @@ const TRIPWIRE_COLUMNS = [
   "peakFrom", "peakTo", "peakCount", "peakWeightShare", "peakWasWeighted", "undatedAssessments", "carriedBacklogCount", "fundingPosition", "fundingUnsettledSince", "fundingSettledOn", "fundingRefusedOn", "fundingApplications", "fundingNotApplied",
   "worstAbsenceWeekday", "worstWeekdayAbsenceRate", "weekdayAbsenceGap", "weekdaysMeasured", "worstAbsenceKind", "worstKindAbsenceRate", "kindAbsenceGap", "kindsMeasured", "unseenWeekRun", "unseenSinceWeekOn", "lastAttendedWeekOn", "longestUnseenWeekRun", "observedWeeks",
   "entryProfileRecorded", "entryProfileOn", "entryProfileAnswered", "entryProfileQuestions", "entryProfileBarriers", "entryWifiAtHome", "entryKnowsOfficeSoftware", "entryAdmittedOutcome", "rightToStudyExpiresOn", "currentBandSince", "worstBandHeld", "worstBandSince", "observedDays", "bandChanges", "bandsVisited", "recoveredPoints", "recoveredBy", "lowestScore", "lowestOn", "divergenceShape", "attendanceSubmissionGap", "attendanceVleGap",
+  "worstAssessmentType", "worstAssessmentTypePassRate", "worstAssessmentTypeMeanPct", "assessmentTypePassRateGap", "assessmentTypeMeanGap", "assessmentTypesMeasured", "assessmentTypesSeen", "untypedGradeCount", "earlyStartAbsenceRate", "laterStartAbsenceRate", "earlyStartAbsenceGap", "earlyStartLatenessRate", "laterStartLatenessRate", "earlyStartLatenessGap", "earlyStartDays", "longDayMissedRate", "shortDayMissedRate", "longDayMissedGap", "longDaysMeasured", "afterLongGapAbsenceRate", "afterShortGapAbsenceRate", "longGapAbsenceGap", "longGapSessions", "daysWithoutSessionEnd", "singleSessionDays",
 ];
 
 /**
@@ -299,12 +300,15 @@ test("adjustments.js reads nothing but the decision and the window", () => {
 //
 // Each module tests its own vocabulary. Nothing tested them TOGETHER, which is the only
 // place a collision can exist.
-test("the nine tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
+test("the eleven tripwire vocabularies are disjoint and all TRIP_-prefixed", () => {
   const all = ALL_VOCABULARIES;
 
   const seen = new Map();
   for (const [name, codes] of all) {
-    assert.ok(Array.isArray(codes) && codes.length, name + " exports no code vocabulary");
+    // An EMPTY vocabulary is legitimate: timetable.js deliberately emits no codes,
+    // because a start time is the most cohort-wide fact a college has. What is not
+    // legitimate is a module that forgot to export one at all.
+    assert.ok(Array.isArray(codes), name + " exports no code vocabulary");
     for (const code of codes) {
       assert.ok(code.startsWith("TRIP_"), name + ' emits \"' + code + '\", which is not TRIP_-prefixed');
       assert.ok(!seen.has(code), code + " is emitted by both " + seen.get(code) + " and " + name);
@@ -329,6 +333,8 @@ const ALL_VOCABULARIES = [
   ["intake", require("./intake").INTAKE_CODES],
   ["history", require("./history").HISTORY_CODES],
   ["divergence", require("./divergence").DIVERGENCE_CODES],
+  ["assessmentType", require("./assessmentType").ASSESSMENT_TYPE_CODES],
+  ["timetable", require("./timetable").TIMETABLE_CODES],
 ];
 
 // EVERY CODE THE SERVER CAN EMIT MUST HAVE A LABEL ON THE SCREEN.

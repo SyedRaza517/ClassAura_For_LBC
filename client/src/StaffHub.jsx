@@ -2873,6 +2873,10 @@ const DRIVER_LABELS = {
   TRIP_DIVERGENCE_SUBMITTING_NOT_ATTENDING: "Handing work in but not attending",
   TRIP_DIVERGENCE_ONLINE_NOT_ATTENDING: "Active online but not in the building",
   TRIP_DIVERGENCE_ATTAINING_NOT_ATTENDING: "Marks holding up while attendance falls",
+
+  // The code does not name the assessment type: that list is editable on the Assessments
+  // page, so a per-type vocabulary would be unbounded. The type is a figure beside it.
+  TRIP_ASSESSMENT_TYPE_FAILING: "Failing one kind of assessment while passing the rest",
 };
 
 /** The tripwires that describe the COLLEGE rather than the student. Shown in the same
@@ -3702,6 +3706,20 @@ function PredictionDetail({ detail, bands, onChanged }) {
     ["Claims awaiting a decision", p.openMitigationCount == null ? "—"
       : `${p.openMitigationCount}${p.oldestOpenMitigationOn ? `, oldest ${p.oldestOpenMitigationOn}` : ""}`],
     ["Assessments covered by a claim", p.mitigatedAssessmentCount == null ? "—" : p.mitigatedAssessmentCount],
+    // Which KIND of work they fail. The code deliberately does not name the type — the
+    // type is a mutable list on the Assessments page, so a per-type vocabulary would be
+    // unbounded and would orphan history rows on a rename. It is a figure beside it.
+    ["Worst kind of assessment", p.worstAssessmentType == null ? "—"
+      : `${p.worstAssessmentType} — ${p.worstAssessmentTypePassRate}% passed, ${p.assessmentTypePassRateGap} pts below the rest`],
+    // The shape of the teaching day. Figures only, never codes: everyone on a unit shares
+    // its 9am and its two-hour hole, so a badly-timetabled unit would produce the same
+    // finding for its whole cohort at once.
+    ["Early starts", p.earlyStartAbsenceRate == null ? "—"
+      : `${p.earlyStartAbsenceRate}% absent vs ${p.laterStartAbsenceRate}% later${p.earlyStartLatenessGap == null ? "" : `, ${p.earlyStartLatenessGap} pts more often late`}`],
+    ["Long teaching days", p.longDayMissedRate == null ? "—"
+      : `missed ${p.longDayMissedRate}% vs ${p.shortDayMissedRate}% of short days`],
+    ["After a long gap", p.afterLongGapAbsenceRate == null ? "—"
+      : `${p.afterLongGapAbsenceRate}% absent vs ${p.afterShortGapAbsenceRate}% after a short one`],
   ];
 
   return (

@@ -477,6 +477,63 @@ const DEFAULTS = {
   // band rung rather than a number, and clear of a bare pass: 40 props nothing up.
   attainingGradeFloor: 55,
 
+  /* --- which KIND of assessment they fail ----------------------------------- */
+
+  // Marked pieces of ONE type before it may be compared against the rest, and pieces of
+  // the rest before it is a comparison. Assessments are an order of magnitude scarcer
+  // than register marks, so these are lower than the attendance floors: at 4 and 6 this
+  // would stay silent until year two at any college running one exam per unit.
+  typeMinGrades: 3,
+  typeMinOtherGrades: 4,
+  // Two types must clear the floor before a worst one is named — a superlative over one
+  // candidate names the only candidate there is.
+  minTypesMeasured: 2,
+  // THE ABSOLUTE HALF, and it is placed to avoid a rounding artefact. At three pieces the
+  // only reachable pass rates are 0, 33.3, 66.7 and 100, so a ceiling of 33 would exclude
+  // "passed one of three" by quantisation rather than by judgement. 34 admits one-in-three
+  // and one-in-four, and excludes two-in-four.
+  typePassRateCeiling: 34,
+  // AND both gaps, which is what stops this firing cohort-wide. Exams being harder than
+  // coursework is the ordinary shape of assessment design. A ceiling of 34 with a gap of
+  // 40 arithmetically forces the pooled rest above 74%, so a student — or a cohort —
+  // failing everything cannot raise it.
+  typePassRateGap: 40,
+  // The mean gap kills the uniformly-borderline student: exams at 38/39/39 against
+  // coursework at 41/42/41 is a 100-point pass-rate gap on marks under three apart.
+  typeMeanGap: 10,
+
+  /* --- the shape of the teaching day ---------------------------------------- */
+
+  // Minutes past midnight before which a day counts as an early start. 09:30, placed in
+  // the EMPTY SPACE between the times a real timetable contains — 540 would put 09:00,
+  // the commonest start in the country, exactly on the boundary, where < and <= decide
+  // different answers for a real college.
+  //
+  // NOTE FOR THIS DEPLOYMENT: every session on both databases starts at 10:00, 14:00 or
+  // 18:00, so nothing is currently "early" and the three early-start figures are null for
+  // everyone. That is a threshold for a daytime college meeting an evening-heavy one, and
+  // it is a setting for exactly that reason.
+  earlyStartBeforeMinutes: 570,
+  // A long teaching day. 5h30, between a half day and a full one: 300 IS the 09:00–14:00
+  // day, so a threshold there would split on a value real timetables sit on.
+  longDayMinMinutes: 330,
+  // An idle gap worth going home for. Lunch is 30, 45 or 60 minutes, so 60 or 90 would
+  // make nearly every full day "gappy" across the sector; 180 would never clear its floor.
+  longGapMinMinutes: 120,
+  // SYMMETRIC floors, unlike the weekday pair. Neither side here is the big one by
+  // construction — a college may timetable mostly early or mostly late — so an asymmetric
+  // floor would make the module answer or refuse depending on which way round the
+  // timetable happens to fall.
+  earlyMinMarks: 6,
+  gapMinMarks: 6,
+  // And a floor in DAYS as well as marks, because marks within a day are not independent:
+  // going home at lunch produces three absences from one decision.
+  earlyMinDays: 4,
+  gapMinDays: 4,
+  // Day length has only one floor because its unit of observation IS the day, so the two
+  // collapse into each other and the single number takes the higher of the two roles.
+  dayLengthMinDays: 5,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -1029,6 +1086,76 @@ function validate(input) {
       min: 0, max: 100,
       label: "The mark at which attainment is holding up",
       why: "a bare pass props nothing up, so this sits a band rung clear of the pass mark.",
+    }) ||
+    checkNumber(out, "typeMinGrades", pick("typeMinGrades"), {
+      min: 1, max: 100, whole: true,
+      label: "The fewest marked pieces of one assessment type",
+      why: "\"failed 100% of exams\" from a single exam is a pattern claimed from one data point.",
+    }) ||
+    checkNumber(out, "typeMinOtherGrades", pick("typeMinOtherGrades"), {
+      min: 1, max: 100, whole: true,
+      label: "The fewest marked pieces of the other types",
+      why: "a floor on only the interesting slice is a half-guard — the pooled side must never be the thinner of the two.",
+    }) ||
+    checkNumber(out, "minTypesMeasured", pick("minTypesMeasured"), {
+      min: 2, max: 20, whole: true,
+      label: "The fewest assessment types before a worst one is named",
+      why: "a superlative over one candidate names the only candidate there is.",
+    }) ||
+    checkNumber(out, "typePassRateCeiling", pick("typePassRateCeiling"), {
+      min: 0, max: 100,
+      label: "The pass rate at which one type counts as failing",
+      why: "set on a value the sample can actually reach — at three pieces the only rates are 0, 33.3, 66.7 and 100, so a ceiling of 33 excludes one-in-three by rounding rather than by judgement.",
+    }) ||
+    checkNumber(out, "typePassRateGap", pick("typePassRateGap"), {
+      min: 0, max: 100,
+      label: "The pass-rate gap against the other types",
+      why: "exams being harder than coursework is the ordinary shape of assessment design, so without a large gap this fires institution-wide.",
+    }) ||
+    checkNumber(out, "typeMeanGap", pick("typeMeanGap"), {
+      min: 0, max: 100,
+      label: "The mean-mark gap against the other types",
+      why: "it is what kills the uniformly-borderline student — 38/39/39 against 41/42/41 is a 100-point pass-rate gap on marks under three apart.",
+    }) ||
+    checkNumber(out, "earlyStartBeforeMinutes", pick("earlyStartBeforeMinutes"), {
+      min: 0, max: 1439, whole: true,
+      label: "The early-start threshold, in minutes past midnight",
+      why: "it must sit in the empty space between the times a real timetable contains — on 09:00 exactly, the commonest start in the country, the comparison decides different answers for a real college.",
+    }) ||
+    checkNumber(out, "longDayMinMinutes", pick("longDayMinMinutes"), {
+      min: 1, max: 1439, whole: true,
+      label: "The length of a long teaching day",
+      why: "300 minutes IS the 09:00 to 14:00 day, so a threshold there splits on a value real timetables sit on.",
+    }) ||
+    checkNumber(out, "longGapMinMinutes", pick("longGapMinMinutes"), {
+      min: 1, max: 1439, whole: true,
+      label: "The idle gap worth going home for",
+      why: "lunch is 30, 45 or 60 minutes, so a shorter threshold makes nearly every full day gappy across the sector.",
+    }) ||
+    checkNumber(out, "earlyMinMarks", pick("earlyMinMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The marks behind an early-start comparison",
+      why: "symmetric with the other side, because neither is the big one by construction — a college may timetable mostly early or mostly late.",
+    }) ||
+    checkNumber(out, "gapMinMarks", pick("gapMinMarks"), {
+      min: 1, max: 500, whole: true,
+      label: "The marks behind a long-gap comparison",
+      why: "the same symmetry, for the same reason.",
+    }) ||
+    checkNumber(out, "earlyMinDays", pick("earlyMinDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The days behind an early-start comparison",
+      why: "marks within a day are not independent — going home at lunch produces three absences from one decision — so a floor in days is needed as well as one in marks.",
+    }) ||
+    checkNumber(out, "gapMinDays", pick("gapMinDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The days behind a long-gap comparison",
+      why: "the same non-independence.",
+    }) ||
+    checkNumber(out, "dayLengthMinDays", pick("dayLengthMinDays"), {
+      min: 1, max: 365, whole: true,
+      label: "The days behind a day-length comparison",
+      why: "its unit of observation is the day, so the marks floor and the days floor collapse into this one number.",
     });
   if (err) return err;
 

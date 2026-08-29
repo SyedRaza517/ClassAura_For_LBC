@@ -36,6 +36,8 @@ const funding = require("./funding");
 const sessionShape = require("./sessions");
 const intake = require("./intake");
 const historyShape = require("./history");
+const assessmentType = require("./assessmentType");
+const timetableShape = require("./timetable");
 
 /* -------------------------------------------------------------------------- */
 /* Dates                                                                       */
@@ -184,7 +186,7 @@ async function gather(studentIds, config) {
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
          answeredQueryRows, firstClosedContact, firstClosedReview,
          unmarkedSessions, linkedSlcRows, kindedSessions,
-         linkedIsmRows, linkedExpiryRows] = await Promise.all([
+         linkedIsmRows, linkedExpiryRows, typedAssessments] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -260,6 +262,13 @@ async function gather(studentIds, config) {
     // stays null. Correct, not broken.
     prisma.ism.count({ where: { admission: { linkedStudentId: { not: null } } } }),
     prisma.admission.count({ where: { linkedStudentId: { not: null }, idExpiryOn: { not: null } } }),
+    // THE FIFTEENTH, and like the others it counts the thing that answers the question
+    // rather than the thing that is easy to count. Assessment.type DEFAULTS to
+    // "Assignment", so count(Assessment) > 0 is true at every college that ever created
+    // one piece of work and would tell us nothing about whether types are distinguished.
+    // "" is excluded alongside the default because a blank type is an unset one written
+    // outside the route layer.
+    prisma.assessment.count({ where: { type: { notIn: ["Assignment", ""] } } }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -277,6 +286,7 @@ async function gather(studentIds, config) {
   const kindRecorded = kindedSessions > 0;
   const ismRecorded = linkedIsmRows > 0;
   const idExpiryRecorded = linkedExpiryRows > 0;
+  const assessmentTypesRecorded = typedAssessments > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -352,7 +362,10 @@ async function gather(studentIds, config) {
     // SESSIONS a student should have been marked in, and a mark that cannot be tied to a
     // session cannot be reconciled. It comes free -- it is a column on the row already
     // being read, not a join.
-    select: { studentId: true, status: true, sessionId: true, session: { select: { date: true, startTime: true, unitId: true, kind: true } } },
+    select: { studentId: true, status: true, sessionId: true, // endTime joins startTime for the same reason: it is a column on the row already
+    // being read, and without it a teaching day has no length and no gaps — the two
+    // questions timetable.js exists to ask.
+    session: { select: { date: true, startTime: true, endTime: true, unitId: true, kind: true } } },
   });
 
   const marksByStudent = new Map();
@@ -365,6 +378,7 @@ async function gather(studentIds, config) {
       startTime: m.session ? m.session.startTime : null,
       unitId: m.session ? m.session.unitId : null,
       kind: m.session ? m.session.kind : null,
+      endTime: m.session ? m.session.endTime : null,
     });
   }
 
@@ -387,7 +401,7 @@ async function gather(studentIds, config) {
   const assessments = unitIds.length
     ? await prisma.assessment.findMany({
         where: { unitId: { in: unitIds } },
-        select: { id: true, unitId: true, dueDate: true, maxMarks: true, weight: true, unit: { select: { termId: true } } },
+        select: { id: true, unitId: true, dueDate: true, maxMarks: true, weight: true, type: true, unit: { select: { termId: true } } },
       })
     : [];
 
@@ -1197,6 +1211,29 @@ async function gather(studentIds, config) {
       institution: { kindRecorded },
     }, config);
 
+    // WHICH KIND OF ASSESSMENT THEY FAIL. Takes the pct already computed for every other
+    // grade figure rather than re-deriving it from marks/maxMarks — two definitions of a
+    // percentage on one screen is how they drift.
+    const byType = assessmentType.evaluate({
+      grades: scopedGrades.map((g) => ({ pct: g.pct, type: g.assessment ? g.assessment.type : null })),
+      institution: { assessmentTypesRecorded },
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+    }, config);
+
+    // THE SHAPE OF THE TEACHING DAY. Reads the RAW marks like sessions.js and for the
+    // same reason: a session an approved claim excuses is still a session the student was
+    // not at, and a nine o'clock start is exactly the kind of thing a claim explains
+    // rather than erases.
+    //
+    // lateRecorded is the probe computed at the top of this function — one argument, not
+    // a new query. It is required because L counts as attendance in the absence rate, so
+    // a college with no lateness code would otherwise report a confident zero.
+    const dayShapeTimetable = timetableShape.evaluate({
+      marks: overallMarks,
+      institution: { lateRecorded },
+      weeksIntoProgramme: weeksByStudent.get(id) ?? null,
+    }, config);
+
     const entry = intake.evaluate({
       today,
       isms: ismByStudent.get(id) || [],
@@ -1356,6 +1393,31 @@ async function gather(studentIds, config) {
         averageGradeForDivergence: avgGrade,
         gradedCountForDivergence: gradePcts.length,
         attendanceObservationsForDivergence: reg.observations,
+        worstAssessmentType: byType.worstAssessmentType,
+        worstAssessmentTypePassRate: byType.worstAssessmentTypePassRate,
+        worstAssessmentTypeMeanPct: byType.worstAssessmentTypeMeanPct,
+        assessmentTypePassRateGap: byType.assessmentTypePassRateGap,
+        assessmentTypeMeanGap: byType.assessmentTypeMeanGap,
+        assessmentTypesMeasured: byType.assessmentTypesMeasured,
+        assessmentTypesSeen: byType.assessmentTypesSeen,
+        untypedGradeCount: byType.untypedGradeCount,
+        earlyStartAbsenceRate: dayShapeTimetable.earlyStartAbsenceRate,
+        laterStartAbsenceRate: dayShapeTimetable.laterStartAbsenceRate,
+        earlyStartAbsenceGap: dayShapeTimetable.earlyStartAbsenceGap,
+        earlyStartLatenessRate: dayShapeTimetable.earlyStartLatenessRate,
+        laterStartLatenessRate: dayShapeTimetable.laterStartLatenessRate,
+        earlyStartLatenessGap: dayShapeTimetable.earlyStartLatenessGap,
+        earlyStartDays: dayShapeTimetable.earlyStartDays,
+        longDayMissedRate: dayShapeTimetable.longDayMissedRate,
+        shortDayMissedRate: dayShapeTimetable.shortDayMissedRate,
+        longDayMissedGap: dayShapeTimetable.longDayMissedGap,
+        longDaysMeasured: dayShapeTimetable.longDaysMeasured,
+        afterLongGapAbsenceRate: dayShapeTimetable.afterLongGapAbsenceRate,
+        afterShortGapAbsenceRate: dayShapeTimetable.afterShortGapAbsenceRate,
+        longGapAbsenceGap: dayShapeTimetable.longGapAbsenceGap,
+        longGapSessions: dayShapeTimetable.longGapSessions,
+        daysWithoutSessionEnd: dayShapeTimetable.daysWithoutSessionEnd,
+        singleSessionDays: dayShapeTimetable.singleSessionDays,
         submissionsRecorded,
         // Appended AFTER the ...trips spread above, so this wins. Three vocabularies with
         // no overlapping strings, all TRIP_-prefixed, all landing in the same
@@ -1371,6 +1433,10 @@ async function gather(studentIds, config) {
           ...(trips.codes || []), ...(reg.codes || []), ...(standing.codes || []),
           ...(load.codes || []), ...(money.codes || []), ...(shape.codes || []),
           ...(entry.codes || []), ...(past.codes || []),
+          // timetable.js emits no codes at all, deliberately — its figures are the most
+          // cohort-wide facts a college has. Spread anyway so that a future decision to
+          // add one does not need this line found and changed.
+          ...(byType.codes || []), ...(dayShapeTimetable.codes || []),
         ],
       },
       raw: {

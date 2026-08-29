@@ -2366,6 +2366,54 @@ model StudentPredictionCurrent {
   divergenceShape         String?
   attendanceSubmissionGap Float?
   attendanceVleGap        Float?
+  /// DOES THIS STUDENT FAIL A PARTICULAR KIND OF ASSESSMENT? Assessment.type has existed
+  /// since the table did and nothing in the prediction layer ever read it, so a student
+  /// who passes every essay and fails every exam showed an unremarkable average — the
+  /// average being exactly the operation that hides it. Exam technique, timed-conditions
+  /// practice and access arrangements are different purchases from essay support.
+  /// `assessmentTypesMeasured` is the sharp one: null means the college records no types
+  /// at all, 0 means it does and nothing cleared the sample floor.
+  worstAssessmentType         String?
+  worstAssessmentTypePassRate Float?
+  worstAssessmentTypeMeanPct  Float?
+  assessmentTypePassRateGap   Float?
+  assessmentTypeMeanGap       Float?
+  assessmentTypesMeasured     Int?
+  assessmentTypesSeen         Int?
+  untypedGradeCount           Int?
+  /// IS THE SHAPE OF THE TEACHING DAY THE REASON THEY ARE NOT THERE? An early start, a
+  /// six-hour day, a two-hour hole in the middle — each has a cheap concrete fix that no
+  /// other figure here can point at. FIGURES ONLY, no codes: a start time is the most
+  /// cohort-wide fact a college has, so a badly-timetabled unit produces the identical
+  /// finding for its whole cohort at once.
+  earlyStartAbsenceRate    Float?
+  laterStartAbsenceRate    Float?
+  earlyStartAbsenceGap     Float?
+  /// Lateness as well as absence, because at a 09:00 start arriving at 09:20 is the same
+  /// phenomenon as not arriving — and L counts as attendance, so a module measuring only
+  /// absence would be blind to the commonest form of what this exists to find.
+  earlyStartLatenessRate   Float?
+  laterStartLatenessRate   Float?
+  earlyStartLatenessGap    Float?
+  earlyStartDays           Int?
+  /// Measured per DAY, not per mark. A long day holds three or four registers, so going
+  /// home at lunch scores 50% while missing a one-session short day scores 100% — which
+  /// would make long days look BETTER for exactly the partial attendance they cause.
+  longDayMissedRate        Float?
+  shortDayMissedRate       Float?
+  longDayMissedGap         Float?
+  longDaysMeasured         Int?
+  /// The sessions a student had to come BACK for, split by the idle gap before them.
+  /// laterSessionAbsenceRate is arithmetically a weighted mean of these two, which is
+  /// why it cannot see the effect.
+  afterLongGapAbsenceRate  Float?
+  afterShortGapAbsenceRate Float?
+  longGapAbsenceGap        Float?
+  longGapSessions          Int?
+  /// How much of the timetable could not be measured, so a reader can tell a null apart
+  /// from a finding.
+  daysWithoutSessionEnd    Int?
+  singleSessionDays        Int?
   /// The single worst driver, for the one-line summary in a list view.
   primaryRiskDriver   String?
 
@@ -2746,6 +2794,54 @@ model StudentPredictionHistory {
   divergenceShape         String?
   attendanceSubmissionGap Float?
   attendanceVleGap        Float?
+  /// DOES THIS STUDENT FAIL A PARTICULAR KIND OF ASSESSMENT? Assessment.type has existed
+  /// since the table did and nothing in the prediction layer ever read it, so a student
+  /// who passes every essay and fails every exam showed an unremarkable average — the
+  /// average being exactly the operation that hides it. Exam technique, timed-conditions
+  /// practice and access arrangements are different purchases from essay support.
+  /// `assessmentTypesMeasured` is the sharp one: null means the college records no types
+  /// at all, 0 means it does and nothing cleared the sample floor.
+  worstAssessmentType         String?
+  worstAssessmentTypePassRate Float?
+  worstAssessmentTypeMeanPct  Float?
+  assessmentTypePassRateGap   Float?
+  assessmentTypeMeanGap       Float?
+  assessmentTypesMeasured     Int?
+  assessmentTypesSeen         Int?
+  untypedGradeCount           Int?
+  /// IS THE SHAPE OF THE TEACHING DAY THE REASON THEY ARE NOT THERE? An early start, a
+  /// six-hour day, a two-hour hole in the middle — each has a cheap concrete fix that no
+  /// other figure here can point at. FIGURES ONLY, no codes: a start time is the most
+  /// cohort-wide fact a college has, so a badly-timetabled unit produces the identical
+  /// finding for its whole cohort at once.
+  earlyStartAbsenceRate    Float?
+  laterStartAbsenceRate    Float?
+  earlyStartAbsenceGap     Float?
+  /// Lateness as well as absence, because at a 09:00 start arriving at 09:20 is the same
+  /// phenomenon as not arriving — and L counts as attendance, so a module measuring only
+  /// absence would be blind to the commonest form of what this exists to find.
+  earlyStartLatenessRate   Float?
+  laterStartLatenessRate   Float?
+  earlyStartLatenessGap    Float?
+  earlyStartDays           Int?
+  /// Measured per DAY, not per mark. A long day holds three or four registers, so going
+  /// home at lunch scores 50% while missing a one-session short day scores 100% — which
+  /// would make long days look BETTER for exactly the partial attendance they cause.
+  longDayMissedRate        Float?
+  shortDayMissedRate       Float?
+  longDayMissedGap         Float?
+  longDaysMeasured         Int?
+  /// The sessions a student had to come BACK for, split by the idle gap before them.
+  /// laterSessionAbsenceRate is arithmetically a weighted mean of these two, which is
+  /// why it cannot see the effect.
+  afterLongGapAbsenceRate  Float?
+  afterShortGapAbsenceRate Float?
+  longGapAbsenceGap        Float?
+  longGapSessions          Int?
+  /// How much of the timetable could not be measured, so a reader can tell a null apart
+  /// from a finding.
+  daysWithoutSessionEnd    Int?
+  singleSessionDays        Int?
   primaryRiskDriver   String?
 
   interventionRequired Boolean @default(false)
