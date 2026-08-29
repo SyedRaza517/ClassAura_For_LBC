@@ -1,0 +1,669 @@
+<title>Tap, Then Check In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600&family=Public+Sans:wght@0,400;0,500;0,600;0,700;0,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+/* ============================================================
+   Same identity as the decision brief for this feature — navy
+   #1a3a8f from the platform's own brand token, maroon accent,
+   blue-biased neutrals. This document is about STATE and
+   SEQUENCE, so the layout is a spine rather than a report.
+
+   Light palette on bare :root; dark redefines TOKENS ONLY,
+   once for the OS preference and once for the explicit stamp.
+   No component rule lives inside a media or [data-theme] block.
+   ============================================================ */
+:root {
+  --ground:       #f6f7fb;
+  --surface:      #ffffff;
+  --sunk:         #eef0f7;
+  --line:         #d8dcea;
+  --line-soft:    #e7eaf3;
+
+  --ink:          #121729;
+  --ink-soft:     #3d465f;
+  --ink-mute:     #5d6784;
+
+  --navy:         #1a3a8f;
+  --navy-ink:     #ffffff;
+  --maroon:       #7d1f35;
+
+  --dead:         #cbd5e1;   /* the greyed-out button */
+  --dead-ink:     #64748b;
+
+  --go:           #1d6b4c;
+  --go-soft:      #e6f2ec;
+  --warn:         #8a5312;
+  --warn-soft:    #fbf0e0;
+  --stop:         #8e2b32;
+  --stop-soft:    #f9e9ea;
+
+  --shadow:       0 1px 2px rgba(18,23,41,.05), 0 10px 28px -18px rgba(18,23,41,.30);
+
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --body:    "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono:    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:    #0c101c;
+    --surface:   #141a2b;
+    --sunk:      #1b2235;
+    --line:      #2c3549;
+    --line-soft: #232b3d;
+
+    --ink:       #e9ecf6;
+    --ink-soft:  #b6bed4;
+    --ink-mute:  #929bb3;
+
+    --navy:      #8aa6f0;
+    --navy-ink:  #0c101c;
+    --maroon:    #e393a6;
+
+    --dead:      #333c52;
+    --dead-ink:  #8891ab;
+
+    --go:        #63c79b;
+    --go-soft:   #12291f;
+    --warn:      #e0a961;
+    --warn-soft: #2a1f10;
+    --stop:      #e58d92;
+    --stop-soft: #2c1518;
+
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 30px -20px rgba(0,0,0,.85);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:    #0c101c;
+  --surface:   #141a2b;
+  --sunk:      #1b2235;
+  --line:      #2c3549;
+  --line-soft: #232b3d;
+
+  --ink:       #e9ecf6;
+  --ink-soft:  #b6bed4;
+  --ink-mute:  #929bb3;
+
+  --navy:      #8aa6f0;
+  --navy-ink:  #0c101c;
+  --maroon:    #e393a6;
+
+  --dead:      #333c52;
+  --dead-ink:  #8891ab;
+
+  --go:        #63c79b;
+  --go-soft:   #12291f;
+  --warn:      #e0a961;
+  --warn-soft: #2a1f10;
+  --stop:      #e58d92;
+  --stop-soft: #2c1518;
+
+  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 30px -20px rgba(0,0,0,.85);
+}
+
+/* ---------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1060px; margin: 0 auto; padding: 0 26px 100px; }
+
+h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(2.5rem, 6vw, 3.9rem); line-height: 1.02; letter-spacing: -.024em; }
+h2 { font-size: clamp(1.55rem, 3vw, 2rem); line-height: 1.14; letter-spacing: -.014em; }
+h3 { font-family: var(--body); font-size: 1rem; font-weight: 700; letter-spacing: -.004em; }
+p { margin: 0; }
+
+.eyebrow {
+  font-size: .7rem; font-weight: 800; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ink-mute); margin: 0;
+}
+.sub { font-size: .95rem; color: var(--ink-mute); max-width: 66ch; }
+
+code {
+  font-family: var(--mono); font-size: .85em;
+  background: var(--sunk); border: 1px solid var(--line-soft);
+  border-radius: 4px; padding: .08em .34em; color: var(--ink);
+}
+
+header.top {
+  padding: 76px 0 40px;
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 18px;
+}
+header.top .lede {
+  font-family: var(--display); font-size: clamp(1.14rem, 2.1vw, 1.36rem);
+  line-height: 1.5; color: var(--ink-soft); max-width: 60ch;
+}
+
+section { padding-top: 66px; }
+.sec-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 26px; }
+
+/* ---------- the three button states: the hero ---------- */
+
+.states {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px; margin-top: 8px;
+}
+.state {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 20px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow);
+}
+.state .when { font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--maroon); }
+.state p { font-size: .87rem; line-height: 1.55; color: var(--ink-mute); }
+
+/* The button mock. This is the thing the whole feature is about, so it is
+   rendered at something close to real size rather than as an icon. */
+.btn {
+  display: block; width: 100%; text-align: center;
+  border-radius: 10px; padding: 14px 12px;
+  font-size: .95rem; font-weight: 700; font-family: var(--body);
+  border: 1px solid transparent;
+}
+.btn-dead { background: var(--dead); color: var(--dead-ink); }
+.btn-live { background: var(--navy); color: var(--navy-ink); }
+.btn-ghost { background: var(--surface); color: var(--ink-soft); border-color: var(--line); }
+.btn-done { background: var(--go-soft); color: var(--go); border-color: color-mix(in srgb, var(--go) 30%, transparent); }
+
+.tick {
+  font-family: var(--mono); font-size: .74rem; color: var(--ink-mute);
+  display: flex; align-items: center; gap: 6px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--go); flex: none; }
+
+/* ---------- the spine ---------- */
+
+.spine { display: flex; flex-direction: column; gap: 0; margin-top: 10px; }
+
+.step {
+  display: grid; grid-template-columns: 46px 1fr;
+  gap: 0 20px; position: relative;
+}
+.step:not(:last-child) .rail::after {
+  content: ""; position: absolute; left: 50%; top: 44px; bottom: -6px;
+  width: 2px; transform: translateX(-50%); background: var(--line);
+}
+.rail { position: relative; display: flex; justify-content: center; padding-top: 4px; }
+.num {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--navy); color: var(--navy-ink);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: .84rem; font-weight: 600;
+  position: relative; z-index: 1; flex: none;
+}
+.step-body { padding-bottom: 34px; display: flex; flex-direction: column; gap: 10px; }
+.step-body > p { font-size: .93rem; color: var(--ink-soft); max-width: 62ch; }
+
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+
+.panel {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 9px;
+}
+.panel .label {
+  font-size: .68rem; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-mute);
+}
+.panel p { font-size: .86rem; line-height: 1.55; color: var(--ink-soft); }
+.panel.sees { border-left: 3px solid var(--navy); }
+.panel.checks { border-left: 3px solid var(--maroon); }
+
+.checklist { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.checklist li {
+  display: grid; grid-template-columns: 16px 1fr; gap: 9px;
+  font-size: .845rem; line-height: 1.5; color: var(--ink-soft);
+}
+.checklist li::before { content: "→"; color: var(--maroon); font-family: var(--mono); font-size: .8rem; }
+
+/* ---------- platform strips ---------- */
+
+.plat { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; margin-top: 10px; }
+.strip {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 20px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.strip h3 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.flow-line {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: .76rem; color: var(--ink-mute);
+}
+.chipm {
+  border: 1px solid var(--line); border-radius: 6px; padding: .34em .6em;
+  background: var(--sunk); color: var(--ink-soft); white-space: nowrap;
+}
+.chipm.live { background: var(--navy); color: var(--navy-ink); border-color: var(--navy); }
+.chipm.dead { background: var(--dead); color: var(--dead-ink); border-color: transparent; }
+.arrow { color: var(--ink-mute); }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  padding: .3em .62em; border-radius: 3px; white-space: nowrap; border: 1px solid transparent;
+}
+.tag-go   { color: var(--go);   background: var(--go-soft);   border-color: color-mix(in srgb, var(--go) 26%, transparent); }
+.tag-warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 26%, transparent); }
+.tag-stop { color: var(--stop); background: var(--stop-soft); border-color: color-mix(in srgb, var(--stop) 26%, transparent); }
+
+/* ---------- refusals table ---------- */
+
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 580px; font-size: .875rem; }
+th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+thead th {
+  font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-mute); background: var(--sunk); border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td { color: var(--ink-soft); }
+th[scope="row"] { font-weight: 600; color: var(--ink); }
+
+/* ---------- callout ---------- */
+
+.note {
+  border-left: 3px solid var(--maroon); background: var(--surface);
+  border-radius: 0 10px 10px 0; padding: 18px 20px; margin-top: 16px;
+  display: flex; flex-direction: column; gap: 9px; box-shadow: var(--shadow); max-width: 68ch;
+}
+.note p { font-size: .9rem; line-height: 1.58; color: var(--ink-soft); }
+.note .eyebrow { color: var(--maroon); }
+
+/* ---------- setup ---------- */
+
+.setup { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; counter-reset: s; }
+.setup li {
+  list-style: none; display: grid; grid-template-columns: 30px 1fr; gap: 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 15px 18px;
+}
+.setup li::before {
+  counter-increment: s; content: counter(s);
+  font-family: var(--mono); font-size: .8rem; font-weight: 600;
+  color: var(--navy); padding-top: 1px;
+}
+.setup h3 { font-size: .94rem; }
+.setup p { font-size: .86rem; color: var(--ink-mute); margin-top: 3px; line-height: 1.55; }
+
+footer {
+  margin-top: 74px; padding-top: 24px; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--ink-mute); display: flex; flex-direction: column; gap: 6px; max-width: 68ch;
+}
+
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .wrap { padding: 0 18px 76px; }
+  .step { grid-template-columns: 34px 1fr; gap: 0 14px; }
+  .num { width: 28px; height: 28px; font-size: .76rem; }
+  .step:not(:last-child) .rail::after { top: 36px; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">London Brookes &middot; how it works</p>
+  <h1>Tap, Then Check In</h1>
+  <p class="lede">The button does nothing until a sticker has been touched. That single rule is the
+    whole mechanism &mdash; everything below is what happens either side of it.</p>
+</header>
+
+<!-- ================= THE RULE ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The one rule</p>
+    <h2>Three states, in order</h2>
+    <p class="sub">The same three states on both apps. A student marking a register and a member of
+      staff clocking in see the identical sequence &mdash; only the words on the button differ.</p>
+  </div>
+
+  <div class="states">
+    <div class="state">
+      <span class="when">Before</span>
+      <span class="btn btn-dead">Check in</span>
+      <p>Grey and unpressable. Nothing happens if you tap it, and nothing is sent anywhere.</p>
+    </div>
+    <div class="state">
+      <span class="when">Sticker touched</span>
+      <span class="btn btn-live">Check in</span>
+      <p class="tick"><span class="dot"></span>Sticker read &mdash; 54s left</p>
+      <p>The button comes alive and a countdown starts. Sixty seconds by default &mdash; long enough
+        to press, too short to walk to another room.</p>
+    </div>
+    <div class="state">
+      <span class="when">Pressed</span>
+      <span class="btn btn-done">&check;&nbsp; Marked present &middot; 09:07</span>
+      <p>Saved immediately, with the minute. Nobody has to approve it and no lecturer has to press
+        anything first.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <p class="eyebrow">Why the countdown exists</p>
+    <p>Without it, a sticker touched in the corridor at nine o&rsquo;clock would still open the
+      button at eleven. The window is what keeps a tap meaning <em>&ldquo;I am here now&rdquo;</em>
+      rather than <em>&ldquo;I walked past this once today&rdquo;</em>. When it lapses the button
+      greys out and the reading is discarded &mdash; not kept for later.</p>
+  </div>
+</section>
+
+<!-- ================= STUDENT ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Student</p>
+    <h2>Marking a register</h2>
+    <p class="sub">The card sits at the top of the home screen &mdash; above attendance and results,
+      because it is the only thing there with a deadline attached.</p>
+  </div>
+
+  <div class="spine">
+
+    <div class="step">
+      <div class="rail"><span class="num">1</span></div>
+      <div class="step-body">
+        <h3>They walk in and hold the phone to the sticker</h3>
+        <p>The app is already open and already signed in. On Android nothing needs pressing first.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="rail"><span class="num">2</span></div>
+      <div class="step-body">
+        <h3>The button opens</h3>
+        <div class="pair">
+          <div class="panel sees">
+            <span class="label">What they see</span>
+            <span class="btn btn-live">Check in</span>
+            <p class="tick"><span class="dot"></span>Leadership &amp; Management &middot; 09:00&ndash;12:00</p>
+          </div>
+          <div class="panel checks">
+            <span class="label">What the app has done</span>
+            <p>Read the sticker&rsquo;s code, started the sixty-second window, and shown which class
+              it is about to mark. Nothing has been sent to the server yet.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="rail"><span class="num">3</span></div>
+      <div class="step-body">
+        <h3>They press it &mdash; and the server decides</h3>
+        <p>Six checks, in this order. The first one that fails is the answer they get.</p>
+        <div class="panel checks">
+          <span class="label">Checked before anything is written</span>
+          <ul class="checklist">
+            <li>Has this college switched tap check-in on?</li>
+            <li>Is this a sticker we recognise, and not a retired one?</li>
+            <li>Have they tapped too many times in the last minute?</li>
+            <li>Is a class they are <em>enrolled on</em> running right now &mdash; between its start
+              and end time?</li>
+            <li>Is that class&rsquo;s teaching term still open?</li>
+            <li>Does a mark already exist for them on that register?</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="rail"><span class="num">4</span></div>
+      <div class="step-body">
+        <h3>The mark is written, with the time</h3>
+        <div class="pair">
+          <div class="panel sees">
+            <span class="label">What they see</span>
+            <span class="btn btn-done">&check;&nbsp; Marked present &middot; 09:07</span>
+          </div>
+          <div class="panel checks">
+            <span class="label">What is stored</span>
+            <p><strong>P</strong> if they arrived within fifteen minutes of the start, <strong>L</strong>
+              if later. The arrival minute is kept separately from the edit time, so a lecturer
+              correcting the register months later cannot erase it.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= STAFF ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Staff</p>
+    <h2>Clocking in</h2>
+    <p class="sub">Same three states, one difference: the choice of where you are working comes
+      first, and it decides whether a sticker is needed at all.</p>
+  </div>
+
+  <div class="pair">
+    <div class="strip">
+      <h3>Onsite <span class="tag tag-go">Sticker required</span></h3>
+      <div class="flow-line">
+        <span class="chipm">Onsite</span><span class="arrow">&rarr;</span>
+        <span class="chipm dead">Clock in</span><span class="arrow">&rarr;</span>
+        <span class="chipm">touch sticker</span><span class="arrow">&rarr;</span>
+        <span class="chipm live">Clock in</span>
+      </div>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        The ordinary button is <strong>replaced</strong>, not sat beside. There is no second route
+        in &mdash; the server refuses an onsite clock-in that did not come from a sticker, so
+        knowing the address of the old one does not help.
+      </p>
+    </div>
+
+    <div class="strip">
+      <h3>Online <span class="tag tag-warn">No sticker</span></h3>
+      <div class="flow-line">
+        <span class="chipm">Online</span><span class="arrow">&rarr;</span>
+        <span class="chipm live">Clock in</span>
+      </div>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        Never gated, deliberately. A sticker proves somebody stood in the building, which is exactly
+        what a person working from home cannot produce &mdash; requiring one would make the honest
+        answer the only unrecordable one.
+      </p>
+    </div>
+  </div>
+
+  <div class="note">
+    <p class="eyebrow">A tap records Onsite, and is not asked</p>
+    <p>Someone who touched a sticker in the building cannot be working remotely. The tap route does
+      not offer the choice and the server ignores it if sent, because recording anything else would
+      store a claim the tap itself disproves.</p>
+  </div>
+</section>
+
+<!-- ================= PLATFORM ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The one thing that differs by phone</p>
+    <h2>Android is silent. iPhone needs one press.</h2>
+    <p class="sub">Apple always shows its own scan sheet and it cannot be suppressed &mdash; a
+      platform rule, not something in this code. Worth seeing before a demo.</p>
+  </div>
+
+  <div class="plat">
+    <div class="strip">
+      <h3>Android <span class="tag tag-go">As pictured</span></h3>
+      <div class="flow-line">
+        <span class="chipm dead">Check in</span><span class="arrow">&rarr;</span>
+        <span class="chipm">hold to sticker</span><span class="arrow">&rarr;</span>
+        <span class="chipm live">Check in</span>
+      </div>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        The app listens quietly the whole time the screen is open. The student does one thing.
+      </p>
+    </div>
+
+    <div class="strip">
+      <h3>iPhone <span class="tag tag-warn">One extra press</span></h3>
+      <div class="flow-line">
+        <span class="chipm dead">Check in</span>
+        <span class="chipm live">Scan</span><span class="arrow">&rarr;</span>
+        <span class="chipm">Apple&rsquo;s sheet</span><span class="arrow">&rarr;</span>
+        <span class="chipm">sticker</span><span class="arrow">&rarr;</span>
+        <span class="chipm live">Check in</span>
+      </div>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        Still quick, but not silent. An iPhone also cannot read a <em>blank</em> sticker at all, so
+        stickers registered by tapping a blank one must be registered on Android.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= REFUSALS ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">When it says no</p>
+    <h2>Every refusal, and what it means</h2>
+    <p class="sub">Each one is recorded against the sticker, so &ldquo;I tapped and nothing
+      happened&rdquo; is a question with an answer.</p>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th scope="col">What they see</th><th scope="col">Why</th><th scope="col">What to do</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">No class of yours is running right now</th>
+          <td>They tapped before the class started or after it ended. The lecture&rsquo;s own hours are the window.</td>
+          <td>Nothing &mdash; the card names the next class and its start time.</td>
+        </tr>
+        <tr>
+          <th scope="row">Two of your classes are running</th>
+          <td>Their timetable genuinely overlaps, so only they can say which room they are in.</td>
+          <td>They pick one, then press.</td>
+        </tr>
+        <tr>
+          <th scope="row">That class is outside its teaching term</th>
+          <td>The term has ended or has not started. Registers close with the term.</td>
+          <td>An administrator reopens the term to correct a mark.</td>
+        </tr>
+        <tr>
+          <th scope="row">You were already marked</th>
+          <td>A mark exists &mdash; theirs from an earlier tap, or one the lecturer set.</td>
+          <td>Nothing. A tap never overwrites a lecturer&rsquo;s mark.</td>
+        </tr>
+        <tr>
+          <th scope="row">That tag isn&rsquo;t recognised</th>
+          <td>The sticker was never registered, or has been retired.</td>
+          <td>Register it, or restore it, on the NFC Tags tab.</td>
+        </tr>
+        <tr>
+          <th scope="row">Nothing appears at all</th>
+          <td>The college has not switched tap check-in on. Students are not shown a feature their college has not adopted.</td>
+          <td>Switch it on &mdash; step 1 below.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <p class="eyebrow">What a tap does not prove</p>
+    <p>That somebody was at that wall <em>once</em>, with their account signed in &mdash; not that
+      they are there now. A sticker&rsquo;s code is fixed and any phone can read it, so a student
+      who notes one down could mark themselves present from home. The lecturer&rsquo;s live screen
+      and the tap log are what make that visible afterwards; nothing prevents it. It is a real
+      improvement on a button anyone could press, and it is not proof of presence.</p>
+  </div>
+</section>
+
+<!-- ================= WHAT STAFF SEE ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Meanwhile, on the dashboard</p>
+    <h2>Two new tabs</h2>
+  </div>
+
+  <div class="pair">
+    <div class="strip">
+      <h3>Live Attendance</h3>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        The register filling in as it happens: present, late, and who has not appeared, with the
+        minute each of them arrived. A <strong>My classes / All classes</strong> switch, and one
+        button at the end that marks everyone still unmarked as absent &mdash; naming the number
+        before it does it. That button is the only thing in the whole feature that records an
+        absence, and a person has to press it.
+      </p>
+    </div>
+    <div class="strip">
+      <h3>NFC Tags</h3>
+      <p style="font-size:.87rem;color:var(--ink-mute);line-height:1.55;">
+        Register a sticker, retire one that has peeled off, bring it back later, and read every tap
+        it has taken &mdash; refusals included. Also where the feature is switched on, and where the
+        lateness threshold and the sixty-second window are set.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SETUP ================= -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">To make it work</p>
+    <h2>Five things, in this order</h2>
+  </div>
+
+  <ol class="setup">
+    <li>
+      <div>
+        <h3>Switch it on</h3>
+        <p>NFC Tags tab &rarr; <em>Tap check-in is ON</em>. It ships off, so until this is done
+          students see nothing and staff keep the ordinary buttons.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Register a sticker</h3>
+        <p>On an Android phone: name the room, press <em>Tap a blank sticker</em>, hold it against
+          one. At a desk: press <em>Generate a code</em>, and write it onto the sticker with an NFC
+          writing app. The code is shown once and never again.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Put it on the wall</h3>
+        <p>One per room. Plain, pennies-each stickers are fine.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Make sure students can sign in</h3>
+        <p>A student cannot check in without a password. They claim an account and an administrator
+          approves it, or an administrator sets one at the desk on the Passwords page.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Get the app onto a phone</h3>
+        <p>This is the one nothing can substitute for. Tapping is a native-app feature &mdash; a
+          browser cannot read a sticker &mdash; so it needs the installed Android or iOS app.
+          <strong>No physical tap has been performed yet.</strong></p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<footer>
+  <p>Written 29 August 2026 for London Brookes. Everything above is built and tested through the
+    API; the tap itself has never been tried against a real sticker on a real handset.</p>
+</footer>
+
+</div>
