@@ -163,10 +163,22 @@ const unitOf = (mr) => mr.unit || mr.module || {};
 
 /* ============================== app shell ============================== */
 
-// Five is the ceiling here: a sixth tab drops each target below the 44px it needs on a
-// 320px phone. Reviews are reached from the home screen and from More instead.
+// SIX, and the arithmetic rather than the habit.
+//
+// This said five was the ceiling because "a sixth tab drops each target below the 44px it
+// needs on a 320px phone". That conflated two different measurements. The button is
+// flex-1, so six of them on a 320px screen are 53.3px wide — comfortably above 44. What
+// actually did not fit was the highlight PILL behind the icon at w-14 (56px): six of
+// those need 336px. Narrowing it to w-12 (48px) needs 288px, and the target is untouched.
+//
+// Check In earns the place because it is the only thing in this app with a deadline. A
+// register closes when the class does; an attendance percentage is still true tomorrow.
+// It sits second, next to Home, because that is where a thumb already is.
+//
+// Reviews are still reached from the home screen and from More.
 const TABS = [
   { key: "home", label: "Home", Icon: HomeIcon },
+  { key: "checkin", label: "Check In", Icon: Nfc },
   { key: "attendance", label: "Attendance", Icon: Percent },
   { key: "assessments", label: "Results", Icon: Award },
   { key: "query", label: "Ask", Icon: MessageSquare },
@@ -279,14 +291,14 @@ function TabBar({ screen, setScreen, newReplies }) {
         return (
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
             className="press relative flex flex-1 flex-col items-center gap-1 py-2">
-            <span className="relative flex h-8 w-14 items-center justify-center rounded-2xl transition-all duration-200"
+            <span className="relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200"
               style={on ? { background: NAVY + "14" } : undefined}>
               <Icon size={20} strokeWidth={on ? 2.6 : 2} style={{ color: on ? NAVY : "#9aa5b8" }} />
               {key === "query" && newReplies > 0 && (
                 <span className="pop absolute right-1.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold text-slate-900 ring-2 ring-white">{newReplies}</span>
               )}
             </span>
-            <span className="text-[10px] font-bold tracking-tight" style={{ color: on ? NAVY : "#9aa5b8" }}>{label}</span>
+            <span className="max-w-full truncate px-0.5 text-[10px] font-bold tracking-tight" style={{ color: on ? NAVY : "#9aa5b8" }}>{label}</span>
           </button>
         );
       })}
