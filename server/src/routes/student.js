@@ -103,11 +103,60 @@ const sTapSession = (s) => ({ id: s.id, unitCode: s.unitCode, unitName: s.unitNa
 // nothing to tamper with.
 router.get("/me/tap-context", async (req, res) => {
   const settings = await tapConfig.get();
-  if (!settings.enabled) return res.json({ enabled: false, armSeconds: settings.armSeconds, now: null, next: null });
-
   const date = localDate();
   const time = localTime();
+
+  // Today's timetable is built BEFORE the enabled check, and returned either way.
+  //
+  // "Which lessons do I have today, and when" is a question worth answering whether or
+  // not this college taps stickers — and answering it is what turns the Check In screen
+  // from a dead end into something useful on day one. A college that never switches tap
+  // check-in on still gets a student's day out of this route.
   const candidates = await candidateSessions(req.user.id, date);
+
+  // One query for the whole day rather than one per session. A student with six classes
+  // should not cost six round trips to render a list.
+  const marks = candidates.length
+    ? await prisma.attendanceMark.findMany({
+        where: { studentId: req.user.id, sessionId: { in: candidates.map((c) => c.id) } },
+        select: { sessionId: true, status: true, checkedInAt: true },
+      })
+    : [];
+  const markBy = new Map(marks.map((m) => [m.sessionId, m]));
+
+  const today = candidates
+    .slice()
+    .sort((a, b) => a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime))
+    .map((c) => {
+      const mark = markBy.get(c.id);
+      // A term that has closed cannot be checked into at all, so the screen needs to know
+      // rather than offering a class the tap will refuse.
+      const termOpen = !c.term || (date >= c.term.start && date <= c.term.end);
+      return {
+        ...sTapSession(c),
+        // Where this class sits relative to the clock. Three states rather than a
+        // boolean, because "finished" and "not started" want different words on screen.
+        state: time < c.startTime ? "upcoming" : time > c.endTime ? "over" : "now",
+        // The mark if one exists. NULL means no mark — which is not the same as absent,
+        // and the screen must not render it as such.
+        status: mark?.status ?? null,
+        checkedInAt: mark?.checkedInAt ?? null,
+        termOpen,
+      };
+    });
+
+  if (!settings.enabled) {
+    return res.json({
+      enabled: false,
+      armSeconds: settings.armSeconds,
+      date,
+      now: [],
+      reason: null,
+      next: null,
+      today,
+    });
+  }
+
   const decision = resolveTapSession(candidates, { date, time }, settings);
 
   // The classes still to come today, so the screen can say "your next class is at 13:00"
@@ -125,6 +174,7 @@ router.get("/me/tap-context", async (req, res) => {
        : [],
     reason: decision.kind === "none" ? decision.reason : null,
     next: later.length ? sTapSession(later[0]) : null,
+    today,
   });
 });
 

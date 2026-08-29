@@ -158,9 +158,19 @@ try {
   check("a staff tap is refused while the feature is off", offStaff.status === 403, `HTTP ${offStaff.status}`);
 
   const offCtx = await call("/student/me/tap-context", { token: sToken });
-  check("tap-context reports disabled rather than leaking the timetable",
-    offCtx.status === 200 && offCtx.data?.enabled === false && offCtx.data?.now === null,
-    `HTTP ${offCtx.status}`);
+  // The contract changed deliberately, and this assertion changed with it.
+  //
+  // It used to require `now === null` while enabled returned an array — one field with
+  // two shapes, which a client has to special-case. It is `[]` in both cases now.
+  //
+  // It also used to be titled "rather than leaking the timetable". Returning the day IS
+  // the behaviour now, and it is not a leak: this route is keyed on req.user.id with no
+  // id parameter, so a student sees their own classes and nobody else's — the same ones
+  // /me/timetable already gives them. What must stay hidden while the feature is off is
+  // the CHECK-IN state, and `enabled: false` with an empty `now` is what says so.
+  check("tap-context reports disabled, with one shape for `now` rather than two",
+    offCtx.status === 200 && offCtx.data?.enabled === false && Array.isArray(offCtx.data?.now) && offCtx.data.now.length === 0,
+    `HTTP ${offCtx.status} now=${JSON.stringify(offCtx.data?.now)}`);
 
   // Switch it on THROUGH THE API, not by writing the row directly.
   //
@@ -987,6 +997,51 @@ try {
     ungated.status === 201 && ungatedRow?.site === "Onsite",
     `HTTP ${ungated.status} site=${ungatedRow?.site}`);
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: true } });
+
+  /* ====================================================================== */
+  console.log("\n--- tap-context carries the whole day, not just what is running ---");
+  /* ====================================================================== */
+
+  // "Which lessons do I have today and when" is the question the check-in screen exists
+  // to answer, and it is worth answering whether or not the college taps stickers.
+  const ctx = await call("/student/me/tap-context", { token: sToken });
+  const dayList = ctx.data?.today || [];
+  check("today's classes are returned, in start-time order",
+    ctx.status === 200 && dayList.length > 0
+      && dayList.every((c, i2) => i2 === 0 || dayList[i2 - 1].startTime <= c.startTime),
+    `${dayList.length} class(es)`);
+
+  const liveRow = dayList.find((c) => c.id === live.id);
+  check("a class the student has already been marked on reports its mark",
+    liveRow && liveRow.status && liveRow.checkedInAt === firstCheckedInAt,
+    `status=${liveRow?.status} checkedInAt=${liveRow?.checkedInAt}`);
+
+  // Three states rather than a boolean: "finished" and "not started" need different
+  // words on screen, and a row that is neither is the one the button will mark.
+  const pastRow = dayList.find((c) => c.id === past.id);
+  const futureRow = dayList.find((c) => c.id === future.id);
+  check("a finished class reads over, and one still to come reads upcoming",
+    pastRow?.state === "over" && futureRow?.state === "upcoming",
+    `past=${pastRow?.state} future=${futureRow?.state}`);
+  check("a class running right now reads now",
+    liveRow?.state === "now",
+    `live=${liveRow?.state}`);
+
+  // No student data beyond the class itself — this is a timetable, not a record.
+  check("a day entry carries only class fields, never anything about other people",
+    dayList.every((c) => Object.keys(c).every((k) =>
+      ["id", "unitCode", "unitName", "startTime", "endTime", "state", "status", "checkedInAt", "termOpen"].includes(k))),
+    `keys: ${[...new Set(dayList.flatMap((c) => Object.keys(c)))].sort().join(",")}`);
+
+  // THE POINT OF RETURNING IT EITHER WAY. A college that never switches tap check-in on
+  // still gets its students a timetable out of this route, so the screen is useful on
+  // day one rather than a dead end until somebody flips a setting.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: false } });
+  const offCtx2 = await call("/student/me/tap-context", { token: sToken });
+  check("today's classes are returned even while tap check-in is switched OFF",
+    offCtx2.status === 200 && offCtx2.data?.enabled === false && (offCtx2.data?.today || []).length > 0,
+    `enabled=${offCtx2.data?.enabled} today=${(offCtx2.data?.today || []).length}`);
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: true } });
 
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");

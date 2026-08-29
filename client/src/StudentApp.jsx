@@ -374,6 +374,82 @@ function checkInSub(tapContext) {
   return "No classes left today";
 }
 
+// Today's classes, in the order they run.
+//
+// The point of this list is that it answers the question a student actually has —
+// "what have I got today and when" — whether or not the college taps stickers. It also
+// makes the check-in card legible: a row marked NOW is the one the button will mark, and
+// a row already carrying P or L is one nobody needs to think about again.
+function TodaysClasses({ today, loading }) {
+  if (loading) return null;
+
+  // An empty day is a real answer and deserves saying, not an absence to interpret.
+  if (!today || !today.length) {
+    return (
+      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Today</p>
+        <p className="mt-1.5 text-sm font-extrabold text-slate-800">No classes timetabled</p>
+        <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+          Nothing is scheduled for you today. If you think that&rsquo;s wrong, ask the college —
+          registers are created from each unit&rsquo;s teaching dates.
+        </p>
+      </div>
+    );
+  }
+
+  // P and L are the two a tap can produce; E and A come from a lecturer. Kept in one
+  // place so the words and the colours cannot drift apart.
+  const MARK = {
+    P: { label: "Present", bg: "bg-emerald-50", text: "text-emerald-700", ring: "ring-emerald-200" },
+    L: { label: "Late", bg: "bg-amber-50", text: "text-amber-700", ring: "ring-amber-200" },
+    E: { label: "Excused", bg: "bg-sky-50", text: "text-sky-700", ring: "ring-sky-200" },
+    A: { label: "Absent", bg: "bg-rose-50", text: "text-rose-700", ring: "ring-rose-200" },
+  };
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+      <p className="px-5 pb-1 pt-4 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        Today &middot; {today.length} class{today.length === 1 ? "" : "es"}
+      </p>
+      <ul className="divide-y divide-slate-100">
+        {today.map((c) => {
+          const mark = c.status ? MARK[c.status] : null;
+          const isNow = c.state === "now";
+          const over = c.state === "over";
+          return (
+            <li key={c.id} className="flex items-start gap-3 px-5 py-3.5">
+              {/* The time column is the spine of the list, so it is fixed-width and
+                  tabular — times that do not line up are hard to scan. */}
+              <span className={`w-[52px] shrink-0 pt-0.5 text-[12px] font-bold tabular-nums ${over ? "text-slate-300" : "text-slate-500"}`}>
+                {c.startTime}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={`block truncate text-[13.5px] font-bold leading-tight ${over && !mark ? "text-slate-400" : "text-slate-800"}`}>
+                  {c.unitName || c.unitCode}
+                </span>
+                <span className="mt-0.5 block text-[11.5px] text-slate-400">
+                  {c.startTime}&ndash;{c.endTime}
+                  {c.checkedInAt && <> &middot; tapped in {c.checkedInAt}</>}
+                  {!c.termOpen && <> &middot; term closed</>}
+                </span>
+              </span>
+              <span className="flex shrink-0 flex-col items-end gap-1">
+                {mark
+                  ? <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ring-1 ${mark.bg} ${mark.text} ${mark.ring}`}>{mark.label}</span>
+                  : isNow
+                    ? <span className="flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10.5px] font-bold ring-1" style={{ color: ACCENT.checkin, borderColor: "transparent", boxShadow: `inset 0 0 0 1px ${ACCENT.checkin}44` }}>
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: ACCENT.checkin }} />On now
+                      </span>
+                    : <span className="text-[10.5px] font-semibold text-slate-300">{over ? "Finished" : "Later"}</span>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // A screen of its own, so Check In is somewhere a student can always GO rather than a
 // card that may or may not be on the home screen. Every state answers plainly here,
 // including the two that previously rendered nothing at all.
@@ -407,6 +483,8 @@ function CheckInScreen({ tapContext, reload }) {
           </p>
         </div>
       )}
+
+      <TodaysClasses today={tapContext?.today} loading={tapContext == null} />
 
       {enabled && running === 0 && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
