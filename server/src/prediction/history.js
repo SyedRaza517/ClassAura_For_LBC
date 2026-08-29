@@ -356,7 +356,17 @@ function recovered(history, config) {
 /* -------------------------------------------------------------------------- */
 
 const isNum = (n) => typeof n === "number" && Number.isFinite(n);
-const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isDate = (v) => {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  if (!Number.isFinite(t)) return false;
+  // THE ROUND TRIP, matching sessions.js, intake.js and earlyWindow.js. Without it the
+  // shape check alone passes "2026-13-45", Date.parse rolls it somewhere plausible, and
+  // daysBetween returns NaN where its own comment promises null. Nothing fires today
+  // (isNum(NaN) is false) so it was fail-safe by accident — and an accident is not a
+  // guard. This file was the only one of the four missing it.
+  return new Date(t).toISOString().slice(0, 10) === v;
+};
 
 /** Whole days between two YYYY-MM-DD strings. Null rather than 0 for an unreadable pair:
  *  zero would say "these are the same day", which is a measurement, and we have none. */

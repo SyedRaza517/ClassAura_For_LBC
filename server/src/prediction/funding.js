@@ -399,7 +399,38 @@ function loanTypesOverlap(a, b) {
  *
  * @param {{slcRecorded:boolean}} institution
  */
+// THE SECOND PROBE, AND IT ANSWERS A DIFFERENT QUESTION FROM THE FIRST.
+//
+// `slcRecorded` asks whether claims can be JOINED to students. `slcStatusesMaintained`
+// asks whether anybody ever MOVES a claim's status once it is raised. They come apart
+// completely, and the gap between them is a cohort-wide false alarm:
+//
+// statusChangedOn is null on every historic row, so the live path is the applicationDate
+// fallback at unsettledApplicationDays (56). A September intake all applies in the same
+// week. If the college works its finance queue in its own system and never touches the
+// status here, then 56 days later EVERY student in that intake carries
+// TRIP_FUNDING_STALLED, and they carry it until the 240-day ceiling — 184 days of a
+// caseload containing the whole cohort, which is the same as no caseload.
+//
+// Reproduced against this module before the guard existed: 0/200 on 20 October,
+// 200/200 on 28 October, still 200/200 the following April.
+//
+// This is the failure tripwires.queryBacklog already guards against, and its words
+// transfer unchanged: "staff who read queries in the app and reply in person never press
+// Respond, so every query the college ever received sits at open for ever. That is a fact
+// about the workflow, not about anybody's wait."
+//
+// It gates ONLY the applicationDate fallback. A claim carrying a real statusChangedOn is
+// itself the evidence that statuses move, so that branch needs no permission.
 function assertInstitutionProbe(institution, fnName) {
+  if (!institution || typeof institution.slcStatusesMaintained !== "boolean") {
+    throw new TypeError(
+      `${fnName}: institution.slcStatusesMaintained must be a boolean — an institution-wide ` +
+      "probe result (does this college ever move a claim's status, rather than raising it " +
+      "and working the queue elsewhere), decided once per run and never derived from one " +
+      "student's rows",
+    );
+  }
   if (!institution || typeof institution.slcRecorded !== "boolean") {
     throw new TypeError(
       `${fnName}: institution.slcRecorded must be a boolean — an institution-wide probe ` +
@@ -461,7 +492,7 @@ function assertInstitutionProbe(institution, fnName) {
  * @returns {{state, since:string|null, basis:string|null, daysUnsettled:number|null,
  *            stalled:boolean|null}}
  */
-function stalledApplication(application, today, opts) {
+function stalledApplication(application, today, opts, institution) {
   const cfg = { ...FUNDING_DEFAULTS, ...(opts || {}) };
   const row = application || {};
   const state = classify(row.status);
@@ -492,6 +523,24 @@ function stalledApplication(application, today, opts) {
 
   const days = daysBetween(since, today);
   if (days === null) return { state, since, basis, daysUnsettled: null, stalled: null };
+
+  // THE WEAK ANCHOR IS ONLY USABLE AT A COLLEGE THAT MAINTAINS STATUSES.
+  //
+  // applicationDate measures time in the PIPELINE, not time in THIS STATE. At a college
+  // that raises claims here and works the queue in its own system, every student's clock
+  // starts on the day they applied and none of them ever stops — so the figure stops
+  // being about a student and becomes a fact about the workflow. See the probe.
+  //
+  // Refusing rather than widening the threshold is deliberate: no value of
+  // unsettledApplicationDays makes a whole intake's shared application week informative.
+  // Null-safe on purpose. evaluate() and fundingState() both assert the probe, so a
+  // caller reaching production without it is impossible; this helper is also exported and
+  // called directly in tests, and a missing probe here should SUPPRESS rather than throw
+  // — suppression is the fail-safe direction for a signal whose failure mode is naming a
+  // whole intake.
+  if (basis !== "status-change" && !(institution && institution.slcStatusesMaintained)) {
+    return { state, since, basis, daysUnsettled: days, stalled: null };
+  }
 
   // The weaker anchor gets the longer rope. See the constants.
   const floor = basis === "status-change" ? cfg.stalledStatusDays : cfg.unsettledApplicationDays;
@@ -753,7 +802,7 @@ function evaluate(raw, config) {
   let evidenceOutstanding = false;
 
   for (const row of rows) {
-    const claim = stalledApplication(row, today, cfg);
+    const claim = stalledApplication(row, today, cfg, input.institution);
 
     // `=== true` rather than a truthiness test, because `stalled` is tri-state and null is
     // falsy. It reads as redundant and it is not: it documents at the call site that the

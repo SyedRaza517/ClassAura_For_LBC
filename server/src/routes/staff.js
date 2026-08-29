@@ -2,7 +2,7 @@ const router = require("express").Router();
 const prisma = require("../db");
 const audit = require("../audit");
 const { sStaff } = require("../serializers");
-const { requireAuth, requireAdmin, requireSuperAdmin, requireAnyPage, hasPage, hashPassword, blockedByRank } = require("../auth");
+const { requireAuth, requireAdmin, requireSuperAdmin, requireAnyPage, hasPage, hashPassword, blockedByRank, EXPLICIT_ONLY } = require("../auth");
 const { notifyStaff } = require("../notify");
 const { sendEmail } = require("../email");
 const { isInt32, MAX_ALLOWANCE_DAYS, isString, isNonEmptyString, isHomeSite, isRealDate, ADMIN_PAGES } = require("../validate");
@@ -223,7 +223,17 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
   if (clean.length === 0) {
     data = { accountRole: "STAFF", adminPages: null };           // no pages → not an admin
   } else {
-    const full = ADMIN_PAGES.every((p) => clean.includes(p));    // all pages → unrestricted
+    // "Unrestricted" is stored as null, and null now means EVERY PAGE EXCEPT the
+    // explicit-grant-only ones (see EXPLICIT_ONLY in auth.js — `mitigations` holds
+    // Article 9 health data and must never arrive by default).
+    //
+    // So a selection that INCLUDES an explicit-only page can never be collapsed to null:
+    // doing so would silently drop the very page somebody had just deliberately ticked.
+    // It is stored as an explicit list instead, and "all pages" is judged against the
+    // pages null would actually grant.
+    const grantsExplicitOnly = clean.some((p) => EXPLICIT_ONLY.has(p));
+    const full = !grantsExplicitOnly
+      && ADMIN_PAGES.filter((p) => !EXPLICIT_ONLY.has(p)).every((p) => clean.includes(p));
     data = { accountRole: "ADMIN", adminPages: full ? null : JSON.stringify(clean) };
   }
   const staff = await prisma.staff.update({ where: { id: req.params.id }, data });

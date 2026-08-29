@@ -389,7 +389,12 @@ router.post("/:id/adjustments", async (req, res) => {
     after: { circumstanceId: claim.id, assessmentId: assessment.id, adjustmentType, revisedDueDate },
   });
 
+  // Re-read rather than trust the write: the adjustment list on the response must be the
+  // one now in the database. If another admin deleted the claim in between, there is
+  // nothing to serialise — sMitigation(null) would throw and answer 500 to a caller whose
+  // request actually succeeded.
   const full = await prisma.mitigatingCircumstance.findUnique({ where: { id: claim.id }, include: withRelations });
+  if (!full) return res.status(404).json({ error: "That claim was deleted while you were editing it." });
   res.status(201).json(sMitigation(full));
 });
 
@@ -414,6 +419,7 @@ router.delete("/:id/adjustments/:adjustmentId", async (req, res) => {
   });
 
   const full = await prisma.mitigatingCircumstance.findUnique({ where: { id: req.params.id }, include: withRelations });
+  if (!full) return res.status(404).json({ error: "That claim was deleted while you were editing it." });
   res.json(sMitigation(full));
 });
 

@@ -437,6 +437,10 @@ test("the defaults are the ones the module documents", () => {
   // Pinned so a change to a constant is a change to a test, with the argument beside it in
   // the module, rather than a number quietly moving under a green suite.
   assert.deepEqual(ASSESSMENT_TYPE_DEFAULTS, {
+    // Restated from settings.js rather than owned here — see the test below. Without it a
+    // bare call compares every mark against undefined and reports a straight-A student as
+    // failing everything.
+    passThreshold: 40,
     typeMinGrades: 3,
     typeMinOtherGrades: 4,
     minTypesMeasured: 2,
@@ -840,4 +844,28 @@ test("a caller's config overrides the module default rather than the other way r
   const r = typeShape(FAILS_EXAMS, TYPED, { ...PASS, typeMinGrades: 4 });
   assert.equal(r.typesMeasured, 1);
   assert.equal(r.worstType, null);
+});
+
+test("passThreshold is restated from settings.js, so a bare call is not confidently wrong", () => {
+  // Without this default, `g.pct >= cfg.passThreshold` compares against undefined and is
+  // false for every mark: a student passing everything at 75-90% is stored as failing
+  // 100% of both types. The CODE cannot fire (the gap is 0), so no caseload is harmed —
+  // but the ROW says a straight-A student fails all their exams, and this module is
+  // exported and callable directly.
+  //
+  // Failing toward a confidently wrong figure is the wrong direction for a file whose
+  // whole argument is that a missing measurement must be silent.
+  const settings = require("./settings");
+  assert.equal(ASSESSMENT_TYPE_DEFAULTS.passThreshold, settings.DEFAULTS.passThreshold,
+    "restated, never a second opinion — these must not drift");
+
+  const straightA = [
+    { pct: 85, type: "Assignment" }, { pct: 78, type: "Assignment" }, { pct: 90, type: "Assignment" },
+    { pct: 75, type: "Exam" }, { pct: 82, type: "Exam" }, { pct: 88, type: "Exam" },
+  ];
+  const r = typeShape(straightA, { assessmentTypesRecorded: true }, ASSESSMENT_TYPE_DEFAULTS);
+  for (const t of r.types) {
+    assert.equal(t.passRate, 100, `${t.type} reported ${t.passRate}% for a student who passed everything`);
+    assert.equal(t.failed, 0);
+  }
 });

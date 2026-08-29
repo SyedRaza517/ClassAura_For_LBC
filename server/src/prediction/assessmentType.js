@@ -181,6 +181,18 @@ const round1 = (n) => Math.round(n * 10) / 10;
 // slices must be before the gap is worth reporting on its own) and `nearFailMargin` (10,
 // the smallest difference in marks this codebase already treats as meaning anything).
 const ASSESSMENT_TYPE_DEFAULTS = {
+  // RESTATED FROM settings.js, NEVER A SECOND OPINION — same key name, same value, so a
+  // real config always wins. It is here because without it `g.pct >= cfg.passThreshold`
+  // compares against undefined and is false for everything: a student passing every piece
+  // at 75-90%% is stored as failing 100%% of both types. The code cannot fire (the gap is
+  // 0) so no caseload is harmed, but the ROW says a straight-A student fails all their
+  // exams, and this module is exported and callable directly.
+  //
+  // Failing toward a confidently wrong figure is the wrong direction for a file whose
+  // whole argument is that a missing measurement must be silent. divergence.js solved
+  // this for itself the same way; a test pins both against settings.DEFAULTS.
+  passThreshold: 40,
+
   // THE FEWEST MARKED PIECES OF ONE TYPE BEFORE ITS PASS RATE MAY BE NAMED.
   //
   // Three — `lateSubmissionMinPieces` exactly, and that is the closest existing analogue

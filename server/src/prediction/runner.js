@@ -179,6 +179,37 @@ async function recalculate(opts = {}) {
         continue;
       }
 
+      // DIVERGENCE IS COMPUTED HERE, NOT IN gather(), for the same structural reason
+      // contactDeficit is. It compares the submission RATE against attendance, and
+      // engine.js derives submissionRate in measure() — which runs after gather(). The
+      // alternative is a second implementation of a stored figure in the wiring, and two
+      // definitions of one number on one screen is how they drift. It reads
+      // result.metrics.submissionRate, the engine's own output, so there is exactly one
+      // definition of it in the codebase.
+      //
+      // HOISTED ABOVE THE ROW because it produces BOTH figures and CODES, and the codes
+      // belong in riskDriverCodes below. An earlier version called it inline in the
+      // figures block and returned only the three figures, silently discarding `codes` —
+      // so all four TRIP_DIVERGENCE_* codes were computed on every run and thrown away,
+      // and the module shipped completely dark while its labels sat unused in the client.
+      // Nothing caught it: the contactDeficit call below DOES append its codes, which is
+      // exactly what makes the omission invisible on a read-through.
+      const diverged = entry.tripwires
+        ? divergence.evaluate({
+            attendancePct: result.metrics.overallAttendance,
+            attendanceObservations: entry.tripwires.attendanceObservationsForDivergence,
+            submissionRate: result.metrics.submissionRate,
+            submissionObservations: (entry.tripwires.submittedCount || 0) + (entry.tripwires.notSubmittedCount || 0),
+            vleActiveDayRate: entry.tripwires.vleActiveDayRate,
+            vleObservedDays: entry.tripwires.vleObservedDaysForDivergence,
+            averageGrade: entry.tripwires.averageGradeForDivergence,
+            gradedCount: entry.tripwires.gradedCountForDivergence,
+            attendanceSlope: entry.tripwires.attendanceSlope,
+            weeksIntoProgramme: entry.tripwires.weeksIntoProgramme,
+            institution: { submissionsRecorded: entry.tripwires.submissionsRecorded === true },
+          }, config)
+        : null;
+
       const row = {
         scopeTermId: entry.scope.termId,
         scopeLabel: entry.scope.label,
@@ -233,37 +264,13 @@ async function recalculate(opts = {}) {
                 today,
               }, config).codes
             : []),
+          // The fourth source, and the only one computed at this seam rather than in
+          // gather(). Omitting it is how this module came to ship dark.
+          ...(diverged ? diverged.codes : []),
         ],
-        // DIVERGENCE IS COMPUTED HERE, NOT IN gather(), for the same structural reason
-        // contactDeficit is. It compares the submission RATE against attendance, and
-        // engine.js derives submissionRate in measure() — which runs after gather(). The
-        // alternative is a second implementation of a stored figure in the wiring, and
-        // two definitions of one number on one screen is how they drift.
-        //
-        // It reads result.metrics.submissionRate, the engine's own output, so there is
-        // exactly one definition of it in the codebase.
-        ...(entry.tripwires
-          ? (() => {
-              const d = divergence.evaluate({
-                attendancePct: result.metrics.overallAttendance,
-                attendanceObservations: entry.tripwires.attendanceObservationsForDivergence,
-                submissionRate: result.metrics.submissionRate,
-                submissionObservations: (entry.tripwires.submittedCount || 0) + (entry.tripwires.notSubmittedCount || 0),
-                vleActiveDayRate: entry.tripwires.vleActiveDayRate,
-                vleObservedDays: entry.tripwires.vleObservedDaysForDivergence,
-                averageGrade: entry.tripwires.averageGradeForDivergence,
-                gradedCount: entry.tripwires.gradedCountForDivergence,
-                attendanceSlope: entry.tripwires.attendanceSlope,
-                weeksIntoProgramme: entry.tripwires.weeksIntoProgramme,
-                institution: { submissionsRecorded: entry.tripwires.submissionsRecorded === true },
-              }, config);
-              return {
-                divergenceShape: d.divergenceShape,
-                attendanceSubmissionGap: d.attendanceSubmissionGap,
-                attendanceVleGap: d.attendanceVleGap,
-              };
-            })()
-          : { divergenceShape: null, attendanceSubmissionGap: null, attendanceVleGap: null }),
+        divergenceShape: diverged ? diverged.divergenceShape : null,
+        attendanceSubmissionGap: diverged ? diverged.attendanceSubmissionGap : null,
+        attendanceVleGap: diverged ? diverged.attendanceVleGap : null,
         positiveDriverCodes: result.positiveDriverCodes,
         primaryRiskDriver: result.primaryRiskDriver,
         interventionRequired: result.interventionRequired,

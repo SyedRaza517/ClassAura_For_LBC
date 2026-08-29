@@ -30,10 +30,15 @@ const { COHORT_CODES } = require("./cohort");
 
 const TODAY = "2026-03-20";
 
-/** A college whose finance records exist AND are linked to actual students. */
-const LINKED = { slcRecorded: true };
+/** A college whose finance records exist, are linked to actual students, AND whose
+ *  statuses are actually maintained here. Two probes, two different questions. */
+const LINKED = { slcRecorded: true, slcStatusesMaintained: true };
 /** A college that runs student finance somewhere other than this module. */
-const NO_SLC = { slcRecorded: false };
+const NO_SLC = { slcRecorded: false, slcStatusesMaintained: false };
+/** THE COMMON REAL CASE, and the one that produced a cohort-wide false alarm: claims are
+ *  raised here and linked to students, but the queue is worked in the college's own
+ *  system, so no status ever moves and statusChangedOn is null on every row. */
+const RAISE_ONLY = { slcRecorded: true, slcStatusesMaintained: false };
 
 /** YYYY-MM-DD, `n` days before TODAY. UTC midnight arithmetic, never a local Date. */
 function daysBefore(n, from = TODAY) {
@@ -184,8 +189,8 @@ test("no rows is null, never zero — the counts are withheld too", () => {
   // a claim, and `refusedUncovered: 0` would read as "we checked, they have not been
   // refused" about a student nobody has a record for.
   const s = fundingState([], TODAY, LINKED);
-  assert.notEqual(s.applications, 0);
-  assert.notEqual(s.refusedUncovered, 0);
+  assert.strictEqual(s.applications, null);
+  assert.strictEqual(s.refusedUncovered, null);
 });
 
 /* ========================================================================== */
@@ -864,4 +869,71 @@ test("stalledApplication survives being handed nothing", () => {
   const s = stalledApplication(undefined, TODAY);
   assert.equal(s.state, STATE.UNRECOGNISED);
   assert.equal(s.stalled, false);
+});
+
+/* -------------------------------------------------------------------------- */
+/* A whole intake, at a college that raises claims but works the queue elsewhere */
+/* -------------------------------------------------------------------------- */
+
+test("a whole intake stuck at Applied raises NOTHING where statuses are never maintained", () => {
+  // THE BUG THIS EXISTS FOR, found in review and reproduced before the guard was written:
+  // 0 of 200 students on 20 October, 200 of 200 on 28 October, still 200 of 200 the
+  // following April. 184 days of a caseload containing an entire cohort, which is the
+  // same as no caseload.
+  //
+  // statusChangedOn is null on every historic row, so the live path is the applicationDate
+  // fallback. A September intake all applies in the same week. If the college raises
+  // claims here and works its finance queue in its own system, nothing ever moves the
+  // status and every one of them trips together on the same day.
+  //
+  // The sibling test at "a whole intake that has not applied" covers the Not-applied
+  // status and passes; this is the neighbouring status, and its absence is why the defect
+  // was green.
+  const intake = Array.from({ length: 200 }, (_, i) => app({
+    studentId: `s${i}`, status: "Applied", applicationDate: daysBefore(120),
+    statusChangedOn: null,
+  }));
+
+  const withCode = intake.filter(
+    (a) => evaluate({ today: TODAY, applications: [a], institution: RAISE_ONLY }, {}).codes.length
+  );
+  assert.equal(withCode.length, 0, `${withCode.length} of 200 students carried a code from one shared application week`);
+});
+
+test("the same intake DOES raise it where the college maintains statuses", () => {
+  // The other half, and the one that stops the guard being a way of switching the signal
+  // off. A college that moves statuses has a real queue, and a claim sitting in it for
+  // four months is a real finding about a real student.
+  const stuck = app({ status: "Applied", applicationDate: daysBefore(120), statusChangedOn: null });
+  const r = evaluate({ today: TODAY, applications: [stuck], institution: LINKED }, {});
+  assert.deepEqual(r.codes, [FUNDING.STALLED]);
+});
+
+test("a claim whose status DID move is judged on that, wherever the college keeps its queue", () => {
+  // The status-change branch is deliberately ungated: a row carrying a real
+  // statusChangedOn is itself the evidence that statuses move here, so it needs no
+  // permission from an institution-wide probe.
+  const moved = app({ status: "Awaiting evidence", applicationDate: daysBefore(200), statusChangedOn: daysBefore(60) });
+
+  assert.deepEqual(
+    evaluate({ today: TODAY, applications: [moved], institution: RAISE_ONLY }, {}).codes.sort(),
+    evaluate({ today: TODAY, applications: [moved], institution: LINKED }, {}).codes.sort(),
+    "the probe must not change a judgement made on the strong anchor",
+  );
+  assert.ok(evaluate({ today: TODAY, applications: [moved], institution: RAISE_ONLY }, {}).codes.includes(FUNDING.STALLED));
+});
+
+test("the maintained-statuses probe is required, and is not the same question as the linked probe", () => {
+  // Two probes, two questions. slcRecorded asks whether claims can be JOINED to students;
+  // this one asks whether anybody ever MOVES a status. They come apart completely, and the
+  // gap between them was a cohort-wide false alarm.
+  const one = app({ status: "Applied", applicationDate: daysBefore(120) });
+  assert.throws(
+    () => evaluate({ today: TODAY, applications: [one], institution: { slcRecorded: true } }, {}),
+    /slcStatusesMaintained/,
+  );
+  assert.throws(
+    () => evaluate({ today: TODAY, applications: [one], institution: { slcRecorded: true, slcStatusesMaintained: 1 } }, {}),
+    /boolean/,
+  );
 });

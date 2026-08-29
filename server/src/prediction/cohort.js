@@ -115,7 +115,7 @@ const round1 = (n) => Math.round(n * 10) / 10;
 //
 // TWO CODES, BOTH ABOUT ONE STUDENT. The cohort being weak is NOT here: it fires for
 // every student at once, which makes it a figure rather than a caseload entry, and it
-// leaves evaluate() as  instead. The argument is at that return.
+// leaves evaluate() as `cohortStruggling` instead. The argument is at that return.
 const COHORT = {
   // This student is far enough below their own cohort that the gap is a finding rather
   // than arithmetic. Both a rank test AND an absolute gap have to pass -- see the
@@ -527,18 +527,23 @@ function evaluate(raw, config) {
   // it, which is what stops this module from grading on a curve: however the distribution
   // is shaped, a cohort below the line is reported as below the line.
   //
-  // IT FIRES FOR EVERY STUDENT IN THE COHORT AT ONCE. That is normally the cardinal sin in
-  // this codebase — a caseload of everybody is the same as no caseload — and it is
-  // accepted here on a narrow argument: this code is not a caseload entry, it is the
-  // caption under one. Its audience is a curriculum manager rather than a tutor, and the
-  // fact it describes is genuinely true of every student in the group. The mitigation is
-  // that its scope is a cohort and not an institution: if it lights up for the whole
-  // college, that is not noise either, it is the finding.
+  // IT FIRES FOR EVERY STUDENT IN THE COHORT AT ONCE, and that is why it is NOT a code.
   //
-  // A reviewer should still watch this one. If it turns out to be rendered per student on
-  // a caseload screen rather than per cohort on a programme screen, it will read as a
-  // hundred separate alarms, and the right fix is at the screen — or by moving this figure
-  // out of riskDriverCodes entirely — rather than by loosening the threshold.
+  // An earlier version of this block argued the opposite at length — that it could be a
+  // code because it is "the caption under a caseload entry rather than an entry itself",
+  // with its audience a curriculum manager rather than a tutor. That argument was
+  // rejected on review and the code was changed; the paragraph making it survived, so
+  // this file spent several commits carrying two contradictory specifications of the
+  // same value. In a codebase where the comments ARE the specification, that is a real
+  // hazard, and it is recorded here rather than quietly deleted.
+  //
+  // What settled it: `riskDriverCodes` is a per-student array and nothing downstream can
+  // tell a caption from an entry. A hundred students carrying one identical reason is a
+  // caseload of a hundred, which is the same as no caseload — the judgement metrics.js
+  // had already made for `assessmentsDueSoon`. So the finding leaves `evaluate()` as its
+  // own field and the screen renders it once.
+  //
+  // The two thresholds below are the college's own, reused rather than reinvented.
   const attendanceLine = isNum(cfg.redAttendanceThreshold) ? cfg.redAttendanceThreshold : null;
   // For attainment, pass + near-miss margin rather than the bare pass mark. A cohort whose
   // AVERAGE sits on the pass mark is a cohort half of which is failing; waiting for the

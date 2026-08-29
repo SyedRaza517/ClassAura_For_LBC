@@ -211,3 +211,49 @@ test("attendance cover honours the same switch", () => {
   assert.equal(attendanceCovered({ date: "2026-03-10" }, claims), true);
   assert.equal(attendanceCovered({ date: "2026-03-10" }, claims, { pendingSuppresses: false }), false);
 });
+
+/* -------------------------------------------------------------------------- */
+/* Both ends of the window, pinned                                             */
+/* -------------------------------------------------------------------------- */
+
+test("work due on the FIRST day of an approved claim is covered", () => {
+  // `inWindow` is documented "Inclusive at both ends" and neither end was tested. This is
+  // the one boundary in this file with a person on the other side of it: an off-by-one
+  // counts work due on the opening day of an approved claim against the student, which is
+  // exactly the harm the module was written to undo — a college punishing somebody for an
+  // accommodation it granted them.
+  const cov = buildCoverage([claim({ coversFrom: "2026-03-01", coversTo: "2026-03-31" })]);
+  assert.equal(effectiveDeadline(work("a1", "2026-03-01"), cov, TODAY).state, STATE.EXCLUDED);
+});
+
+test("work due on the LAST day of an approved claim is covered", () => {
+  const cov = buildCoverage([claim({ coversFrom: "2026-03-01", coversTo: "2026-03-31" })]);
+  assert.equal(effectiveDeadline(work("a1", "2026-03-31"), cov, TODAY).state, STATE.EXCLUDED);
+});
+
+test("the days either side of the window are NOT covered", () => {
+  // The other half of an inclusive test: a window that covers everything would pass the
+  // two assertions above while meaning nothing.
+  const cov = buildCoverage([claim({ coversFrom: "2026-03-01", coversTo: "2026-03-31" })]);
+  assert.equal(effectiveDeadline(work("a1", "2026-02-28"), cov, TODAY).state, STATE.MEASURED);
+  assert.equal(effectiveDeadline(work("a2", "2026-04-01"), cov, TODAY).state, STATE.MEASURED);
+});
+
+test("a single-day claim covers exactly that day", () => {
+  // coversFrom === coversTo is legitimate — a student missing one examined session — and
+  // it is where an exclusive comparison at either end covers nothing at all.
+  const cov = buildCoverage([claim({ coversFrom: "2026-03-10", coversTo: "2026-03-10" })]);
+  assert.equal(effectiveDeadline(work("a1", "2026-03-10"), cov, TODAY).state, STATE.EXCLUDED);
+  assert.equal(effectiveDeadline(work("a2", "2026-03-09"), cov, TODAY).state, STATE.MEASURED);
+  assert.equal(effectiveDeadline(work("a3", "2026-03-11"), cov, TODAY).state, STATE.MEASURED);
+});
+
+test("attendance cover is inclusive at both ends too", () => {
+  // The same comparison, reached by the other caller. A mark on the closing day of an
+  // approved claim must leave the percentage.
+  const claims = [claim({ coversAttendance: true, coversFrom: "2026-03-01", coversTo: "2026-03-15" })];
+  assert.equal(attendanceCovered({ date: "2026-03-01" }, claims), true);
+  assert.equal(attendanceCovered({ date: "2026-03-15" }, claims), true);
+  assert.equal(attendanceCovered({ date: "2026-02-28" }, claims), false);
+  assert.equal(attendanceCovered({ date: "2026-03-16" }, claims), false);
+});

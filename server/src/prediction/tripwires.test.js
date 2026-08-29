@@ -1374,3 +1374,42 @@ test("single-session days do not skew the first-session rate on a mixed timetabl
   assert.equal(r.firstSessionRate, 0, "they attended every morning they had a full day");
   assert.equal(r.laterRate, 100);
 });
+
+/* -------------------------------------------------------------------------- */
+/* VLE access is the fifth recency source                                      */
+/* -------------------------------------------------------------------------- */
+
+test("a student who has stopped attending but is opening the course is ENGAGED", () => {
+  // The one change made to this file when VLE engagement landed, and it had no test:
+  // deleting `lastVleAccessOn` from the list killed none of the 136 tests here.
+  //
+  // The point of the change is that the other four sources all require somebody at the
+  // COLLEGE to have acted — a register taken, work marked, a meeting logged, a query
+  // received. A student who has stopped coming in but is reading the material is engaged,
+  // and every one of those four would report them as silent. A sponsoring provider must
+  // evidence academic engagement rather than attendance, and this is what answers it.
+  const r = engagementRecency({
+    lastAttendedOn: null, lastGradedOn: null, lastPastoralOn: null, lastQueryOn: null,
+    lastVleAccessOn: "2026-08-20",
+  });
+  assert.equal(r, "2026-08-20", "the only evidence of engagement was ignored");
+});
+
+test("VLE access wins the recency race when it is the most recent of the five", () => {
+  const r = engagementRecency({
+    lastAttendedOn: "2026-07-01", lastGradedOn: "2026-07-15",
+    lastPastoralOn: "2026-06-20", lastQueryOn: "2026-08-01",
+    lastVleAccessOn: "2026-08-25",
+  });
+  assert.equal(r, "2026-08-25");
+});
+
+test("a college that cannot observe the VLE is unaffected", () => {
+  // Null drops out of the filter exactly as the other four do when they are missing —
+  // absence must not become the answer.
+  const r = engagementRecency({
+    lastAttendedOn: "2026-07-01", lastGradedOn: null, lastPastoralOn: null,
+    lastQueryOn: null, lastVleAccessOn: null,
+  });
+  assert.equal(r, "2026-07-01");
+});

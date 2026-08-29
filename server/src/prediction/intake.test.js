@@ -488,9 +488,9 @@ test("no ISM is null, never zero — the counts are withheld too", () => {
   // the row as "we have their interview form and it is blank", and `entryProfileBarriers:
   // 0` as "we asked and they reported no barriers" — about a student nobody interviewed.
   const r = evaluate(input({ isms: [] }), {});
-  assert.notEqual(r.entryProfileAnswered, 0);
-  assert.notEqual(r.entryProfileBarriers, 0);
-  assert.notEqual(r.entryProfileQuestions, 0);
+  assert.strictEqual(r.entryProfileAnswered, null);
+  assert.strictEqual(r.entryProfileBarriers, null);
+  assert.strictEqual(r.entryProfileQuestions, null);
 });
 
 test("having no interview record is a FIGURE and can never become a code", () => {

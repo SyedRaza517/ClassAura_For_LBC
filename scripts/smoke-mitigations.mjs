@@ -16,6 +16,15 @@
 //
 // Weighted toward refusals on purpose, like the rest of scripts/.
 import { strict as assert } from "node:assert";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
+const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
+const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
+if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 const BASE = process.env.API_URL || "http://localhost:4010/api";
 const ADMIN = process.env.SEED_ADMIN_EMAIL || "admin@edtech.co.uk";
@@ -46,7 +55,50 @@ if (!admin.body.token) {
   console.log(JSON.stringify(admin.body).slice(0, 200));
   process.exit(1);
 }
-const token = admin.body.token;
+const adminToken = admin.body.token;
+
+// THE SUITE RUNS AS A WELFARE OFFICER, NOT AS THE FULL ADMIN, and the reason is the
+// point of the feature. `mitigations` is explicit-grant-only: an admin whose pages were
+// never configured — which the seeded HR administrator is — correctly gets 403, because
+// Article 9 health data must not arrive with a deploy. So the route body is reachable
+// only by somebody holding the page deliberately, which is exactly the arrangement the
+// separate page exists to allow.
+//
+// BUILT HERE RATHER THAN SEEDED, and that is a lesson rather than a preference. The first
+// version added this account to prisma/seed.js, which gave the college a SECOND admin —
+// and smoke-account-deletion.mjs has a rule that only applies while there is one ("the
+// last administrator cannot delete themselves"). That rule silently stopped applying, the
+// suite went on to delete the shared admin account, and every suite after it failed
+// against a dead API. A fixture in the shared seed is a change to every other suite.
+const OFFICER_EMAIL = `mitig.officer.${Date.now()}@edtech.co.uk`;
+const OFFICER_PW = "OfficerPass123!";
+
+const made = await call("/staff", {
+  method: "POST", token: adminToken,
+  body: { name: "Mitigations Officer", email: OFFICER_EMAIL, password: OFFICER_PW },
+});
+if (!made.body || !made.body.id) {
+  console.log("✗ could not create the welfare officer fixture");
+  console.log(JSON.stringify(made.body).slice(0, 200));
+  process.exit(1);
+}
+// The grant itself goes in directly: /staff/:id/access is Super Admin only and the
+// seeded college has none, which is itself the realistic case.
+await db.staff.update({
+  where: { id: made.body.id },
+  data: {
+    accountRole: "ADMIN",
+    adminPages: JSON.stringify(["mitigations", "students", "registers", "assessments", "staff", "prediction"]),
+    mustChangePassword: false,
+  },
+});
+
+const officer = await call("/auth/login", { method: "POST", body: { email: OFFICER_EMAIL, password: OFFICER_PW } });
+if (!officer.body.token) {
+  console.log("✗ could not sign in as the welfare officer fixture");
+  process.exit(1);
+}
+const token = officer.body.token;
 
 const students = await call("/hnd/students", { token });
 const student = (students.body || [])[0];
@@ -236,7 +288,10 @@ await check("the audit trail records the DECISION and never the reason", async (
   // "bereavement claim approved for J Smith" would route health data straight past the
   // access control this feature exists to apply.
   await call(`/mitigations/${claimId}`, { token, method: "PATCH", body: { status: "approved" } });
-  const log = await call("/audit?limit=100", { token });
+  // Read as the FULL ADMIN on purpose: the whole risk is that health data reaches the
+  // audit log, which is read by admins who were never granted the mitigations page. This
+  // reads it as exactly such a person.
+  const log = await call("/audit?limit=100", { token: adminToken });
   const rows = log.body.entries || log.body.rows || log.body || [];
   const mine = (Array.isArray(rows) ? rows : []).filter((e) => (e.entityId === claimId) || (e.action || "").startsWith("mitigation."));
   assert.ok(mine.length, "no audit rows written for the claim at all");
@@ -258,6 +313,81 @@ await check("the prediction register never carries the reason for a claim", asyn
 });
 
 /* -------------------------------------------------------------------------- */
+/* Who may reach it — the assertions this suite existed without                */
+/* -------------------------------------------------------------------------- */
+
+await check("a member of staff without the page grant is refused", async () => {
+  // This suite shipped asserting only that an anonymous caller gets 401, which proves
+  // almost nothing about a page holding Article 9 health data. The sibling suite twelve
+  // files away already had this exact pattern.
+  const staff = await call("/staff", { token: adminToken });
+  // GET /staff returns a BARE ARRAY, not { staff: [...] }. The original form of this
+  // check read `staff.body.staff`, which is always undefined, so it took the skip branch
+  // on every run — a security assertion that has never actually executed. Both shapes are
+  // accepted here so the fix survives the response gaining an envelope later.
+  const list = Array.isArray(staff.body) ? staff.body : staff.body.staff;
+  if (staff.status !== 200 || !Array.isArray(list)) return "skipped — could not read the staff list";
+
+  const plain = list.find((s) => s.accountRole !== "ADMIN" && !s.isSuperAdmin);
+  if (!plain) return "skipped — no non-admin account in the fixtures";
+
+  const login = await call("/auth/login", { method: "POST", body: { email: plain.email, password: PASSWORD } });
+  if (!login.body.token) return `skipped — could not sign in as ${plain.email}`;
+
+  const r = await call("/mitigations", { token: login.body.token });
+  assert.equal(r.status, 403, `a member of staff without the grant got ${r.status} from the claims list`);
+  return `${plain.email} refused`;
+});
+
+await check("an ADMIN whose pages were never configured is refused", async () => {
+  // THE ONE THIS FEATURE MOST NEEDED. `adminPages: null` means "nobody has configured
+  // grants here", and it grants every other page — correctly, so a college that never
+  // touched the screen is not locked out. Under that rule, adding `mitigations` to
+  // ADMIN_PAGES would have handed illness and bereavement records to every existing
+  // admin at every such college the moment this deployed, decided by nobody.
+  //
+  // It is now explicit-grant-only, like `access`. A super admin still reaches it, so
+  // there is always somebody who can grant it.
+  const staff = await call("/staff", { token: adminToken });
+  // GET /staff returns a BARE ARRAY, not { staff: [...] }. The original form of this
+  // check read `staff.body.staff`, which is always undefined, so it took the skip branch
+  // on every run — a security assertion that has never actually executed. Both shapes are
+  // accepted here so the fix survives the response gaining an envelope later.
+  const list = Array.isArray(staff.body) ? staff.body : staff.body.staff;
+  if (staff.status !== 200 || !Array.isArray(list)) return "skipped — could not read the staff list";
+
+  const unconfigured = list.find(
+    (s) => s.accountRole === "ADMIN" && !s.isSuperAdmin && s.adminPages == null
+      && s.email !== OFFICER_EMAIL
+  );
+  if (!unconfigured) return "skipped — no unconfigured admin in the fixtures";
+
+  const login = await call("/auth/login", { method: "POST", body: { email: unconfigured.email, password: PASSWORD } });
+  if (!login.body.token) return `skipped — could not sign in as ${unconfigured.email}`;
+
+  const r = await call("/mitigations", { token: login.body.token });
+  assert.equal(r.status, 403,
+    `an admin with adminPages:null got ${r.status} — health data is being granted by default`);
+
+  // And the same account must still hold an ordinary page, or the fix has locked people
+  // out of the product rather than out of one screen.
+  const ordinary = await call("/prediction/summary", { token: login.body.token });
+  assert.equal(ordinary.status, 200, "the unconfigured admin lost access to ordinary pages too");
+  return `${unconfigured.email} refused the claims, kept the register`;
+});
+
+await check("a claim cannot be read across a tenant boundary", async () => {
+  // The id is a cuid, so this is not a guessing attack — it is the check that the tenant
+  // extension in db.js is actually filtering this model rather than the route relying on
+  // the id being unguessable.
+  if (!claimId) return "skipped — no claim was created";
+  const r = await call(`/mitigations/${claimId}`, { token, tenant: "does-not-exist" });
+  assert.ok(r.status === 404 || r.status === 403,
+    `reading a claim under another tenant returned ${r.status}`);
+  return `${r.status} under an unknown tenant`;
+});
+
+/* -------------------------------------------------------------------------- */
 /* Tidy up                                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -265,11 +395,19 @@ for (const id of created) {
   await call(`/mitigations/${id}`, { token, method: "DELETE" });
 }
 
+
+
 await check("a deleted claim is gone", async () => {
   const r = await call(`/mitigations/${claimId}`, { token });
   assert.equal(r.status, 404);
   return "404";
 });
 
+// The officer goes LAST, after every assertion that uses its token. Deleting it earlier
+// made the final check answer 401 instead of 404 — the fixture outliving the suite is not
+// optional. Leaving it behind is what broke smoke-account-deletion.mjs the first time
+// this fixture existed, so it must go, just not yet.
+await db.staff.deleteMany({ where: { email: OFFICER_EMAIL } });
+await db.$disconnect();
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

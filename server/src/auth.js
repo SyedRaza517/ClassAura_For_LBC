@@ -165,6 +165,30 @@ const requirePage = (page) => requireAnyPage([page]);
 // routes previously widened on `accountRole === "ADMIN"` alone — but granting ANY
 // page makes an account an ADMIN, so a page-scoped admin could read/modify sections
 // they were never granted. Gate the "see everyone" branch on this instead.
+// PAGES THAT AN UNCONFIGURED ADMIN DOES NOT GET.
+//
+// `adminPages: null` means "nobody has configured grants at this college", and it grants
+// everything — which is right, because a college that has never touched the screen must
+// not find its administrators locked out of the product.
+//
+// That default stops being right the moment a page holds data of a different KIND.
+// `mitigations` carries UK GDPR Article 9 health data: illness, bereavement, mental
+// health, pregnancy. Adding it to ADMIN_PAGES under the old rule meant that at every
+// college which has never configured grants, EVERY existing admin silently gained read
+// access to it the moment this deployed. Nobody would have made that decision; the grant
+// would have arrived with a migration.
+//
+// So it is explicit-grant-only. This is not a new idea — `access` is already handled the
+// same way on the client (`canAccessPage`), for the same reason: some pages are too
+// consequential to arrive by default.
+//
+// THIS CANNOT LOCK A COLLEGE OUT. isSuperAdmin short-circuits above, so a super admin
+// always reaches the page and is exactly who would grant it to somebody else.
+//
+// Semantics: an unconfigured admin holds every page EXCEPT these, so a requireAnyPage
+// check that also names an ordinary page still passes on the strength of that one.
+const EXPLICIT_ONLY = new Set(["mitigations"]);
+
 function hasPage(user, pages) {
   if (!user) return false;
   // A student NEVER holds an admin page. This is already true incidentally — sStudent
@@ -175,9 +199,9 @@ function hasPage(user, pages) {
   if (isStudent(user)) return false;
   if (user.isSuperAdmin) return true;
   if (user.accountRole !== "ADMIN") return false;
-  const allowed = user.adminPages; // null = unconfigured = full access
-  if (allowed == null) return true;
   const wanted = Array.isArray(pages) ? pages : [pages];
+  const allowed = user.adminPages; // null = unconfigured = full access, EXCEPT below
+  if (allowed == null) return wanted.some((p) => !EXPLICIT_ONLY.has(p));
   return wanted.some((p) => allowed.includes(p));
 }
 
@@ -218,4 +242,4 @@ function blockedByRank(actor, target) {
   return "You can't change an administrator whose access is broader than your own";
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requirePage, requireAnyPage, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET };
+module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requirePage, requireAnyPage, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET, EXPLICIT_ONLY};

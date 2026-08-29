@@ -398,3 +398,97 @@ test("no two prediction modules define the same config key with different defaul
   assert.deepEqual(clashes, [],
     `these keys mean different things to different modules and share one config object:\n  ${clashes.join("\n  ")}`);
 });
+
+// EVERY VOCABULARY MUST ACTUALLY REACH A ROW.
+//
+// A module can be fully written, fully tested, wired for its FIGURES, and still have its
+// codes silently discarded — which is exactly what happened to divergence.js. Its
+// evaluate() returned {shape, gaps, codes}, the wiring destructured the three figures and
+// dropped `codes`, and all four TRIP_DIVERGENCE_* codes were computed on every run and
+// thrown away. The module shipped completely dark while its labels sat unused in the
+// client, the vocabulary test below happily checked it for prefix and disjointness, and
+// 1,055 unit tests passed.
+//
+// Nothing caught it because NOTHING EXERCISES THE WRITE PATH: no unit test calls gather()
+// or recalculate(), and the smoke suite asserts on no new column. The contactDeficit call
+// twelve lines above the bug DOES append its codes, which is what made the omission
+// invisible on a read-through.
+//
+// So this checks the one thing that makes a vocabulary real: that somewhere between
+// metrics.js and runner.js, something spreads that module's codes into an array. It is a
+// source-text check and therefore coarse — it cannot prove the array is riskDriverCodes —
+// but it is the difference between "the codes exist" and "the codes can be seen".
+test("every module that emits codes has them spread into a row", () => {
+  const wiring = [
+    fs.readFileSync(path.join(__dirname, "metrics.js"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "runner.js"), "utf8"),
+  ].join("\n");
+
+  // The local name each module's result is bound to in the wiring. Kept beside the
+  // module name so a rename that orphans a vocabulary fails here rather than going quiet.
+  const BOUND_AS = {
+    tripwires: ["trips", "entry.tripwires"],
+    coverage: ["reg"],
+    cohort: ["standing"],
+    workload: ["load"],
+    funding: ["money"],
+    sessions: ["shape"],
+    intake: ["entry"],
+    history: ["past"],
+    divergence: ["diverged"],
+    assessmentType: ["byType"],
+    timetable: ["dayShapeTimetable"],
+    earlyWindow: ["opening"],
+  };
+
+  const unreachable = [];
+  for (const [name, codes] of ALL_VOCABULARIES) {
+    // An EMPTY vocabulary is a deliberate design decision in two modules — timetable and
+    // earlyWindow both argue at length that their findings are cohort-wide and must stay
+    // figures. Nothing to reach a row, so nothing to check.
+    if (!codes.length) continue;
+
+    const names = BOUND_AS[name];
+    assert.ok(names, `${name} emits codes but this test does not know what it is bound to`);
+    const spread = names.some((n) => wiring.includes(`...(${n}.codes || [])`)
+      || wiring.includes(`...(${n} ? ${n}.codes : [])`)
+      || wiring.includes(`...(${n}.codes)`));
+    if (!spread) unreachable.push(`${name} (${codes.length} codes, bound as ${names.join("/")})`);
+  }
+
+  assert.deepEqual(unreachable, [],
+    `these modules compute codes that never reach a stored row:\n  ${unreachable.join("\n  ")}`);
+});
+
+// AND THE SAME RULE, ENFORCED ON THE WHOLE DIRECTORY.
+//
+// The test above names metrics.js and adjustments.js. CLAUDE.md states the rule far more
+// broadly — "nothing under server/src/prediction/ may select category or detail" — and
+// there are now twelve modules in here, added at roughly one per commit. A thirteenth
+// issuing its own `prisma.mitigatingCircumstance.findMany({ select: { category: true } })`
+// would pass every existing test.
+//
+// So this walks the directory rather than a list of filenames. Comments are stripped
+// first: the rule is about what the code SELECTS, and several files discuss `category`
+// and `detail` at length precisely to explain why they must not be read.
+test("no file under src/prediction selects the reason for a mitigating circumstance", () => {
+  const files = fs.readdirSync(__dirname)
+    .filter((f) => f.endsWith(".js") && !f.endsWith(".test.js"));
+  assert.ok(files.length >= 12, `only found ${files.length} modules — has the directory moved?`);
+
+  const offenders = [];
+  for (const f of files) {
+    const raw = fs.readFileSync(path.join(__dirname, f), "utf8");
+    // Strip block and line comments. Crude, and deliberately so: a false positive here
+    // costs somebody five minutes, while a false negative puts health data in a risk score.
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    if (!code.includes("mitigatingCircumstance")) continue;
+
+    for (const forbidden of ["category:", "detail:"]) {
+      if (code.includes(forbidden)) offenders.push(`${f} selects ${forbidden}`);
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    `these read the REASON for a claim, which is Article 9 health data collected for support and not for scoring:\n  ${offenders.join("\n  ")}`);
+});

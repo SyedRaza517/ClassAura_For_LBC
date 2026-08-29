@@ -375,9 +375,14 @@ await check("a member of staff without the page grant cannot read who the colleg
   // from their attendance, their marks and a pastoral conversation. It is a wider
   // disclosure than the gradebook, and the gradebook is page-gated.
   const staff = await call("/staff", { token });
-  if (staff.status !== 200 || !Array.isArray(staff.body.staff)) return "skipped — could not read the staff list";
+  // GET /staff returns a BARE ARRAY, not { staff: [...] }. The original form of this
+  // check read `staff.body.staff`, which is always undefined, so it took the skip branch
+  // on every run — a security assertion that has never actually executed. Both shapes are
+  // accepted here so the fix survives the response gaining an envelope later.
+  const list = Array.isArray(staff.body) ? staff.body : staff.body.staff;
+  if (staff.status !== 200 || !Array.isArray(list)) return "skipped — could not read the staff list";
 
-  const plain = staff.body.staff.find((s) => s.accountRole !== "ADMIN" && !s.isSuperAdmin);
+  const plain = list.find((s) => s.accountRole !== "ADMIN" && !s.isSuperAdmin);
   if (!plain) return "skipped — no non-admin account in the fixtures";
 
   const login = await call("/auth/login", { method: "POST", body: { email: plain.email, password: PASSWORD } });

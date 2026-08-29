@@ -2226,6 +2226,7 @@ const warnOnPageListDrift = (allNav) => {
 // including the Super-Admin-only Access tab. A page-scoped admin gets only their
 // granted pages (null adminPages = unrestricted, so existing admins keep full
 // access). Anyone who isn't an admin gets nothing.
+const EXPLICIT_ONLY_PAGES = new Set(["mitigations"]);
 const canAccessPage = (user, key) => {
   if (!user) return false;
   // No student holds any admin page — stated first, mirroring the server's hasPage,
@@ -2235,6 +2236,11 @@ const canAccessPage = (user, key) => {
   if (user.isSuperAdmin) return true;
   if (user.accountRole !== "ADMIN") return false;
   const pages = user.adminPages;
+  // EXPLICIT GRANT ONLY, mirroring EXPLICIT_ONLY in the server's hasPage — the two are
+  // hand-maintained copies like ADMIN_PAGES itself. `mitigations` holds Article 9 health
+  // data, so an unconfigured college must not hand it to every admin by default; without
+  // this the page would appear in the nav and 403 on every request behind it.
+  if (EXPLICIT_ONLY_PAGES.has(key)) return Array.isArray(pages) && pages.includes(key);
   return pages == null || (Array.isArray(pages) && pages.includes(key));
 };
 

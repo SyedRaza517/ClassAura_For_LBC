@@ -37,9 +37,36 @@ function pick(b, user) {
   };
 }
 
+// WHAT LEAVES THE BUILDING. An allowlist, never a blocklist — CLAUDE.md records that
+// sAdmission once stripped a fixed list of secrets, so every column added afterwards
+// shipped to the browser by default. This route was returning raw Prisma rows, which is
+// that failure in its purest form, on a table holding loan status and CRNs: the four
+// columns added to this model recently (studentId, studentLinkSource, studentLinkedAt,
+// statusChangedOn) all began shipping without anyone deciding they should.
+const sSlc = (a) => ({
+  id: a.id,
+  studentId: a.studentId,
+  studentName: a.studentName,
+  studentRef: a.studentRef,
+  course: a.course,
+  intake: a.intake,
+  status: a.status,
+  statusChangedOn: a.statusChangedOn,
+  loanType: a.loanType,
+  crn: a.crn,
+  applicationDate: a.applicationDate,
+  decisionDate: a.decisionDate,
+  amount: a.amount,
+  notes: a.notes,
+  admissionId: a.admissionId,
+  updatedBy: a.updatedBy,
+  createdAt: a.createdAt,
+  updatedAt: a.updatedAt,
+});
+
 router.get("/", async (_req, res) => {
   const rows = await prisma.slcApplication.findMany({ orderBy: [{ updatedAt: "desc" }] });
-  res.json(rows);
+  res.json(rows.map(sSlc));
 });
 
 router.post("/", async (req, res) => {
@@ -59,7 +86,7 @@ router.post("/", async (req, res) => {
     summary: `Student finance record created for ${row.studentName} — ${row.status}`,
     after: { studentName: row.studentName, status: row.status, admissionId: row.admissionId },
   });
-  res.status(201).json(row);
+  res.status(201).json(sSlc(row));
 });
 
 router.put("/:id", async (req, res) => {
@@ -93,7 +120,7 @@ router.put("/:id", async (req, res) => {
       before: existing ? { studentName: existing.studentName, status: existing.status, admissionId: existing.admissionId } : null,
       after: { studentName: row.studentName, status: row.status, admissionId: row.admissionId },
     });
-    res.json(row);
+    res.json(sSlc(row));
   } catch (_) { res.status(404).json({ error: "Record not found." }); }
 });
 

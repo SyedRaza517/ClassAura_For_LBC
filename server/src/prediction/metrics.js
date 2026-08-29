@@ -187,7 +187,8 @@ async function gather(studentIds, config) {
   const [lateMarks, contactRows, reviewRows, excusedMarks, submittedAtRows, submissionRows,
          answeredQueryRows, firstClosedContact, firstClosedReview,
          unmarkedSessions, linkedSlcRows, kindedSessions,
-         linkedIsmRows, linkedExpiryRows, typedAssessments] = await Promise.all([
+         linkedIsmRows, linkedExpiryRows, typedAssessments,
+         maintainedSlcRows] = await Promise.all([
     prisma.attendanceMark.count({ where: { status: "L" } }),
     prisma.interaction.count(),
     prisma.studentReview.count(),
@@ -270,6 +271,27 @@ async function gather(studentIds, config) {
     // "" is excluded alongside the default because a blank type is an unset one written
     // outside the route layer.
     prisma.assessment.count({ where: { type: { notIn: ["Assignment", ""] } } }),
+    // THE SIXTEENTH, and it asks a DIFFERENT question from the SLC probe above.
+    //
+    // That one asks whether claims can be joined to students. This asks whether anybody
+    // ever MOVES a claim's status once it is raised — and the two come apart completely.
+    // A college that raises claims here and works its finance queue in its own system has
+    // linked rows whose status never changes, so every student in an intake trips the
+    // applicationDate fallback together, 56 days after a shared application week, and
+    // stays tripped until the 240-day ceiling. Reproduced in review: 200 of 200 students
+    // for 184 days.
+    //
+    // Evidence of maintenance is a status that is neither the column default nor the
+    // one every claim starts at, OR any row carrying a statusChangedOn at all.
+    prisma.slcApplication.count({
+      where: {
+        NOT: { studentId: null },
+        OR: [
+          { NOT: { statusChangedOn: null } },
+          { status: { notIn: ["Not applied", "Applied", ""] } },
+        ],
+      },
+    }),
   ]);
   // Does this college's feed carry submission dates at all? Fourth guard of the same
   // shape — nothing anywhere carrying a submittedAt means "0% late" is a statement
@@ -288,6 +310,7 @@ async function gather(studentIds, config) {
   const ismRecorded = linkedIsmRows > 0;
   const idExpiryRecorded = linkedExpiryRows > 0;
   const assessmentTypesRecorded = typedAssessments > 0;
+  const slcStatusesMaintained = maintainedSlcRows > 0;
 
   // The fifth of the same family, and the one that was missed when the other four were
   // hoisted. It reads whether the college records submissions AT ALL, so it must be
@@ -1203,7 +1226,7 @@ async function gather(studentIds, config) {
     const money = funding.evaluate({
       today,
       applications: slcByStudent.get(id) || [],
-      institution: { slcRecorded },
+      institution: { slcRecorded, slcStatusesMaintained },
     }, config);
 
     // THE SHAPE OF THE ABSENCE. Reads the RAW marks, not rateMarks: a session an approved

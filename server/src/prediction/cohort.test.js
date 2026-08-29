@@ -443,7 +443,10 @@ test("a strong cohort is not accused of struggling, and its members are not flag
     cohortAttendancePcts: HEALTHY,
   }), DEFAULTS);
 
-  assert.notEqual(r.cohortStruggling, true);
+  // STRICT. `notEqual(x, true)` passes for false, null, undefined, 0 and "maybe" alike,
+  // so the tri-state this module argues for at length was pinned by nothing: mutating
+  // `? null` to `? false` killed zero tests.
+  assert.strictEqual(r.cohortStruggling, false);
   assert.equal(r.codes.includes(COHORT.ATTENDANCE_OUTLIER), false);
 });
 
@@ -466,7 +469,10 @@ test("a cohort comfortably above the pass mark is not struggling", () => {
     cohortAverageGrades: [45, 50, 55, 58, 60, 60, 62, 65, 68, 70, 75, 80],
   }), DEFAULTS);
 
-  assert.notEqual(r.cohortStruggling, true);
+  // STRICT. `notEqual(x, true)` passes for false, null, undefined, 0 and "maybe" alike,
+  // so the tri-state this module argues for at length was pinned by nothing: mutating
+  // `? null` to `? false` killed zero tests.
+  assert.strictEqual(r.cohortStruggling, false);
 });
 
 /* --- the trap this module was written against ------------------------------ */
@@ -590,7 +596,10 @@ test("a config with no thresholds set raises nothing rather than comparing again
     cohortAttendancePcts: FAILING,
   }), {});
 
-  assert.notEqual(r.cohortStruggling, true);
+  // STRICT. `notEqual(x, true)` passes for false, null, undefined, 0 and "maybe" alike,
+  // so the tri-state this module argues for at length was pinned by nothing: mutating
+  // `? null` to `? false` killed zero tests.
+  assert.strictEqual(r.cohortStruggling, false);
 });
 
 test("the cohort tunables can be overridden from config without touching the module", () => {
@@ -604,4 +613,18 @@ test("the cohort tunables can be overridden from config without touching the mod
     { ...DEFAULTS, cohortMinSize: 8 });
   assert.equal(heard.attendance.percentile, 6.3);
   assert.ok(heard.codes.includes(COHORT.ATTENDANCE_OUTLIER));
+});
+
+test("a cohort too small to describe is NULL struggling, not false", () => {
+  // The distinction the module spends a paragraph on: "a null mean is a cohort too small
+  // to describe, not a healthy one". Nothing asserted it — every negative test used
+  // notEqual(x, true), which passes for null and false alike, so mutating `? null` to
+  // `? false` killed no tests.
+  //
+  // False would say "we checked the programme and it is fine" on the strength of no
+  // check at all, which is the null-is-not-zero rule wearing a boolean.
+  const r = evaluate(input({ cohortAttendancePcts: [], cohortAverageGrades: [] }), DEFAULTS);
+  assert.strictEqual(r.cohortStruggling, null);
+  assert.equal(r.cohortAttendance.mean, null);
+  assert.equal(r.cohortAttainment.mean, null);
 });
