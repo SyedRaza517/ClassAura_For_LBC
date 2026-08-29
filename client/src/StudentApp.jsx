@@ -20,7 +20,7 @@ import { NAVY, NAVY_DARK, MAROON } from "./branding";
 // Section accents. Checked as an adjacent colour-blind-safe set (worst pair ΔE 16.4),
 // so the four areas stay tellable apart for every reader — and each still carries its
 // own icon and label, so colour is never the only signal.
-const ACCENT = { attendance: "#4f46e5", results: "#0891b2", ask: "#be123c", timetable: "#0d7a5f", more: "#7c3aed" };
+const ACCENT = { checkin: "#1a3a8f", attendance: "#4f46e5", results: "#0891b2", ask: "#be123c", timetable: "#0d7a5f", more: "#7c3aed" };
 const fmtPct = (p) => (p == null ? "—" : `${p}%`);
 // Attendance/grade bands. Four steps rather than three, so "nearly there" reads
 // differently from "needs attention" instead of both being flat red.
@@ -247,7 +247,7 @@ export default function StudentApp({ user, logout }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, reviews]);
 
-  const title = { home: "Student Hub", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", more: "More" }[screen];
+  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", more: "More" }[screen];
   const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen };
 
   return (
@@ -255,6 +255,7 @@ export default function StudentApp({ user, logout }) {
       <div className="flex min-h-full flex-col">
         <div className="flex-1" style={{ background: "linear-gradient(180deg,#f6f8fc 0%,#eef2f9 60%,#f6f8fc 100%)" }}>
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
+          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
@@ -349,6 +350,80 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
 /* ============================== home ============================== */
 
 /* ============================== tap check-in ============================== */
+
+/** One line for the Check In tile, honest in every state. */
+function checkInSub(tapContext) {
+  if (tapContext == null) return "Checking…";
+  if (!tapContext.enabled) return "Not switched on yet";
+  const running = (tapContext.now || []).length;
+  if (running > 1) return "Choose your class";
+  if (running === 1) return "Ready — tap a sticker";
+  if (tapContext.next) return `Next at ${tapContext.next.startTime}`;
+  return "No classes left today";
+}
+
+// A screen of its own, so Check In is somewhere a student can always GO rather than a
+// card that may or may not be on the home screen. Every state answers plainly here,
+// including the two that previously rendered nothing at all.
+function CheckInScreen({ tapContext, reload }) {
+  const enabled = tapContext?.enabled;
+  const running = (tapContext?.now || []).length;
+
+  return (
+    <div className="space-y-3.5 px-4 pb-8 pt-5">
+      {enabled && <StudentCheckIn tapContext={tapContext} reload={reload} />}
+
+      {tapContext == null && (
+        <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
+          <Loader2 size={20} className="mx-auto animate-spin text-slate-300" />
+          <p className="mt-2 text-[13px] text-slate-500">Checking whether you can check in…</p>
+        </div>
+      )}
+
+      {tapContext && !enabled && (
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
+            <Nfc size={19} style={{ color: ACCENT.checkin }} />
+          </span>
+          <p className="mt-3 text-sm font-extrabold text-slate-800">Not switched on yet</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+            Your college hasn&rsquo;t turned on check-in by sticker. When it does, hold your phone
+            to the sticker in your classroom and a button here will let you mark yourself present.
+          </p>
+          <p className="mt-2 text-[13px] leading-relaxed text-slate-500">
+            Until then your lecturer takes the register as usual — there&rsquo;s nothing you need to do.
+          </p>
+        </div>
+      )}
+
+      {enabled && running === 0 && (
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <p className="text-sm font-extrabold text-slate-800">
+            {tapContext.next ? "No class on right now" : "That's you done for today"}
+          </p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+            {tapContext.next
+              ? <>Check-in opens when your next class starts — <strong>{tapContext.next.unitName || tapContext.next.unitCode}</strong> at {tapContext.next.startTime}.</>
+              : "You have no more classes today."}
+          </p>
+        </div>
+      )}
+
+      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
+        <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
+          <li>1. Hold your phone against the sticker in your classroom.</li>
+          <li>2. The button turns blue for about a minute.</li>
+          <li>3. Press it, and you&rsquo;re marked present with the time.</li>
+        </ul>
+        <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          It only works while your class is actually running, and only on a phone that can read
+          stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 // The card at the top of the home screen. Renders nothing at all when the college has
 // not switched tap check-in on, so a student at an institution that does not use it
@@ -534,11 +609,17 @@ function Home({ user, attendance, results, queries, reviews, tapContext, busy, e
 
       <SectionTitle colour={ACCENT.attendance}>Quick actions</SectionTitle>
       <div className="grid grid-cols-2 gap-2.5">
-        <Action onClick={() => setScreen("attendance")} Icon={Percent} label="My Attendance" sub="By unit" c={ACCENT.attendance} i={0} />
-        <Action onClick={() => setScreen("assessments")} Icon={Award} label="My Results" sub="Marks & grades" c={ACCENT.results} i={1} />
-        <Action onClick={() => setScreen("timetable")} Icon={CalendarDays} label="My Timetable" sub="Weekly classes" c={ACCENT.timetable} i={2} />
-        <Action onClick={() => setScreen("query")} Icon={MessageSquare} label="Ask the College" sub={newReplies ? `${newReplies} new repl${newReplies === 1 ? "y" : "ies"}` : "Send a query"} c={ACCENT.ask} badge={newReplies} i={3} />
-        <Action onClick={() => setScreen("more")} Icon={Settings} label="More" sub="Account & settings" c={ACCENT.more} i={4} />
+        {/* Always rendered, whatever state the feature is in. It was previously shown
+            only when a class was checkable, which is defensible for a student and left
+            nobody able to tell "switched off" from "not built" — reported as missing
+            twice. The destination explains itself in every state instead. */}
+        <Action onClick={() => setScreen("checkin")} Icon={Nfc} label="Check In"
+          sub={checkInSub(tapContext)} c={ACCENT.checkin} i={0} />
+        <Action onClick={() => setScreen("attendance")} Icon={Percent} label="My Attendance" sub="By unit" c={ACCENT.attendance} i={1} />
+        <Action onClick={() => setScreen("assessments")} Icon={Award} label="My Results" sub="Marks & grades" c={ACCENT.results} i={2} />
+        <Action onClick={() => setScreen("timetable")} Icon={CalendarDays} label="My Timetable" sub="Weekly classes" c={ACCENT.timetable} i={3} />
+        <Action onClick={() => setScreen("query")} Icon={MessageSquare} label="Ask the College" sub={newReplies ? `${newReplies} new repl${newReplies === 1 ? "y" : "ies"}` : "Send a query"} c={ACCENT.ask} badge={newReplies} i={4} />
+        <Action onClick={() => setScreen("more")} Icon={Settings} label="More" sub="Account & settings" c={ACCENT.more} i={5} />
       </div>
     </div>
   );
