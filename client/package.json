@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:lan": "vite --host",
     "build": "vite build",
+    "build:staging": "vite build --mode staging",
     "preview": "vite preview",
     "brand": "node scripts/apply-brand.mjs",
     "sync": "npm run brand && vite build && cap sync",
