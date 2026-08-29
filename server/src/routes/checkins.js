@@ -106,6 +106,27 @@ router.post("/check-in", requireAuth, async (req, res) => {
   const date = today();
   const site = req.body?.site;
   if (!isSite(site)) return res.status(400).json({ error: "site must be Onsite or Online" });
+
+  // Where a college requires a sticker for onsite work, this route may not record one.
+  //
+  // Defence in depth, matching the note above the HND router: the app hides its ordinary
+  // button in this case, but a hidden button is not a rule — the endpoint was still there
+  // and still answered. Anything that can be worked around by knowing the URL is a
+  // convention, and a timesheet is not a good place for one.
+  //
+  // ONLINE IS NEVER GATED, and that is the point of gating on `site` rather than on the
+  // route. A sticker proves somebody stood in the building, which is precisely what a
+  // person working from home cannot do; requiring one to record remote work would make
+  // the honest answer the unrecordable one. An administrator's PUT / is also untouched,
+  // because fixing a missed clock-in is exactly what that route is for.
+  const tap = await tapConfig.get();
+  if (site === "Onsite" && tap.enabled && tap.staffTapEnabled) {
+    return res.status(409).json({
+      error: "Onsite clock-in is by sticker here — tap the sticker in your building. Choose Online if you are working remotely.",
+      reason: "tap_required",
+    });
+  }
+
   const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
   if (existing) {
     // A row created by a summary-first save has timeIn === "" — fill in the

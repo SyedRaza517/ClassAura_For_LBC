@@ -952,6 +952,43 @@ try {
     `HTTP ${staffWorksAgain.status} ${staffWorksAgain.data?.error || ""}`);
 
   /* ====================================================================== */
+  console.log("\n--- a sticker is REQUIRED for onsite, not merely offered ---");
+  /* ====================================================================== */
+
+  // The client hid its ordinary Check In button once a college switched tap check-in on,
+  // and that was the whole enforcement: the endpoint was still there and still answered,
+  // so anyone who knew the URL clocked in Onsite without going near a sticker. A hidden
+  // button is a convention, and a timesheet is a poor place for one.
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
+  const bareOnsite = await call("/checkins/check-in", { method: "POST", token: adminToken, body: { site: "Onsite" } });
+  const bareRow = adminId ? await db.checkIn.findFirst({ where: { staffId: adminId, date: staffDate } }) : null;
+  check("a plain Onsite check-in is refused while stickers are required",
+    bareOnsite.status === 409 && bareOnsite.data?.reason === "tap_required" && !bareRow,
+    `HTTP ${bareOnsite.status} ${bareOnsite.data?.reason || ""}${bareRow ? " — A ROW WAS WRITTEN" : ""}`);
+
+  // Online must stay open. A sticker proves presence in the building, which is exactly
+  // what somebody working remotely cannot produce — gating it would make the honest
+  // answer the one nobody can record.
+  const bareOnline = await call("/checkins/check-in", { method: "POST", token: adminToken, body: { site: "Online" } });
+  const onlineRow = adminId ? await db.checkIn.findFirst({ where: { staffId: adminId, date: staffDate } }) : null;
+  if (onlineRow && !made.checkIns.includes(onlineRow.id)) made.checkIns.push(onlineRow.id);
+  check("...but Online is never gated",
+    bareOnline.status === 201 && onlineRow?.site === "Online",
+    `HTTP ${bareOnline.status} site=${onlineRow?.site}`);
+
+  // And with staff tapping switched off the ordinary route works again — the gate must
+  // follow the college's setting rather than the feature merely existing.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: false } });
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
+  const ungated = await call("/checkins/check-in", { method: "POST", token: adminToken, body: { site: "Onsite" } });
+  const ungatedRow = adminId ? await db.checkIn.findFirst({ where: { staffId: adminId, date: staffDate } }) : null;
+  if (ungatedRow && !made.checkIns.includes(ungatedRow.id)) made.checkIns.push(ungatedRow.id);
+  check("a college that has not enabled staff tapping keeps the ordinary button",
+    ungated.status === 201 && ungatedRow?.site === "Onsite",
+    `HTTP ${ungated.status} site=${ungatedRow?.site}`);
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: true } });
+
+  /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");
   /* ====================================================================== */
 

@@ -718,21 +718,12 @@ const HOME_SITES = ["HND", "FE", "SL"];
 // Clocking in by touching a sticker. Renders nothing at all unless the college has
 // switched tap check-in on AND allowed it for staff, so nobody sees a control that would
 // only ever refuse them.
-function StaffTapCheckIn({ store }) {
-  const [settings, setSettings] = useState(null);
-  useEffect(() => {
-    // The STAFF-reachable settings route, not the admin one. api.tapSettings() lives on a
-    // router gated by the NFC Tags page, so asking it here 403'd for every ordinary
-    // lecturer and this card silently rendered nothing — the feature worked and was
-    // invisible to everybody it was built for. Still silent on failure: a college that
-    // has not migrated yet should show the two buttons above, not an error.
-    api.staffTapSettings().then(setSettings).catch(() => setSettings({ enabled: false }));
-  }, []);
+function StaffTapCheckIn({ store, settings }) {
   if (!settings?.enabled || !settings?.staffTapEnabled) return null;
 
   return (
     <div className="mt-4">
-      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Or tap a sticker</p>
+      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Tap the sticker to clock in</p>
       <CheckInCard
         armSeconds={settings.armSeconds || 60}
         actionLabel="Clock in — Onsite"
@@ -759,6 +750,26 @@ function CheckInScreen({ store, me }) {
   // Which site they're clocking in from today. Must be chosen before the button
   // enables, so every check-in carries a site.
   const [site, setSite] = useState(null);
+  // Whether this college requires a sticker for an ONSITE clock-in.
+  //
+  // Read here rather than only inside the tap card, because the plain Check In button
+  // below has to know too. It did not, so the card was an ALTERNATIVE route in rather
+  // than a gate: a member of staff picked Onsite, pressed the ordinary button, and was
+  // clocked in without going near a sticker. That is not what "the button opens once you
+  // tap" means, and it made the tap decorative.
+  //
+  // The STAFF-reachable route, not the admin one: api.tapSettings() sits behind the NFC
+  // Tags page and 403s for an ordinary lecturer. Silent on failure — a college that has
+  // not migrated yet keeps the two buttons and loses nothing.
+  const [tapSettings, setTapSettings] = useState(null);
+  useEffect(() => {
+    api.staffTapSettings().then(setTapSettings).catch(() => setTapSettings({ enabled: false }));
+  }, []);
+  const tapRequired = Boolean(tapSettings?.enabled && tapSettings?.staffTapEnabled);
+  // Online is deliberately NOT gated. A sticker proves somebody stood in the building,
+  // which is exactly the thing a person working from home cannot do — requiring one to
+  // record remote work would make the honest answer unrecordable.
+  const onsiteNeedsTap = tapRequired && site === "Onsite";
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
   const checkIn = () => store.checkIn(site);
   const checkOut = () => store.checkOut(rec.id);
@@ -806,15 +817,26 @@ function CheckInScreen({ store, me }) {
               })}
             </div>
 
-            {/* Tapping a sticker is the OTHER way in, and it does not ask where you are
-                working: touching a wall in the building settles that. Online stays on
-                the buttons above, which is why both are offered rather than one
-                replacing the other. */}
-            <StaffTapCheckIn store={store} />
+            {/* Shown only once Onsite is chosen. Offering it beside an Online selection
+                would be offering the one route that contradicts the answer just given. */}
+            {onsiteNeedsTap && <StaffTapCheckIn store={store} settings={tapSettings} />}
           </div>
         )}
         <div className="mt-5">
-          {!checkedIn && <PrimaryBtn onClick={checkIn} disabled={!site} className="w-full !py-3.5 text-base"><LogIn size={20} /> {site ? `Check In · ${site}` : "Choose onsite or online"}</PrimaryBtn>}
+          {/* The gate. While this college requires a sticker for onsite work, the
+              ordinary button cannot record one — the tap card above is the only route,
+              and its own button stays grey until a sticker has actually been read.
+              Online is unaffected, so nobody is ever left unable to record their day. */}
+          {!checkedIn && !onsiteNeedsTap && <PrimaryBtn onClick={checkIn} disabled={!site} className="w-full !py-3.5 text-base"><LogIn size={20} /> {site ? `Check In · ${site}` : "Choose onsite or online"}</PrimaryBtn>}
+          {!checkedIn && onsiteNeedsTap && (
+            <p className="rounded-xl bg-slate-50 px-4 py-3 text-center text-[13px] leading-relaxed text-slate-500 ring-1 ring-slate-200">
+              Onsite clock-in is by sticker at this college. Hold your phone to the sticker above to switch the button on.
+              <br />
+              <button type="button" onClick={() => setSite("Online")} className="mt-1 font-semibold underline" style={{ color: NAVY }}>
+                Working online instead?
+              </button>
+            </p>
+          )}
           {checkedIn && !rec.out && <PrimaryBtn onClick={checkOut} colour={MAROON} className="w-full !py-3.5 text-base"><LogOut size={20} /> Check Out</PrimaryBtn>}
           {checkedIn && rec.out && <div className="rounded-xl bg-emerald-50 py-3 text-sm font-semibold text-emerald-700">✓ Your day is complete. Have a great evening!</div>}
         </div>

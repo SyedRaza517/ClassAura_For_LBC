@@ -260,7 +260,7 @@ export default function StudentApp({ user, logout }) {
           {screen === "reviews" && <ReviewsScreen {...shared} />}
           {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
-          {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} />}
+          {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
         <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies} />
       </div>
@@ -360,6 +360,11 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
 // would put a menu in front of every student every day for the sake of a few.
 function StudentCheckIn({ tapContext, reload }) {
   const [picked, setPicked] = useState(null);
+  // Hidden on the home screen when the college has not switched tap check-in on: a
+  // student should not be shown a control their institution has not adopted. The row on
+  // the More screen stays visible in that case and says so, because rendering NOTHING
+  // anywhere made "switched off" and "never built" look identical — and that is how this
+  // came to be reported as missing.
   if (!tapContext?.enabled) return null;
 
   const running = tapContext.now || [];
@@ -1008,7 +1013,44 @@ function QueryScreen({ queries = [], reload }) {
 
 /* ============================== more ============================== */
 
-function MoreScreen({ user, logout, setScreen }) {
+// What the More screen says about check-in, in every state. This exists so there is one
+// place a student — or the person setting the college up — can always look and get a
+// straight answer, rather than an absence they have to interpret.
+function CheckInStatusRow({ tapContext, setScreen }) {
+  const loading = tapContext == null;
+  const off = !loading && !tapContext.enabled;
+  const running = (tapContext?.now || []).length;
+  const next = tapContext?.next;
+
+  const body = loading
+    ? "Checking…"
+    : off
+      ? "Your college hasn't switched on tap check-in yet. When it does, a Check in card appears at the top of your home screen."
+      : running
+        ? `You can check in now — ${running > 1 ? "choose which class" : (tapContext.now[0].unitName || tapContext.now[0].unitCode)}. The card is at the top of your home screen.`
+        : next
+          ? `Nothing to check in to yet. Your next class starts at ${next.startTime}.`
+          : "No more classes today.";
+
+  return (
+    <button
+      type="button"
+      onClick={() => setScreen("home")}
+      disabled={loading || off}
+      className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default"
+    >
+      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: off ? "#f1f5f9" : NAVY + "14" }}>
+        <Nfc size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-bold text-slate-800">Check in with a sticker</span>
+        <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500">{body}</span>
+      </span>
+    </button>
+  );
+}
+
+function MoreScreen({ user, logout, setScreen, tapContext }) {
   const [cur, setCur] = useState(""); const [nw, setNw] = useState(""); const [cf, setCf] = useState("");
   const [pwBusy, setPwBusy] = useState(false); const [pwErr, setPwErr] = useState(""); const [pwOk, setPwOk] = useState(false);
   const [openPw, setOpenPw] = useState(false);
@@ -1049,6 +1091,11 @@ function MoreScreen({ user, logout, setScreen }) {
         <p className="text-xs text-slate-400">{user.email}</p>
         {user.studentRef && <span className="mt-2 inline-block rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500">Student · {user.studentRef}</span>}
       </Card>
+
+      {/* Always present, in every state. The home card only appears when a class is
+          actually checkable, which is right for a student but left nobody able to tell
+          "switched off" from "not built" — the reason this was reported missing. */}
+      <CheckInStatusRow tapContext={tapContext} setScreen={setScreen} />
 
       {/* The second way in. Home only shows a review card once one exists, so this row
           is what makes the screen findable — and it's here whether there are any or not. */}
