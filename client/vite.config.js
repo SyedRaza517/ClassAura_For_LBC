@@ -36,9 +36,12 @@ const FOREIGN_HOSTS = [
  * Where a deployed build should point when nobody has said explicitly.
  *
  * Vercel sets VERCEL_GIT_COMMIT_REF to the branch being built, and this repo's two front
- * ends build from two branches — so the branch is the honest signal. An explicit
- * VITE_API_URL still wins, because a dashboard variable or a one-off CI override is
- * somebody stating an intention and this is only a default.
+ * ends build from two branches — so the branch is the honest signal.
+ *
+ * An explicit VITE_API_URL wins, with ONE exception: a value naming a host in
+ * FOREIGN_HOSTS is overridden, because such a value cannot be an intention. Those hosts
+ * belong to another product, so a build using one is broken whatever anybody meant by it.
+ * See the reasoning in config() below.
  */
 function apiUrlForBranch() {
   const branch = process.env.VERCEL_GIT_COMMIT_REF || "";
@@ -58,12 +61,40 @@ function requireProductionApiUrl() {
     name: "require-production-api-url",
     apply: "build",
     config() {
-      // Supply the branch default BEFORE Vite resolves env, so a clean clone with no
-      // .env.production still produces a working build instead of failing the check
-      // below. Never overrides an explicit value.
-      if (!process.env.VITE_API_URL) {
-        const derived = apiUrlForBranch();
-        if (derived) process.env.VITE_API_URL = derived;
+      const derived = apiUrlForBranch();
+      const current = process.env.VITE_API_URL || "";
+
+      // Nothing set: supply the branch default, so a clean clone with no
+      // .env.production still builds something that works rather than failing the
+      // check below.
+      if (!current && derived) {
+        process.env.VITE_API_URL = derived;
+        return {};
+      }
+
+      // Set, but set to an API that is not ours. OVERRIDE IT.
+      //
+      // This deliberately beats an explicit value, which is not a thing to do lightly —
+      // a configured variable normally means somebody stated an intention. The reason it
+      // is right here is that the value cannot be the intention: those hosts serve a
+      // different product, so a build using one cannot work, and both Vercel projects
+      // carried the SAME wrong value. The alternatives were both worse. Failing the
+      // build stops two deployments dead until someone edits a dashboard. Honouring it
+      // ships a client that talks to another system and looks broken rather than
+      // erroring — which is exactly how this went unnoticed for days.
+      //
+      // So: correct it, and say so loudly enough that the log makes the cause obvious.
+      const foreign = FOREIGN_HOSTS.find((f) => current.includes(f.host));
+      if (foreign && derived) {
+        console.warn(
+          `\n[api-url] VITE_API_URL is ${current}\n` +
+          `[api-url]   that host is ${foreign.belongsTo}, so this build would not reach our API.\n` +
+          `[api-url]   Using ${derived} instead, chosen from branch "${process.env.VERCEL_GIT_COMMIT_REF}".\n` +
+          `[api-url]   To silence this, remove VITE_API_URL from the Vercel project's\n` +
+          `[api-url]   Environment Variables — the branch already decides correctly — or set it\n` +
+          `[api-url]   to the URL above.\n`
+        );
+        process.env.VITE_API_URL = derived;
       }
       return {};
     },
@@ -83,9 +114,10 @@ function requireProductionApiUrl() {
         );
       }
 
-      // Pointing at the right kind of URL is not the same as pointing at OUR API. This
-      // is the check that would have caught the lbc_staff_hub misconfiguration on the
-      // day it was introduced rather than four days later.
+      // Still foreign at this point means config() could not substitute anything — no
+      // VERCEL_GIT_COMMIT_REF, so this is a local or non-Vercel build and there is no
+      // branch to infer from. Nothing correct is available to fall back to, so failing
+      // is the only honest answer left.
       const foreign = FOREIGN_HOSTS.find((f) => url.includes(f.host));
       if (foreign) {
         throw new Error(
