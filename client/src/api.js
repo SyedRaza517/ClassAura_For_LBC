@@ -733,6 +733,11 @@ export const api = {
   // students and marks. sync only STARTS the run and returns — reading a whole VLE
   // can outlast a proxy's request timeout — so poll moodleStatus() for the result.
   moodleStatus: () => request("/moodle/status"),
+  // Canvas is READ-ONLY here: a preview reports what an import would find and writes
+  // nothing. There is deliberately no canvasSync() — nothing writes Canvas data yet,
+  // and a sync call that imported nothing would read as a working integration.
+  canvasStatus: () => request("/canvas/status"),
+  canvasPreview: () => request("/canvas/preview", { timeoutMs: 120000 }),
   // A preview reads every course, every enrolment and every grade item in the VLE, so
   // it legitimately outlives the default deadline.
   moodlePreview: () => request("/moodle/preview", { timeoutMs: 180000 }),

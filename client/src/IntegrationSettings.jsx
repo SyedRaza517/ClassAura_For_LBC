@@ -10,7 +10,7 @@
 // blank box that silently wipes a working credential is the obvious trap here.
 import React, { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
-import { Plug, Loader2, CheckCircle2, AlertTriangle, Trash2, Save, X, PlugZap } from "lucide-react";
+import { Plug, Loader2, CheckCircle2, AlertTriangle, Trash2, Save, X, PlugZap, Eye } from "lucide-react";
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:opacity-60";
@@ -151,6 +151,19 @@ function ProviderCard({ item, onSaved, onRemoved }) {
   // The result of the most recent "Test connection" in THIS session. item.lastTest*
   // carries the stored result from previous ones.
   const [testing, setTesting] = useState(false);
+  // Canvas preview: a read-only report of what an import would find. Held in this
+  // session only, like the test result beside it — it is a diagnostic, not a setting.
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const runPreview = async () => {
+    setPreviewing(true); setPreview(null);
+    try {
+      setPreview(await api.canvasPreview());
+    } catch (e) {
+      // A failure to read Canvas is itself a finding worth showing, in the same box.
+      setPreview({ ok: false, note: e?.message || "Could not read Canvas." });
+    } finally { setPreviewing(false); }
+  };
   const [test, setTest] = useState(null);
 
   useEffect(() => {
@@ -297,6 +310,29 @@ function ProviderCard({ item, onSaved, onRemoved }) {
             </div>
           )}
 
+          {preview && (
+            <div className={`rounded-xl px-3.5 py-3 text-[13px] ring-1 ${preview.ok ? "bg-slate-50 text-slate-700 ring-slate-200" : "bg-amber-50 text-amber-800 ring-amber-200"}`}>
+              <p className="font-semibold">{preview.note}</p>
+              {preview.summary && (
+                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[12px] text-slate-600 sm:grid-cols-3">
+                  <li>Courses sampled: <b>{preview.summary.coursesSampled}</b></li>
+                  <li>Students: <b>{preview.summary.students}</b></li>
+                  <li>Assignments: <b>{preview.summary.assignments}</b></li>
+                  <li>Submission rows: <b>{preview.summary.submissionRows}</b></li>
+                  <li>Marked as submitted: <b>{preview.summary.submitted}</b></li>
+                  {/* THE FIGURE THIS SCREEN IS FOR. */}
+                  <li>With a hand-in date: <b>{preview.summary.withDates}</b>{preview.summary.datedPercent != null ? ` (${preview.summary.datedPercent}%)` : ""}</li>
+                </ul>
+              )}
+              {Array.isArray(preview.issues) && preview.issues.length > 0 && (
+                <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
+                  {preview.issues.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              )}
+              <p className="mt-2 text-[11px] text-slate-400">Nothing was imported — this reads Canvas and writes nothing.</p>
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2 pt-1">
             <button type="submit" disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
               {busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Save
@@ -304,6 +340,18 @@ function ProviderCard({ item, onSaved, onRemoved }) {
             {item.configured && (
               <button type="button" onClick={runTest} disabled={busy || testing} className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-50 disabled:opacity-60">
                 {testing ? <Loader2 size={15} className="animate-spin" /> : <PlugZap size={15} />} Test connection
+              </button>
+            )}
+            {/* Canvas only, and READ-ONLY. Canvas has a complete client and normaliser
+                but nothing that writes its data here yet, so there is no sync button to
+                offer — a sync button that imported nothing would read as a working
+                integration. The preview reads Canvas and reports what an importer WOULD
+                find, chiefly whether this account's submissions carry real hand-in
+                dates. That is the property that decides whether the importer is worth
+                building, because Moodle+Turnitin does not carry them. */}
+            {item.provider === "canvas" && item.configured && (
+              <button type="button" onClick={runPreview} disabled={busy || previewing} className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-50 disabled:opacity-60">
+                {previewing ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />} Preview import
               </button>
             )}
             {item.configured && (

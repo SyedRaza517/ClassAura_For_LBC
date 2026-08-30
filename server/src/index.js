@@ -106,6 +106,7 @@ app.use("/api/timesheets", wrapAsync(require("./routes/timesheets")));
 app.use("/api/student", wrapAsync(require("./routes/student")));
 app.use("/api/student-queries", wrapAsync(require("./routes/studentQueries")));
 app.use("/api/moodle", wrapAsync(require("./routes/moodle")));
+app.use("/api/canvas", wrapAsync(require("./routes/canvas")));
 app.use("/api/staff-reviews", wrapAsync(require("./routes/staffReviews")));
 app.use("/api/passwords", wrapAsync(require("./routes/passwords")));
 app.use("/api/my-reviews", wrapAsync(require("./routes/myReviews")));
