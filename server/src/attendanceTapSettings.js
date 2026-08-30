@@ -26,6 +26,24 @@ const DEFAULTS = Object.freeze({
   armSeconds: 60,
   // Whether the same stickers also clock staff in.
   staffTapEnabled: true,
+  // Whether a lecturer can put a rotating QR code on screen and have students scan it.
+  //
+    // Ships OFF, and SEPARATELY from `enabled` rather than implied by it. These are two
+  // different capture methods with different physical properties — a sticker needs
+  // proximity, a screen can be photographed — and a college may reasonably want one and
+  // not the other. Inferring this switch from the sticker switch would silently give an
+  // institution a second way of writing to its attendance record on the next deploy,
+  // which is the exact thing `enabled` defaulting to false exists to prevent.
+  qrEnabled: false,
+  // How often the on-screen code changes.
+  //
+  // This is the single number the feature's honesty rests on. A photographed screen works
+  // until the code rotates, so this is literally how long proxy attendance stays possible
+  // — and it trades directly against a student with a slow phone or poor signal, who is
+  // refused if the code moves on before they can focus. Thirty seconds is the compromise;
+  // it is a setting because this is exactly the sort of threshold a college will want to
+  // argue about, and it should not need a deploy to say so.
+  qrRotateSeconds: 30,
 });
 
 const SETTING_FIELDS = Object.freeze(Object.keys(DEFAULTS));
@@ -35,6 +53,21 @@ const SETTING_FIELDS = Object.freeze(Object.keys(DEFAULTS));
 // the attendance record. Two hours is past any plausible intent.
 const MAX_MINS = 120;
 const MAX_ARM_SECONDS = 600;
+
+// The rotation period is bounded at BOTH ends, and the floor does as much work as the
+// ceiling — which is unusual here and worth saying why.
+//
+// Too long, and the code stops rotating in any meaningful sense: a square that lives for
+// an hour is the permanent code this whole design exists to avoid, reachable by typing a
+// large number into a settings box.
+//
+// Too short, and the feature simply does not work. A code that changes every second is
+// gone before a phone at the back of a room can focus on it, and the failure presents as
+// "the QR never works" rather than as a bad setting — so it gets blamed on the feature and
+// switched off. Ten seconds is about the floor of what a phone camera plus a network round
+// trip can actually complete.
+const MIN_QR_ROTATE_SECONDS = 10;
+const MAX_QR_ROTATE_SECONDS = 300;
 
 /** A whole number of minutes within range, or null when the value is unusable. */
 function minutes(v, max) {
@@ -84,7 +117,20 @@ function merge(stored, base = DEFAULTS) {
   const arm = minutes(stored.armSeconds, MAX_ARM_SECONDS);
   if (arm !== null) out.armSeconds = arm;
 
+  if (stored.qrEnabled === true || stored.qrEnabled === false) out.qrEnabled = stored.qrEnabled;
+
+  // Clamped rather than merely capped, because this field has a meaningful floor. Note
+  // `minutes()` is reused for the range check but returns null for anything unusable, so a
+  // bad value still falls through to the base — ignored, not reset, as the PATCH contract
+  // promises. A usable-but-too-small number is raised to the floor rather than ignored:
+  // somebody typing 5 meant "as fast as possible", not "leave it alone".
+  const rotate = minutes(stored.qrRotateSeconds, MAX_QR_ROTATE_SECONDS);
+  if (rotate !== null) out.qrRotateSeconds = Math.max(MIN_QR_ROTATE_SECONDS, rotate);
+
   return out;
 }
 
-module.exports = { DEFAULTS, SETTING_FIELDS, MAX_MINS, MAX_ARM_SECONDS, merge };
+module.exports = {
+  DEFAULTS, SETTING_FIELDS, MAX_MINS, MAX_ARM_SECONDS,
+  MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, merge,
+};

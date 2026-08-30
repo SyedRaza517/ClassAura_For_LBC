@@ -14,6 +14,7 @@ import {
   Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy,
   Radio,
   Nfc,
+  Gauge,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -26,6 +27,8 @@ import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
 import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance from "./AdminLiveAttendance";
+import AssessmentTracker from "./AssessmentTracker";
+import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import MyTimetable from "./MyTimetable";
 import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
@@ -2195,8 +2198,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
 // A grantable page is named in THREE hand-maintained places and nothing joins them:
 // ADMIN_PAGES above (which the server duplicates a fourth time in validate.js),
@@ -2218,8 +2221,9 @@ const warnOnPageListDrift = (allNav) => {
   const noNav = ADMIN_PAGES.filter(k => !navKeys.has(k));
   // The reverse direction too: a label for a page nobody can be granted is dead weight,
   // usually the fossil of a page renamed in one list only. allNav is deliberately NOT
-  // checked in reverse — "audit" and "access" are meant to be absent from ADMIN_PAGES
-  // (see the comments on each), so flagging them would train people to ignore this.
+  // checked in reverse — "audit", "access" and "assessment-tracker-setup" are meant to
+  // be absent from ADMIN_PAGES (see the comments on each), so flagging them would train
+  // people to ignore this.
   const orphanLabels = Object.keys(PAGE_LABELS).filter(k => !ADMIN_PAGES.includes(k));
   if (noLabel.length) console.warn("[StaffHub] ADMIN_PAGES keys with no PAGE_LABELS entry (they render as an unlabelled checkbox on the Access tab):", noLabel);
   if (noNav.length) console.warn("[StaffHub] ADMIN_PAGES keys with no allNav entry (grantable, but they reach no screen):", noNav);
@@ -2677,6 +2681,10 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "ism", label: "ISM", I: MessageSquare },
     { key: "slc", label: "SLC", I: Wallet },
     { key: "assessments", label: "Assessments", I: Award },
+    { key: "assessment-tracker", label: "Assessment Tracker", I: Gauge },
+    // Two screens, ONE permission. See the nav filter below for why this key is
+    // deliberately absent from ADMIN_PAGES.
+    { key: "assessment-tracker-setup", label: "Tracker Setup", I: SlidersHorizontal },
     { key: "pat", label: "PAT", I: MessageSquare },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
@@ -2703,6 +2711,16 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // sensible thing to be able to configure.
   const nav = allNav.filter(n => n.key === "audit"
     ? AUDIT_READER_PAGES.some(p => canAccessPage(me, p))
+    // The tracker's setup screen is a second SCREEN behind one permission, not a
+    // second permission. Deriving its visibility here — rather than adding it to
+    // ADMIN_PAGES — keeps the grantable list at four hand-maintained copies instead of
+    // five, and makes it impossible to hold the screen that configures the tracker
+    // without holding the tracker it configures. Same reasoning as "audit" above.
+    //
+    // It needs a key of its own rather than sharing "assessment-tracker" because
+    // activeKey below matches on key alone and every nav button calls setTab(n.key),
+    // so two entries sharing a key would both highlight and both render one screen.
+    : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
     : canAccessPage(me, n.key));
   const [tab, setTab] = useState(() => nav[0]?.key || "overview");
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
@@ -2780,6 +2798,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}
+        {activeKey === "assessment-tracker" && <AssessmentTracker me={me} />}
+        {activeKey === "assessment-tracker-setup" && <AssessmentTrackerSetup />}
         {activeKey === "pat" && <AdminPAT store={store} />}
         {activeKey === "prediction" && <AdminPrediction store={store} />}
         {activeKey === "mitigations" && <AdminMitigations />}
@@ -10429,6 +10449,45 @@ function UnitGradeGrid({ store, unit, assessments }) {
   );
 }
 
+/* ----- Did this student hand the work in? -----
+ *
+ * A separate question from the mark beside it, and it cannot be answered from a mark:
+ * a grade exists only once work has been MARKED, so the gradebook alone cannot tell a
+ * student who submitted and is waiting from one who submitted nothing at all.
+ *
+ * A NULL ROW IS NEVER RENDERED AS "NOT SUBMITTED". The LMS sync writes a row per
+ * enrolled student, so a missing row means the sync did not cover this student — not
+ * that they handed nothing in. Saying "not submitted" against a named individual on the
+ * strength of a row nobody wrote is the version of this bug that reaches a student, and
+ * "not_submitted" already exists as an explicit status for when the LMS says so.
+ *
+ * `recordsSubmissions` chooses only the wording of that unknown: "Not synced" when no
+ * integration anywhere feeds this, "Awaiting sync" when the college does record
+ * submissions and this assessment has not been covered.
+ */
+function SubmittedCell({ submission, recordsSubmissions }) {
+  if (!submission) {
+    return <span className="text-[11px] italic text-slate-400">{recordsSubmissions ? "Awaiting sync" : "Not synced"}</span>;
+  }
+  if (submission.status === "submitted") {
+    return (
+      <>
+        <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">SUBMITTED</span>
+        {submission.submittedOn && <span className="ml-1.5 text-[11px] text-slate-500">{fmtDate(submission.submittedOn)}</span>}
+        {/* onTime === false is late. onTime === null is NOT late — it means there was
+            nothing to be late against (no due date), and treating it as late would
+            accuse a student of something the data does not say. */}
+        {submission.onTime === false && <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-bold text-amber-700 ring-1 ring-amber-100">LATE</span>}
+      </>
+    );
+  }
+  if (submission.status === "not_submitted") {
+    // The one case that earns a warning colour: the LMS actually said so.
+    return <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">NOT SUBMITTED</span>;
+  }
+  return <span className="text-[11px] italic text-slate-400">Unknown</span>;
+}
+
 /* ----- Grade entry for one assessment (all enrolled students) ----- */
 function GradeEntry({ store, assessment, onBack }) {
   const [data, setData] = useState(null);
@@ -10525,8 +10584,10 @@ function GradeEntry({ store, assessment, onBack }) {
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
+          {/* 560 → 700 because a sixth column was added; the old floor let the
+              Submitted and Marks columns collide before the scroll container kicked in. */}
+          <table className="w-full min-w-[700px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Submitted</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
             <tbody>
               {paged.slice.map(r => {
                 const v = draft[r.student.id] ?? "";
@@ -10544,19 +10605,25 @@ function GradeEntry({ store, assessment, onBack }) {
                             {r.source === "moodle" && <span className="ml-1.5 rounded bg-violet-50 px-1 py-0.5 text-[9px] font-bold text-violet-600 ring-1 ring-violet-100">MOODLE</span>}</>
                         : <span className="text-[11px] text-slate-300">—</span>}
                     </td>
+                    <td className="px-5 py-2.5 whitespace-nowrap"><SubmittedCell submission={r.submission} recordsSubmissions={data.recordsSubmissions} /></td>
                     <td className="px-5 py-2.5"><input inputMode="numeric" value={v} onChange={e => setMark(r.student.id, e.target.value)} placeholder="—" className={`w-24 rounded-lg border px-2.5 py-1.5 text-sm outline-none transition focus:ring-2 ${bad ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100" : "border-slate-200 focus:border-blue-400 focus:ring-blue-100"}`} /></td>
                     <td className="px-5 py-2.5 text-center tabular-nums text-slate-500">{pct == null ? "—" : `${pct}%`}</td>
                     <td className="px-5 py-2.5 text-center">{band ? <span className={`rounded-lg px-2 py-1 text-[11px] font-extrabold ${gt.bg} ${gt.text}`}>{band}</span> : <span className="text-slate-300">—</span>}</td>
                   </tr>
                 );
               })}
-              {paged.slice.length === 0 && <tr><td colSpan={5} className="px-5 py-10"><EmptyState Icon={Users} title={rows.length === 0 ? "No students enrolled" : "No students match"} msg={rows.length === 0 ? "Enrol students onto this unit first." : "Try a different search."} /></td></tr>}
+              {paged.slice.length === 0 && <tr><td colSpan={6} className="px-5 py-10"><EmptyState Icon={Users} title={rows.length === 0 ? "No students enrolled" : "No students match"} msg={rows.length === 0 ? "Enrol students onto this unit first." : "Try a different search."} /></td></tr>}
             </tbody>
           </table>
         </div>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
       <p className="mt-3 text-[11px] text-slate-400">Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail. Leave a mark blank to clear it.</p>
+      {/* Says why the column is empty, so nobody reads a missing integration as a
+          cohort that handed nothing in. */}
+      {!data.recordsSubmissions && (
+        <p className="mt-1 text-[11px] text-slate-400">Submission data is imported from the LMS and no import has run yet, so the Submitted column reads “Not synced”.</p>
+      )}
     </>
   );
 }

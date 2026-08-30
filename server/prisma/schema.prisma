@@ -513,6 +513,7 @@ model Staff {
   staffReviews     StaffReview[]
   studentReviews   StudentReview[]
   unitsTaught      Unit[]          @relation("UnitTutor")
+  unitsLed         Unit[]          @relation("UnitLeader")
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
@@ -948,6 +949,21 @@ model Unit {
   // SetNull, so removing a staff member never deletes the units they taught.
   tutorStaff   Staff?     @relation("UnitTutor", fields: [tutorStaffId], references: [id], onDelete: SetNull)
   tutorStaffId String?
+  // The member of staff who LEADS this module, as distinct from tutorStaff above, who
+  // TEACHES it. They are frequently different people and the assessment tracker exists
+  // partly to make that visible: the lecturer is chased about a register, the module
+  // leader is chased about a marking deadline.
+  //
+  // Nullable, and that is a measurement decision rather than laziness. A module whose
+  // leader has not been named yet is NOT MEASURABLE, not "unassigned" — the tracker
+  // renders "—" and excludes it from any count of modules missing a leader, so a
+  // college part-way through configuring the page is never reported as having a
+  // problem it does not have.
+  //
+  // SetNull mirrors tutorStaffId exactly: removing a staff account must never cascade
+  // into deleting the modules that person led.
+  leaderStaff   Staff?    @relation("UnitLeader", fields: [leaderStaffId], references: [id], onDelete: SetNull)
+  leaderStaffId String?
   // A unit can belong to a specific cohort + dated term (the intake and teaching term
   // it runs in). Nullable so existing units and the "just a unit" case still work;
   // set-null on delete keeps registers if a cohort/term is removed.
@@ -968,6 +984,7 @@ model Unit {
   @@index([courseId])
   @@index([cohortId])
   @@index([termId])
+  @@index([leaderStaffId])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
@@ -990,6 +1007,18 @@ model Assessment {
   maxMarks  Int      @default(100)
   weight    Int      @default(0)  // percentage weighting toward the unit (0 = unset)
   dueDate   String?               // YYYY-MM-DD
+  // The date by which this assessment's scripts are to be MARKED, as distinct from
+  // dueDate above, which is when students hand the work in. Two different deadlines
+  // owned by two different people, and the gap between them is what the assessment
+  // tracker measures.
+  //
+  // Deliberately NOT called `deadline`: Unit.submissionDate already exists and means a
+  // third thing (the unit's own hand-in window), so an unqualified name here would be
+  // genuinely ambiguous to the next reader.
+  //
+  // Nullable — a college that does not set internal marking deadlines is not late, it
+  // is unmeasured, and the tracker must say so rather than show every row as overdue.
+  markingDueDate String?          // YYYY-MM-DD
   createdAt DateTime @default(now())
 
   grades AssessmentGrade[]

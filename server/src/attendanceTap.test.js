@@ -225,3 +225,49 @@ test("a session that has already ended does not make a running one ambiguous", (
   assert.equal(r.kind, "one");
   assert.equal(r.session.id, "s1");
 });
+
+// ---------------------------------------------------------------------------
+// Which marks were written by the student rather than by a person in the room
+// ---------------------------------------------------------------------------
+//
+// routes/hnd.js builds the lecturer's live view with `takenBy === SELF_CHECKIN_STAMP` —
+// an exact equality against one string. A second capture method writing a second stamp
+// would make selfMarked come back FALSE for every check-in it takes, so the one screen
+// built to show the difference between "a student marked themselves" and "a human marked
+// them" would assert the opposite of the truth. Hence a predicate rather than a compare,
+// and hence these tests: this is the ADMIN_PAGES failure shape — a value two places must
+// agree on — and that one is only survivable because a test checks it.
+
+const {
+  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn,
+} = require("./attendanceTap");
+
+test("the NFC stamp keeps its exact historical wording", () => {
+  // Pinned deliberately. Rows in both live databases already carry this string, and the
+  // lecturer's view reads it back. Changing it would silently reclassify every self
+  // check-in ever recorded as staff-marked. If this test fails, the fix is to restore the
+  // string, not to update the test.
+  assert.equal(SELF_CHECKIN_STAMP, "Self check-in (NFC)");
+});
+
+test("a QR check-in counts as self-marked", () => {
+  assert.equal(isSelfCheckIn(SELF_CHECKIN_QR_STAMP), true);
+});
+
+test("an NFC check-in still counts as self-marked", () => {
+  assert.equal(isSelfCheckIn(SELF_CHECKIN_STAMP), true);
+});
+
+test("every registered self check-in stamp is recognised by the predicate", () => {
+  // The guard against a third capture method being added to the list and forgotten in the
+  // predicate — which is the same bug this predicate exists to fix, one level up.
+  for (const stamp of SELF_CHECKIN_STAMPS) {
+    assert.equal(isSelfCheckIn(stamp), true, `${stamp} is registered but not recognised`);
+  }
+});
+
+test("a mark taken by a member of staff is not self-marked", () => {
+  for (const takenBy of ["A. Khan", "Self check-in", "self check-in (qr)", "", null, undefined]) {
+    assert.equal(isSelfCheckIn(takenBy), false, `${JSON.stringify(takenBy)} must not read as self-marked`);
+  }
+});

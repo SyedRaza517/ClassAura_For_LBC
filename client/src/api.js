@@ -668,6 +668,23 @@ export const api = {
   // student app's `studentAssessments` (their own results) — when both keys shared a
   // name the later one silently won and broke the student "My Results" screen.
   adminStudentAssessments: (studentId) => request(`/assessments/student/${studentId}`),
+
+  // assessment tracker — the management view over assessment progress.
+  //
+  // The two writes go to narrow, single-purpose endpoints rather than to the general
+  // unit and assessment updaters. Those live behind guards that also protect deleting
+  // a unit and reading student marks, and a tracker admin holds neither; see the
+  // comments on the routes themselves.
+  assessmentTracker: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/assessment-tracker${q ? `?${q}` : ""}`);
+  },
+  assessmentTrackerSetup: () => request("/assessment-tracker/setup"),
+  // "" clears the leader — the server reads an empty string as "not recorded".
+  setUnitLeader: (unitId, leaderStaffId) =>
+    request(`/hnd/units/${unitId}/leader`, { method: "PUT", body: { leaderStaffId } }),
+  setMarkingDeadline: (assessmentId, markingDueDate) =>
+    request(`/assessments/${assessmentId}/marking-deadline`, { method: "PUT", body: { markingDueDate } }),
   execSummary: () => request("/assessments/exec-summary"),
   // staff reviews (Strategic Self-Reflection, Monthly Performance & Support)
   // The question definitions come FROM the server, so a new form or a reworded
