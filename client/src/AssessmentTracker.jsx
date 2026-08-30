@@ -63,24 +63,28 @@ const Pct = ({ value, recordsSubmissions }) =>
 // Colour by state. `complete` is deliberately neutral even though its date has passed:
 // an assessment fully marked a week late is finished, and painting it red fills the
 // screen with rows nobody can act on, which trains people to ignore red.
-const STATE_STYLE = {
-  overdue: "bg-rose-50 text-rose-700 ring-rose-200",
-  due: "bg-amber-50 text-amber-700 ring-amber-200",
-  upcoming: "bg-slate-50 text-slate-600 ring-slate-200",
-  complete: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  none: "bg-slate-50 text-slate-400 ring-slate-200",
-  unknown: "bg-slate-50 text-slate-400 ring-slate-200",
-};
 const STATE_LABEL = {
   overdue: "Overdue", due: "Due today", upcoming: "Upcoming",
   complete: "Marked", none: "No deadline", unknown: "Not synced",
 };
 
-function StatePill({ state }) {
+// A deadline, coloured by its own state, with the state spelled out underneath rather
+// than left to the colour alone — colour is not readable to everyone, and "13 May" in
+// red says nothing about WHY to somebody who cannot see the red.
+//
+// No date at all reads "—" in grey and says "Not set", never "overdue": a college that
+// has not set this deadline is unmeasured, not late.
+const DEADLINE_TEXT = {
+  overdue: "text-rose-700", due: "text-amber-700", upcoming: "text-slate-700",
+  complete: "text-emerald-700", none: "text-slate-400", unknown: "text-slate-400",
+};
+function DeadlineCell({ date, state }) {
+  if (!date) return <span className="text-[12px] italic text-slate-400">Not set</span>;
   return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ${STATE_STYLE[state] || STATE_STYLE.none}`}>
-      {STATE_LABEL[state] || state}
-    </span>
+    <div className="leading-tight">
+      <div className={`tabular-nums font-semibold ${DEADLINE_TEXT[state] || DEADLINE_TEXT.none}`}>{date}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{STATE_LABEL[state] || ""}</div>
+    </div>
   );
 }
 
@@ -252,22 +256,39 @@ export default function AssessmentTracker({ me }) {
               {/* Wide table, own scroll container — the page body must never scroll
                   sideways on a laptop. */}
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[820px] text-left text-[13px]">
+                {/* 820 → 960: "Total students" was added and the two deadlines now carry
+                    a state line under the date, so the old floor let columns collide
+                    before the scroll container took over. */}
+                <table className="w-full min-w-[960px] text-left text-[13px]">
                   <thead>
+                    {/* The five columns the college asked for come first and in their
+                        order — total students, total submission, submission rate out of
+                        total students, the assessment deadline, the marking deadline.
+                        Marking progress follows, because "how many marked of those who
+                        submitted" was asked for separately and is the figure marking is
+                        actually chased on. */}
                     <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-500">
                       <th className="px-5 py-2 font-bold">Assessment</th>
-                      <th className="px-3 py-2 font-bold">Due in</th>
-                      <th className="px-3 py-2 font-bold">Submitted</th>
-                      <th className="px-3 py-2 font-bold">Submission rate</th>
-                      <th className="px-3 py-2 font-bold">Marked</th>
-                      <th className="px-3 py-2 font-bold" title="Marked ÷ students enrolled. How far through the cohort this module is.">
-                        Marked of cohort
+                      <th className="px-3 py-2 font-bold" title="Students enrolled on this module — the denominator of the submission rate.">
+                        Total students
                       </th>
+                      <th className="px-3 py-2 font-bold">Total submitted</th>
+                      <th className="px-3 py-2 font-bold" title="Submitted ÷ total students enrolled.">
+                        Submission rate
+                      </th>
+                      <th className="px-3 py-2 font-bold" title="When students must hand the work in.">
+                        Assessment deadline
+                      </th>
+                      <th className="px-3 py-2 font-bold" title="When marking must be finished. Set on Tracker Setup — Moodle has no equivalent.">
+                        Marking deadline
+                      </th>
+                      <th className="px-3 py-2 font-bold">Marked</th>
                       <th className="px-3 py-2 font-bold" title="Marked ÷ students who submitted. The marking backlog — you cannot mark a script nobody handed in.">
                         Marked of submitted
                       </th>
-                      <th className="px-3 py-2 font-bold">Marked by</th>
-                      <th className="px-3 py-2 font-bold">Marking</th>
+                      <th className="px-3 py-2 font-bold" title="Marked ÷ all students enrolled. Measurable without submission data — but on a resubmission, which only concerns the students who failed, this reads low by design.">
+                        Marked of cohort
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -277,21 +298,24 @@ export default function AssessmentTracker({ me }) {
                           {r.title}
                           <span className="ml-2 text-[11px] font-medium text-slate-400">{r.type}</span>
                         </td>
-                        <td className="px-3 py-2.5">
-                          <span className="tabular-nums text-slate-600">{r.dueDate || "—"}</span>
-                          {r.dueDate && <span className="ml-2"><StatePill state={r.dueState} /></span>}
-                        </td>
+                        {/* Total students — the denominator of the submission rate, and
+                            previously only visible in the module heading. */}
+                        <td className="px-3 py-2.5 tabular-nums font-semibold text-slate-700">{r.enrolled}</td>
                         <td className="px-3 py-2.5">
                           {r.submitted == null
                             ? <Unknown recordsSubmissions={recordsSubmissions} />
                             : <span className="tabular-nums font-semibold">{r.submitted} / {r.enrolled}</span>}
                         </td>
                         <td className="px-3 py-2.5"><Pct value={r.submissionRate} recordsSubmissions={recordsSubmissions} /></td>
+                        {/* The two deadlines. The state is carried as COLOUR on the date
+                            rather than as its own column: it saves a column on an
+                            already-wide table, and a date that is its own status reads
+                            faster than a date sitting beside a separate pill. */}
+                        <td className="px-3 py-2.5"><DeadlineCell date={r.dueDate} state={r.dueState} /></td>
+                        <td className="px-3 py-2.5"><DeadlineCell date={r.markingDueDate} state={r.markingState} /></td>
                         <td className="px-3 py-2.5"><span className="tabular-nums font-semibold">{r.marked} / {r.enrolled}</span></td>
-                        <td className="px-3 py-2.5"><Pct value={r.coverageRate} recordsSubmissions={recordsSubmissions} /></td>
                         <td className="px-3 py-2.5"><Pct value={r.markingRate} recordsSubmissions={recordsSubmissions} /></td>
-                        <td className="px-3 py-2.5 tabular-nums text-slate-600">{r.markingDueDate || "—"}</td>
-                        <td className="px-3 py-2.5"><StatePill state={r.markingState} /></td>
+                        <td className="px-3 py-2.5"><Pct value={r.coverageRate} recordsSubmissions={recordsSubmissions} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -302,12 +326,26 @@ export default function AssessmentTracker({ me }) {
         </div>
       )}
 
-      <p className="text-[12px] leading-relaxed text-slate-500">
-        <strong className="font-semibold text-slate-600">Marked of cohort</strong> is marked ÷ students enrolled, and is
-        measurable today. <strong className="font-semibold text-slate-600">Marked of submitted</strong> is the marking
-        backlog — you cannot mark a script nobody handed in — and needs submission data from the LMS. They are separate
-        columns rather than one, because a figure whose denominator changes from row to row cannot be read.
-      </p>
+      <div className="space-y-1.5 text-[12px] leading-relaxed text-slate-500">
+        <p>
+          <strong className="font-semibold text-slate-600">Submission rate</strong> is submitted ÷ total students enrolled.
+          <strong className="font-semibold text-slate-600"> Assessment deadline</strong> is when students hand work in;
+          <strong className="font-semibold text-slate-600"> marking deadline</strong> is when marking must be finished, and is
+          set on Tracker Setup because Moodle has no equivalent.
+        </p>
+        <p>
+          <strong className="font-semibold text-slate-600">Marked of submitted</strong> is the marking backlog — you cannot mark
+          a script nobody handed in — and needs submission data.
+          <strong className="font-semibold text-slate-600"> Marked of cohort</strong> is marked ÷ all students enrolled and is
+          measurable without it. They are separate columns rather than one, because a figure whose denominator changes from row
+          to row cannot be read.
+        </p>
+        <p>
+          On a <strong className="font-semibold text-slate-600">resubmission</strong>, which only concerns the students who
+          failed first time, marked-of-cohort reads low by design — six resubmissions all marked is still a small fraction of
+          the whole class. Marked of submitted is the figure to read on those rows.
+        </p>
+      </div>
     </div>
   );
 }
