@@ -2222,6 +2222,36 @@ const NAV_GROUPS = {
   "assessments-record": { label: "Assessments Record", I: ClipboardList },
 };
 
+// One sidebar button, used at both levels — `indent` is the only difference between a
+// top-level entry and a child, so a child cannot drift out of step with the styling.
+//
+// DEFINED AT MODULE SCOPE, AND THAT IS LOAD-BEARING. Declared inside the dashboard's
+// render instead, it is a NEW function identity on every render, so React treats it as
+// a different component type, unmounts every nav button and mounts fresh ones. The
+// sidebar then replays its entry animation on every re-render — and this component
+// re-renders whenever a pending count or notification poll lands, which is often. The
+// visible result is a sidebar that flickers continuously. It shipped that way once.
+//
+// The entry animation is gone from these buttons for the same reason: `slide-in` is a
+// mount animation, and the children of a group mount every time the group is opened,
+// so keeping it made expanding the parent flash its contents in. The group header and
+// the child rows now simply appear.
+function NavButton({ n, i, indent, activeKey, setTab, badges }) {
+  const on = activeKey === n.key;
+  const badge = badges?.[n.key];
+  return (
+    <button
+      onClick={() => setTab(n.key)}
+      className={`group flex w-full items-center gap-3 rounded-xl py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] ${indent ? "pl-9 pr-3" : "px-3"} ${on ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`}
+      style={on ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${alpha(BLUE, 60)}` } : undefined}
+    >
+      <n.I size={indent ? 16 : 18} className="transition-transform duration-200 group-hover:scale-110" />
+      <span className="flex-1 text-left">{n.label}</span>
+      {badge > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{badge}</span>}
+    </button>
+  );
+}
+
 // A grantable page is named in THREE hand-maintained places and nothing joins them:
 // ADMIN_PAGES above (which the server duplicates a fourth time in validate.js),
 // PAGE_LABELS above (the wording beside each checkbox on the Access tab) and allNav
@@ -2778,6 +2808,18 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   const pendingSignups = (store.signups || []).filter(s => s.status === "pending").length;
   const openQueries = (store.studentQueries || []).filter(q => q.status === "open").length;
   const timesheetsPending = store.timesheetsPending || 0;
+  // The amber counts, as data rather than four inline conditionals inside the button.
+  // NavButton lives at module scope now (see its comment), so it cannot close over
+  // these — they have to arrive as a prop.
+  //
+  // Declared HERE, after the four counts, not up beside navTree. A useMemo body runs
+  // during render, so reading a `const` declared further down the component throws on
+  // the very first render — a temporal dead zone the bundler cannot see and the build
+  // reports as success.
+  const navBadges = useMemo(() => ({
+    requests: pendingCount, approvals: pendingCount,
+    signups: pendingSignups, studentqueries: openQueries, timesheets: timesheetsPending,
+  }), [pendingCount, pendingSignups, openQueries, timesheetsPending]);
   // Guard placed after every hook above, for the reason noted at the top.
   //
   // The student check is explicit and FIRST. App.jsx already routes a student to
@@ -2797,47 +2839,34 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
           <button onClick={() => toggleSidebar(false)} title="Hide menu" aria-label="Hide menu" className="press ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><PanelLeftClose size={18} /></button>
         </div>
         <nav className="flex-1 space-y-1">
-          {(() => {
-            // One implementation of the nav button, used at both levels. `indent` is
-            // the only difference between a top-level entry and a child, so a child
-            // cannot drift out of step with the rest of the sidebar's styling.
-            const NavButton = ({ n, i, indent }) => (
-              <button key={n.key} onClick={() => setTab(n.key)} className={`group flex w-full items-center gap-3 rounded-xl py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${indent ? "pl-9 pr-3" : "px-3"} ${activeKey === n.key ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${alpha(BLUE, 60)}`, animationDelay: `${i * 35}ms` } : { animationDelay: `${i * 35}ms` }}>
-                <n.I size={indent ? 16 : 18} className="transition-transform duration-200 group-hover:scale-110" /><span className="flex-1 text-left">{n.label}</span>
-                {(n.key === "requests" || n.key === "approvals") && pendingCount > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingCount}</span>}
-                {n.key === "signups" && pendingSignups > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingSignups}</span>}
-                {n.key === "studentqueries" && openQueries > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{openQueries}</span>}
-                {n.key === "timesheets" && timesheetsPending > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{timesheetsPending}</span>}
-              </button>
+          {navTree.map((node, i) => {
+            if (node.kind === "item") {
+              return <NavButton key={node.item.key} n={node.item} i={i} activeKey={activeKey} setTab={setTab} badges={navBadges} />;
+            }
+            const open = groupOpen(node);
+            // A child being shown is what makes the PARENT look selected. The parent is
+            // not a page, so it can never be activeKey itself — without this the sidebar
+            // shows nothing highlighted while a child page is open.
+            const holdsActive = node.children.some(c => c.key === activeKey);
+            return (
+              <div key={node.id}>
+                <button
+                  onClick={() => toggleGroup(node.id)}
+                  aria-expanded={open}
+                  className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] ${holdsActive && !open ? "bg-blue-50 text-blue-700" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`}
+                >
+                  <node.I size={18} className="transition-transform duration-200 group-hover:scale-110" />
+                  <span className="flex-1 text-left">{node.label}</span>
+                  {open ? <ChevronDown size={16} className="shrink-0 opacity-70" /> : <ChevronRight size={16} className="shrink-0 opacity-70" />}
+                </button>
+                {open && (
+                  <div className="mt-1 space-y-1">
+                    {node.children.map((c, ci) => <NavButton key={c.key} n={c} i={ci} indent activeKey={activeKey} setTab={setTab} badges={navBadges} />)}
+                  </div>
+                )}
+              </div>
             );
-            return navTree.map((node, i) => {
-              if (node.kind === "item") return <NavButton key={node.item.key} n={node.item} i={i} />;
-              const open = groupOpen(node);
-              // A child being shown is what makes the PARENT look selected. The parent
-              // is not a page, so it can never be activeKey itself — without this the
-              // sidebar would show nothing highlighted while a child page is open.
-              const holdsActive = node.children.some(c => c.key === activeKey);
-              return (
-                <div key={node.id}>
-                  <button
-                    onClick={() => toggleGroup(node.id)}
-                    aria-expanded={open}
-                    className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${holdsActive && !open ? "bg-blue-50 text-blue-700" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`}
-                    style={{ animationDelay: `${i * 35}ms` }}
-                  >
-                    <node.I size={18} className="transition-transform duration-200 group-hover:scale-110" />
-                    <span className="flex-1 text-left">{node.label}</span>
-                    {open ? <ChevronDown size={16} className="shrink-0 opacity-70" /> : <ChevronRight size={16} className="shrink-0 opacity-70" />}
-                  </button>
-                  {open && (
-                    <div className="mt-1 space-y-1">
-                      {node.children.map((c, ci) => <NavButton key={c.key} n={c} i={ci} indent />)}
-                    </div>
-                  )}
-                </div>
-              );
-            });
-          })()}
+          })}
         </nav>
         <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-400">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}</div>
       </aside>
