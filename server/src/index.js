@@ -68,22 +68,19 @@ const { wrapAsync } = require("./asyncRoutes");
 // The same protection for an async MIDDLEWARE, which would otherwise reject into an
 // unhandled rejection rather than a 500.
 const wrapAsyncMw = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const { tenantMiddleware } = require("./tenant");
-
-// The PLATFORM surface sits above every institution, so it is mounted BEFORE the
-// tenant middleware — demanding a tenant here would be circular. Its own guard
-// (requirePlatformAdmin) rejects any staff, student or applicant token.
-app.use("/api/platform", wrapAsync(require("./routes/platform")));
-// Organisations APPLYING to join. Mounted here, above the tenant middleware, for the
-// same reason the platform surface is: an applicant is not yet an institution and has
-// no tenant to be resolved to. Two of its routes are deliberately public.
-app.use("/api/registrations", wrapAsync(require("./routes/registrations")));
-
-// Which institution is this request for? Resolved BEFORE authentication, because
-// Staff.email is unique per tenant now, so a login cannot find an account from an
-// email address alone. Everything after this line runs inside that tenant's scope,
-// so no route has to remember to filter — see db.js.
-app.use("/api", wrapAsyncMw(tenantMiddleware));
+// MOUNT ORDER USED TO CARRY MEANING HERE, AND NO LONGER DOES.
+//
+// Two routers were mounted above everything else — /api/platform, the supplier's
+// operator tier, and /api/registrations, a college applying to join — because
+// neither caller was yet an institution and the tenant middleware below would have
+// had nothing to resolve them to. That middleware then ran BEFORE authentication,
+// because Staff.email was unique per institution and a login could not find an
+// account from an email address alone.
+//
+// One deployment now serves one college. There is no operator tier above it, no
+// registration queue, and no institution to resolve: the server IS the college. So
+// the ordering constraint is gone and these mounts are ordinary. Anything reading
+// like a deliberate sequence below is about authentication, not tenancy.
 
 // Routes.
 app.use("/api/auth", wrapAsync(require("./routes/auth")));
@@ -116,8 +113,7 @@ app.use("/api/timetable", wrapAsync(require("./routes/timetable")));
 // reads them: /api/timetabling is the planner and is gated on the "scheduling"
 // admin page; /api/my-timetable is what every lecturer reads and carries no page
 // gate at all, because gating it would mean granting an admin page to the whole
-// teaching staff. Both sit below tenantMiddleware — an administrator of a college
-// is a college user, unlike /api/platform and /api/registrations above.
+// teaching staff.
 app.use("/api/timetabling", wrapAsync(require("./routes/timetabling")));
 app.use("/api/my-timetable", wrapAsync(require("./routes/myTimetable")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
@@ -130,8 +126,7 @@ app.use("/api/admission-offers", wrapAsync(require("./routes/admissionOffer")));
 app.use("/api/admission-apply", wrapAsync(require("./routes/admissionApply")));
 app.use("/api/applicant", wrapAsync(require("./routes/applicant")));
 app.use("/api/ism", wrapAsync(require("./routes/ism")));
-// Each institution's own Moodle / SharePoint credentials. Inside the tenant
-// middleware, so an admin can only ever reach their own.
+// This institution's own Moodle / SharePoint credentials.
 app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
 // This institution's own name, colours and logo. GET is deliberately public — the
 // sign-in screen must be branded before anyone has signed in — and the router

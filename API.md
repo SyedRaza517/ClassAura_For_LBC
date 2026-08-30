@@ -3,6 +3,24 @@
 Base URL: `http://localhost:4000/api`
 All protected routes require header: `Authorization: Bearer <token>`.
 
+**One deployment serves one institution.** There is no tenant header: `X-Tenant` was
+sent by the client until 30 Aug 2026 and is now neither sent nor read, and the `tid`
+claim is no longer in the token (it is *ignored* rather than rejected, so sessions
+issued before the change keep working). Two route trees went at the same time and are no
+longer in the codebase:
+
+| Gone | What it was |
+|---|---|
+| `/api/platform/*` | The supplier's operator tier — its own login, 2FA, operator management, per-college storage figures, server-configuration health, and a "restore access" password reset for a locked-out college |
+| `/api/registrations/*` | A public apply/activate flow by which an organisation became a customer |
+
+One response key was **renamed** in the same change. `GET` and `PUT
+/api/timetabling/settings` and `GET /api/my-timetable/settings` return a JSON key named
+**`institution`** where they previously returned `tenant` — the college's own settings
+layer, sent alongside the merged view so "reset to the college default" has something to
+reset to. Neither route is documented below; see §8 of `STATUS.md` on how much of the API
+this file still omits.
+
 ## Auth
 | Method | Path | Access | Body | Returns |
 |--------|------|--------|------|---------|
@@ -385,7 +403,7 @@ rule or have been edited by hand in a console:
 Switching the feature on or off is audited on its own
 (`attendance.tap.settings.updated`): it makes every register in the college writable by a
 student holding a phone, and switching it off silently stops attendance being recorded.
-Settings are cached for 30 seconds per tenant (`ATTENDANCE_TAP_CACHE_MS`) and the cache is
+Settings are cached for 30 seconds (`ATTENDANCE_TAP_CACHE_MS`) and the cache is
 dropped on save, so an administrator who has just switched it on sees it work while they
 are still looking at the screen.
 
@@ -420,20 +438,21 @@ guessable from the sticker in the next room is a check-in nobody attended. An em
 | `code` present but not a string | 400 | `code must be text` |
 | `code` present and shorter than 8 characters | 400 | `A tag's own code must be at least 8 characters — a short one would be guessable` |
 | `code` over 200 characters | 400 | `That code is too long (200 characters maximum)` |
-| That physical sticker is already registered | 409 | `That tag is already registered.` |
+| That physical sticker is already registered **and live** | 409 | `That sticker is already registered here, as "<label>". Rename it from the list if it has moved.` — it is this college's own row, so naming it is the whole value of the message |
+| That physical sticker is registered but **retired** | 200 | Not a refusal: the row is brought back into use under the label in *this* request, and the response carries `restored: true` and no `code`. Retiring must take a sticker out of service, not destroy it |
+| Too many codes claimed from outside the system in a short time | 429 | `Too many new stickers in a short time. Wait a few minutes and carry on.` — only reached by a **supplied** code this college does not already hold |
 | `PATCH` or log on an unknown id | 404 | `Tag not found` |
 | `PATCH` with a blank `label` | 400 | `A label is required` |
 | `PATCH` with `active` not a boolean | 400 | `active must be true or false` |
 | `PATCH` with no recognised field | 400 | `Nothing to change` |
 
-The 409 is this feature's **one cross-tenant read**, and it has to be:
-`AttendanceTag.code` is unique across the whole platform, so a create with a code another
-college already holds would otherwise fail as an opaque P2002, and the honest answer to
-"is this sticker already in use" is yes even when the other holder is an institution this
-administrator cannot see. The check returns a boolean and nothing else — which college
-holds it, what they call it and when they registered it all stay invisible. The caller
-learns only that this sticker is spoken for, which is what they need in order to go and
-find a different one.
+The 409 used to have a second form, and it is worth knowing why it went. `AttendanceTag.code`
+is unique across the table, and when one database held every college a supplied code could
+belong to *another institution* — so the create ran a deliberately blind cross-tenant probe
+that answered "spoken for" and nothing else: never which college, never what they call it.
+One database per college deletes the case rather than rephrasing it. A code either is in
+this table or is not, and if it is, it is this college's own, which is why the message
+above can name the sticker.
 
 `PATCH` differs from `POST` on an over-long label: it **truncates** to 120 characters
 rather than refusing.
@@ -525,15 +544,16 @@ to evidence:
 | Missing or blank `tagCode` | 400 | `A tag is required` |
 | `sessionId` present but not a string | 400 | `sessionId must be text` |
 | More than 10 taps in 60 seconds by the same student | 429 | `Too many attempts — wait a moment and try again.` |
-| Tag unknown, retired, or another college's | 404 | `That tag isn't recognised.` |
+| Tag unknown or retired | 404 | `That tag isn't recognised.` |
 | No class of theirs running now | 409 | `No class of yours is running right now.` + `reason: "no_session_now"` |
 | That class's term is closed | 409 | `That class is outside its teaching term, so the register is closed.` + `reason: "term_locked"` |
 | Two of their classes are running at once | 409 | `{ reason: "ambiguous", sessions: [...] }` — **no `error` key**; the app re-posts with `sessionId` |
 | `sessionId` names a class that is not the one running | 409 | `That class is no longer running. Try again.` |
 
-The three 404s read **identically** — an unknown code, a retired sticker and a tag
-belonging to another institution are one message, which is the tenant isolation working
-rather than a special case anybody wrote. "Nothing is running" is reported *before* the
+Both 404s read **identically** — an unknown code and a retired sticker are one message,
+because the lookup filters on `active` and does not distinguish them. (There used to be a
+third case behind the same message, a tag belonging to another institution; one database
+per college has removed it.) "Nothing is running" is reported *before* the
 term is checked, so a student who tapped at the wrong time of day is not told their term
 is closed: two different problems with two different remedies. The rate limit is an
 in-process module-level `Map` keyed on the student — correct for one Node process, and

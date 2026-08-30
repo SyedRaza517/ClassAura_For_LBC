@@ -1,21 +1,36 @@
-// Resolves an institution's integration configuration — Moodle, SharePoint —
-// preferring what that institution has saved over the server-wide environment.
+// Resolves this institution's integration configuration — Moodle, SharePoint, email —
+// preferring what the college has saved over the server-wide environment.
 //
 // moodle.js and sharepoint.js read their settings through small synchronous
 // accessors (BASE(), TOKEN(), CLIENT_SECRET(), ...) called deep inside request
 // handling. Making those async would mean rewriting both files end to end. Instead
-// the resolved config is primed ONCE per request at each module's choke point —
-// moodle.call(), sharepoint.getAccessToken()/graphFetch() — and the accessors then
-// read it synchronously from a cache keyed by the current tenant.
+// the resolved config is primed ONCE at each module's choke point — moodle.call(),
+// sharepoint.getAccessToken()/graphFetch() — and the accessors then read it
+// synchronously from the cache below.
 //
 // Precedence, deliberately in this order:
-//   1. what the institution saved (encrypted, per tenant)
-//   2. process.env — so the existing single-institution deployments keep working
-//      unchanged, and so a self-hosted customer can still configure by environment
+//   1. what the college saved through Settings (secret encrypted at rest)
+//   2. process.env — so a deployment configured entirely by environment keeps working
+//      unchanged, and so a self-hosted customer can still configure that way
 //
-// A tenant that has saved nothing therefore behaves exactly as before this existed.
+// A deployment that has saved nothing therefore behaves exactly as before this existed.
+//
+// WHY THE FALLBACK USED TO BE FENCED, AND WHY IT NO LONGER IS
+//
+// When one process served many colleges, step 2 was the dangerous step: MOODLE_*,
+// SMTP_* and SP_* describe ONE institution's systems, and handing them to a college
+// that had not configured its own is how a student receives an offer letter "from"
+// another institution and has their passport scan filed in that institution's
+// SharePoint library. That was not hypothetical — this platform ran for a period with
+// EdTech emailing as "London Brookes College". So the environment was fenced off to a
+// single tenant, the one named by DEFAULT_TENANT_SLUG, and every other college
+// resolved to "not configured" instead.
+//
+// One deployment per college removes the ambiguity the fence existed to resolve: the
+// host's environment describes the only institution there is, so inheriting it is
+// correct rather than a leak, and the fence would now only stop a college from using
+// its own settings. DEFAULT_TENANT_SLUG is therefore no longer consulted here.
 const prisma = require("./db");
-const { currentTenantId, crossTenant } = require("./db");
 const secrets = require("./secrets");
 
 // What each provider stores. `secret` is encrypted at rest; `settings` are shown
@@ -73,6 +88,10 @@ const PROVIDERS = {
     },
     describe: (s) => (s.host ? s.host + (s.user ? " as " + s.user : "") : s.provider === "resend" ? "Resend API" : "no server set"),
   },
+  // NOTE for anyone grepping `tenantId` out of this codebase: the one below is Microsoft
+  // Entra's DIRECTORY id, the GUID identifying the customer's Microsoft 365 tenancy. It
+  // has nothing to do with this platform's former multi-tenancy, it is the name the Graph
+  // API uses, and renaming it would only make the SharePoint setup instructions wrong.
   sharepoint: {
     label: "SharePoint",
     secretField: "clientSecret",
@@ -90,9 +109,10 @@ const PROVIDERS = {
 // person who corrected it is still watching. Decryption is cheap; the round trip is
 // what this avoids.
 const TTL_MS = Number(process.env.INTEGRATION_CACHE_MS ?? 30_000);
-const cache = new Map(); // "<tenantId>:<provider>" -> { config, at }
-
-const keyFor = (tenantId, provider) => tenantId + ":" + provider;
+// Keyed on the provider alone. The key used to be "<tenantId>:<provider>" — with one
+// institution the tenant half is a constant, and a constant in a cache key is a
+// reader's invitation to believe something varies that does not.
+const cache = new Map(); // provider -> { config, at }
 
 function fromEnv(provider) {
   const spec = PROVIDERS[provider];
@@ -104,14 +124,14 @@ function fromEnv(provider) {
   return out;
 }
 
-/** Read the stored row for the CURRENT tenant and decrypt it. Null when unusable. */
+/** Read the stored row for this provider and decrypt it. Null when unusable. */
 async function stored(provider) {
   const spec = PROVIDERS[provider];
   let row;
   try {
     row = await prisma.tenantIntegration.findFirst({ where: { provider } });
   } catch {
-    return null; // no tenant context, or the table is not there yet
+    return null; // the table is not there yet
   }
   if (!row || !row.enabled) return null;
   let settings = {};
@@ -126,92 +146,55 @@ async function stored(provider) {
 }
 
 /**
- * Prime and return the configuration for the current institution. Await this at a
- * module's entry point; the synchronous accessors then use peek().
+ * Prime and return the configuration for one provider. Await this at a module's entry
+ * point; the synchronous accessors then use peek().
  */
-// WHICH institution, if any, may fall back to the environment.
-//
-// The env vars describe ONE institution's systems — one Moodle, one mailbox, one
-// SharePoint library. Handing them to any tenant that has not configured its own is
-// how a college ends up sending mail as another college and filing its applicants'
-// documents in that college's library. It is not hypothetical: this platform ran for
-// a period with EdTech emailing as "London Brookes College" and uploading into LBC's
-// Admissions library, purely because those were the values on the host.
-//
-// So the environment now serves exactly one tenant: the one named by
-// DEFAULT_TENANT_SLUG, which is what a single-institution deployment sets to mean
-// "this server is that college's server". Every other institution gets nothing until
-// it enters its own, and "nothing" is a safe failure — mail is not sent, a sync does
-// not run — where inheriting is not.
-//
-// A blank DEFAULT_TENANT_SLUG disables the fallback entirely, which is the right
-// setting for a genuine multi-tenant deployment.
-const ENV_TENANT_SLUG = (process.env.DEFAULT_TENANT_SLUG || "").trim().toLowerCase();
-
-// Resolved once and cached: the slug is fixed for the life of the process, and this
-// runs on the hot path of every integration read.
-let envTenantId;
-async function envTenantIdFor() {
-  if (envTenantId !== undefined) return envTenantId;
-  if (!ENV_TENANT_SLUG) { envTenantId = null; return null; }
-  try {
-    const t = await crossTenant(() => prisma.tenant.findUnique({ where: { slug: ENV_TENANT_SLUG } }));
-    envTenantId = t ? t.id : null;
-  } catch {
-    envTenantId = null;
-  }
-  return envTenantId;
-}
-
 async function load(provider) {
   if (!PROVIDERS[provider]) return {};
-  const tenantId = currentTenantId();
-  // Outside a tenant (a script, a boot task) there is no row to read, so the
-  // environment is all there is.
-  if (!tenantId) return fromEnv(provider);
 
-  const key = keyFor(tenantId, provider);
-  const hit = cache.get(key);
+  const hit = cache.get(provider);
   if (TTL_MS > 0 && hit && Date.now() - hit.at < TTL_MS) return hit.config;
 
-  const saved = await stored(provider);
-  let config = saved;
-  if (!config) {
-    // Only the deployment's OWN institution may inherit the host's settings. Any other
-    // college resolves to {} — not configured — rather than to somebody else's system.
-    config = (tenantId === await envTenantIdFor()) ? fromEnv(provider) : {};
-  }
-  cache.set(key, { config, at: Date.now() });
+  // What the college saved wins; the host environment is the fallback, because it
+  // describes this college's systems and nobody else's — see the note at the top of
+  // the file about the fence that used to stand here.
+  const config = (await stored(provider)) || fromEnv(provider);
+  cache.set(provider, { config, at: Date.now() });
   return config;
 }
 
 /**
- * The configuration resolved by the last load() in this request. Synchronous, for
- * the accessors inside moodle.js / sharepoint.js. Falls back to the environment if
- * nothing has been primed, so a caller that forgets to prime degrades to the old
- * behaviour rather than to nothing.
+ * The configuration resolved by the last load(). Synchronous, for the accessors inside
+ * moodle.js / sharepoint.js.
+ *
+ * An unprimed read falls back to the environment. That is a REVERSAL of what this
+ * function did while the platform was multi-tenant, and the reasoning has genuinely
+ * flipped rather than merely relaxed: back then, a caller that forgot to prime would
+ * have been handed the host's credentials, which belonged to whichever college the
+ * server was configured for, and serving those to a different institution was the leak
+ * load() existed to prevent — so an unprimed read reported "not configured" instead,
+ * failing visibly as a feature that does nothing. Now the host's credentials belong to
+ * the only institution there is, so returning them is the correct answer rather than a
+ * leak, and refusing would break a caller for no benefit at all.
  */
 function peek(provider) {
   if (!PROVIDERS[provider]) return {};
-  const tenantId = currentTenantId();
-  if (!tenantId) return fromEnv(provider);
-  const hit = cache.get(keyFor(tenantId, provider));
+  const hit = cache.get(provider);
   if (hit) return hit.config;
-  // Nothing primed. Falling back to the environment HERE would reintroduce exactly the
-  // leak load() now prevents — a caller that forgot to prime would silently serve one
-  // institution's credentials to another. An unprimed read reports "not configured",
-  // which is the safe answer and shows up immediately as a feature that does nothing
-  // rather than as a letter from the wrong college.
-  return tenantId === envTenantId ? fromEnv(provider) : {};
+  return fromEnv(provider);
 }
 
-/** Drop cached config — call after saving or removing credentials. */
-function invalidate(tenantId, provider) {
-  // A tenant may have been created, renamed or deleted since the slug was resolved.
-  envTenantId = undefined;
-  if (!tenantId) return cache.clear();
-  if (provider) return void cache.delete(keyFor(tenantId, provider));
-  for (const k of cache.keys()) if (k.startsWith(tenantId + ":")) cache.delete(k);
+/**
+ * Drop cached config — call after saving or removing credentials.
+ *
+ * Takes the provider alone. It used to take (tenantId, provider), and the ordering
+ * mattered: passing the provider first cleared the entire cache instead of one entry,
+ * which over-invalidates rather than serving a stale credential — safe, but wrong.
+ * Both call sites in routes/integrations.js pass the provider alone now.
+ */
+function invalidate(provider) {
+  if (!provider) return cache.clear();
+  cache.delete(provider);
 }
 
 module.exports = { PROVIDERS, load, peek, invalidate, fromEnv };

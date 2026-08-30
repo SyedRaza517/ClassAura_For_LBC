@@ -207,8 +207,9 @@ router.post("/me/tap-check-in", async (req, res) => {
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
-  // Tenant-scoped by db.js, so a tag belonging to another college is simply not found.
-  // That is the isolation working; it needs no special case here.
+  // Every tag in this database belongs to this college, because every row does — so a
+  // sticker that is not found is one nobody here registered. This used to be scoped by
+  // db.js, and the not-found was the isolation working rather than an absence.
   const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
   if (!tag) {
     // The code itself is NOT stored. It is a secret, and a log an administrator can read

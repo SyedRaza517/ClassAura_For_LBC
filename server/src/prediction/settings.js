@@ -1,19 +1,26 @@
-// How ONE college weights, bands and scopes the progression score.
+// How this college weights, bands and scopes the progression score.
 //
-// WHY THIS IS PER TENANT
+// WHY THIS IS CONFIGURATION AND NOT CONSTANTS
 //
 // The spec's numbers — attendance at 20%, average grade at 25%, R3 starting at 55,
 // a pass threshold of 40 — are one institution's academic policy written down. A
 // college running a Student-visa cohort weights attendance far above a part-time
 // evening provider; a college whose pass mark is 50 would have OVR-003 fire for
-// nobody at 40. Scoring students against another institution's policy is not a
+// nobody at 40. Scoring students against a policy that is not theirs is not a
 // cosmetic mismatch: this score decides who gets flagged for intervention, who gets
 // a review date, and who gets escalated.
 //
+// That argument was first made about tenancy — one deployment served many colleges
+// and the numbers could not be constants shared between them. One deployment per
+// college does NOT restore the case for constants: the numbers still belong to the
+// institution rather than to the software, they are still edited by an administrator
+// through Settings rather than by a release, and a deployment recompiled to move a
+// pass mark is not a product. What changed is only the row count.
+//
 // So the configuration is DATA, in exactly the shape attendanceBandConfig.js
-// established: platform defaults in code, ONE JSON column per tenant merged OVER
-// them, no row until a college edits something, an allowlist on the way out, and a
-// short cache invalidated on save. Read that file alongside this one.
+// established: defaults in code, ONE JSON column merged OVER them, no row until the
+// college edits something, an allowlist on the way out, and a short cache invalidated
+// on save. Read that file alongside this one.
 //
 // WHY VALIDATION IS THE POINT OF THIS FILE
 //
@@ -37,7 +44,6 @@
 // So validate() refuses all four, and get() re-runs it on the way OUT as well —
 // a row can predate a rule or be edited by hand in a console.
 const prisma = require("../db");
-const { currentTenantId } = require("../db");
 
 /* -------------------------------------------------------------------------- */
 /* 1) The platform defaults.                                                  */
@@ -543,10 +549,13 @@ const DEFAULTS = {
   modelVersion: "PROG-1.0",
 };
 
-// Frozen because it is shared by every tenant in the process. get() hands back a
+// Frozen because it is process-wide state that every caller shares. get() hands back a
 // clone, but one caller that reaches for DEFAULTS directly and edits a weight would
-// otherwise change the policy every other college falls back to, for the lifetime of
-// the process, with nothing in any diff to show for it.
+// otherwise change the policy this college falls back to for the lifetime of the
+// process, with nothing in any diff to show for it — and, worse, only until the next
+// restart, which makes it an academic-policy change that reverts itself. (It was
+// frozen for the same reason when a process served several colleges and the blast
+// radius was all of them; one institution shrinks the radius, not the argument.)
 deepFreeze(DEFAULTS);
 
 /* -------------------------------------------------------------------------- */
@@ -557,7 +566,11 @@ deepFreeze(DEFAULTS);
 // batch recalculation rather than per student, it changes about never, and an
 // administrator who has just moved a weight should see the next run use it.
 const TTL_MS = Number(process.env.PREDICTION_SETTINGS_CACHE_MS ?? 30_000);
-const cache = new Map(); // tenantId -> { value, at }
+
+// One slot, not a Map. This was `Map<tenantId, {value, at}>` when a process served
+// several colleges; with one institution per deployment there is exactly one thing to
+// cache, and a Map keyed on nothing invites the next reader to look for a key.
+let cached = null; // { value, at }
 
 /* -------------------------------------------------------------------------- */
 /* 3) Validation.                                                             */
@@ -1336,17 +1349,21 @@ function normaliseBands(input) {
  * fallback of its own and no batch run can score a cohort against half a policy.
  */
 async function get() {
-  const tenantId = currentTenantId();
-  // Outside a request — a script, a one-off — there is no institution to look up,
-  // and the defaults are the honest answer. A scheduler that means a particular
-  // college's settings must say so with runInTenant; see db.js.
-  if (!tenantId) return clone(DEFAULTS);
-
-  const hit = cache.get(tenantId);
-  if (TTL_MS > 0 && hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  // A scheduler, a script and a request all now read the SAME settings, because they
+  // are all running inside the one institution's deployment. That is worth stating,
+  // because it used to be false: outside a request there was no tenant in scope and
+  // this returned the defaults, so the nightly batch could score a cohort against a
+  // different policy from the one the screen showed — settings a college had saved and
+  // could see, silently not applied by the run that mattered.
+  if (TTL_MS > 0 && cached && Date.now() - cached.at < TTL_MS) return cached.value;
 
   let row = null;
   try {
+    // findFirst, not findUnique on the "singleton" id: this is a read, and a read that
+    // insists on one literal primary key silently reports "never customised" for a row
+    // stored under any other id — which is this college's whole academic policy quietly
+    // not being applied, the exact class of failure the header comment is about. The
+    // singleton primary key is what guarantees there is at most one row to find.
     row = await prisma.predictionModelSettings.findFirst();
   } catch {
     row = null; // table not migrated yet — the defaults are correct, not an error
@@ -1355,16 +1372,16 @@ async function get() {
   // Re-validated on the way OUT, not only on the way in. A row can predate a rule,
   // or be edited by hand in a console, and weights totalling 0.9 would deflate an
   // entire cohort's scores without raising anything. Falling back to the defaults
-  // keeps every student scored against a coherent policy, and the log names the
-  // college so somebody can go and fix the row.
+  // keeps every student scored against a coherent policy, and the log says loudly
+  // enough that somebody can go and fix the row.
   let value = clone(DEFAULTS);
   if (row && isPlainObject(row.config)) {
     const checked = validate(row.config);
     if (checked.ok) value = checked.config;
-    else console.error(`[prediction-settings] tenant ${tenantId} has an unusable stored config (${checked.error}) — using the platform defaults`);
+    else console.error(`[prediction-settings] the stored config is unusable (${checked.error}) — using the built-in defaults`);
   }
 
-  cache.set(tenantId, { value, at: Date.now() });
+  cached = { value, at: Date.now() };
   return value;
 }
 
@@ -1375,40 +1392,56 @@ async function get() {
  *
  * Returns { ok: true, config } or { ok: false, error }.
  *
- * Passing null RESETS to the platform defaults by deleting the row, so "no row" and
+ * Passing null RESETS to the built-in defaults by deleting the row, so "no row" and
  * "a row holding the defaults" mean the same thing they do in attendanceBandConfig:
  * this college has never customised anything.
  *
  * NOTE FOR THE CALLER: every stored score was produced under the OLD settings and is
  * not comparable with one produced under the new ones. A save should mark the
- * college's StudentPredictionCurrent rows stale so the next batch rescores them;
- * that is deliberately not done here, because this module owns configuration and
- * knows nothing about scoring.
+ * StudentPredictionCurrent rows stale so the next batch rescores them; that is
+ * deliberately not done here, because this module owns configuration and knows
+ * nothing about scoring.
  */
 async function save(config, updatedBy) {
-  const tenantId = currentTenantId();
-  const existing = await prisma.predictionModelSettings.findFirst();
-
   if (config === null) {
-    if (existing) await prisma.predictionModelSettings.delete({ where: { id: existing.id } });
-    invalidate(tenantId);
+    // deleteMany rather than a read followed by delete-by-id. "Reset when there is
+    // nothing to reset" is then a no-op instead of a P2025 on a row that vanished
+    // between the two statements, and there is no id to carry between them.
+    await prisma.predictionModelSettings.deleteMany({});
+    invalidate();
     return { ok: true, config: clone(DEFAULTS), reset: true };
   }
 
   const checked = validate(config);
   if (!checked.ok) return { ok: false, error: checked.error };
 
-  const data = { config: checked.config, updatedBy: updatedBy || null };
-  if (existing) await prisma.predictionModelSettings.update({ where: { id: existing.id }, data });
-  else await prisma.predictionModelSettings.create({ data });
+  // Upsert on the constant primary key, replacing a findFirst-then-create-or-update.
+  //
+  // That pair was a read followed by a write, and the window between them is real: two
+  // administrators saving at the same moment both found no row and both created one,
+  // and this table has no natural key to stop the second — under the old schema the
+  // uniqueness came from @@unique([tenantId]), which does not survive the column being
+  // dropped. Two rows would then make get()'s findFirst a coin toss between two
+  // academic policies, which is precisely the silent, cohort-wide failure the top of
+  // this file is about. `id String @id @default("singleton")` puts the guarantee back
+  // in the database, and upsert is the statement that uses it: one round trip, and the
+  // primary key makes a double insert impossible rather than unlikely.
+  //
+  // This assumes any pre-existing row carries the id "singleton". The de-tenanting
+  // migration must normalise it — a row left under an old cuid would be invisible to
+  // this upsert, which would then insert a SECOND row beside it.
+  await prisma.predictionModelSettings.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton", config: checked.config, updatedBy: updatedBy || null },
+    update: { config: checked.config, updatedBy: updatedBy || null },
+  });
 
-  invalidate(tenantId);
+  invalidate();
   return { ok: true, config: checked.config };
 }
 
 /** Whether this college has settings of its own, or is running on the defaults. */
 async function isCustomised() {
-  if (!currentTenantId()) return false;
   try {
     return Boolean(await prisma.predictionModelSettings.findFirst({ select: { id: true } }));
   } catch {
@@ -1416,8 +1449,14 @@ async function isCustomised() {
   }
 }
 
-/** Drop the cached config — called after every save. */
-const invalidate = (tenantId) => (tenantId ? void cache.delete(tenantId) : cache.clear());
+/**
+ * Drop the cached config — called after every save.
+ *
+ * Takes no argument. It used to take the tenant whose entry to evict; anything passed
+ * now is ignored, because there is one entry and dropping it is the whole operation.
+ * No caller outside this module passes anything — the only callers are save() above.
+ */
+const invalidate = () => { cached = null; };
 
 /* -------------------------------------------------------------------------- */
 /* 5) Helpers the engine needs.                                               */

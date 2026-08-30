@@ -16,8 +16,6 @@ import { BrandMark } from "./Brand";
 import { getBranding, onBranding } from "./branding";
 import StudentApp from "./StudentApp";
 import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
-import PlatformDashboard from "./PlatformDashboard";
-import CollegeRegistration from "./CollegeRegistration";
 import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
@@ -254,20 +252,12 @@ export default function App() {
     setEntry(null);
   };
 
-  // The PLATFORM surface — every institution on the system. Reached at ?platform and
-  // checked FIRST, before any college session is considered: it has its own operator
-  // account, its own token, and no relationship to whoever may be signed in here.
-  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("platform")) {
-    return (<><style>{GLOBAL_STYLE}</style><PlatformDashboard /></>);
-  }
-
-  // College registration — an organisation applying to join, or redeeming the access
-  // code we issued. Checked here with the platform surface rather than below the auth
-  // gate, because an applicant has no account by definition and a stale session on this
-  // browser must not divert them into somebody else's college.
-  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("register")) {
-    return (<><style>{GLOBAL_STYLE}</style><CollegeRegistration onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} /></>);
-  }
+  // `?platform` (the supplier's operator console, above every institution) and
+  // `?register` (an organisation applying to join) were both checked here, ahead of
+  // everything else, because neither had anything to do with a college session. Both
+  // are gone: one deployment now serves one college, so there is no tier above it to
+  // operate and no second college to sign up. The public entry points below are
+  // unrelated to that and are unchanged.
 
   // These public pages are valid whether or not a stale session exists, and deliberately
   // run before the auth gate below.
@@ -316,11 +306,6 @@ export default function App() {
     // The Student Portal — a prospective student (general public) registers / signs in to
     // apply to the College and track their application. The public front door.
     if (entry === "applicant") return (<><style>{GLOBAL_STYLE}</style><ApplicantAuth onBack={() => setEntry(null)} /></>);
-    // The Super Admin tile. Same component the ?platform URL reaches — that URL still
-    // works and is unchanged; this simply gives it a visible front door. It carries its
-    // own operator token in sessionStorage and knows nothing about a college session,
-    // so no college user is implied by getting here.
-    if (entry === "platform") return (<><style>{GLOBAL_STYLE}</style><PlatformDashboard onBack={() => setEntry(null)} /></>);
     if (entry === "app") return (
       // 100dvh (not vh) so collapsing mobile browser chrome can't clip the page.
       <div className="w-full" style={{ minHeight: "100dvh", height: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: "radial-gradient(1200px 600px at 50% -10%, #e7ecf6 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
@@ -328,7 +313,7 @@ export default function App() {
         <MobileAuth onExit={() => setEntry(null)} />
       </div>
     );
-    return (<><style>{GLOBAL_STYLE}</style><Landing onStaffApp={() => setEntry("app")} onAdmin={() => setEntry("admin")} onStudent={() => setEntry("applicant")} onPlatform={() => setEntry("platform")} /></>);
+    return (<><style>{GLOBAL_STYLE}</style><Landing onStaffApp={() => setEntry("app")} onAdmin={() => setEntry("admin")} onStudent={() => setEntry("applicant")} /></>);
   }
 
   // App lock sits in front of everything a signed-in user can see, including the

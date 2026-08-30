@@ -94,8 +94,7 @@ async function maybeSyncMoodle() {
   // choice now wins, and the environment variable is what remains for a
   // single-institution deployment that has saved nothing.
   //
-  // Runs inside forEachTenant (see startScheduler), so this reads the right
-  // institution's row without being told which.
+  // Reads this deployment's own configuration row; there is only one.
   const cfg = require("./integrationConfig");
   await cfg.load("moodle");
   const autoSync = cfg.peek("moodle").autoSync;
@@ -130,15 +129,14 @@ async function maybeSyncMoodle() {
 // limit real work to its own day/hour. unref() so the timer never keeps the process
 // alive on its own.
 function startScheduler() {
-  // Once per institution. These run on a timer, outside any request, so nothing has
-  // resolved a tenant for them — see eachTenant.js. One college failing must not stop
-  // the rest, which forEachTenant guarantees.
-  const { forEachTenant } = require("./eachTenant");
+  // One institution per deployment, so these simply run. They used to be wrapped
+  // once per tenant by eachTenant.js, which is gone — see attendanceScheduler.js.
   const run = () => {
-    forEachTenant("timesheet-reminders", () => sendTimesheetReminders())
+    sendTimesheetReminders()
       .catch((e) => console.error("scheduler run failed:", e.message));
-    // Kept separate so a failing Moodle import can never stop the reminders.
-    forEachTenant("moodle-import", () => maybeSyncMoodle())
+    // Still two statements rather than one chain: a failing Moodle import must never
+    // stop the reminders, which is why they were separate calls before too.
+    maybeSyncMoodle()
       .catch((e) => console.error("nightly Moodle import failed:", e.message));
   };
   run(); // run once on boot (covers a deploy that happens on the reminder day)

@@ -2747,9 +2747,12 @@ function ExecutiveDashboard({ store }) {
 // history pop drags the fragment somewhere else, and one press does both. Replacing
 // keeps Back meaning "leave the console", exactly as it meant before.
 //
-// The path and query are rebuilt rather than assumed. `?tenant=` names the
-// institution on a shared host, and dropping it on the first nav click would send
-// the next reload to a different college.
+// The path and query are rebuilt rather than assumed. The query used to carry
+// `?tenant=`, naming which college a shared host was serving, and dropping it on the
+// first nav click sent the next reload to a different institution. That parameter is
+// gone with multi-tenancy, but the query is still carried through rather than
+// discarded: throwing away whatever somebody arrived with is a behaviour change we
+// have no reason to make, and the next parameter that matters would break silently.
 const pageFromHash = () => {
   if (typeof window === "undefined") return null;
   const m = /^#\/([a-z0-9-]+)$/i.exec(window.location.hash || "");
@@ -14239,9 +14242,14 @@ function AdminTimetable({ store }) {
  */
 const AUDIT_READER_PAGES = ["settings", "access", "staff"];
 
-// Who acted, in a word. A platform operator is not a member of staff, and a failed
-// sign-in has no account behind it at all — so the tier is shown, not inferred from
-// the address.
+// Who acted, in a word. A failed sign-in has no account behind it at all, so the tier
+// is shown rather than inferred from the address.
+//
+// `platform` is kept even though the supplier's operator tier was removed with
+// multi-tenancy and nothing writes that actor type any more. Existing audit rows still
+// carry it, and the lookup below falls back to "System" for anything unrecognised — so
+// dropping the entry would silently relabel a past operator action as the machine's.
+// An audit log that rewrites who did something is worse than one carrying a dead word.
 const ACTOR_TONE = {
   platform: { label: "Platform", cls: "bg-purple-100 text-purple-700" },
   staff: { label: "Staff", cls: "bg-blue-100 text-blue-700" },
@@ -14509,8 +14517,8 @@ function AdminSettings({ store }) {
       </div>
       <div className="mb-4">
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
-        {/* This institution's OWN Moodle / SharePoint credentials — encrypted, and not
-            readable by any other institution or by a platform operator. */}
+        {/* This institution's OWN Moodle / SharePoint credentials — encrypted at rest,
+            and never returned to any client once saved. */}
         <IntegrationSettings />
       </div>
       <div className="grid gap-4 lg:grid-cols-3">

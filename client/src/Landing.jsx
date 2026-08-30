@@ -1,9 +1,15 @@
-// First screen for anyone who isn't signed in: choose the staff mobile app
-// (which has its own in-app sign in / sign up), the public student portal, the
-// college admin dashboard, or — for an operator of the platform itself — the
-// Super Admin tier that sits above every institution.
+// First screen for anyone who isn't signed in: choose the staff mobile app (which has
+// its own in-app sign in / sign up), the public student portal, or the college admin
+// dashboard.
+//
+// A fourth tile, "Super Admin", used to sit here for operators of the supplier's own
+// platform — the tier above every institution — alongside a "Register your college"
+// link for organisations applying to join. Both went when the product stopped being
+// multi-tenant: one deployment now serves one college, so there is no tier above it and
+// nobody left to sign up. Three tiles, not four, is why the grid below is a 3-column
+// layout rather than the 4 it was built for.
 import React from "react";
-import { GraduationCap, Smartphone, Monitor, ArrowRight, ShieldCheck, UserPlus, Building2, Layers } from "lucide-react";
+import { GraduationCap, Smartphone, Monitor, ArrowRight, ShieldCheck, UserPlus } from "lucide-react";
 import { BrandLockup } from "./Brand";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
@@ -36,7 +42,7 @@ function Choice({ Icon, title, subtitle, points, onClick, accent, delay }) {
   );
 }
 
-export default function Landing({ onStaffApp, onAdmin, onStudent, onPlatform }) {
+export default function Landing({ onStaffApp, onAdmin, onStudent }) {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
       <div className="animated-gradient absolute inset-0" style={{ background: `linear-gradient(135deg, ${NAVY_DARK} 0%, ${NAVY} 30%, #2b3f9e 55%, ${MAROON} 100%)`, backgroundSize: "220% 220%" }} />
@@ -56,7 +62,7 @@ export default function Landing({ onStaffApp, onAdmin, onStudent, onPlatform }) 
           <p className="mt-1 text-sm text-white/70">Choose how you'd like to continue</p>
         </div>
 
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <Choice
             Icon={Smartphone}
             title="Staff App"
@@ -93,34 +99,10 @@ export default function Landing({ onStaffApp, onAdmin, onStudent, onPlatform }) 
               { Icon: Monitor, label: "Registers, balances, reporting" },
             ]}
           />
-          {/* The tier ABOVE every college. Deliberately last, deliberately slate-and-amber
-              rather than college navy or maroon: an operator here can suspend a customer
-              or delete their data, and a tile that looked like the others would invite
-              exactly the mistake of not noticing which door you took. */}
-          <Choice
-            Icon={Building2}
-            title="Super Admin"
-            subtitle="Platform operators only"
-            accent="linear-gradient(135deg, #0f172a, #b45309)"
-            delay="0.32s"
-            onClick={onPlatform}
-            points={[
-              { Icon: Layers, label: "Every institution on the system" },
-              { Icon: ShieldCheck, label: "Provision, suspend & configure" },
-            ]}
-          />
         </div>
 
         <p className="fade-up mt-7 text-center text-[11px] text-white/50" style={{ animationDelay: "0.3s" }}>
           Administrators can switch to the staff app at any time once signed in.
-          <br />Super Admin is for operators of the platform itself — not a college sign-in.
-        </p>
-
-        <p className="fade-up mt-3 text-center text-[11px] text-white/60" style={{ animationDelay: "0.36s" }}>
-          Are you an institution that would like to use this system?{" "}
-          <a href="?register" className="font-bold text-white underline underline-offset-2 hover:text-white/80">
-            Register your college
-          </a>
         </p>
       </div>
     </div>

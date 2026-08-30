@@ -32,7 +32,7 @@ if (!process.env.DATABASE_URL) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-// A BARE client: it bypasses the tenant extension so this suite can plant fixtures
+// A BARE client, so this suite can plant fixtures
 // (a rival student's query, a mark above its assessment maximum, a draft timetable
 // row) that the API itself would refuse to create, and then read back what the API
 // actually wrote rather than what it claims to have written.
@@ -58,8 +58,6 @@ const check = (name, ok, detail = "") => {
 async function call(path, { method = "GET", body, token } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  // No X-Tenant: with DEFAULT_TENANT_SLUG unset the API falls back to "default",
-  // which is the tenant the seed wrote into. Sending one would prove nothing here.
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await res.json(); } catch (_) { /* empty body */ }
@@ -86,7 +84,6 @@ function expectedSummary(marks) {
 // as the seed left it — eight suites share one seeded database and the seed is not
 // re-run between them.
 const made = { queries: [], reviews: [], assessments: [], slots: [], units: [], courses: [], enrolments: [] };
-let tenantId = null;
 
 async function cleanup() {
   try {
@@ -107,10 +104,6 @@ async function cleanup() {
 }
 
 try {
-  const tenant = await db.tenant.findUnique({ where: { slug: process.env.SEED_TENANT_SLUG || "default" } });
-  if (!tenant) throw new Error("seeded tenant not found — run the seed first");
-  tenantId = tenant.id;
-
   console.log("\n--- a seeded student has no way in until the college gives them one ---");
   // Every seeded student has passwordHash null. That is the whole reason the student
   // app is not a back door into the college's data on a fresh install: the records
@@ -220,11 +213,11 @@ try {
 
   console.log("\n--- assessments: marks, bands and the average ---");
   const mkAssessment = async (unitId, title, maxMarks) => {
-    const a = await db.assessment.create({ data: { tenantId, unitId, title, type: "Assignment", maxMarks, weight: 25, dueDate: "2026-05-01" } });
+    const a = await db.assessment.create({ data: { unitId, title, type: "Assignment", maxMarks, weight: 25, dueDate: "2026-05-01" } });
     made.assessments.push(a.id);
     return a;
   };
-  const grade = async (assessmentId, marks) => db.assessmentGrade.create({ data: { tenantId, assessmentId, studentId: A_ID, marks, feedback: "seen", gradedBy: "HR Administrator" } });
+  const grade = async (assessmentId, marks) => db.assessmentGrade.create({ data: { assessmentId, studentId: A_ID, marks, feedback: "seen", gradedBy: "HR Administrator" } });
 
   const aDist = await mkAssessment("m-obm", `SP Distinction ${RUN}`, 100);
   const aFail = await mkAssessment("m-obm", `SP Fail ${RUN}`, 100);
@@ -236,7 +229,7 @@ try {
   await grade(aDist.id, 70);   // exactly on the Distinction boundary
   await grade(aFail.id, 49);   // one mark below Pass
   await grade(aLegacy.id, 60); // a historic mark ABOVE its maximum — see below
-  await db.assessmentGrade.create({ data: { tenantId, assessmentId: aOther.id, studentId: B_ID, marks: 100 } });
+  await db.assessmentGrade.create({ data: { assessmentId: aOther.id, studentId: B_ID, marks: 100 } });
 
   const asr = await call("/student/me/assessments", { token: sToken });
   const items = asr.data?.assessments || [];
@@ -283,7 +276,7 @@ try {
 
   // Another student's message to the college — welfare, finance, a complaint about a
   // lecturer. The single most private thing in this table.
-  const bQuery = await db.studentQuery.create({ data: { tenantId, studentId: B_ID, subject: `B private ${RUN}`, message: "Confidential message from another student", status: "open" } });
+  const bQuery = await db.studentQuery.create({ data: { studentId: B_ID, subject: `B private ${RUN}`, message: "Confidential message from another student", status: "open" } });
   made.queries.push(bQuery.id);
   const mine = await call("/student/me/queries", { token: sToken });
   check("the query list contains only this student's messages",
@@ -306,12 +299,12 @@ try {
   check("the reply reaches the student's app", answered?.response === answer && answered?.status === "answered" && !!answered?.respondedAt);
 
   console.log("\n--- progress reviews: read-only, and only your own ---");
-  const rA1 = await db.studentReview.create({ data: { tenantId, studentId: A_ID, unitId: "m-obm", staffId: "s2", staffName: "Aisha Rahman", date: "2026-03-01", progress: "On Track", concerns: JSON.stringify(["Attendance", "Engagement"]), summary: "Good progress", agreedActions: "Keep going", followUp: false } });
+  const rA1 = await db.studentReview.create({ data: { studentId: A_ID, unitId: "m-obm", staffId: "s2", staffName: "Aisha Rahman", date: "2026-03-01", progress: "On Track", concerns: JSON.stringify(["Attendance", "Engagement"]), summary: "Good progress", agreedActions: "Keep going", followUp: false } });
   // concerns is a JSON string in a plain text column. A row written by an older build,
   // a partial import or a hand edit must render as "no concerns", not as a 500 that
   // takes the student's whole reviews screen down.
-  const rA2 = await db.studentReview.create({ data: { tenantId, studentId: A_ID, unitId: "m-bs", staffId: "s1", staffName: "James Whitfield", date: "2026-02-01", progress: "Monitor", concerns: "{{ not json", summary: "Watch this", agreedActions: "", followUp: true, followUpDate: "2026-04-01" } });
-  const rB = await db.studentReview.create({ data: { tenantId, studentId: B_ID, unitId: "m-obm", staffId: "s2", staffName: "Aisha Rahman", date: "2026-03-02", progress: "At Risk", concerns: "[]", summary: `B only ${RUN}`, agreedActions: "", followUp: false } });
+  const rA2 = await db.studentReview.create({ data: { studentId: A_ID, unitId: "m-bs", staffId: "s1", staffName: "James Whitfield", date: "2026-02-01", progress: "Monitor", concerns: "{{ not json", summary: "Watch this", agreedActions: "", followUp: true, followUpDate: "2026-04-01" } });
+  const rB = await db.studentReview.create({ data: { studentId: B_ID, unitId: "m-obm", staffId: "s2", staffName: "Aisha Rahman", date: "2026-03-02", progress: "At Risk", concerns: "[]", summary: `B only ${RUN}`, agreedActions: "", followUp: false } });
   made.reviews.push(rA1.id, rA2.id, rB.id);
 
   const revs = await call("/student/me/reviews", { token: sToken });
@@ -332,14 +325,14 @@ try {
   const ttEmpty = await call("/student/me/timetable", { token: sToken });
   check("an unclassified student gets an empty timetable, not an error", ttEmpty.status === 200 && Array.isArray(ttEmpty.data?.stages) && ttEmpty.data.stages.length === 0, `HTTP ${ttEmpty.status}`);
 
-  const course = await db.course.create({ data: { tenantId, name: `SP Course ${RUN}`, colour: "#1a3a8f" } });
+  const course = await db.course.create({ data: { name: `SP Course ${RUN}`, colour: "#1a3a8f" } });
   made.courses.push(course.id);
-  const ttUnit = await db.unit.create({ data: { tenantId, id: `sp-unit-${RUN}`, code: `SPU${RUN}`, name: "Suite Timetabled Unit", tutor: "Aisha Rahman", courseId: course.id, year: 1, termNumber: 2, startDate: "2026-01-05", endDate: "2026-04-10" } });
+  const ttUnit = await db.unit.create({ data: { id: `sp-unit-${RUN}`, code: `SPU${RUN}`, name: "Suite Timetabled Unit", tutor: "Aisha Rahman", courseId: course.id, year: 1, termNumber: 2, startDate: "2026-01-05", endDate: "2026-04-10" } });
   made.units.push(ttUnit.id);
-  const enrol = await db.enrolment.create({ data: { tenantId, studentId: A_ID, unitId: ttUnit.id } });
+  const enrol = await db.enrolment.create({ data: { studentId: A_ID, unitId: ttUnit.id } });
   made.enrolments.push(enrol.id);
-  const publishedSlot = await db.timetableSlot.create({ data: { tenantId, courseId: course.id, year: 1, termNumber: 2, unitId: ttUnit.id, day: 1, startTime: "10:00", endTime: "13:00", title: `SP Published ${RUN}`, lecturer: "Aisha Rahman", room: "Room 101", published: true } });
-  const draftSlot = await db.timetableSlot.create({ data: { tenantId, courseId: course.id, year: 1, termNumber: 2, day: 3, startTime: "09:00", endTime: "11:00", title: `SP Draft ${RUN}`, lecturer: "TBC", room: "TBC", published: false } });
+  const publishedSlot = await db.timetableSlot.create({ data: { courseId: course.id, year: 1, termNumber: 2, unitId: ttUnit.id, day: 1, startTime: "10:00", endTime: "13:00", title: `SP Published ${RUN}`, lecturer: "Aisha Rahman", room: "Room 101", published: true } });
+  const draftSlot = await db.timetableSlot.create({ data: { courseId: course.id, year: 1, termNumber: 2, day: 3, startTime: "09:00", endTime: "11:00", title: `SP Draft ${RUN}`, lecturer: "TBC", room: "TBC", published: false } });
   made.slots.push(publishedSlot.id, draftSlot.id);
 
   const tt = await call("/student/me/timetable", { token: sToken });

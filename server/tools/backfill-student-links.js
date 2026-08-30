@@ -41,7 +41,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const prisma = require("../src/db");
-const { crossTenant, runInTenant } = require("../src/db");
 // The rules live in a PURE module with tests beside them, because deciding whether one
 // person is another is the most dangerous arithmetic here and nearly every test of it
 // is a refusal. This script is the plumbing; src/linkRules.js is the judgement.
@@ -61,13 +60,13 @@ const csvCell = (v) => {
 // --apply. Everything else lands in the CSV for a person to decide.
 const DECISION = { auto: () => (APPLY ? "APPLIED" : "would apply"), review: () => "review by hand", none: () => "left null" };
 
-async function forTenant(tenant, rows) {
+async function propose(rows) {
   const students = await prisma.student.findMany({
     select: { id: true, studentRef: true, lastName: true, email: true, dob: true },
   });
 
   const push = (table, id, p) =>
-    rows.push([tenant.slug, table, id, p.tier, p.studentId || "", p.why, DECISION[p.tier]()]);
+    rows.push([table, id, p.tier, p.studentId || "", p.why, DECISION[p.tier]()]);
 
   /* ---- finance records --------------------------------------------------- */
 
@@ -111,17 +110,18 @@ async function forTenant(tenant, rows) {
 }
 
 (async () => {
-  const tenants = await crossTenant(() => prisma.tenant.findMany({ select: { id: true, slug: true } }));
+  // One deployment, one institution, one database — so there is nothing to iterate
+  // over and no tenant column in the CSV. The database named by DATABASE_URL IS the
+  // scope, which is exactly why the header comment above refuses to reuse a mapping
+  // produced against one database when running against the other: it is now the only
+  // thing telling the two apart.
   const rows = [];
+  await propose(rows);
 
-  for (const t of tenants) {
-    await runInTenant(t.id, () => forTenant(t, rows));
-  }
-
-  const counts = rows.reduce((acc, r) => { acc[r[3]] = (acc[r[3]] || 0) + 1; return acc; }, {});
+  const counts = rows.reduce((acc, r) => { acc[r[2]] = (acc[r[2]] || 0) + 1; return acc; }, {});
   const file = path.join(OUT_DIR, `student-link-proposals-${APPLY ? "applied" : "dryrun"}.csv`);
   fs.writeFileSync(file,
-    "tenant,table,rowId,tier,candidateStudentId,evidence,decision\n" +
+    "table,rowId,tier,candidateStudentId,evidence,decision\n" +
     rows.map((r) => r.map(csvCell).join(",")).join("\n") + "\n");
 
   console.log(APPLY ? "APPLIED tier-A links." : "DRY RUN — nothing was written.");
@@ -133,16 +133,14 @@ async function forTenant(tenant, rows) {
   // fix by loosening a rule — every loosening trades a correct null for a possible
   // wrong link, and the wrong link is the incident.
 
-  if (APPLY) {
-    const bad = await crossTenant(() => prisma.$queryRawUnsafe(`
-      SELECT s.id FROM "SlcApplication" s JOIN "Student" st ON st.id = s."studentId"
-       WHERE st."tenantId" <> s."tenantId"
-      UNION ALL
-      SELECT a.id FROM "Admission" a JOIN "Student" st ON st.id = a."linkedStudentId"
-       WHERE st."tenantId" <> a."tenantId"`));
-    console.log("cross-tenant links (must be 0):", bad.length);
-    if (bad.length) process.exitCode = 1;
-  }
+  // The post-apply check that every written link stayed inside one institution is
+  // GONE, and deliberately not replaced with something shaped like it. It compared
+  // Student."tenantId" against SlcApplication."tenantId" — columns the
+  // remove-multi-tenancy migration dropped. A cross-institution link is no longer
+  // expressible: one institution per database means a link landing on the wrong row
+  // is the wrong PERSON, not the wrong college, and no query distinguishes that from
+  // a correct one. The CSV, read before --apply, is what catches it, and it is now
+  // the only thing that does.
 
   await prisma.$disconnect();
 })().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });

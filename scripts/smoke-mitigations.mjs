@@ -37,10 +37,9 @@ async function check(label, fn) {
   try { const d = await fn(); ok(label, d); } catch (e) { bad(label, e); }
 }
 
-const call = async (path, { method = "GET", body, token, tenant } = {}) => {
+const call = async (path, { method = "GET", body, token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
-  if (tenant) headers["X-Tenant"] = tenant;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
@@ -376,15 +375,22 @@ await check("an ADMIN whose pages were never configured is refused", async () =>
   return `${unconfigured.email} refused the claims, kept the register`;
 });
 
-await check("a claim cannot be read across a tenant boundary", async () => {
-  // The id is a cuid, so this is not a guessing attack — it is the check that the tenant
-  // extension in db.js is actually filtering this model rather than the route relying on
-  // the id being unguessable.
+// This replaces "a claim cannot be read across a tenant boundary", which fetched a real
+// claim id with X-Tenant: does-not-exist and required 404/403. Half of what it proved is
+// gone with tenancy — there is no second institution to read from. The OTHER half is not,
+// and is the reason it was written: the claim id is a cuid, and the route must not be
+// leaning on that. An unguessable id is not an access control, and this is the route that
+// serves a single claim by id — the shape most likely to be mounted outside the guard,
+// because the guard is usually thought about for the list.
+//
+// The unauthenticated assertion near the top of this suite covers GET /mitigations, the
+// LIST. It says nothing about /mitigations/:id, which is a separate handler.
+await check("a single claim by id is behind the guard, not behind an unguessable id", async () => {
   if (!claimId) return "skipped — no claim was created";
-  const r = await call(`/mitigations/${claimId}`, { token, tenant: "does-not-exist" });
-  assert.ok(r.status === 404 || r.status === 403,
-    `reading a claim under another tenant returned ${r.status}`);
-  return `${r.status} under an unknown tenant`;
+  const r = await call(`/mitigations/${claimId}`);
+  assert.equal(r.status, 401,
+    `an anonymous caller holding a claim id got ${r.status} — the id is being treated as the secret`);
+  return "401 with no token, holding a real claim id";
 });
 
 /* -------------------------------------------------------------------------- */

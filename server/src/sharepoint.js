@@ -23,10 +23,16 @@
 // takes effect rather than being frozen at require() time.
 
 // --- Configuration (all read at call time) ---------------------------------------
-// Prefer what THIS institution saved over the server-wide environment. Primed once
-// per request at the choke points below; peek() falls back to process.env, so a
-// deployment configured by environment behaves exactly as it always did.
+// Prefer what the college saved on the Settings screen over the server-wide environment.
+// Primed at the choke points below (the `await cfg.load("sharepoint")` calls); peek()
+// falls back to process.env, so a deployment configured entirely by environment — which
+// is how this started, before there was a Settings screen — behaves exactly as it did.
 const cfg = require("./integrationConfig");
+// NOTE ON THE WORD "TENANT": this is MICROSOFT's tenant — the Azure AD directory id the
+// app registration lives in, shown as "Directory (tenant) ID" in the Azure portal. It has
+// nothing to do with the multi-tenancy this platform used to have and no longer does, and
+// it does not go away with it. Renaming it would be worse than the collision: an
+// administrator copying a value out of Azure is looking for the label Azure uses.
 const TENANT_ID = () => cfg.peek("sharepoint").tenantId || "";
 const CLIENT_ID = () => cfg.peek("sharepoint").clientId || "";
 const CLIENT_SECRET = () => cfg.peek("sharepoint").clientSecret || "";
@@ -116,21 +122,26 @@ function describe() {
 // on every call would triple the traffic and slow each upload; caching it — and renewing
 // ~60s before Azure's stated expiry to leave a safety margin against clock skew and
 // in-flight requests — keeps things quick without ever presenting a stale token.
-// PER TENANT, not per process. These four caches previously held one institution's
-// OAuth token, site, document library and root folder for the whole server. Because
-// getAccessToken() and the resolve* functions returned the cached value BEFORE
-// consulting configuration, the first college to touch SharePoint after a restart
-// captured every other college's uploads: college B's applicant documents were
-// written into college A's library, where A could read them and B could not. The
-// three id caches had no TTL at all, so it persisted until the next deploy.
-const tokenCache = new Map();       // tenantId -> { value, expiresAt }
-const EMPTY_TOKEN = { value: null, expiresAt: 0 };
-const tenantKey = () => currentTenantId() || "__no_tenant__";
+// PER PROCESS, which is per college again.
+//
+// These four caches (token, site, drive, root folder) were once plain module variables,
+// then a Map keyed by our tenant id, and are now plain values again. The Map existed
+// because one server served every college while getAccessToken() and the resolve*
+// functions returned the cached value BEFORE consulting configuration: the first
+// college to touch SharePoint after a restart captured every other college's uploads —
+// college B's applicant documents written into college A's library, where A could read
+// them and B could not, and the three id caches had no TTL so it lasted until the next
+// deploy. One process serves one college now, so the key was always the same string.
+//
+// What has NOT changed is the read-before-config ordering that made that bug possible.
+// It is harmless with one college but still wrong in the same way: a cached value
+// survives a credentials change. forgetCached() below is the release valve, and it is
+// why an administrator saving new SharePoint settings must call it.
+let cachedToken = null;             // { value, expiresAt } | null
 
 async function getAccessToken() {
   await cfg.load("sharepoint");
-  const cached = tokenCache.get(tenantKey()) || EMPTY_TOKEN;
-  if (cached.value && Date.now() < cached.expiresAt) return cached.value;
+  if (cachedToken && cachedToken.value && Date.now() < cachedToken.expiresAt) return cachedToken.value;
 
   const tenant = TENANT_ID();
   if (!tenant || !CLIENT_ID() || !CLIENT_SECRET()) {
@@ -184,7 +195,7 @@ async function getAccessToken() {
     // Renew 60s early so a request never sets out with a token about to expire.
     expiresAt: Date.now() + Math.max(0, ttlSeconds - 60) * 1000,
   };
-  tokenCache.set(tenantKey(), nextToken);
+  cachedToken = nextToken;
   return nextToken.value;
 }
 
@@ -239,18 +250,23 @@ async function graphFetch(path, init = {}) {
 // Each is resolved once on first use and cached in a module variable — these ids never
 // change for the life of the process, and re-resolving them on every upload would add two
 // or three needless round-trips to Graph before the request that actually matters.
-// Same reasoning as tokenCache above: keyed by tenant, because a site id resolved
-// for one institution is meaningless — and dangerous — for another.
-const siteIdCache = new Map();
-const driveIdCache = new Map();
-const rootFolderIdCache = new Map();
+// Same reasoning as the token cache above, and the same history: these were Maps keyed
+// by tenant id while one process served every college, because a site id resolved for
+// one institution is meaningless — and dangerous — for another. One process, one
+// college, one value each.
+//
+// Note what "for the life of the process" quietly assumes: that the configuration does
+// not change under them. It can, on the Settings screen, and nothing here notices —
+// which is what forgetCached() exists for.
+let cachedSiteId = null;
+let cachedDriveId = null;
+let cachedRootFolderId = null;
 
 async function resolveSiteId() {
-  const kSite = tenantKey();
-  if (siteIdCache.get(kSite)) return siteIdCache.get(kSite);
+  if (cachedSiteId) return cachedSiteId;
   // Use SP_SITE_ID directly ONLY if it's a real Graph id (has commas). A URL pasted into
   // it is handled as a URL by siteHostAndPath instead.
-  if (SITE_ID().includes(",")) { siteIdCache.set(kSite, SITE_ID().trim()); return siteIdCache.get(kSite); }
+  if (SITE_ID().includes(",")) { cachedSiteId = SITE_ID().trim(); return cachedSiteId; }
 
   const { host, path } = siteHostAndPath();
   if (!host || !path) {
@@ -261,14 +277,13 @@ async function resolveSiteId() {
   if (!site || !site.id) {
     throw new Error(`Could not resolve the SharePoint site "${host}${path}". Check the site address (SP_SITE_URL).`);
   }
-  siteIdCache.set(kSite, site.id);
-  return site.id;
+  cachedSiteId = site.id;
+  return cachedSiteId;
 }
 
 async function resolveDriveId() {
-  const kDrive = tenantKey();
-  if (driveIdCache.get(kDrive)) return driveIdCache.get(kDrive);
-  if (DRIVE_ID()) { driveIdCache.set(kDrive, DRIVE_ID()); return driveIdCache.get(kDrive); }
+  if (cachedDriveId) return cachedDriveId;
+  if (DRIVE_ID()) { cachedDriveId = DRIVE_ID(); return cachedDriveId; }
 
   const siteId = await resolveSiteId();
 
@@ -289,24 +304,23 @@ async function resolveDriveId() {
       const names = drives.map((d) => `"${d.name}"`).join(", ") || "(none)";
       throw new Error(`No SharePoint document library named "${wanted}" on this site. Available libraries: ${names}. Fix SP_DRIVE_NAME (or set SP_DRIVE_ID).`);
     }
-    driveIdCache.set(kDrive, match.id);
-    return match.id;
+    cachedDriveId = match.id;
+    return cachedDriveId;
   }
 
   const drive = await graphFetch(`/sites/${siteId}/drive`);
   if (!drive || !drive.id) {
     throw new Error("The SharePoint site has no default document library (drive). Set SP_DRIVE_ID or SP_DRIVE_NAME explicitly.");
   }
-  driveIdCache.set(kDrive, drive.id);
-  return drive.id;
+  cachedDriveId = drive.id;
+  return cachedDriveId;
 }
 
 // The base folder under which every applicant folder lives. Fetch it if it's there; if
 // not, create it once under the drive root. A concurrent creator racing us produces a
 // 409, which simply means "it exists now" — so re-fetch and use theirs.
 async function resolveRootFolderId() {
-  const kRoot = tenantKey();
-  if (rootFolderIdCache.get(kRoot)) return rootFolderIdCache.get(kRoot);
+  if (cachedRootFolderId) return cachedRootFolderId;
 
   const driveId = await resolveDriveId();
   const rootFolder = ROOT_FOLDER().trim();
@@ -316,13 +330,13 @@ async function resolveRootFolderId() {
   if (!rootFolder) {
     const root = await graphFetch(`/drives/${driveId}/root`);
     if (!root || !root.id) throw new Error("Could not read the SharePoint library root.");
-    rootFolderIdCache.set(kRoot, root.id);
-    return root.id;
+    cachedRootFolderId = root.id;
+    return cachedRootFolderId;
   }
 
   try {
     const item = await graphFetch(`/drives/${driveId}/root:/${encodeURIComponent(rootFolder)}`);
-    if (item && item.id) { rootFolderIdCache.set(kRoot, item.id); return item.id; }
+    if (item && item.id) { cachedRootFolderId = item.id; return cachedRootFolderId; }
   } catch (e) {
     if (e.status !== 404) throw e; // a 404 just means it doesn't exist yet; anything else is real
   }
@@ -333,13 +347,13 @@ async function resolveRootFolderId() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: rootFolder, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
     });
-    rootFolderIdCache.set(kRoot, created.id);
-    return created.id;
+    cachedRootFolderId = created.id;
+    return cachedRootFolderId;
   } catch (e) {
     if (e.status === 409) {
       const item = await graphFetch(`/drives/${driveId}/root:/${encodeURIComponent(rootFolder)}`);
-      rootFolderIdCache.set(kRoot, item.id);
-      return item.id;
+      cachedRootFolderId = item.id;
+      return cachedRootFolderId;
     }
     throw e;
   }
@@ -519,12 +533,20 @@ async function moveItem(itemId, newParentId, newName) {
 }
 
 /**
- * Drop everything cached for one institution — call when its credentials change,
- * otherwise a corrected configuration keeps using the old site and token.
+ * Drop everything cached here — call after the SharePoint credentials or site are saved,
+ * otherwise a corrected configuration keeps uploading to the old site with the old token.
+ *
+ * Was `forgetTenant(tenantId)`, which took the tenant whose Map entries to evict. There
+ * are no tenants and no Maps, so it takes nothing. It is NOT dead code even though
+ * nothing calls it today — the three id caches have no TTL at all, so without this an
+ * administrator who fixes a wrong site address has to wait for a restart to see it take
+ * effect. Whoever owns the Settings save path should be calling it.
  */
-function forgetTenant(tenantId) {
-  const k = tenantId || "__no_tenant__";
-  tokenCache.delete(k); siteIdCache.delete(k); driveIdCache.delete(k); rootFolderIdCache.delete(k);
+function forgetCached() {
+  cachedToken = null;
+  cachedSiteId = null;
+  cachedDriveId = null;
+  cachedRootFolderId = null;
 }
 
 
@@ -544,9 +566,8 @@ async function testConnection() {
   } catch (e) {
     return { ok: false, note: "Sign-in to Microsoft failed — check the directory ID, application ID and client secret. (" + e.message + ")" };
   }
-  let siteId;
   try {
-    siteId = await resolveSiteId();
+    await resolveSiteId();
   } catch (e) {
     return { ok: false, note: "Signed in, but the site could not be found — check the site host and path. (" + e.message + ")" };
   }
@@ -559,7 +580,7 @@ async function testConnection() {
 }
 
 module.exports = {
-  forgetTenant,
+  forgetCached,
   testConnection,
   isConfigured,
   describe,

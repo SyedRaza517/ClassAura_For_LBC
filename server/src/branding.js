@@ -1,44 +1,50 @@
-// What one institution looks and sounds like — resolved in a single place.
+// What this institution looks and sounds like — resolved in a single place.
 //
 // WHY THIS IS ONE MODULE AND NOT A FIELD READ IN SIXTEEN
 //
-// Before this, an institution's identity was literals: "EdTech" in sixteen server
+// Before this, the institution's identity was literals: "EdTech" in sixteen server
 // files, "42 The Burroughs, Hendon, London NW4 4AP" at the foot of the offer letter,
 // a signatory's actual name defaulted in offerLetter.js, and #1a3a8f in
-// seventy-six places in the client. A second college on the platform would have sent
-// its applicants letters branded for the first one — not a cosmetic problem, a letter
-// from the wrong institution.
+// seventy-six places in the client. Changing any of it meant finding all of it, and
+// the copies drifted — the address on the offer letter and the address on the
+// attendance letter were different addresses for the same college.
 //
 // So every one of those values now has exactly one resolver. A caller asks for the
-// current tenant's branding and gets a COMPLETE object: whatever the college saved,
-// falling back to the environment, falling back to the platform default. No caller
-// has to handle a missing field, which is what stops the defaults drifting apart
-// again.
+// branding and gets a COMPLETE object: whatever the college saved, falling back to
+// the environment, falling back to a neutral default. No caller has to handle a
+// missing field, which is what stops the defaults drifting apart again.
 //
-// Cached per tenant for a short time, like integrationConfig.js and for the same
-// reason: this is read on nearly every email and PDF, it changes about never, and a
-// college that has just corrected its address should see the correction while it is
-// still looking at the screen.
+// The shape of this file was set when one deployment served many colleges, and the
+// stakes were higher then: a resolver that returned the wrong row sent an applicant a
+// letter from an institution they had never applied to. That cannot happen now — one
+// deployment, one college, one branding row — but the single-resolver design is kept
+// because it is also what fixed the drift above, which was never a tenancy problem.
+//
+// Cached for a short time, like integrationConfig.js and for the same reason: this is
+// read on nearly every email and PDF, it changes about never, and a college that has
+// just corrected its address should see the correction while it is still looking at
+// the screen.
 const prisma = require("./db");
-const { currentTenantId } = require("./db");
 
 // NEUTRAL fallbacks. Deliberately not EdTech's — nor any other institution's.
 //
 // The first version of this file used EdTech's real name, address and colours as the
-// defaults, which only moved the hardcoding one level down: every new college would
-// have started life branded as EdTech and sent EdTech-branded letters until someone
-// noticed. That is the same defect this module exists to remove.
+// defaults, which only moved the hardcoding one level down: a deployment that had
+// configured nothing would send letters signed by a college it has no connection to
+// until someone noticed. That is the same defect this module exists to remove, and it
+// survives the move to one-college-per-deployment unchanged — a default that names a
+// real institution is wrong wherever it is read.
 //
 // So the fallbacks below belong to nobody. They are what an institution that has
 // configured nothing looks like: a plain slate palette and its own name, taken from
-// the Tenant record it was created with. EdTech's identity is DATA now, held in its
-// own TenantBranding row like any other customer's — see the branding migration,
-// which moves it out of the code and into that row.
+// the Tenant record — which is now this deployment's single settings row rather than
+// one customer among many. EdTech's identity is DATA, held in the TenantBranding
+// row — see the branding migration, which moves it out of the code and into that row.
 //
-// A college therefore never inherits another college's identity. The worst case is
-// unstyled, which is honest, rather than wrongly attributed, which is not.
+// The worst case is therefore unstyled, which is honest, rather than wrongly
+// attributed, which is not.
 const DEFAULTS = {
-  displayName: null,      // falls back to the Tenant's own `name` — see get()
+  displayName: null,      // falls back to the institution's own `name` — see get()
   shortName: null,
   wordmarkTop: null,
   wordmarkSub: null,
@@ -72,7 +78,11 @@ const ENV = {
 };
 
 const TTL_MS = Number(process.env.BRANDING_CACHE_MS ?? 30_000);
-const cache = new Map(); // tenantId -> { value, at }
+
+// One slot, not a Map. This was `Map<tenantId, {value, at}>` when a process served
+// several colleges; with one institution per deployment there is exactly one thing to
+// cache, and a Map keyed on nothing is a Map that hides that fact from the next reader.
+let cached = null; // { value, at }
 
 /** #abc or #aabbcc, nothing else. Rejected rather than sanitised — a colour that is
  *  not a colour is a mistake to report, and anything looser reaches a style attribute. */
@@ -129,52 +139,57 @@ function mailFromFor(row, resolved) {
 }
 
 /**
- * The current institution's branding, complete. Never returns a partial object, so
- * no caller needs a fallback of its own.
+ * This institution's branding, complete. Never returns a partial object, so no caller
+ * needs a fallback of its own.
+ *
+ * There used to be TWO paths through this function: one for a request, which read the
+ * current tenant's row, and one for a scheduler or script, which had no tenant in
+ * scope and could only return defaults. They had to be kept agreeing about whether
+ * displayName can be null, because two shapes is how a caller ends up handling one and
+ * crashing on the other. That split is gone — a scheduler and a request are now
+ * looking at the same single institution — and with it the class of bug where an
+ * emailed letter was branded differently from the same letter downloaded as a PDF.
  */
 async function get() {
-  const tenantId = currentTenantId();
-  // Outside a request — a scheduler, a script — there is no institution to look up.
-  // The same completion rules as the tenant branch below are applied, because the
-  // docstring promises a COMPLETE object and two branches that disagreed about
-  // whether displayName can be null is exactly how a caller ends up handling one
-  // shape and crashing on the other.
-  if (!tenantId) {
-    const resolved = { ...DEFAULTS, ...fromEnv() };
-    if (!resolved.displayName) resolved.displayName = "Staff Hub";
-    if (!resolved.shortName) resolved.shortName = resolved.displayName;
-    if (!resolved.wordmarkTop) resolved.wordmarkTop = String(resolved.shortName).toUpperCase();
-    return { ...resolved, mailFrom: mailFromFor(null, resolved) };
-  }
-
-  const hit = cache.get(tenantId);
-  if (TTL_MS > 0 && hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (TTL_MS > 0 && cached && Date.now() - cached.at < TTL_MS) return cached.value;
 
   let row = null;
-  let tenantName = null;
+  let institutionName = null;
   try {
+    // findFirst rather than findUnique on the "singleton" id: this is a read, and a
+    // read that insists on one literal primary key reports "no branding configured"
+    // for a row that exists under some other id — which is a college silently losing
+    // its own name in letters, the exact failure the DEFAULTS comment above is about.
+    // findFirst returns whatever row is there, and the schema's singleton primary key
+    // is what guarantees there is at most one.
     row = await prisma.tenantBranding.findFirst();
-    // The institution's own name is the right fallback for displayName: it is what
-    // the operator typed when creating the customer, so a college that never opens
-    // the branding screen is still called by its own name in letters and emails —
-    // never by the platform's, and never by another customer's.
-    const { crossTenant } = require("./db");
-    const t = await crossTenant(() => prisma.tenant.findUnique({ where: { id: tenantId } }));
-    tenantName = t ? t.name : null;
+    // The institution's own name is the right fallback for displayName: it is what was
+    // typed when the deployment was set up, so a college that never opens the branding
+    // screen is still called by its own name in letters and emails rather than by the
+    // software's.
+    const t = await prisma.tenant.findFirst();
+    institutionName = t ? t.name : null;
   } catch {
     row = null; // table not migrated yet — neutral defaults are correct
   }
 
   const resolved = { ...DEFAULTS, ...fromEnv(), ...present(row) };
-  if (!resolved.displayName) resolved.displayName = tenantName || "Staff Hub";
+  if (!resolved.displayName) resolved.displayName = institutionName || "Staff Hub";
   if (!resolved.shortName) resolved.shortName = resolved.displayName;
   if (!resolved.wordmarkTop) resolved.wordmarkTop = String(resolved.shortName).toUpperCase();
   const value = { ...resolved, mailFrom: mailFromFor(row, resolved) };
-  cache.set(tenantId, { value, at: Date.now() });
+  cached = { value, at: Date.now() };
   return value;
 }
 
-/** Drop cached branding — call after saving. */
-const invalidate = (tenantId) => (tenantId ? void cache.delete(tenantId) : cache.clear());
+/**
+ * Drop cached branding — call after saving.
+ *
+ * Takes no argument. It used to take the tenant whose entry to evict, and callers
+ * still pass one; anything passed is ignored, because there is only one entry and
+ * dropping it is the whole operation. Kept argument-tolerant rather than argument-
+ * checking, so a caller that has not been updated cannot break on it.
+ */
+const invalidate = () => { cached = null; };
 
 module.exports = { get, invalidate, DEFAULTS, isHex };

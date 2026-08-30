@@ -1,8 +1,10 @@
 // Where an institution chooses what it looks like and what it is called.
 //
 // Lives on the college's own Settings page, beside Connected systems, for the same
-// reason: this is the customer's identity, and a platform operator should not have to
-// hold it — or set it on their behalf — for the service to run.
+// reason: this is the customer's identity, and nobody running the service on their
+// behalf should have to hold it — or set it for them — to keep it running. It was
+// once contrasted with the supplier's platform dashboard, which has gone with
+// multi-tenancy; the reasoning stands without it.
 //
 // The preview is live and local. Changing a colour writes the CSS variables
 // immediately so the whole app around the form restyles as you drag the picker; if

@@ -7,7 +7,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { DEFAULTS, mergeSettings, cleanTenant, cleanUser } = require("./settingsDefaults");
+const { DEFAULTS, mergeSettings, cleanInstitution, cleanUser } = require("./settingsDefaults");
 
 test("with nothing stored, the platform defaults come back whole", () => {
   const got = mergeSettings(null, null);
@@ -52,31 +52,31 @@ test("unknown keys are dropped rather than stored", () => {
   // An allowlist, not a blocklist. sAdmission is the standing example of what the
   // other way costs: it stripped a fixed list of secrets, so every column added
   // afterwards shipped to the browser by default.
-  const cleaned = cleanTenant({ view: "day", isAdmin: true, __proto__: {}, nonsense: 1 });
+  const cleaned = cleanInstitution({ view: "day", isAdmin: true, __proto__: {}, nonsense: 1 });
   assert.deepEqual(Object.keys(cleaned), ["view"]);
 });
 
 test("an invalid view is dropped, not stored", () => {
-  assert.deepEqual(cleanTenant({ view: "spiral" }), {});
+  assert.deepEqual(cleanInstitution({ view: "spiral" }), {});
 });
 
 test("days must be ISO weekdays 1-7 and are de-duplicated and sorted", () => {
-  assert.deepEqual(cleanTenant({ days: [5, 1, 1, 9, 3, 0] }).days, [1, 3, 5]);
+  assert.deepEqual(cleanInstitution({ days: [5, 1, 1, 9, 3, 0] }).days, [1, 3, 5]);
 });
 
 test("an empty day list is refused, because a timetable showing no days is a bug report", () => {
-  assert.deepEqual(cleanTenant({ days: [] }), {});
+  assert.deepEqual(cleanInstitution({ days: [] }), {});
 });
 
 test("periods must be HH:MM pairs with end after start", () => {
-  const ok = cleanTenant({ periods: [{ start: "09:00", end: "10:00" }] });
+  const ok = cleanInstitution({ periods: [{ start: "09:00", end: "10:00" }] });
   assert.deepEqual(ok.periods, [{ start: "09:00", end: "10:00" }]);
-  assert.deepEqual(cleanTenant({ periods: [{ start: "10:00", end: "09:00" }] }), {});
-  assert.deepEqual(cleanTenant({ periods: [{ start: "9:00", end: "10:00" }] }), {});
+  assert.deepEqual(cleanInstitution({ periods: [{ start: "10:00", end: "09:00" }] }), {});
+  assert.deepEqual(cleanInstitution({ periods: [{ start: "9:00", end: "10:00" }] }), {});
 });
 
 test("periods come back sorted, whatever order they were sent in", () => {
-  const got = cleanTenant({ periods: [{ start: "14:00", end: "15:00" }, { start: "09:00", end: "10:00" }] });
+  const got = cleanInstitution({ periods: [{ start: "14:00", end: "15:00" }, { start: "09:00", end: "10:00" }] });
   assert.deepEqual(got.periods.map((p) => p.start), ["09:00", "14:00"]);
 });
 

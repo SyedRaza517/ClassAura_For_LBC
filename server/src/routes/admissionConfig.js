@@ -36,10 +36,10 @@ const isMissingRow = (e) => e?.code === "P2025";
 
 // What a course/intake row is allowed to say back — an ALLOWLIST, for the same reason
 // routes/admissions.js gives at length for the Admission serializer. These two routes
-// answered `res.json(rows)` straight off Prisma, so every column shipped, tenantId
-// included: the one field that file calls out by name as "an internal id that only
-// leaks the estate's shape". More to the point, a column added to either model tomorrow
-// becomes public the moment it exists, and nobody adding one thinks to come back here.
+// answered `res.json(rows)` straight off Prisma, so every column shipped — and, more to
+// the point, a column added to either model tomorrow becomes public the moment it
+// exists, without anybody adding one thinking to come back here. An allowlist makes the
+// new column private until somebody deliberately publishes it.
 const sCourse = (r) => ({ id: r.id, name: r.name, active: r.active, sortOrder: r.sortOrder, createdAt: r.createdAt });
 const sIntake = (r) => ({ id: r.id, label: r.label, active: r.active, sortOrder: r.sortOrder, createdAt: r.createdAt });
 

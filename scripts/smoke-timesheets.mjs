@@ -35,7 +35,7 @@ const bcrypt = require(join(server, "node_modules", "bcryptjs"));
 // expected numbers are derived from it rather than copied into this file, where they
 // would rot the moment a bank holiday moved.
 const { chargeableDays, ukBankHolidays, bankHolidayCount } = require(join(server, "src", "bankHolidays"));
-// A BARE client: no tenant extension. Used only to plant a password on a seeded
+// A BARE client. Used only to plant a password on a seeded
 // student (they ship with passwordHash null, so none of them can sign in), to read
 // back a row the API refused to change, and to sweep up afterwards.
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
@@ -47,7 +47,7 @@ const check = (name, ok, detail = "") => {
 };
 
 async function call(path, { method = "GET", body, token } = {}) {
-  const headers = { "Content-Type": "application/json", "X-Tenant": "default" };
+  const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;

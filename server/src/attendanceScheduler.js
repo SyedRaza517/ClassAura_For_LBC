@@ -41,10 +41,12 @@ async function tick() {
 }
 
 function start() {
-  // Per institution — each has its own attendance-email configuration and its own
-  // recipients. See eachTenant.js.
-  const { forEachTenant } = require("./eachTenant");
-  const runAll = () => forEachTenant("attendance-emails", () => tick())
+  // Ran once per institution until this deployment served exactly one. The wrapper
+  // that did it (eachTenant.js) existed because a job on a timer is outside any
+  // request, so nothing had resolved a tenant for it and every query would throw.
+  // With one institution there is nothing to resolve and nothing to iterate; the
+  // .catch below already does the error isolation the wrapper also provided.
+  const runAll = () => tick()
     .catch((e) => console.error("[attendance-scheduler] failed:", e.message));
   setInterval(runAll, 60 * 60 * 1000); // hourly
   setTimeout(runAll, 30 * 1000);       // and once ~30s after boot, in case we start on month-end

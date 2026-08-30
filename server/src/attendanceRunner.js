@@ -18,10 +18,10 @@ const CONFIG_ID = "singleton";
 // Merge a stored config blob over the code defaults so callers always receive a complete
 // config (every band template present, every institution value present).
 //
-// `bandList` is THIS college's ladder, so the templates returned are exactly one per
-// band it actually uses — a band it invented gets the generic starting letter rather
-// than nothing, and a band it deleted stops appearing in the editor. It defaults to
-// the built-in bands so this function stays synchronous and callable without a
+// `bandList` is this college's configured ladder, so the templates returned are exactly
+// one per band it actually uses — a band it invented gets the generic starting letter
+// rather than nothing, and a band it deleted stops appearing in the editor. It defaults
+// to the built-in bands so this function stays synchronous and callable without a
 // database, which is what lets the route and the scheduler share it.
 function resolveConfig(data, bandList) {
   const d = data || {};
@@ -41,9 +41,9 @@ function resolveConfig(data, bandList) {
     sendHour: Number.isFinite(d.sendHour) ? d.sendHour : 9,
     lastRunPeriod: d.lastRunPeriod || null,
     values: { ...bands.DEFAULT_VALUES, ...(d.values || {}) },
-    // The ladder itself travels WITH the templates. Every caller that has a config has
-    // the bands those templates belong to, so none of them can pair one college's
-    // letters with another list's thresholds.
+    // The ladder itself travels WITH the templates. Every caller that has a config also
+    // has the bands those templates belong to, so none of them has to re-resolve the
+    // ladder and risk pairing a letter with a threshold that has since been edited.
     bands: list,
     templates,
   };
@@ -51,7 +51,7 @@ function resolveConfig(data, bandList) {
 
 async function loadConfig() {
   const [row, list] = await Promise.all([
-    prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } }).catch(() => null),
+    prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } }).catch(() => null),
     bandConfig.get(),
   ]);
   return resolveConfig(row && row.data, list);
@@ -60,18 +60,23 @@ async function loadConfig() {
 // Shallow-merge the patch over the stored blob; `values` and `templates` merge one level
 // deeper so saving one band's template (or one value) doesn't wipe the others.
 async function saveConfig(patch = {}) {
-  const row = await prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } }).catch(() => null);
+  const row = await prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } }).catch(() => null);
   const cur = (row && row.data) || {};
   const next = { ...cur, ...patch };
   if (patch.values) next.values = { ...(cur.values || {}), ...patch.values };
   if (patch.templates) next.templates = { ...(cur.templates || {}), ...patch.templates };
-  // findFirst + create/update rather than upsert: the primary key is [tenantId, id]
-  // now, so { id } alone is not a selector Prisma accepts. The scoped read also means
-  // each institution finds only its OWN row — which is the bug this replaced, where
-  // every tenant fought over one literal "singleton" id and only the first could save.
-  const own = await prisma.attendanceEmailConfig.findFirst({ where: { id: CONFIG_ID } });
-  if (own) await prisma.attendanceEmailConfig.updateMany({ where: { id: CONFIG_ID }, data: { data: next } });
-  else await prisma.attendanceEmailConfig.create({ data: { id: CONFIG_ID, data: next } });
+  // One upsert on the constant key. This was briefly a findFirst + create/update pair,
+  // because the primary key had become [tenantId, id] and `{ id }` alone was no longer
+  // a selector Prisma would accept. `id` is the whole primary key again, so the atomic
+  // form is available and is the one to use: find-then-create is two statements, and
+  // two ticks of the scheduler racing on the first ever save would both find nothing,
+  // both create, and leave two rows — after which loadConfig reads an arbitrary one and
+  // the month marker written by the other never stops a second send.
+  await prisma.attendanceEmailConfig.upsert({
+    where: { id: CONFIG_ID },
+    update: { data: next },
+    create: { id: CONFIG_ID, data: next },
+  });
   // Resolved against the college's real ladder, not the code defaults: saving a
   // template must not hand the caller back a config describing six bands when this
   // college runs three. Bands themselves are NOT written here — they live in their own

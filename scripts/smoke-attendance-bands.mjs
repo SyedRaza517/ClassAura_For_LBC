@@ -1,9 +1,11 @@
-// Each college's OWN attendance bands — and, above all, the students they decide about.
+// The college's OWN attendance bands — and, above all, the students they decide about.
 //
 // The bands were six numbers in the code (85+, 70–84, 60–69, 50–59, 40–49, 0–39), which
-// is one institution's attendance policy applied to every institution on the platform.
-// That is not a settings problem: a band decides whether a student receives a letter
-// telling them their place on the programme is at risk. A college that warns at 75% and
+// is one institution's attendance policy written into the product. Now that a deployment
+// serves a single college that is no longer a leak between institutions, but it is the
+// same defect for the college in front of it: its regulations are not the ones shipped in
+// the source. That is not a settings problem: a band decides whether a student receives a
+// letter telling them their place on the programme is at risk. A college that warns at 75% and
 // escalates at 60% was, until now, warning nobody at 75% and escalating nobody at 60%.
 //
 // So the assertions here are mostly about what a BAD band list would do to a student:
@@ -25,10 +27,9 @@ async function check(label, fn) {
   try { const d = await fn(); ok(label, d); } catch (e) { bad(label, e); }
 }
 
-const call = async (path, { method = "GET", body, token, tenant } = {}) => {
+const call = async (path, { method = "GET", body, token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
-  if (tenant) headers["X-Tenant"] = tenant;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
@@ -280,12 +281,16 @@ await check("renaming a band keeps the letter that belongs to it", async () => {
 });
 
 /* ----------------------------------------------------------------------- isolation --- */
-
-await check("bands cannot be read for an institution that does not exist", async () => {
-  const r = await call("/attendance-emails/config", { token, tenant: "no-such-college" });
-  assert.equal(r.status, 404, `expected 404, got ${r.status}`);
-  return "no institution, no bands";
-});
+//
+// REMOVED: "bands cannot be read for an institution that does not exist". It sent
+// X-Tenant: no-such-college and required a 404 — the middleware refusing to serve an
+// unknown institution without confirming whether it exists. There is no X-Tenant header
+// and no institution registry to miss in, so the header would be ignored and the call
+// would simply return this college's bands with a 200. Restating it against the new
+// behaviour would assert only that an unknown request header is ignored, which is true
+// of every header and proves nothing about who may read the band ladder.
+//
+// The assertion below is the one that carried the access rule, and it is untouched.
 
 await check("bands cannot be changed without signing in", async () => {
   const r = await call("/attendance-emails/config", { method: "PUT", body: { bands: OWN } });

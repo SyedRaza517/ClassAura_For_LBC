@@ -1,13 +1,13 @@
-// Each institution's own Moodle and SharePoint credentials.
+// This institution's Moodle and SharePoint credentials.
 //
-// These were process-level environment variables, which cannot survive more than one
-// customer: every college would have synced from, and uploaded into, whichever
-// institution's systems the server happened to be configured for. They now live per
-// tenant, encrypted at rest.
+// These were process-level environment variables, so changing which Moodle the college
+// syncs from meant editing the deployment and restarting it — an operation only the
+// supplier could perform, on a timescale of days, for a change the college's own IT
+// staff make in a minute. They now live in the database, encrypted at rest, and are
+// edited on the Settings page by an administrator with the `settings` permission.
 //
-// This router is mounted INSIDE the tenant middleware, so an institution's admin can
-// only ever read or write their own row — no code here checks a tenantId, and none
-// needs to.
+// One deployment serves one institution, so there is one row per provider and the
+// handlers below find it by provider name alone.
 //
 // The secret half is never returned. A GET reports whether something is configured,
 // the last four characters so a person can recognise which credential is in place,
@@ -95,7 +95,7 @@ router.put("/:provider", requireAuth, requirePage("settings"), async (req, res) 
     ? await prisma.tenantIntegration.update({ where: { id: existing.id }, data })
     : await prisma.tenantIntegration.create({ data: { ...data, secretEnc: secrets.encrypt(incomingSecret) } });
 
-  cfg.invalidate(req.tenant?.id, provider);
+  cfg.invalidate(provider);
   // WHAT changed, never the credential itself — audit.js redacts secret fields, and
   // this deliberately passes only the non-secret settings anyway.
   audit.record(req, {
@@ -118,7 +118,7 @@ router.delete("/:provider", requireAuth, requirePage("settings"), async (req, re
   const existing = await prisma.tenantIntegration.findFirst({ where: { provider } });
   if (!existing) return res.json({ removed: false });
   await prisma.tenantIntegration.delete({ where: { id: existing.id } });
-  cfg.invalidate(req.tenant?.id, provider);
+  cfg.invalidate(provider);
   audit.record(req, {
     action: "integration.removed", entity: "TenantIntegration", entityId: existing.id,
     summary: `${PROVIDERS[provider].label} credentials removed — future syncing stopped, imported records kept`,

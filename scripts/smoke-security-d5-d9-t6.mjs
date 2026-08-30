@@ -9,14 +9,22 @@
 //       across staff, students and applicants.
 //   T6  a platform operator could be created but never removed. An operator who left
 //       kept a working password against every customer's data.
+//       T6 IS GONE FROM THIS SUITE. The platform-operator tier was removed with
+//       multi-tenancy — one deployment, one college, so there is no supplier login
+//       sitting above every institution — and /platform/login, /platform/me and
+//       /platform/admins/:id/active do not exist to be probed. Its three assertions
+//       (deactivation kills a live session immediately, an operator cannot deactivate
+//       themselves, deactivation is reversible) proved real things about real code and
+//       are recorded here as DELETED, not as passing: nothing covers them any more, and
+//       if a supplier-support login is ever reintroduced this section is what has to
+//       come back with it. Recoverable from git history.
 //
 // Written the way smoke-security-regressions.mjs is: each section reproduces the
 // ORIGINAL defect, and "CONFIRMED" means it is BACK — which is a failure.
 //
 // Prereqs: an API on API_URL (npm test boots one) and DATABASE_URL pointing at the
-// same database. THIS SUITE WRITES: it registers a throwaway applicant and creates two
-// throwaway PlatformAdmin rows, and removes all three at the end. Point it at a scratch
-// database, not a live one.
+// same database. THIS SUITE WRITES: it registers a throwaway applicant and removes it
+// at the end. Point it at a scratch database, not a live one.
 //
 // It also SPENDS the check-email budget for this machine's IP for 15 minutes, by
 // design — that is what section D9 measures.
@@ -29,18 +37,14 @@ import { dirname, join } from "node:path";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
-// Resolved through the SERVER's dependency tree, like the Prisma client above — the
-// repo root does not carry bcryptjs.
-const bcrypt = require("bcryptjs");
 
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
-// Every tenanted row needs an institution named for it: this client is deliberately
-// bare (it verifies what the API did, so nothing injects a tenant for it). PlatformAdmin
-// is the one model here that is NOT tenanted — it sits above every institution.
-const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
-if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
+// This client is deliberately bare: it verifies what the API did, so it must not be the
+// one the API writes through. It used to also need the seeded tenant's id, to stamp onto
+// fixtures and to scope the cleanup query below — there is one institution per deployment
+// now and tenantId is gone from the schema, so neither is needed.
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -66,7 +70,7 @@ const alive = async () => (await call("/health")).status === 200;
 const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
 if (!admin?.token) { console.error("admin login failed — is the API up and seeded?"); process.exit(1); }
 
-const cleanup = { applicantEmails: [], platformEmails: [] };
+const cleanup = { applicantEmails: [] };
 
 /* ============ D5: secrets on an Admission row reaching the admin client ============ */
 //
@@ -85,9 +89,12 @@ const cleanup = { applicantEmails: [], platformEmails: [] };
 
   // Named individually rather than looped over a denylist, because a denylist is the
   // bug: these are the four that leaked, plus the two token hashes the old code did
-  // remember and tenantId, which is nobody's business outside the server.
+  // remember. tenantId was named here too; the column no longer exists on any model, so
+  // keeping it would be an assertion that can never fire — which is exactly the kind
+  // that reads as coverage while discriminating nothing. The unknown-key check below is
+  // what carries D5's real second half, and it is untouched.
   const leaked = row
-    ? ["passwordHash", "active", "tokenVersion", "uploadTokenHash", "offerTokenHash", "tenantId"].filter((k) => k in row)
+    ? ["passwordHash", "active", "tokenVersion", "uploadTokenHash", "offerTokenHash"].filter((k) => k in row)
     : [];
 
   // The other half of D5: a field ADDED to the model tomorrow must not become public
@@ -103,7 +110,10 @@ const cleanup = { applicantEmails: [], platformEmails: [] };
       : `register=${reg.status} — the applicant's row was NOT in the admin list, so nothing could be checked (test setup failure, not a pass)`);
 
   // Same rule for the documents that ride along on the row.
-  const docLeak = (row?.documents || []).flatMap((d) => ["tenantId", "storagePath", "spItemId"].filter((k) => k in d));
+  // storagePath and spItemId are the live half of this — they are the SharePoint
+  // coordinates of a passport scan and must never leave the server. tenantId was the
+  // third name and has gone with the column.
+  const docLeak = (row?.documents || []).flatMap((d) => ["storagePath", "spItemId"].filter((k) => k in d));
   verdict("D5b", "Storage keys on the embedded document checklist",
     docLeak.length > 0,
     `${(row?.documents || []).length} document(s) inspected | leaked=[${docLeak.join(", ") || "none"}]`);
@@ -138,94 +148,35 @@ const cleanup = { applicantEmails: [], platformEmails: [] };
     `first call answered honestly=${firstAnswered} | ${stillOracling} of 60 rapid probes still answered | after the cap: status=${afterCap.status} valid=${afterCap.data?.valid} available=${afterCap.data?.available} (a 429 or available:false here would break the register form)`);
 }
 
-/* ============ T6: removing a platform operator ============ */
-{
-  // NOTE the toLowerCase(). These fixtures go in through a bare Prisma client, which
-  // skips POST /admins — and POST /admins is where an operator email is normalised
-  // (`clean(req.body?.email).toLowerCase()`). /platform/login lowercases the submitted
-  // address before findUnique, and PlatformAdmin.email is a plain unique column, so
-  // Postgres compares it case-SENSITIVELY. A fixture stored as "…opA@example.com" is
-  // therefore unreachable by the login that looks for "…opa@example.com": every sign-in
-  // returned 401 "Invalid email or password", which reads exactly like the product
-  // being broken. It was the suite. Any fixture written straight to the database has to
-  // do by hand what the route it bypasses would have done for it.
-  const mkOperator = async (suffix) => {
-    const email = `${TAG}.${suffix}@example.com`.toLowerCase();
-    const password = "OperatorPassword123!";
-    cleanup.platformEmails.push(email);
-    await db.platformAdmin.create({ data: { email, name: `Smoke ${suffix}`, passwordHash: bcrypt.hashSync(password, 10) } });
-    const lg = await call("/platform/login", { method: "POST", body: { email, password } });
-    // mfaRequired means the password was accepted and only the second factor is
-    // outstanding — a different situation from a rejected password, and the two must
-    // not be reported as one thing.
-    return { email, password, token: lg.data?.token, id: lg.data?.admin?.id, loginStatus: lg.status, mfaRequired: !!lg.data?.mfaRequired };
-  };
-
-  const a = await mkOperator("opA");
-  const b = await mkOperator("opB");
-
-  if (!a.token || !b.token) {
-    // A setup failure is not a vulnerability, and reporting it as one is how a suite
-    // starts crying wolf. Say which it is: an enrolled second factor (the fixtures are
-    // created without one, so this would mean the product now enforces it for every
-    // operator and this section needs rewriting) versus a rejected password (which
-    // points at the fixture, not the product — see the note on mkOperator).
-    const mfa = a.mfaRequired || b.mfaRequired;
-    verdict("T6", "Platform operator removal", !mfa,
-      mfa
-        ? `SKIPPED — the platform login now demands a second factor the fixtures cannot produce (A=${a.loginStatus} B=${b.loginStatus}). Not a finding either way; this section needs rewriting to enrol a TOTP secret and sign the code.`
-        : `could not sign in as the fixture operators (A=${a.loginStatus} B=${b.loginStatus}) and neither was asked for a second factor — the fixtures never reached a usable session, so nothing below was exercised`);
-  } else {
-    // 1. The route exists at all. This is the defect itself: there was no way to
-    //    withdraw an operator's access short of editing the database.
-    const gone = await call(`/platform/admins/${b.id}/active`, { method: "PUT", token: a.token, body: { active: false } });
-
-    // 2. Sessions die IMMEDIATELY, not at the 8-hour token expiry. tokenVersion is what
-    //    makes that true; `active` alone would leave the check to a different branch.
-    const bAfter = await call("/platform/me", { token: b.token });
-
-    // 3. And the password stops working too.
-    const bRelogin = await call("/platform/login", { method: "POST", body: { email: b.email, password: b.password } });
-
-    verdict("T6", "A departed platform operator keeps their access (was: no removal endpoint)",
-      gone.status !== 200 || bAfter.status === 200 || bRelogin.status === 200,
-      `deactivate=${gone.status} | their live session afterwards=${bAfter.status} (401 wanted) | signing in again=${bRelogin.status} (401 wanted)`);
-
-    // 4. Self-deactivation must be refused. Succeeding here locks the actor out of the
-    //    only screen that could undo it, and if they were the last operator, out of the
-    //    platform tier entirely — recoverable only with database access.
-    const self = await call(`/platform/admins/${a.id}/active`, { method: "PUT", token: a.token, body: { active: false } });
-    const stillIn = await call("/platform/me", { token: a.token });
-    verdict("T6b", "An operator can deactivate themselves (would lock the tier out)",
-      self.status === 200 || stillIn.status !== 200,
-      `self-deactivate=${self.status} (400 wanted) "${self.data?.error || ""}" | own session afterwards=${stillIn.status} (200 wanted)`);
-
-    // 5. Restore puts them back — the reason this is a switch and not a delete.
-    const back = await call(`/platform/admins/${b.id}/active`, { method: "PUT", token: a.token, body: { active: true } });
-    const bRelogin2 = await call("/platform/login", { method: "POST", body: { email: b.email, password: b.password } });
-    verdict("T6c", "Deactivation cannot be undone (would make it a delete in disguise)",
-      back.status !== 200 || bRelogin2.status !== 200,
-      `restore=${back.status} | signing in again afterwards=${bRelogin2.status} (200 wanted)`);
-
-    // NOT covered here: the "last active operator" guard. With the self-guard in place
-    // it is unreachable through the API — the caller is an active operator and is not
-    // the target, so an active target implies at least two remain. It exists for the
-    // concurrent case (two operators deactivating each other at the same instant), and
-    // reproducing that needs a database with exactly one operator in it, which is not
-    // something a suite sharing a database with other suites can arrange safely.
-  }
-}
+/* ====== T6: removing a platform operator — DELETED WITH THE TIER, not adapted ====== */
+//
+// The platform-operator tier went with multi-tenancy. There is no /platform/login to get
+// a session from, no /platform/admins/:id/active to call, and no PlatformAdmin model to
+// plant a fixture in, so every statement this section made is now a statement about
+// routes that answer 404.
+//
+// Deleted rather than rewritten against that 404, because "POST /platform/login is not
+// mounted" is a fact about the router table, not a security property, and dressing it up
+// would put a line beside T6, T6b and T6c that discriminates nothing. This suite's own
+// convention makes that worse than usual — "not reproduced" here means the defect is
+// absent, so a section that can never reproduce anything reads as permanent reassurance.
+//
+// Genuinely no longer proven ANYWHERE, and flagged rather than quietly dropped:
+//   * revoking an administrator's access kills their LIVE session rather than leaving it
+//     to run to token expiry (tokenVersion, not `active`, is what makes that true),
+//   * an administrator cannot deactivate themselves and lock the tier out,
+//   * a deactivation can be undone, so it is a switch rather than a delete in disguise.
+// The staff-account model has the same shape (Staff.active + tokenVersion) and would be
+// the place to reinstate them, but no suite asserts the immediate-session-death property
+// on the staff side today.
 
 /* ============ cleanup ============ */
 for (const email of cleanup.applicantEmails) {
-  const row = await db.admission.findFirst({ where: { email, tenantId: TENANT.id } });
+  const row = await db.admission.findFirst({ where: { email } });
   if (row) {
     await db.admissionDocument.deleteMany({ where: { admissionId: row.id } });
     await db.admission.delete({ where: { id: row.id } });
   }
-}
-for (const email of cleanup.platformEmails) {
-  await db.platformAdmin.deleteMany({ where: { email } });
 }
 await db.$disconnect();
 

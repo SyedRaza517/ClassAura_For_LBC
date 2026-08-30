@@ -8,7 +8,6 @@
 const crypto = require("crypto");
 const router = require("express").Router();
 const prisma = require("../db");
-const { crossTenant, currentTenantId } = require("../db");
 const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
@@ -19,23 +18,6 @@ router.use(requireAuth, requirePage("attendance-tags"));
 // 16 random bytes, base64url. Not sequential and not derived from the label: a code
 // guessable from the sticker in the next room is a check-in nobody attended.
 const newCode = () => crypto.randomBytes(16).toString("base64url");
-
-/**
- * Is this physical tag already registered ANYWHERE on the platform?
- *
- * The one cross-tenant read in this feature, and it has to be: AttendanceTag.code is
- * globally unique, so a create() with a code another college already holds fails with an
- * opaque P2002 — and the honest answer to "is this sticker already in use" is yes, even
- * when the other holder is an institution this administrator cannot see.
- *
- * Returns a BOOLEAN and nothing else. Which college holds it, what they call it and when
- * they registered it all stay invisible; the caller learns only that this sticker is
- * spoken for, which is what they need to go and find a different one.
- */
-async function crossTenantTagExists(code) {
-  return await crossTenant(async () =>
-    Boolean(await prisma.attendanceTag.findUnique({ where: { code }, select: { id: true } })));
-}
 
 // An allowlist, like every other serialiser here. Note what is absent: `code`. A column
 // added to AttendanceTag tomorrow is private until somebody publishes it deliberately.
@@ -93,26 +75,34 @@ router.get("/", async (_req, res) => {
 // which is 8–14 hex characters, so this admits a real UID and refuses "room1".
 const MIN_SUPPLIED_CODE = 8;
 
-// How fast one college may claim codes that came from OUTSIDE it — see the squatting
-// note on POST below. Deliberately generous: registering a blank sticker means walking to
-// it, holding a phone against it and typing a room name, so one every fifteen seconds is
-// a brisk rollout and sixty in ten minutes is well clear of it. What it is not clear of
-// is a script, which is the only version of this that scales.
+// How fast codes that came from outside this system may be registered. Deliberately
+// generous: registering a blank sticker means walking to it, holding a phone against it
+// and typing a room name, so one every fifteen seconds is a brisk rollout and sixty in
+// ten minutes is well clear of it. What it is not clear of is a script, which is the only
+// version of this that scales — and a script pointed at this endpoint fills AttendanceTag
+// with rows for stickers nobody owns.
+//
+// WHY IT IS ONE COUNTER AND NOT A MAP.
+//
+// It was `Map<tenantId, timestamps[]>` and the reasoning was about squatting: with many
+// colleges on one platform, pre-registering UIDs read off somebody else's blank pack took
+// those stickers away from their rightful owner, and that is an act an INSTITUTION
+// commits, so a college with five admins should not get five times the allowance for it.
+// There is one institution now, so the map has one key, and one key is a counter. Note
+// what did NOT change: it is still not keyed on the administrator, because the thing
+// being paced is the deployment's rate of claiming codes, not any one person's.
 //
 // In-process and module-level, so it is correct for ONE Node process; a clustered
 // deployment needs Redis. Same shape and same caveat as the tap limiter in
-// routes/student.js. Keyed on the TENANT rather than the administrator, because claiming
-// somebody else's stickers is something an institution does, and a college with five
-// admins should not get five times the allowance for doing it.
-const claimHits = new Map(); // tenantId -> number[] of timestamps
+// routes/student.js.
+let claimHits = []; // timestamps
 const CLAIM_WINDOW_MS = 10 * 60_000;
 const CLAIM_MAX = 60;
-function claimAllowed(tenantId) {
+function claimAllowed() {
   const now = Date.now();
-  const recent = (claimHits.get(tenantId) || []).filter((t) => now - t < CLAIM_WINDOW_MS);
-  if (recent.length >= CLAIM_MAX) { claimHits.set(tenantId, recent); return false; }
-  recent.push(now);
-  claimHits.set(tenantId, recent);
+  claimHits = claimHits.filter((t) => now - t < CLAIM_WINDOW_MS);
+  if (claimHits.length >= CLAIM_MAX) return false;
+  claimHits.push(now);
   return true;
 }
 
@@ -124,14 +114,20 @@ function claimAllowed(tenantId) {
 // rollout than writing a generated secret onto every tag with a separate app. When it is
 // omitted we generate a secret instead, for an admin working at a desktop with no NFC.
 //
-// A supplied code may already exist, and the three answers are deliberately different
-// because they are three different situations wearing the same 409:
+// A supplied code may already exist, and the two answers are deliberately different
+// because they are two different situations wearing the same 409:
 //
-//   * OUR OWN RETIRED sticker — restored, relabelled and handed back. Retiring a sticker
-//     must take it out of service, not destroy it.
-//   * OUR OWN LIVE sticker — refused, but named, because the admin is entitled to know
-//     which of their own rows they are looking at.
-//   * ANOTHER COLLEGE'S sticker — refused without a word about whose.
+//   * A RETIRED sticker — restored, relabelled and handed back. Retiring a sticker must
+//     take it out of service, not destroy it.
+//   * A LIVE sticker — refused, but named, because the admin is entitled to know which of
+//     their own rows they are looking at.
+//
+// There used to be a THIRD answer: "registered to another institution on this platform",
+// refused without a word about whose, because the code column was unique across every
+// college in one shared database and an administrator here was not entitled to learn
+// anything about a college over there. One database per college deletes the case
+// entirely — a code either is in this table or is not — so that branch and the
+// cross-tenant probe behind it are gone rather than rephrased.
 router.post("/", async (req, res) => {
   const label = req.body?.label;
   if (!isString(label) || !label.trim()) return res.status(400).json({ error: "A label is required — the room this sticker lives in" });
@@ -145,16 +141,10 @@ router.post("/", async (req, res) => {
   }
   if (code !== null && code.length > 200) return res.status(400).json({ error: "That code is too long (200 characters maximum)" });
 
-  // code is unique across every college, so a clash here means this physical sticker is
-  // already registered — possibly to another institution, which is exactly the case we
-  // must not paper over by generating a different code and pretending it worked.
+  // code is unique, so a clash here means this physical sticker is already registered —
+  // which is exactly the case we must not paper over by generating a different code and
+  // pretending it worked.
   if (code !== null) {
-    // OURS? Asked first, and tenant-scoped: db.js merges tenantId into the unique
-    // selector, so this finds our row or nothing — a sticker held elsewhere is simply not
-    // found, which is the isolation working and needs no special case. Asking this before
-    // the cross-tenant probe is what separates the question we may answer in full from the
-    // question we may answer only with a boolean.
-    //
     // `code` is not selected. Nothing here needs it — we were handed it — and a variable
     // holding a live tag's secret is a variable that ends up in a log line one day.
     const ours = await prisma.attendanceTag.findUnique({
@@ -220,29 +210,12 @@ router.post("/", async (req, res) => {
       return res.status(409).json({ error: `That sticker is already registered here, as "${ours.label}". Rename it from the list if it has moved.` });
     }
 
-    // From here the code is one this college does not hold, so this request either claims
-    // it or is refused as somebody else's — which is exactly the population worth pacing.
-    // A first rollout of genuinely blank stickers lands here too, hence the generous cap.
-    if (!claimAllowed(currentTenantId())) {
+    // From here the code is one this college does not hold, so this request is claiming a
+    // code that came from outside the system — a genuinely blank sticker's factory UID, or
+    // a value someone typed. That is exactly the population worth pacing, and a first
+    // rollout of blank stickers lands here too, hence the generous cap.
+    if (!claimAllowed()) {
       return res.status(429).json({ error: "Too many new stickers in a short time. Wait a few minutes and carry on." });
-    }
-
-    if (await crossTenantTagExists(code)) {
-      // Still a boolean's worth of information, and that property is load-bearing — see
-      // crossTenantTagExists. Saying "another institution" adds nothing the caller could
-      // not already work out: it is not in their own list, and their own retired stickers
-      // now come back rather than clashing, so "somewhere else" is all that is left. What
-      // it adds is a next step, where before there was a dead end that read like a fault
-      // in our software.
-      //
-      // It does NOT solve squatting: a college that pre-registers a UID read off somebody
-      // else's blank sticker still holds it, and the rightful owner still cannot have it.
-      // Releasing it means proving possession of a physical object, which no request to
-      // this endpoint can do — hence support, and hence the platform-operator tier, rather
-      // than a self-service override that would BE the attack.
-      return res.status(409).json({
-        error: "That sticker is already registered to another institution on this platform, so it cannot be registered here. If it came from your own pack, contact support to have it released.",
-      });
     }
   }
 

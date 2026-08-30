@@ -4,8 +4,7 @@
 // This file is only the storage and the cache, in the shape attendanceBandConfig.js
 // established.
 const prisma = require("../db");
-const { currentTenantId } = require("../db");
-const { mergeSettings, cleanTenant, cleanUser, DEFAULTS } = require("./settingsDefaults");
+const { mergeSettings, cleanInstitution, cleanUser, DEFAULTS } = require("./settingsDefaults");
 
 // Short, matching branding.js and attendanceBandConfig.js. These are read on every
 // timetable load, change about never, and an administrator who has just edited the
@@ -13,23 +12,24 @@ const { mergeSettings, cleanTenant, cleanUser, DEFAULTS } = require("./settingsD
 //
 // IN-PROCESS. Correct for one Node process; a clustered deployment would need Redis,
 // and until then a second instance can serve a stale banner for up to TTL_MS.
+// ONE ENTRY, NOT A MAP. This was keyed by tenant id because one process served
+// every college. One process now serves one college, so the key had exactly one
+// possible value and the Map was a dictionary with a single entry.
 const TTL_MS = Number(process.env.TIMETABLE_SETTINGS_CACHE_MS ?? 30_000);
-const tenantCache = new Map(); // tenantId -> { value, at }
+let cached = null; // { value, at }
 
-function invalidate(tenantId) {
-  if (tenantId) tenantCache.delete(tenantId);
-  else tenantCache.clear();
+// The tenant id parameter is gone. Callers that passed one — routes/timetabling.js
+// among them — now call invalidate() with nothing, which is the whole cache.
+function invalidate() {
+  cached = null;
 }
 
 /** This college's stored settings, cleaned. `{}` when it has never edited anything. */
-async function getTenant() {
-  const tenantId = currentTenantId();
-  // Outside a request — a script, a one-off — there is no college to look up, and
-  // the defaults are the honest answer.
-  if (!tenantId) return {};
-
-  const hit = tenantCache.get(tenantId);
-  if (TTL_MS > 0 && hit && Date.now() - hit.at < TTL_MS) return hit.value;
+async function getInstitution() {
+  // This used to return {} outside a request, because with no tenant resolved there
+  // was no college to look up. A script now reads the same single row a request
+  // does, so the defaults are no longer a special case for it.
+  if (TTL_MS > 0 && cached && Date.now() - cached.at < TTL_MS) return cached.value;
 
   let row = null;
   try {
@@ -41,8 +41,8 @@ async function getTenant() {
     row = null;
   }
 
-  const value = cleanTenant(row?.display || {});
-  tenantCache.set(tenantId, { value, at: Date.now() });
+  const value = cleanInstitution(row?.display || {});
+  cached = { value, at: Date.now() };
   return value;
 }
 
@@ -55,8 +55,8 @@ async function getTenant() {
  * the single reader most likely to reload immediately.
  */
 async function getEffective(staffId) {
-  const tenant = await getTenant();
-  if (!staffId) return mergeSettings(tenant, null);
+  const institution = await getInstitution();
+  if (!staffId) return mergeSettings(institution, null);
 
   let row = null;
   try {
@@ -64,7 +64,7 @@ async function getEffective(staffId) {
   } catch {
     row = null;
   }
-  return mergeSettings(tenant, row?.display || {});
+  return mergeSettings(institution, row?.display || {});
 }
 
 /**
@@ -75,25 +75,25 @@ async function getEffective(staffId) {
  * edits the college layer and must see the college layer, or an individual's
  * override would look like the college's own setting.
  */
-async function saveTenant(patch, updatedBy = "") {
-  const tenantId = currentTenantId();
+async function saveInstitution(patch, updatedBy = "") {
   const existing = await prisma.timetableSettings.findFirst();
-  const next = { ...cleanTenant(existing?.display || {}), ...cleanTenant(patch) };
+  const next = { ...cleanInstitution(existing?.display || {}), ...cleanInstitution(patch) };
 
-  if (existing) {
-    await prisma.timetableSettings.update({
-      where: { id: existing.id },
-      data: { display: next, updatedBy: String(updatedBy || "").slice(0, 200) },
-    });
-  } else {
-    // No row until a college edits something — so "no row" and "a row holding the
-    // defaults" cannot both mean the same thing, exactly as in branding.js.
-    await prisma.timetableSettings.create({
-      data: { display: next, updatedBy: String(updatedBy || "").slice(0, 200) },
-    });
-  }
+  // UPSERT ON A CONSTANT ID, rather than the find-then-create this used to do.
+  // TimetableSettings.id now defaults to "singleton" and is the primary key, which
+  // is what replaced the per-tenant unique as the guarantee that this table holds
+  // one row. Find-then-create is not atomic: two saves arriving together both found
+  // nothing, both inserted, and findFirst afterwards returned whichever the planner
+  // picked — half the college's settings silently lost. An upsert on a known id
+  // cannot do that. "No row until a college edits something" still holds: nothing
+  // creates the row except a save, exactly as in branding.js.
+  await prisma.timetableSettings.upsert({
+    where: { id: existing?.id || "singleton" },
+    update: { display: next, updatedBy: String(updatedBy || "").slice(0, 200) },
+    create: { display: next, updatedBy: String(updatedBy || "").slice(0, 200) },
+  });
 
-  invalidate(tenantId);
+  invalidate();
   return next;
 }
 
@@ -108,4 +108,4 @@ async function saveUser(staffId, patch) {
   return next;
 }
 
-module.exports = { getTenant, getEffective, saveTenant, saveUser, invalidate, DEFAULTS };
+module.exports = { getInstitution, getEffective, saveInstitution, saveUser, invalidate, DEFAULTS };

@@ -3,6 +3,21 @@
 # It creates the web service below; paste the secret values when prompted.
 #
 # The database is already hosted on Supabase — nothing to provision here.
+#
+# A BLUEPRINT ONLY APPLIES ITS SETTINGS WHEN A SERVICE IS CREATED. Editing this
+# file does NOT change a service that already exists, and that cuts both ways:
+# ADDING a variable here does not add it to the running service, and DELETING one
+# here does not remove it either — the old value keeps being injected into the
+# process until somebody deletes it in the Render dashboard, on BOTH services
+# (edtech-staging-api from `main`, and this one from `production`).
+#
+# Removed here on 30 Aug 2026 when the platform stopped being multi-tenant, and
+# therefore still present in the dashboard until deleted by hand:
+#   DEFAULT_TENANT_SLUG   — nothing reads it any more
+#   TENANT_BASE_DOMAIN    — nothing reads it any more
+# Leaving them set is inert rather than dangerous: no code looks them up. They are
+# worth deleting anyway, because a variable that survives the feature it configured
+# is read by the next person as evidence the feature is still there.
 services:
   - type: web
     name: edtech-hub-api
@@ -44,33 +59,24 @@ services:
       - key: APP_TIMEZONE
         value: Europe/London     # the organisation's wall clock; drives dates, the term
                                  # gate and the 02:00 Moodle sync
-      # --- multi-tenancy ---
-      # This file predated tenancy and never mentioned these, which is defect T9/S4 in
-      # STATUS.md. Without them a multi-college deployment is quietly misconfigured.
+      # --- integration credential storage ---
+      # ONE DEPLOYMENT, ONE COLLEGE. There is no tenant to resolve, so there is
+      # nothing here naming which institution a request belongs to — see the note at
+      # the top of this file for the two variables that used to do that.
       - key: CREDENTIALS_KEY
-        sync: false              # 64 hex chars. AES-256-GCM key that encrypts every college's
-                                 # own Moodle/SharePoint/SMTP credentials at rest. WITHOUT IT
-                                 # no college can save an integration at all, and the failure
-                                 # surfaces only when one tries. Generate:
+        sync: false              # 64 hex chars. AES-256-GCM key that encrypts this college's
+                                 # Moodle/SharePoint/SMTP credentials at rest. WITHOUT IT no
+                                 # integration can be saved at all, and the failure surfaces
+                                 # only when somebody tries. Generate:
                                  #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
                                  # NEVER rotate it casually — every stored secret is encrypted
                                  # under it and becomes unreadable if it changes.
-      - key: DEFAULT_TENANT_SLUG
-        sync: false              # which college a request with no X-Tenant and no subdomain
-                                 # resolves to. ALSO the only tenant permitted to inherit the
-                                 # host-level MOODLE_*/SMTP_* values below — see
-                                 # integrationConfig.js. Every other college resolves to "not
-                                 # configured", which fails safe rather than sending mail as
-                                 # somebody else.
-      - key: TENANT_BASE_DOMAIN
-        sync: false              # e.g. edtech-hub.example.com — lets "lbc.edtech-hub.example.com"
-                                 # resolve the college from the subdomain. Leave unset for a
-                                 # single-college deployment.
       # --- Moodle (VLE) import ---
-      # NOTE: these are HOST-level values and now serve exactly ONE college — the one
-      # named by DEFAULT_TENANT_SLUG above. Every other institution enters its own in
-      # Settings → Integrations. They are no longer dangerous, but on a multi-college
-      # deployment they are simply the wrong place to configure anything.
+      # NOTE: these are HOST-level values and they now simply apply. The fence that
+      # let only the college named by DEFAULT_TENANT_SLUG inherit them is gone with
+      # tenancy, because there is no other institution to protect from them. Setting
+      # them in Settings → Integrations instead is still the better place — those
+      # values are encrypted at rest and editable without a redeploy.
       # WITHOUT these the whole VLE feature silently does nothing in production: the
       # "Sync now" button reports "not set up" and the nightly job never runs. They
       # live in server/.env locally, which is gitignored and never reaches Render, so

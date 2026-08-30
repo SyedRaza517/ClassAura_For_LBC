@@ -12,7 +12,6 @@
 // audit log is read by more people, kept for longer, and exported more often than the
 // table it describes.
 const prisma = require("./db");
-const { currentTenantId, crossTenant } = require("./db");
 
 // Field names whose VALUES never reach the log. Matched case-insensitively on the
 // whole name, so "passwordHash" and "totpSecret" are caught but "passwordChangedAt"
@@ -72,18 +71,24 @@ function diff(before, after) {
 }
 
 /**
- * Who is acting, worked out from the request. A platform operator, a staff member, a
- * student and an applicant are different tiers, and the log has to say which — actorId
- * alone is ambiguous because a PlatformAdmin is not a Staff row, and a Student id and
- * a Staff id are drawn from different tables and can collide in meaning.
+ * Who is acting, worked out from the request. A staff member, a student and an
+ * applicant are different tiers, and the log has to say which — actorId alone is
+ * ambiguous because a Student id and a Staff id are drawn from different tables and
+ * can collide in meaning.
  *
  * req.user carries `kind` for exactly this reason (see auth.js), so a student updating
  * their own record is not filed as staff activity.
  */
 function actorFrom(req) {
-  if (req?.platformAdmin) {
-    return { actorType: "platform", actorId: req.platformAdmin.id, actorEmail: req.platformAdmin.email };
-  }
+  // A branch for `req.platformAdmin` stood here and has gone with the operator tier
+  // — platformAuth.js was the only thing that set it, and nothing writes
+  // actorType: "platform" any more.
+  //
+  // WRITING it is dead; READING it is not. Rows the operator tier wrote are still in
+  // AuditLog and still have to render, so the vocabulary on AuditLog.actorType has
+  // NOT shrunk and the client still has a label and a tone for "platform". Removing
+  // that too would relabel a past operator action as the machine's, which is the one
+  // thing an audit trail must not do.
   if (req?.user) {
     const kind = req.user.kind;
     return {
@@ -107,7 +112,6 @@ function actorFrom(req) {
  * @param {string} [evt.entityId]
  * @param {object} [evt.before]  previous state — diffed and redacted
  * @param {object} [evt.after]   new state
- * @param {string} [evt.tenantId] required only outside a tenant-scoped request
  * @param {object} [evt.actor]   explicit actor, for events that happen BEFORE a session
  *                               exists — a sign-in, a password reset, an invitation
  *                               accepted. Without it those would all be filed as
@@ -119,16 +123,8 @@ function record(req, evt) {
   // Resolve everything synchronously, before the caller's context can unwind.
   let payload;
   try {
-    const tenantId = evt.tenantId || currentTenantId();
-    if (!tenantId) {
-      // Nothing to attach it to. Log loudly rather than silently dropping, because a
-      // privileged action with no audit row is exactly what this exists to prevent.
-      console.error("[audit] dropped '" + evt.action + "' — no tenant in scope and none supplied");
-      return;
-    }
     const { before, after } = diff(evt.before, evt.after);
     payload = {
-      tenantId,
       ...actorFrom(req),
       ...(evt.actor || {}),
       action: String(evt.action || "unknown").slice(0, 100),
@@ -144,10 +140,19 @@ function record(req, evt) {
     return;
   }
 
-  // crossTenant, then an explicit tenantId: a platform operator acts OUTSIDE any
-  // tenant scope, but the row belongs to the institution they affected. Awaiting this
-  // would make every audited action wait on a write nobody is reading yet.
-  crossTenant(() => prisma.auditLog.create({ data: payload }))
+  // Not awaited, on purpose: an audited action must not wait on a write nobody is
+  // reading yet, and by the first rule at the top of this file a failed write must not
+  // fail the action it was recording. So the promise is deliberately floated and its
+  // only job is to log.
+  //
+  // This used to be wrapped in crossTenant(), and the reason is worth keeping: with one
+  // shared database, an audit row had to be stamped with the institution it concerned,
+  // and a platform operator acting from OUTSIDE any institution had no tenant in scope
+  // to stamp it with — so the write escaped the scope guard and supplied the id by hand.
+  // A row that could not be attributed was DROPPED rather than written unattributed,
+  // which meant a privileged action could go unlogged. None of that applies now: there
+  // is one institution, it is the database, and every row belongs to it by construction.
+  prisma.auditLog.create({ data: payload })
     .catch((e) => console.error("[audit] write failed for '" + payload.action + "':", e.message));
 }
 

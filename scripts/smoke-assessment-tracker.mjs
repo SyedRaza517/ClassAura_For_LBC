@@ -39,10 +39,9 @@ const bad = (label, e) => { failed++; console.log(`✗ ${label}\n    ${e && e.me
 async function check(label, fn) {
   try { const d = await fn(); ok(label, d); } catch (e) { bad(label, e); }
 }
-const call = async (path, { method = "GET", body, token, tenant } = {}) => {
+const call = async (path, { method = "GET", body, token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
-  if (tenant) headers["X-Tenant"] = tenant;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
@@ -277,20 +276,20 @@ await check("the saved leader and deadline come back on the tracker row", async 
   return `leader ${row.leaderName}, marking deadline ${row.markingDueDate}`;
 });
 
-/* ---------------- tenant isolation ---------------- */
-
-await check("a unit from another college never appears", async () => {
-  const mineTenant = (await db.staff.findUnique({ where: { id: officerId }, select: { tenantId: true } })).tenantId;
-  const theirs = await db.unit.findMany({ where: { tenantId: { not: mineTenant } }, select: { id: true } });
-  if (!theirs.length) return "skipped — only one college seeded";
-  const visible = new Set(((await call("/assessment-tracker", { token })).body?.rows || []).map((r) => r.unitId));
-  const leaked = theirs.filter((u) => visible.has(u.id));
-  assert.equal(leaked.length, 0, `${leaked.length} unit(s) from another college appeared`);
-  const setupVisible = new Set(((await call("/assessment-tracker/setup", { token })).body?.modules || []).map((m) => m.unitId));
-  const leakedSetup = theirs.filter((u) => setupVisible.has(u.id));
-  assert.equal(leakedSetup.length, 0, `${leakedSetup.length} unit(s) from another college appeared on the setup grid`);
-  return `${theirs.length} foreign unit(s), none visible on either screen`;
-});
+/* ---------------- tenant isolation — REMOVED ---------------- */
+//
+// "a unit from another college never appears" checked that no Unit belonging to a
+// different tenant showed up on either the tracker rows or the setup grid. There are no
+// other colleges in this database any more — one deployment serves one institution — so
+// the query it built its expectation from (`unit where tenantId not: mine`) has nothing
+// to select and the assertion would compare two empty sets. It already returned
+// "skipped — only one college seeded" whenever that was true, which is how it read on
+// most local runs; the difference now is that it can NEVER be otherwise, so keeping it
+// would put a permanent ✓ on the summary for a comparison of nothing against nothing.
+//
+// Nothing tenant-free is lost with it: every OTHER visibility rule on these two screens
+// (which staff may see the tracker at all, and what an outsider without the page grant
+// gets) is asserted above and is untouched.
 
 /* ---------------- cleanup ---------------- */
 //

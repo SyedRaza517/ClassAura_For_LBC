@@ -1,8 +1,14 @@
 // Where one institution enters its OWN Moodle and SharePoint credentials.
 //
-// Lives on the college's own Settings page, not the platform dashboard: these are
-// the customer's credentials for the customer's systems, and a platform operator
-// should not need to hold them to run the service.
+// Lives on the college's own Settings page. It was placed here rather than on the
+// supplier's platform dashboard — since removed along with multi-tenancy — because
+// these are the customer's credentials for the customer's systems, and nobody
+// running the service on their behalf should need to hold them. The reasoning
+// outlived the dashboard: the college still owns these, not us.
+//
+// (The SharePoint "Directory (tenant) ID" field below is Microsoft's word, naming an
+// Entra ID directory. It has nothing to do with the multi-tenancy this product used
+// to have, and does not go anywhere.)
 //
 // The saved secret is never sent back by the API — only the last four characters, so
 // a person can tell which credential is in place. The field therefore starts empty

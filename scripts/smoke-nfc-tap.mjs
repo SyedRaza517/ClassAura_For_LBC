@@ -32,7 +32,7 @@ if (!process.env.DATABASE_URL) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-// A BARE client: it bypasses the tenant extension so this suite can plant fixtures the
+// A BARE client, and not the one the API writes through, so this suite can plant fixtures the
 // API would refuse to create (a lecturer's A on a register nobody has opened, a tag
 // belonging to another college) and then read back what the API actually wrote rather
 // than what it claims to have written.
@@ -91,7 +91,7 @@ const shift = (hhmm, mins) => {
 // the seed left it — the suites share one seeded database and it is not re-run between
 // them.
 const made = { tags: [], sessions: [], units: [], enrolments: [], marks: [], taps: [], checkIns: [], terms: [], cohorts: [], courses: [] };
-let tenantId = null, otherTenantId = null, configExisted = false, priorConfig = null;
+let configExisted = false, priorConfig = null;
 
 async function cleanup() {
   try {
@@ -111,9 +111,11 @@ async function cleanup() {
     // Put the tap config back exactly as it was. Leaving a college switched ON is the
     // one piece of state here that would change how the product behaves for real users.
     if (configExisted) {
-      await db.attendanceTapConfig.updateMany({ where: { tenantId }, data: { settings: priorConfig } }).catch(() => {});
+      // No filter: AttendanceTapConfig is the institution's single row now that one
+      // deployment serves one college, so "the config" and "every config" are the same set.
+      await db.attendanceTapConfig.updateMany({ data: { settings: priorConfig } }).catch(() => {});
     } else {
-      await db.attendanceTapConfig.deleteMany({ where: { tenantId } }).catch(() => {});
+      await db.attendanceTapConfig.deleteMany({}).catch(() => {});
     }
 
     // The seeded students have NO password and tokenVersion 0. Restore both — a student
@@ -127,11 +129,7 @@ async function cleanup() {
 }
 
 try {
-  const tenant = await db.tenant.findUnique({ where: { slug: process.env.SEED_TENANT_SLUG || "default" } });
-  if (!tenant) throw new Error("seeded tenant not found — run the seed first");
-  tenantId = tenant.id;
-
-  const existingConfig = await db.attendanceTapConfig.findFirst({ where: { tenantId } });
+  const existingConfig = await db.attendanceTapConfig.findFirst({});
   configExisted = Boolean(existingConfig);
   priorConfig = existingConfig?.settings ?? {};
 
@@ -150,7 +148,7 @@ try {
 
   // Deliberately BEFORE the config is enabled. A college that has never heard of this
   // feature must not have its registers writable by anybody holding a student token.
-  await db.attendanceTapConfig.deleteMany({ where: { tenantId } });
+  await db.attendanceTapConfig.deleteMany({});
   const offTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: "anything" } });
   check("a student tap is refused while the feature is off", offTap.status === 403, `HTTP ${offTap.status}`);
 
@@ -174,7 +172,7 @@ try {
 
   // Switch it on THROUGH THE API, not by writing the row directly.
   //
-  // Not a stylistic choice: the config is cached for 30 seconds per tenant, and the
+  // Not a stylistic choice: the config is cached for 30 seconds, and the
   // disabled assertions above have just populated that cache with enabled:false. A
   // direct row write would leave the running API refusing every tap for half a minute,
   // which is what the first run of this suite actually did. save() invalidates the
@@ -243,7 +241,8 @@ try {
   // sends its UID as `code`, rather than a secret being generated here and written onto
   // the tag with a separate NFC tool. Nothing exercised this path at all — every tag in
   // this suite was previously created without a code — so the whole `supplied` branch of
-  // POST /tags, its two guards and its cross-tenant clash check, shipped unread.
+  // POST /tags and its two guards shipped unread. (It also had a cross-tenant clash
+  // check; that branch went with multi-tenancy, and so did the assertion covering it.)
   /* ---------------------------------------------------------------------- */
 
   const codeNotText = await call("/tags", { method: "POST", token: adminToken, body: { label: `Numeric ${RUN}`, code: 12345678 } });
@@ -277,50 +276,39 @@ try {
   const unknown = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: `no-such-code-${RUN}` } });
   check("an unknown tag code is refused", unknown.status === 404, `HTTP ${unknown.status}`);
 
-  const retired = await db.attendanceTag.create({ data: { tenantId, code: `retired-${RUN}`, label: `Retired ${RUN}`, active: false } });
+  const retired = await db.attendanceTag.create({ data: { code: `retired-${RUN}`, label: `Retired ${RUN}`, active: false } });
   made.tags.push(retired.id);
   const retiredTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: retired.code } });
   check("a retired tag is refused, and reads identically to one that never existed",
     retiredTap.status === 404 && retiredTap.data?.error === unknown.data?.error,
     `HTTP ${retiredTap.status}`);
 
-  // A tag belonging to ANOTHER college. db.js scopes the lookup, so this must be
-  // invisible rather than merely rejected — the isolation is what is under test.
-  const other = await db.tenant.findFirst({ where: { NOT: { id: tenantId } } });
-  if (other) {
-    otherTenantId = other.id;
-    const foreign = await db.attendanceTag.create({ data: { tenantId: other.id, code: `foreign-${RUN}`, label: `Foreign ${RUN}` } });
-    made.tags.push(foreign.id);
-    const foreignTap = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode: foreign.code } });
-    check("a tag from another college cannot be used here", foreignTap.status === 404, `HTTP ${foreignTap.status}`);
-
-    // Registering a sticker somebody else already holds. This is the ONE deliberately
-    // cross-tenant read in the feature, and the awkward one: the honest answer is "that
-    // sticker is spoken for", which is information about an institution this
-    // administrator cannot see. crossTenantTagExists() returns a boolean and nothing
-    // else, so the assertion below is about what the 409 does NOT contain.
-    const clash = await call("/tags", { method: "POST", token: adminToken, body: { label: `Clash ${RUN}`, code: foreign.code } });
-    if (clash.data?.id) made.tags.push(clash.data.id); // should never exist; tracked so a bug does not leak a row
-    check("a sticker another college already registered is refused rather than duplicated",
-      clash.status === 409, `HTTP ${clash.status}`);
-    // Keys EXACTLY ["error"] — not "no tenant name appears", which would pass against a
-    // body carrying the other college's id, label or registration date.
-    check("...and the refusal carries nothing but the message",
-      JSON.stringify(Object.keys(clash.data || {})) === '["error"]',
-      `keys: ${Object.keys(clash.data || {}).join(", ")}`);
-    // And no row was created here under a code this college does not own — a 409 that
-    // still wrote would hand the other college's sticker to this one.
-    const clashRows = await db.attendanceTag.count({ where: { tenantId, code: foreign.code } });
-    check("...and no tag was created for it in this college",
-      clashRows === 0, `${clashRows} row(s)`);
-  } else {
-    // Five assertions live behind this branch, not one: a foreign tag cannot be tapped,
-    // cannot be renamed or retired through PATCH, and cannot be re-registered here — and
-    // the 409 that says so must carry nothing but its message. All of that is the one
-    // deliberately cross-tenant read in this feature, so a database with a single college
-    // in it leaves the isolation entirely unproven rather than partly proven.
-    console.log("SKIP  only one tenant in this database — cross-college tag isolation, the PATCH scope and the already-registered 409 are NOT exercised");
-  }
+  // REMOVED: the cross-college tag block, and its SKIP branch.
+  //
+  // It planted an AttendanceTag under a second Tenant and asserted four things: that
+  // tapping it here answered 404 rather than anything confirming it existed; that
+  // re-registering its code was refused with a 409; that the 409 body's keys were EXACTLY
+  // ["error"], carrying no hint of the other college's label, id or registration date; and
+  // that no row was created here under a code this college did not own.
+  //
+  // All four rested on a second institution existing in the same database. There is no
+  // second institution and no crossTenantTagExists() probe left in routes/tags.js, so the
+  // block has nothing to plant and nothing to assert against. Note that it ALREADY printed
+  // SKIP on every single-college run, which is most of them — deleting it changes what the
+  // summary line claims, not what was actually being exercised.
+  //
+  // What survives in tenant-free form, and where:
+  //   * a 404 for a code that is not ours — the unknown-tag and retired-tag checks
+  //     immediately above, which already require the two refusals to read identically;
+  //   * a re-registration is refused, not duplicated, and writes nothing — the LIVE-sticker
+  //     clash further down, which now also counts the rows holding that code;
+  //   * a PATCH against a tag id we do not hold — the 404 for an id that does not exist.
+  //
+  // What does NOT survive, recorded rather than quietly dropped: "the refusal carries
+  // nothing but the message". That was specifically about not naming ANOTHER institution's
+  // sticker, and our own live sticker's 409 deliberately DOES name its label — an admin is
+  // entitled to know which of their own rows they are looking at. There is no tenant-free
+  // version of it, because the thing it protected no longer exists.
 
   /* ====================================================================== */
   console.log("\n--- the lecture's own hours are the window ---");
@@ -330,15 +318,15 @@ try {
   const now = nowHHMM();
 
   const unit = await db.unit.create({
-    data: { tenantId, code: `NFC${RUN}`.slice(0, 12), name: `Tap Suite Unit ${RUN}`, startDate: today, endDate: today },
+    data: { code: `NFC${RUN}`.slice(0, 12), name: `Tap Suite Unit ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(unit.id);
-  const enrol = await db.enrolment.create({ data: { tenantId, studentId: A_ID, unitId: unit.id } });
+  const enrol = await db.enrolment.create({ data: { studentId: A_ID, unitId: unit.id } });
   made.enrolments.push(enrol.id);
 
   // A class that finished an hour ago.
   const past = await db.hndSession.create({
-    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, -180), endTime: shift(now, -60), description: "past" },
+    data: { unitId: unit.id, date: today, startTime: shift(now, -180), endTime: shift(now, -60), description: "past" },
   });
   made.sessions.push(past.id);
   const tooLate = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode } });
@@ -348,7 +336,7 @@ try {
 
   // A class that starts in an hour. earlyGraceMins is 0, so this is still refused.
   const future = await db.hndSession.create({
-    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, 60), endTime: shift(now, 180), description: "future" },
+    data: { unitId: unit.id, date: today, startTime: shift(now, 60), endTime: shift(now, 180), description: "future" },
   });
   made.sessions.push(future.id);
   const tooEarly = await call("/student/me/tap-check-in", { method: "POST", token: sToken, body: { tagCode } });
@@ -362,7 +350,7 @@ try {
 
   // A class that started five minutes ago: inside the window, inside the late threshold.
   const live = await db.hndSession.create({
-    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "live" },
+    data: { unitId: unit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "live" },
   });
   made.sessions.push(live.id);
 
@@ -400,11 +388,11 @@ try {
   // THE ONE THAT MATTERS. A lecturer marked this student absent. A tap must not turn
   // that into a P — where two sources disagree, the human who was in the room wins.
   const lecturerSession = await db.hndSession.create({
-    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, -4), endTime: shift(now, 116), description: "lecturer marked" },
+    data: { unitId: unit.id, date: today, startTime: shift(now, -4), endTime: shift(now, 116), description: "lecturer marked" },
   });
   made.sessions.push(lecturerSession.id);
   const plantedA = await db.attendanceMark.create({
-    data: { tenantId, sessionId: lecturerSession.id, studentId: A_ID, status: "A", remark: "", takenBy: "Ms Lecturer" },
+    data: { sessionId: lecturerSession.id, studentId: A_ID, status: "A", remark: "", takenBy: "Ms Lecturer" },
   });
   made.marks.push(plantedA.id);
 
@@ -448,11 +436,11 @@ try {
   /* ====================================================================== */
 
   const strangerUnit = await db.unit.create({
-    data: { tenantId, code: `NOEN${RUN}`.slice(0, 12), name: `Not Enrolled ${RUN}`, startDate: today, endDate: today },
+    data: { code: `NOEN${RUN}`.slice(0, 12), name: `Not Enrolled ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(strangerUnit.id);
   const strangerSession = await db.hndSession.create({
-    data: { tenantId, unitId: strangerUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "not enrolled" },
+    data: { unitId: strangerUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "not enrolled" },
   });
   made.sessions.push(strangerSession.id);
   // This block previously made NO HTTP call at all: it created a session and asserted no
@@ -512,6 +500,14 @@ try {
   check("re-registering our own LIVE sticker is refused, and does not rename it",
     liveClash.status === 409 && afterClash?.label !== `Renamed ${RUN}`,
     `HTTP ${liveClash.status} label=${afterClash?.label}`);
+  // Added when the cross-college clash block was removed. That block asserted "a 409 that
+  // still wrote would hand the other college's sticker to this one"; the same failure is
+  // reachable without a second institution — a refusal that nonetheless inserted a row
+  // leaves two rows claiming one physical sticker, and the code column is the only thing
+  // tying a tap to a wall.
+  const rowsAfterClash = await db.attendanceTag.count({ where: { code: reuseCode } });
+  check("...and the refusal wrote no second row for that sticker",
+    rowsAfterClash === 1, `${rowsAfterClash} row(s) hold that code`);
 
   console.log("\n--- the tap log ---");
   /* ====================================================================== */
@@ -542,15 +538,15 @@ try {
   // A Term needs a Cohort, which needs a Course — and this database seeds none of the
   // three. Built explicitly rather than reused, so the fixture cannot collide with
   // whatever another suite left behind.
-  const termCourse = await db.course.create({ data: { tenantId, name: `Tap Suite Course ${RUN}` } }).catch(() => null);
+  const termCourse = await db.course.create({ data: { name: `Tap Suite Course ${RUN}` } }).catch(() => null);
   if (termCourse) made.courses.push(termCourse.id);
   const termCohort = termCourse
-    ? await db.cohort.create({ data: { tenantId, courseId: termCourse.id, name: `Tap Intake ${RUN}` } }).catch(() => null)
+    ? await db.cohort.create({ data: { courseId: termCourse.id, name: `Tap Intake ${RUN}` } }).catch(() => null)
     : null;
   if (termCohort) made.cohorts.push(termCohort.id);
   const closedTerm = termCohort
     ? await db.term.create({
-        data: { tenantId, cohortId: termCohort.id, year: 1, index: 1, name: `Closed Term ${RUN}`, start: "2020-01-06", end: "2020-06-30" },
+        data: { cohortId: termCohort.id, year: 1, index: 1, name: `Closed Term ${RUN}`, start: "2020-01-06", end: "2020-06-30" },
       }).catch(() => null)
     : null;
 
@@ -558,20 +554,20 @@ try {
     console.log("SKIP  could not create a Term fixture — the term lock is NOT exercised in this run");
   } else {
     const termUnit = await db.unit.create({
-      data: { tenantId, code: `TRM${RUN}`.slice(0, 12), name: `Term Locked ${RUN}`, termId: closedTerm.id },
+      data: { code: `TRM${RUN}`.slice(0, 12), name: `Term Locked ${RUN}`, termId: closedTerm.id },
     });
     made.units.push(termUnit.id);
     // A DIFFERENT student, enrolled on this unit and nothing else. A_ID has several
     // classes running by now, so the resolver would filter the locked one out and report
     // `ambiguous` for the rest — which is correct behaviour and useless as a test of the
     // lock. Isolation is what makes term_locked the only possible answer.
-    const termEnrol = await db.enrolment.create({ data: { tenantId, studentId: B_ID, unitId: termUnit.id } });
+    const termEnrol = await db.enrolment.create({ data: { studentId: B_ID, unitId: termUnit.id } });
     made.enrolments.push(termEnrol.id);
     await db.student.update({ where: { id: B_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0 } });
     const bLogin = await login(B_EMAIL, A_PASSWORD);
     const bToken = bLogin.data?.token;
     const termSession = await db.hndSession.create({
-      data: { tenantId, unitId: termUnit.id, date: today, startTime: shift(now, -1), endTime: shift(now, 119), description: "term locked" },
+      data: { unitId: termUnit.id, date: today, startTime: shift(now, -1), endTime: shift(now, 119), description: "term locked" },
     });
     made.sessions.push(termSession.id);
 
@@ -628,7 +624,7 @@ try {
   // And the other direction, on a register nobody has corrected. Both assertions are
   // needed: the first alone would pass against a `selfMarked` hardcoded to false.
   const freshSession = await db.hndSession.create({
-    data: { tenantId, unitId: unit.id, date: today, startTime: shift(now, -2), endTime: shift(now, 118), description: "fresh" },
+    data: { unitId: unit.id, date: today, startTime: shift(now, -2), endTime: shift(now, 118), description: "fresh" },
   });
   made.sessions.push(freshSession.id);
   // sessionId explicit: several of this student's sessions are running by now, so a bare
@@ -651,7 +647,7 @@ try {
   check("a student cannot read the lecturer's live view", (await call(`/hnd/sessions/${live.id}/live`, { token: sToken })).status === 403, "");
 
   // Closing the register: the ONLY path from this feature to an absence.
-  const strangerEnrol = await db.enrolment.create({ data: { tenantId, studentId: "st-100122", unitId: unit.id } }).catch(() => null);
+  const strangerEnrol = await db.enrolment.create({ data: { studentId: "st-100122", unitId: unit.id } }).catch(() => null);
   if (strangerEnrol) made.enrolments.push(strangerEnrol.id);
 
   const beforeClose = await call(`/hnd/sessions/${live.id}/live`, { token: adminToken });
@@ -743,15 +739,15 @@ try {
   if (!cToken) throw new Error(`third student sign-in failed (HTTP ${cLogin.status}) — cannot run the tap-context and ambiguity blocks`);
 
   const cUnit = await db.unit.create({
-    data: { tenantId, code: `CTX${RUN}`.slice(0, 12), name: `Context Suite Unit ${RUN}`, startDate: today, endDate: today },
+    data: { code: `CTX${RUN}`.slice(0, 12), name: `Context Suite Unit ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(cUnit.id);
-  const cEnrol = await db.enrolment.create({ data: { tenantId, studentId: C_ID, unitId: cUnit.id } });
+  const cEnrol = await db.enrolment.create({ data: { studentId: C_ID, unitId: cUnit.id } });
   made.enrolments.push(cEnrol.id);
 
   // Nothing on now, one class later today.
   const cFuture = await db.hndSession.create({
-    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, 60), endTime: shift(now, 180), description: "ctx future" },
+    data: { unitId: cUnit.id, date: today, startTime: shift(now, 60), endTime: shift(now, 180), description: "ctx future" },
   });
   made.sessions.push(cFuture.id);
   const ctxNone = await call("/student/me/tap-context", { token: cToken });
@@ -764,7 +760,7 @@ try {
 
   // One class running.
   const cLive1 = await db.hndSession.create({
-    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "ctx live 1" },
+    data: { unitId: cUnit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "ctx live 1" },
   });
   made.sessions.push(cLive1.id);
   const ctxOne = await call("/student/me/tap-context", { token: cToken });
@@ -778,7 +774,7 @@ try {
   // Two classes running at once — a real timetable clash, and a question only the
   // student can answer.
   const cLive2 = await db.hndSession.create({
-    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -6), endTime: shift(now, 116), description: "ctx live 2" },
+    data: { unitId: cUnit.id, date: today, startTime: shift(now, -6), endTime: shift(now, 116), description: "ctx live 2" },
   });
   made.sessions.push(cLive2.id);
   const ctxTwo = await call("/student/me/tap-context", { token: cToken });
@@ -854,19 +850,12 @@ try {
   const patchUnknown = await call(`/tags/no-such-tag-${RUN}`, { method: "PATCH", token: adminToken, body: { active: false } });
   check("patching a tag that does not exist is a 404", patchUnknown.status === 404, `HTTP ${patchUnknown.status}`);
 
-  if (otherTenantId) {
-    // The same 404, for a tag that exists but belongs elsewhere. db.js filters findUnique
-    // as well as findFirst, so this must be indistinguishable from the line above rather
-    // than a 403 that confirms the id is real.
-    const foreignRow = await db.attendanceTag.findFirst({ where: { tenantId: otherTenantId, code: `foreign-${RUN}` } });
-    if (foreignRow) {
-      const patchForeign = await call(`/tags/${foreignRow.id}`, { method: "PATCH", token: adminToken, body: { label: "mine now" } });
-      const foreignAfter = await db.attendanceTag.findUnique({ where: { id: foreignRow.id } });
-      check("another college's tag cannot be renamed or retired from here",
-        patchForeign.status === 404 && foreignAfter?.label === foreignRow.label,
-        `HTTP ${patchForeign.status} label=${foreignAfter?.label}`);
-    }
-  }
+  // REMOVED here: "another college's tag cannot be renamed or retired from here", which
+  // PATCHed the foreign tag planted above and required a 404 indistinguishable from the
+  // one for an id that does not exist — so that a real id could not be confirmed by its
+  // status code. Its fixture went with the second institution. The 404 for an unknown id,
+  // immediately above, is what remains of the pair, and it is the half still worth having:
+  // there is no longer a class of id that exists but is not ours.
 
   // "no" is the string a form sends when a checkbox is serialised carelessly, and
   // coercing it would retire a tag on a truthy value that means the opposite.
@@ -913,7 +902,7 @@ try {
   // already_marked answered off the row the first tap left. sessionId is explicit
   // because two of C's classes are running once this one exists.
   const cLive3 = await db.hndSession.create({
-    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -4), endTime: shift(now, 116), description: "ctx live 3" },
+    data: { unitId: cUnit.id, date: today, startTime: shift(now, -4), endTime: shift(now, 116), description: "ctx live 3" },
   });
   made.sessions.push(cLive3.id);
   const afterUnretire = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode: patchCode, sessionId: cLive3.id } });
@@ -945,7 +934,7 @@ try {
   // `enabled`, because that would refuse everybody — this student tap in the same window
   // is what proves the college is still switched ON and only the staff half is closed.
   const cLive4 = await db.hndSession.create({
-    data: { tenantId, unitId: cUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "ctx live 4" },
+    data: { unitId: cUnit.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "ctx live 4" },
   });
   made.sessions.push(cLive4.id);
   const studentStillTaps = await call("/student/me/tap-check-in", { method: "POST", token: cToken, body: { tagCode, sessionId: cLive4.id } });

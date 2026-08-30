@@ -4,6 +4,12 @@
 *§1, §3.9, §5 and §7 updated 28 Aug 2026 (evening) against `nfc-tap-check-in` at
 `74774a9`. Every count in §1 was re-counted on that commit, not carried forward.*
 
+*§1, §2, §3.1, §3.4–3.7, §3.9, §5, §6, §8 and §9 updated 30 Aug 2026 for the removal of
+multi-tenancy, by reading the working tree. **No count was re-taken and no claim was
+promoted**: rows describing machinery that no longer exists were removed or moved into
+the past tense, and nothing was upgraded from code-read to demonstrated. The suite has
+not been run since the change as this was written.*
+
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
 
@@ -15,6 +21,9 @@ This revision was produced by **reading the code**: every route mounted in
 `emailTemplate.js`, `email.js`, `usage.js`, `audit.js`, the schedulers, the test
 runner and the header of all 21 suites as they stood then, `scripts/README.md`, `API.md`, `render.yaml`,
 `server/.env.example`, and the client's routing, `api.js` and the platform dashboard.
+(Several of those files — `tenant.js`, the platform dashboard — were deleted on 30 Aug.
+The list is left as a record of what the 23 Aug pass actually read, not as a claim that
+all of it still exists.)
 
 **That was true of the 23 Aug pass, and it is no longer true of the whole file.** At the
 time, `npm test` was deliberately not run, because `server/.env` points at a **live
@@ -44,10 +53,13 @@ neither is made here.
 
 ## 1. What this is now
 
-It is no longer a staff attendance app. It is a multi-tenant college management
-platform with a supplier-facing operator tier above it, and the July 2026 description
-of it — SQLite, 8 route files, ~50 endpoints — understated it by roughly a factor of
-five.
+It is no longer a staff attendance app. It is a college management platform sold as
+**one deployment per institution** — one server, one database, one college — and the
+July 2026 description of it (SQLite, 8 route files, ~50 endpoints) understated it by
+roughly a factor of five.
+
+It was multi-tenant, with a supplier-facing operator tier above it, from 23 Aug to
+30 Aug 2026. §2 records what that was and what remains of it.
 
 | | July 2026 | 23 Aug 2026 | Now (28 Aug) |
 |---|---|---|---|
@@ -61,6 +73,16 @@ five.
 | Institutions | one | many, one database | **many, each with its own identity** |
 | Tests | 5 suites, by hand | 21 suites, CI | **26 suites**, CI |
 
+**Two rows of that table stopped being true on 30 Aug 2026 and have not been
+re-counted.** *Account kinds* is now **three** — staff, student, applicant; the operator
+tier was deleted. *Institutions* is **one per deployment, with its own database**. The
+counted figures (route modules, endpoints, models, migrations, suites) all moved in the
+same change — two route modules and three suites went, and other work has been landing
+alongside — so **treat every number above as stale**. They are left at their 28 Aug
+values rather than replaced by a fresh count, because a count taken while several
+branches are mid-flight would be no more trustworthy and would look more current than it
+is. Re-count before quoting any of them.
+
 Counted on `74774a9`, not quoted: `ls server/src/routes/*.js` → 41;
 `router.<method>(` across those files → 275; `^model ` in `schema.prisma` → 57;
 `ls -d server/prisma/migrations/*/` → 30; `ls scripts/smoke-*.mjs` → 26. The page
@@ -72,53 +94,68 @@ the grants somebody already holds, and `access`, which is Super Admin only.
 edtech-hub/
 ├── server/   Express + Prisma + PostgreSQL API  (41 route modules, 275 endpoints)
 ├── client/   React 18 + Vite SPA                (staff app, admin dashboard,
-│                                                 student + applicant portals,
-│                                                 college registration,
-│                                                 Super Admin platform dashboard)
-└── scripts/  setup, the test runner + 26 suites, load test, screenshots
+│                                                 student + applicant portals)
+└── scripts/  setup, the test runner + suites, load test, screenshots
 ```
 
-**Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` (sending
-`X-Tenant`) → Express with JWT + RBAC → tenant middleware → Prisma (isolation
-extension) → PostgreSQL.
+**Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` → Express with
+JWT + RBAC → Prisma → PostgreSQL. One database per institution, so isolation is a
+property of the deployment rather than of the query.
 
 ---
 
-## 2. Multi-tenancy — the load-bearing change, now mostly finished
+## 2. Multi-tenancy — built 23 Aug, removed 30 Aug
 
-This is the part a prospective customer's IT team will ask about, so it is worth being
-precise about what is and is not done.
+The product is now sold as one deployment per institution, each with its own database,
+so the tenancy machinery has been taken out rather than left switched off. This section
+is kept because a prospective customer's IT team will still ask how institutions are
+kept apart, and because the answer changed.
 
-### Done
+**How isolation works now:** by deployment. One database holds one college, so a query
+that forgets a filter can only reach rows belonging to the institution whose server it is
+running on, because there are no others. There is no runtime enforcement of it and no
+test of it, because there is nothing left to enforce or test.
 
-| Piece | Where | Notes |
+### What was removed
+
+Verified by reading the working tree on 30 Aug 2026 — the files below are absent and
+`server/src/db.js` is a plain `PrismaClient`. This has **not** been re-verified by
+running the suite.
+
+| Was | Where it lived | Gone |
 |---|---|---|
-| `Tenant` model; `tenantId` on all 55 other tables | `server/prisma/schema.prisma` | Only `Tenant` and `PlatformAdmin` are exempt |
-| **Isolation enforced centrally** in the Prisma client extension | `server/src/db.js` | Filters, stamps, and **throws** on a query with no tenant context. A new route is isolated without its author doing anything |
-| `crossTenant()` / `runInTenant()` escape hatches | `server/src/db.js` | Deliberately conspicuous, so cross-institution reads show up in a diff |
-| Per-request resolution: `X-Tenant` → subdomain → `DEFAULT_TENANT_SLUG` → `default` | `server/src/tenant.js` | Runs **before** auth, because `Staff.email` is unique per tenant now |
-| Unknown tenant → 404 without confirming existence; suspended → 403 | `server/src/tenant.js` | Deliberately not "tenant x does not exist" |
-| Sessions bound to their institution (`tid` claim checked) | `server/src/auth.js` | A valid token from college A is refused against college B |
-| **The client sends `X-Tenant`** | `client/src/api.js` | `?tenant=slug` → remembered choice → `VITE_TENANT`. Deliberately *not* sent when the host already carries the tenant as a subdomain, so a stale remembered slug cannot override the hostname |
-| Data-safe tenancy migration (nullable → backfill → enforce) | `migrations/20260823120000_multi_tenancy` | Prisma's generated version would have failed on any non-empty database |
-| Platform-admin tier, separate from `Staff.isSuperAdmin` | `src/platformAuth.js`, `routes/platform.js` | Own token kind, own 8h expiry, mounted above the tenant middleware |
-| Per-institution **Moodle, SharePoint and email** credentials, AES-256-GCM at rest | `TenantIntegration`, `src/secrets.js`, `routes/integrations.js` | Secret never returned to any client — only a hint and change metadata |
-| **Env fallback scoped to one tenant** | `src/integrationConfig.js` | Only the tenant named by `DEFAULT_TENANT_SLUG` may inherit the host's settings. Every other college resolves to *not configured*, which fails safe rather than sending mail as somebody else |
-| **Per-tenant token/site/drive caches** in SharePoint | `src/sharepoint.js:126` onwards | `tokenCache`, `siteIdCache`, `driveIdCache`, `rootFolderIdCache` are all `Map`s keyed by `tenantKey()`, with `forgetTenant()` to evict |
-| **Per-tenant branding, letters and email wording** | `TenantBranding`, `TenantDocTemplate`, `TenantEmailTemplate` | See §3.6 |
-| Schedulers fan out per tenant | `server/src/eachTenant.js` | One college's failure is logged and stepped over |
-| **An isolation test suite** | `scripts/smoke-tenant-isolation.mjs` | Builds two colliding institutions and attacks one from the other over real HTTP |
+| `tenantId` on 61 models, 18 compound uniques | `schema.prisma` | Dropped by `migrations/20260830T210000_remove_multi_tenancy`. `Tenant` itself **survives** as the single institution settings row |
+| Isolation enforced in a Prisma client extension — filter, stamp, and throw `TenantScopeError` on a query with no context | `server/src/db.js` | Deleted, with the reasoning kept in the file header |
+| `crossTenant()` / `runInTenant()` escape hatches | `server/src/db.js` | Deleted; schedulers, scripts and tools call directly |
+| Per-request resolution `X-Tenant` → subdomain → `DEFAULT_TENANT_SLUG`, unknown → 404, suspended → 403 | `server/src/tenant.js` | File deleted, middleware unmounted |
+| Sessions bound to their institution by a `tid` claim | `server/src/auth.js` | Neither issued nor checked. **Ignored rather than rejected**, so live sessions carrying one are not signed out by the deploy |
+| The client sending `X-Tenant` | `client/src/api.js` | Removed |
+| Platform-admin tier, separate from `Staff.isSuperAdmin` | `src/platformAuth.js`, `routes/platform.js`, `PlatformDashboard.jsx` | All deleted. `PlatformAdmin` carried no `tenantId`, so the migration did not force this — a tier defined as *above every institution* is simply incoherent when there is one, and a second login kind is a security surface with no remaining purpose |
+| College registration (public apply → operator approves → code redeemed) | `CollegeRegistration` model, `routes/registrations.js`, `client/src/CollegeRegistration.jsx` | All deleted |
+| Schedulers fanning out per tenant | `server/src/eachTenant.js` | Deleted |
+| The isolation test suite, the platform suite and the registrations suite | `scripts/smoke-*.mjs` | Deleted, not adapted — see §5 for the coverage that gives up |
 
-### Not done, or done only partly
+### What survives, and why
+
+| Piece | Notes |
+|---|---|
+| `Tenant`, as one settings row | Not a registry any more. Its only remaining reader is a display-name fallback in `branding.js`. Deleting it was the rejected option: a single row already *is* the singleton settings table the alternative would have had to build |
+| Per-institution **Moodle, SharePoint and email** credentials, AES-256-GCM at rest | `TenantIntegration`, `src/secrets.js`, `routes/integrations.js`. Unchanged — the secret is still never returned to any client |
+| Configuration in the database rather than in env vars or constants | Branding, letters, email wording, attendance bands, prediction thresholds, tap settings. An administrator changes these from Settings; a value only changeable by a deploy is not a setting |
+| A **constant primary key** as the single-row guarantee | `TenantBranding`, `AttendanceBandConfig`, `PredictionModelSettings`, `AttendanceTapConfig` and `TimetableSettings` each held one row per institution under `@@unique([tenantId])`. That is now `id @default("singleton")`, with the save path **upserting on that literal** — find-then-create is not atomic, and two saves arriving together would leave two rows for `findFirst` to choose between |
+| The env fallback for integrations, now **unfenced** | It used to be restricted to the one tenant named by `DEFAULT_TENANT_SLUG`, so no college could inherit another's Moodle or SMTP. The host's environment now describes the only institution there is, so inheriting it is correct rather than a leak (`src/integrationConfig.js`) |
+
+### Left over
 
 | # | Item | Detail |
 |---|---|---|
-| T5b | **Three literals of EdTech's identity survive in the client** | `client/src/StaffHub.jsx:2068` and `:12337` render "EdTech · 42 The Burroughs, London NW4 4AP · 020 8202 2007" in the staff app's App-info card and the admin console's identity card; `:11622` hard-codes the same address in the Admissions help text. The server side is clean — `grep Burroughs server/src` finds only the comment in `branding.js` explaining why it used to be there. A second college sees another college's address on two screens. |
-| T6b | **Operators can be created and switched off, but not reset** | `POST /platform/admins` and `PUT /platform/admins/:id/active` exist, with guards against deactivating yourself or the last operator. There is still no password reset for an operator and no self-service bootstrap — `create-platform-admin.js` on the server command line is the only way to make the first one, and `PlatformDashboard.jsx:552` says so on screen. Deletion is deliberately absent, and the reasoning is written into `routes/platform.js:435`. |
-| T8b | **One script still bypasses isolation** | `server/prisma/seed-admissions.js` constructs a bare `PrismaClient`, so it would write unscoped or fail the NOT NULL constraint. `create-admin.js`, `prisma/seed.js` and 6 of the 12 files in `server/tools/` now use the extended client; of those 6, only `seed-demo.js` wraps its work in `runInTenant`, so the other five (`audit-courses.js`, `delete-seeded-courses.js`, the three `moodle-attendance-*` ones) will **throw** rather than write unscoped. That is failing closed, which is the right failure, but it means those tools do not currently run. The remaining 6 tools never touch Prisma. |
-| ~~T9~~ | ~~Deployment config predates tenancy~~ | **RESOLVED 25 Aug 2026.** `render.yaml` now declares `CREDENTIALS_KEY`, `DEFAULT_TENANT_SLUG` and `TENANT_BASE_DOMAIN` with the reason each exists, states `branch: production` explicitly rather than inheriting the repo default (this repo has two deploy branches, so the default is the last thing that should be decided by accident), and says plainly that the host-level `MOODLE_*` / `SMTP_*` values now serve exactly one college. `DEPLOY.md` gains a troubleshooting section for the two ways an API deploy fails silently. |
+| T5b | **Three literals of EdTech's identity survive in the client** | `client/src/StaffHub.jsx` renders "EdTech · 42 The Burroughs, London NW4 4AP · 020 8202 2007" in the staff app's App-info card and the admin console's identity card, and hard-codes the same address in the Admissions help text. The server side is clean — `grep Burroughs server/src` finds only the comment in `branding.js` explaining why it used to be there. **Line numbers not re-checked since 28 Aug.** Lower severity than it was — a customer now sees the supplier's address rather than another customer's — but it is still text no college can edit |
+| T8b | ~~One script still bypasses isolation~~ | **Dissolved rather than fixed.** `seed-admissions.js` constructing a bare `PrismaClient` was a defect only because the extended client was the one that stamped `tenantId`; there is no extended client now, and the five tools that failed closed under `runInTenant` have nothing left to fail on. Not re-run, so "they work again" is inference from the removal, not a demonstration |
+| ~~T9~~ | ~~Deployment config predates tenancy~~ | Resolved 25 Aug 2026 by declaring `CREDENTIALS_KEY`, `DEFAULT_TENANT_SLUG` and `TENANT_BASE_DOMAIN` in `render.yaml`, with `branch: production` stated explicitly. **The last two of those variables no longer have a reader in `server/src`**; whether `render.yaml` and `server/.env.example` have been cleaned up was not checked in this pass |
 
-**T1, T2, T3, T4 and T7 are resolved.** See §6 for what was checked in each case.
+**T1, T2, T3, T4, T6 and T7 were resolved before the removal.** §6 keeps the record of
+what was checked in each case; several of those items describe machinery that has since
+been deleted outright.
 
 ---
 
@@ -131,7 +168,7 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 
 | Feature | Where | Status |
 |---|---|---|
-| Landing screen with four tiles, including **Super Admin** | `client/src/Landing.jsx` | ✅ |
+| Landing screen with three tiles — staff, student, applicant | `client/src/Landing.jsx` | ✅ The fourth, **Super Admin**, went with the operator tier on 30 Aug (§2). Code-read, not re-run |
 | Self-service sign-up → admin approval → account created | `routes/signup.js` | ✅ |
 | TOTP two-step verification (RFC 6238, hand-rolled) | `src/totp.js`, `client/src/TwoFactor.jsx` | ✅ built — but **not mandatory**, see D2 |
 | Admin reset of a lost authenticator | `routes/staff.js` | ✅ |
@@ -140,12 +177,10 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | Invited accounts — unusable until activated | `src/invite.js`, `client/src/AcceptInvite.jsx` | ✅ |
 | Self-service account deletion (store requirement) | `routes/auth.js`, `client/src/DeleteAccount.jsx` | ✅ |
 | Login rate limiting (8 per IP+email / 15 min) | `routes/auth.js` | ✅ in-process only |
-| **Platform login rate limiting** (5 per IP+email / 15 min → 30 min lock, plus an address-independent account floor) | `routes/platform.js:61–91` | ✅ in-process only |
-| **2FA on the platform login** | `routes/platform.js:128–275` | ✅ Challenge/verify split; `/2fa/setup`, `/enable`, `/disable`; disabling bumps `tokenVersion` |
 | **Per-page admin access + Super Admin** | `src/auth.js` (`requirePage`), `AdminAccess` tab | ✅ 31 grantable pages, the two copies of `ADMIN_PAGES` verified identical by set *and* order. Two of them — `prediction` and `mitigations` — have no entry in the client's `PAGE_LABELS`, so they render as blank rows on the Access tab (D16) |
 | **Student accounts** — own token kind, router allowlist | `src/auth.js`, `routes/student.js` | ✅ |
 | **Applicant accounts** — own token kind, router allowlist | `src/auth.js`, `routes/applicant.js` | ✅ |
-| **Platform operators** — separate tier entirely | `src/platformAuth.js` | ✅ |
+| ~~**Platform operators** — separate tier entirely~~ | ~~`src/platformAuth.js`~~ | **Removed 30 Aug 2026** with multi-tenancy (§2). Three identity kinds remain: staff, student, applicant |
 | **Audit trail** | `src/audit.js`, `routes/audit.js` | ✅ Secret-redacting, append-only over the API (no write route exists), read behind a page grant. Not a grantable page itself — derived |
 | Push notifications (FCM HTTP v1) | `src/push.js`, `routes/devices.js` | ✅ transport verified Jul 2026; needs a Firebase project to deliver |
 | Biometric app lock | `client/src/biometric.js` | ✅ native only; needs a physical device to test |
@@ -185,27 +220,42 @@ Unless a row says otherwise, it has **not** been re-verified by running it.
 | Application record, documents, interviews, offers, enrolment | `/api/admissions` | ✅ With SharePoint filing and a per-college branded email at each step. External steps are best-effort and return a `warning` rather than failing |
 | Course / intake dropdown lists | `/api/admission-config` | ✅ Deliberately separate from the Moodle-synced `Course` table. Both routes now serialise through an allowlist |
 | Application form and offer letter PDFs | `/api/admission-pdf` | ✅ pdfkit for the built-in layout; **pdf-lib over the college's own PDF when one is uploaded** (§3.6) |
-| Public application form | `/api/admission-apply` | ⚠️ Open by design. A honeypot field is **still the only** anti-abuse measure — no rate limit, no CAPTCHA, no email verification on a public write endpoint. Compare `routes/registrations.js`, which added a limiter for exactly this shape of endpoint |
+| Public application form | `/api/admission-apply` | ⚠️ Open by design. A honeypot field is **still the only** anti-abuse measure — no rate limit, no CAPTCHA, no email verification on a public write endpoint. The pattern that was thirty lines away in `routes/registrations.js` is now only in git history, so copying it means fetching it from there |
 | Token-link document upload | `/api/admission-uploads` | ⚠️ Hashed 30-day token; everything normalised to PDF. The body cap is `sharepoint.MAX_BYTES` = 15 MB but `storage.MAX_BYTES` (the Supabase fallback) is 10 MB, so on a deployment without SharePoint a 12 MB file is still accepted then rejected downstream |
 | Token-link offer acceptance | `/api/admission-offers` | ⚠️ Idempotent. `src/offerLetter.js:224` still tells the applicant to accept **by replying to the email**, contradicting the one-click link — and it is now in a letter a college may have replaced with its own |
 | **Applicant portal** | `/api/applicant` | ✅ Register, edit a draft, submit, upload, see the interview invite and outcome, accept, download PDFs |
 | **ISM** (Intention to Study Meeting) | `/api/ism` | ✅ Mirrors its "Admitted?" answer onto `Admission.ismOutcome` |
 | **SLC** (Student Loans Company tracker) | `/api/slc` | ✅ Flat tracker. `admissionId` is an unenforced string with no reader |
 
-### 3.5 What landed on 23 Aug 2026 — the Super Admin surface
+### 3.5 ~~The Super Admin surface~~ — built 23 Aug, deleted 30 Aug 2026
 
-Thirty-eight commits landed today; the last eleven are what this section and §3.6
-describe. None of it appeared in the previous edition of this file.
+The supplier-facing operator tier is gone. It was a whole surface — its own landing
+tile, a monochrome dashboard (Institutions, Registrations, Storage & usage, Operators,
+Server configuration, My security), operator accounts with their own token kind, their
+own rate limiter and their own 2FA, an apportioned per-college storage estimate, a server
+configuration health check, and a "restore access" flow that let an operator reset a
+locked-out college administrator's password into that college's own audit log.
 
-| Piece | Where | What it does |
-|---|---|---|
-| **Its own tile** | `client/src/Landing.jsx:102` | "Super Admin — Platform operators only", visually apart from the three college tiles, with a line under it saying it is not a college sign-in. `?platform` still reaches the same component |
-| **A menu-driven dashboard, black and white** | `client/src/PlatformDashboard.jsx` (1,374 lines) | Six sections behind one menu — Institutions, Registrations, Storage & usage, Operators, Server configuration, My security. The monochrome is deliberate and the reasoning is in the file header: a college can now pick its own colours, so "a different colour" no longer distinguishes the supplier's screen from a customer's. Nobody brands themselves in pure black and white |
-| **Storage & usage per college** | `GET /platform/usage`, `src/usage.js` | Apportioned, not measured: per table, real on-disk size (heap + indexes + TOAST) ÷ row count × that tenant's rows. Labelled *estimated* wherever it appears, because it will end up on an invoice. File storage is **not** an estimate — those bytes are recorded on the document rows and summed directly, and reported separately |
-| **Operator management** | `GET/POST /platform/admins`, `PUT /platform/admins/:id/active` | List, create, deactivate, restore. Two guards: never yourself, never the last active operator. Deactivate rather than delete, so the audit trail keeps a name attached to it |
-| **Server-configuration health** | `GET /platform/health` | Answers "is this host actually set up?" — credential storage, email, file storage, SharePoint, tenant resolution. `CREDENTIALS_KEY` is **round-tripped**, not merely checked for presence, because a truncated paste parses as "set" right up until the first college tries to save a credential |
-| **2FA on the platform login** | `POST /platform/login`, `/login/verify`, `/2fa/*` | Password alone yields a challenge token, never a session, once an authenticator is enrolled. Offered rather than forced — forcing it would lock out an operator with no way back |
-| **"Restore access"** | `GET /platform/tenants/:id/admins`, `PUT …/admins/:staffId/password` | Resets a college administrator's password when the college has locked itself out. Deliberately awkward: administrators only (not the whole staff list), the operator must re-enter **their own** password, the new password is one-time (`mustChangePassword`), `tokenVersion` is bumped, and it is written to **the college's own audit log** so the institution can see that its supplier did it |
+It was removed because a tier defined as *above every institution* is incoherent when a
+deployment holds one institution, and a second login kind with no remaining purpose is
+security surface for nothing. Deleted: `routes/platform.js`, `src/platformAuth.js`, the
+`PlatformAdmin` model, `client/src/PlatformDashboard.jsx`, `client/src/platformApi.js`
+and the `?platform` entry point. **Recoverable from git history** if a supplier-support
+login is ever wanted.
+
+Two consequences worth knowing:
+
+- **`src/usage.js` survives but nothing calls it.** Its only caller was the platform
+  dashboard. It was rewritten for one database per college — `pg_database_size()` is now
+  the figure rather than an apportioned share, so the bytes stopped being an estimate —
+  but there is no route to it. Either a Settings screen picks it up or it is dead code;
+  that decision has not been taken.
+- **A college that locks itself out has no supplier remedy through the API any more.**
+  "Restore access" went with the dashboard, so the only route back in is
+  `server/create-admin.js` on the server command line — and **as this was written that
+  file still imports `runInTenant` and `crossTenant` from `src/db`, which no longer
+  exports either**, so it would throw on require. It is D1 all over again in the
+  opposite direction (§6) and needs re-checking before anyone relies on it.
 
 ### 3.6 What landed on 23 Aug 2026 — each college's own identity
 
@@ -214,8 +264,8 @@ describe. None of it appeared in the previous edition of this file.
 | **Branding** | `TenantBranding`, `src/branding.js`, `routes/branding.js`, `client/src/BrandingSettings.jsx`, `client/src/branding.js` | Names (display, short, two-line wordmark), primary and accent colours, a logo as a data URI (≤256 KB, PNG/JPEG/SVG/WebP/GIF), address lines, contact email and phone, website, legal footer, signatory name and title. The server resolves *saved → env → neutral default* and always returns a complete object, so no caller handles a missing field. The client turns the two colours into CSS custom properties set once on `:root` — `NAVY` is now the string `var(--brand-primary)`, which is why nineteen files needed no change. `GET /api/branding` is public, because the login screen needs it before anyone is authenticated. **The fallbacks belong to nobody** (slate grey): the first version defaulted to EdTech's real identity, which just moved the hardcoding one level down |
 | **Document templates** | `TenantDocTemplate`, `src/docTemplate.js`, `routes/doc-templates`, `client/src/TemplateEditor.jsx` | A college uploads its **own** offer letter or application form as a PDF and drags field chips onto it. `pdf-lib` loads that PDF and writes on top of it — **it never redraws the page**, and the file header argues the point: recreating a design cannot be exact (font substitution, kerning, a resampled crest), and *nearly* their letterhead is worse than obviously not it. Positions are stored as a **percentage** of page width and height, so a template re-exported at a different paper size still lands the name in the right place. The field list is defined once in `docTemplate.js` and is also what the editor offers, so the two cannot drift. `/api/doc-templates` gets its own 8 MB body cap; the global one is 1 MB |
 | **Email wording** | `TenantEmailTemplate`, `src/emailTemplate.js`, `routes/email-templates`, `client/src/DocumentSettings.jsx` | Editable subject and body per email kind, with `{{placeholders}}`. Substituted, never evaluated — no expressions, no logic — because this is customer-authored text rendered and sent under that customer's name. Bodies are **escaped**, not trusted. Unrecognised placeholders are left alone rather than guessed at. One email (the enrolment congratulations) deliberately has no template and takes only its identity from branding |
-| **Per-tenant email configuration** | `src/email.js`, `integrationConfig.js` (`PROVIDERS.email`), `client/src/IntegrationSettings.jsx` | Email now sits alongside Moodle and SharePoint as a third per-tenant integration: provider, host, port, secure, user, from-name, from-address, with the SMTP password (or Resend key) encrypted at rest. `FROM` is resolved **per send**, not once at require time — it was a module-level constant, which meant whichever college the server was configured for became the sender for every other one. The last-resort address is deliberately undeliverable: a bounce nobody owns is a better failure than a letter signed by the wrong institution |
-| **College registration** | `CollegeRegistration` model, `routes/registrations.js`, `client/src/CollegeRegistration.jsx` | A public apply/activate flow, mounted **above** the tenant middleware because an applicant is not yet an institution. Two decisions by two different people are required: an operator approves and issues an access code, and the applicant redeems it. The code is stored **hashed**, like a password-reset token, with only its last four characters readable so an operator can identify it over the phone. The public submit route is rate limited (5/hour/IP) with a size-triggered sweep. Four statuses — pending, approved, activated, rejected — and a rejection is kept rather than deleted so a resubmission has history |
+| **The institution's email configuration** | `src/email.js`, `integrationConfig.js` (`PROVIDERS.email`), `client/src/IntegrationSettings.jsx` | Email sits alongside Moodle and SharePoint as a third configurable integration: provider, host, port, secure, user, from-name, from-address, with the SMTP password (or Resend key) encrypted at rest. `FROM` is resolved **per send**, not once at require time — it was a module-level constant, which meant whichever college the server was configured for became the sender for every other one. The last-resort address is deliberately undeliverable: a bounce nobody owns is a better failure than a letter signed by the wrong institution |
+| ~~**College registration**~~ | ~~`CollegeRegistration` model, `routes/registrations.js`, `client/src/CollegeRegistration.jsx`~~ | **Deleted 30 Aug 2026** (§2). It was a public apply/activate flow requiring two decisions by two different people — an operator approved and issued a hashed access code, the applicant redeemed it — and it existed to manufacture a new institution inside a shared platform. There is nothing for it to manufacture now. Its rate-limiting pattern (5/hour/IP with a size-triggered sweep) is the one D12 still wants, and it is now only in git history |
 | **Pinned Prisma generator output** | `schema.prisma:11–28` | `output = "../node_modules/.prisma/client"`. npm workspaces installs `@prisma/client` twice — hoisted at the repo root and under `server/` — so `prisma generate` wrote into one copy while `server/src` loaded the other, throwing "@prisma/client did not initialize yet". It survived locally only because an older `node_modules` happened to be in the right state; CI, which always installs fresh, failed on the seed *after* migrations had applied cleanly, which is what made it confusing. The path is relative to `schema.prisma`, so it always lands where `server/src` resolves from |
 
 ### 3.8 Predictive Analysis — progression risk (25 Aug 2026)
@@ -504,7 +554,7 @@ this today**, and nothing about it is reachable until an administrator turns it 
 | Piece | Where | What it does |
 |---|---|---|
 | **The tag register** | `AttendanceTag`, `routes/tags.js` (6 endpoints, `attendance-tags` page grant) | Register a sticker, rename it, retire it, read its taps. The code is returned **exactly once**, to the administrator who creates it, because that is the moment somebody writes it onto the tag — there is deliberately no endpoint that reads one back, and `code` is absent from the serialiser, which is an allowlist. Two rollouts are supported on purpose: generate a secret and write it on with a phone app, or tap a **blank** sticker and register its factory UID, which needs no NFC writing tool at all |
-| **The one cross-tenant read** | `crossTenantTagExists()` in `routes/tags.js` | `AttendanceTag.code` is unique across the whole platform, so a college registering a sticker another institution already holds would otherwise get an opaque P2002. The probe runs in `crossTenant()` and returns **a boolean and nothing else** — never which college, never what they call it |
+| ~~**The one cross-tenant read**~~ | ~~`crossTenantTagExists()` in `routes/tags.js`~~ | **Gone 30 Aug 2026.** `AttendanceTag.code` was unique across every college in one shared database, so registering a sticker another institution already held needed a probe that answered "yes, spoken for" and nothing else — never which college, never what they call it. One database per college deletes the case rather than rephrasing it: a code either is in this table or is not |
 | **The window** | `src/attendanceTap.js` — pure, no database, no clock | The lecture's own hours *are* the window; there is nothing for a lecturer to open and nothing to forget to switch off. Taps are accepted from `startTime − earlyGraceMins` to `endTime`, **both ends inclusive**; `P` until `startTime + lateAfterMins`, `L` after. Two classes genuinely running at once return `ambiguous` and the student picks — and the status is then recomputed for the chosen session, because inheriting the first candidate's verdict would mark a punctual student late. The term lock is honoured, matching the 423 on `PUT /sessions/:id/register`, so a tap is not a back door around a closed term |
 | **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. Five settings — `enabled`, `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `staffTapEnabled` (true) — capped at 120 minutes and 600 seconds, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
 | **The student's tap** | `GET /api/student/me/tap-context`, `POST /api/student/me/tap-check-in` | Inside the student router allowlist and keyed on `req.user.id`; no id parameter exists. Candidates are built from `Enrolment`, so a tap cannot attach a student to a unit they were never on. Rate limited 10 per minute per student — in-process, like the other six limiters (§6). Writing a mark flags the student's progression score stale but deliberately does **not** rescore: a check-in must not wait on arithmetic |
@@ -568,16 +618,16 @@ tapping it, and check the log. Only then the two Xcode steps and an iPhone.
 - Sick leave is exempt from allowance, on both client and server.
 - A decided leave request cannot be re-decided (409).
 - Balance adjustments must be non-zero whole numbers, range-bound to fit a 32-bit Int.
-  So must `sortOrder` on admission courses and intakes, and `approxStaff` /
-  `approxStudents` on a college registration — the same class of defect, closed in the
-  same way, each time.
+  So must `sortOrder` on admission courses and intakes — the same class of defect,
+  closed in the same way, each time. (`approxStaff` / `approxStudents` on a college
+  registration was a third instance; that table is gone.)
 - A summary saved for a day you didn't attend does not fabricate a check-in time.
 - Timesheet self-approval is refused (403).
 - An assessment's `maxMarks` cannot be cut below a mark already awarded (409).
 - Semester date ranges cannot overlap, so every session belongs to exactly one.
-- The last remaining administrator cannot delete their own account, and the last active
-  platform operator cannot be deactivated.
-- No operator can deactivate their own operator account.
+- The last remaining administrator cannot delete their own account. (The matching
+  operator guards — never yourself, never the last active operator — went with the
+  operator tier on 30 Aug.)
 
 ---
 
@@ -629,9 +679,17 @@ a failure.
 **The July sweep never covered** sign-up/approval, check-ins, HND registers,
 staff/documents/notifications, input robustness, the browser UI, or a static code
 review. The August work closed specific reported findings; it was not a sweep. A fresh
-sweep across the current surface — which is now 275 endpoints, four identity tiers and
-a supplier-facing dashboard — is outstanding and is a much larger job than it was in
-July.
+sweep across the current surface — roughly 275 endpoints across three identity kinds; the
+fourth tier and the supplier dashboard it guarded were removed on 30 Aug — is outstanding
+and is a much larger job than it was in July.
+
+**Four of the fixes above now guard deleted code.** D3 (a rate limiter and 2FA on the
+platform login), T6 (deactivating a departed operator), T2/D4 (a SharePoint token cache
+shared across institutions) and the isolation work generally were real fixes to real
+defects, and the surfaces they hardened no longer exist. They are kept here because the
+history is true and because two of them — a privileged login without a limiter, a
+module-level cache holding one caller's credentials — are mistakes shaped generically
+enough to be made again somewhere else.
 
 ---
 
@@ -643,12 +701,13 @@ non-zero if any failed. `.github/workflows/ci.yml` runs it on every push and PR 
 a throwaway Postgres container, builds the client first (so a broken import fails
 before the tests start), and runs `npm audit` advisory-only.
 
-**26 suites, up from 10 in July and 21 on 23 Aug.** Read from each file's own header:
+**26 suites on 28 Aug 2026, up from 10 in July and 21 on 23 Aug. Three were deleted on
+30 Aug and the total has not been re-counted** — other branches have been adding suites
+in the same period, so the arithmetic does not simply give 23. Read from each file's own
+header:
 
 | Suite | Covers |
 |---|---|
-| `smoke-tenant-isolation` | **One customer cannot reach another's data.** Two deliberately colliding institutions — same admin email at both — attacked from A against B over real HTTP. Every attempt must fail |
-| `smoke-platform` | The tier above every customer. Deliberately lopsided towards refusals: a college admin reaching the platform, a password alone once 2FA is enrolled, a challenge token passing as a session, a revoked operator's tab still working, a deletion without the typed confirmation, the platform locking itself out of its last account |
 | `smoke-branding` | That a college which has configured **nothing** receives nothing belonging to anybody else. Mostly negative assertions — the defect it guards is a student getting an offer letter from the wrong institution |
 | `smoke-attendance-bands` | Each college's own attendance thresholds, and which of them send a letter. Mostly about what a bad ladder does to a student: a gap swallows them silently, an overlap makes their letter depend on array order, a ladder short of 0% or 100% loses the two students it matters most not to lose. Also pins that an unconfigured college still gets exactly the six built-in bands |
 | `smoke-admissions` | The pipeline holding the most dangerous data in the product — DOB, NI number, ID numbers, criminal-conviction and medical declarations, ethnicity, religion — with three of its six routers public. Almost all negative: who is refused, what never leaves the building, which decisions cannot be made twice |
@@ -659,7 +718,7 @@ before the tests start), and runs `npm audit` advisory-only.
 | `smoke-reviews` | The three routers holding the most sensitive free text. Guards confidentiality and integrity, not uptime: a lecturer reading the management review about them, an appraisal silently re-attributed, a submitted reflection rewritten after it was read, the student roster's emails reaching every member of staff |
 | `smoke-timesheets` | The payroll surface — timesheets, leave, check-ins, adjustments. Almost all negative: no self-approval, no editing an approved month, no approval past allowance, no invented clock-in for a day nobody came in |
 | `smoke-audit` | Three properties: it records the right things, it never leaks a secret into a log read by more people and kept longer than the table it describes, and it cannot be edited or deleted through the API |
-| `smoke-security-d5-d9-t6` | The three defects fixed on 23 Aug stay fixed. Writes — creates a throwaway applicant and two throwaway operators, removes all three |
+| `smoke-security-d5-d9-t6` | The three defects fixed on 23 Aug stay fixed — **now two.** The T6 section (an operator who left keeps a working password) was removed on 30 Aug with the operator tier and is recorded in the file as **DELETED, not as passing**: its three assertions proved real things and nothing covers them any more. The name is unchanged, so the suite's title claims one more defect than it guards |
 | `smoke-security-regressions` | The 8 July 2026 defects stay fixed |
 | `smoke-int-overflow` | Oversized numbers can't crash the API; the database refuses out-of-range values |
 | `smoke-account-deletion` | Password, 2FA, typed confirmation, dependent records — the guards as hard as the happy path |
@@ -672,7 +731,22 @@ before the tests start), and runs `npm audit` advisory-only.
 | `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. 25 checks; **passed on 25 Aug 2026** |
 | `smoke-mitigations` | **Added 28 Aug 2026.** Mitigating circumstances. Mostly refusals, and two that matter: the audit trail carries no `category` or `detail`, and neither does the prediction payload — health data is collected for student support and must not reach a score. 13 checks; **passed** |
 | `smoke-nfc-tap` | **Added 28 Aug 2026.** What a tap must never be able to do — a tap while the feature is off, an unknown or retired tag, a tag belonging to another college, a tap before the class or after it, a student reaching the tag admin or the lecturer's live view or closing a register, a second tap creating a second mark. The two that would otherwise be missed: a tap cannot overwrite a mark a lecturer already set, and a later register save cannot overwrite `checkedInAt`. 48 checks; **passed on 28 Aug 2026** |
-| `smoke-registrations` | How an organisation becomes a customer — the one route that manufactures an institution from outside the platform, where a mistake hands a stranger a whole college with a super-admin account in it. Proves both halves are needed: a form submission, a guessed code, a stolen code, a spent code, a rejected code and a locked-out code must each be worth nothing on its own. 41 checks. Written 23 Aug, after the previous edition of this file had read the suite headers, so it was never described in it |
+
+**Three suites were deleted on 30 Aug 2026, and the coverage they held is given up
+rather than replaced.**
+
+| Deleted suite | What it proved |
+|---|---|
+| `smoke-tenant-isolation` | **One customer could not reach another's data.** Two deliberately colliding institutions — same admin email at both — attacked from A against B over real HTTP. Every attempt had to fail |
+| `smoke-platform` | The tier above every customer. Deliberately lopsided towards refusals: a college admin reaching the platform, a password alone once 2FA was enrolled, a challenge token passing as a session, a revoked operator's tab still working, the platform locking itself out of its last account |
+| `smoke-registrations` | How an organisation became a customer — the one route that manufactured an institution from outside the platform. A form submission, a guessed code, a stolen code, a spent code, a rejected code and a locked-out code each had to be worth nothing on its own. 41 checks |
+
+They were **deleted rather than adapted**, deliberately: with no tenancy their assertions
+would pass while discriminating nothing, which is the failure mode this repo has hit twice
+before and which reads as coverage on the summary line. Recorded honestly — this removes
+the only automated proof that one institution cannot read another's data. That proof is no
+longer *meaningful*, but it is no longer *available* either, and if the product ever
+becomes multi-tenant again these suites are the first thing that has to come back.
 
 **What still has no automated coverage** — checked by grepping every suite for each
 mount, not assumed: `/api/ism`, `/api/slc`, `/api/interactions` (PAT),
@@ -687,6 +761,11 @@ There is still no unit or component test framework and no client-side tests.
 execution. That run is what makes this file's claims about the tap HTTP surface
 demonstrations rather than code-reading. The 25 Aug run (24 passed, 1 skipped) did the
 same for the prediction surface.
+
+**Neither run covers the code as it stands.** The removal of multi-tenancy on 30 Aug
+touched the schema, `db.js`, every smoke suite's setup and most of the client, and the
+suite has **not** been run since as this section was written. Nothing in §3 that those
+two runs demonstrated should be read as still demonstrated until it is.
 
 **There IS a local PostgreSQL on this machine, and earlier editions of this file were
 wrong to say otherwise.** Two services are installed and 16.13 answers on
@@ -735,9 +814,16 @@ found") is worth noting: the suites are already earning their keep.
 None of the *resolutions* below were runtime-verified either. "Fixed" means the code no
 longer does the thing described and, where relevant, a comment or a suite says why.
 
+**This table is a record as at 28 Aug 2026 and has not been re-verified since.** Several
+rows — D1, D3, D4, T1, T2, T3, T8, T9, S1 — describe tenancy machinery that was deleted
+on 30 Aug, so their *defect* is now moot even where their *fix* is gone too. The
+exception worth acting on is **D1**: `server/create-admin.js` was fixed by teaching it
+`runInTenant` / `crossTenant`, and `src/db.js` no longer exports either, so the fix is
+now the breakage. See §3.5.
+
 | # | Previous claim | Verified state |
 |---|---|---|
-| D1 | `server/create-admin.js` broken by tenancy | **Fixed.** Uses the extended client from `src/db`, resolves the tenant by `TENANT_SLUG` / `DEFAULT_TENANT_SLUG` through `crossTenant`, and does its work inside `runInTenant` so the create is stamped. `upsert({ where: { email } })` was replaced by `findFirst` + create/update, because `@@unique([tenantId, email])` means `email` is no longer a unique selector. It also refuses the passwords this project used to ship, and clears TOTP so a lost authenticator is recoverable |
+| D1 | `server/create-admin.js` broken by tenancy | **Was fixed 23 Aug; broken again 30 Aug, in the opposite direction.** The fix taught it `crossTenant` / `runInTenant` and replaced `upsert({ where: { email } })` with `findFirst` + create/update, because `@@unique([tenantId, email])` meant `email` was no longer a unique selector. `src/db.js` exports neither function now, so the file would throw on require — tracked as **D17**. The parts worth keeping either way: it refuses the passwords this project used to ship, and clears TOTP so a lost authenticator is recoverable |
 | D2 | Mandatory 2FA is switched off | **Still true.** `TOTP_ENFORCED = false` at `routes/auth.js:33`, the enrolment branch at `:225` is commented out, `routes/signup.js:356` sets `mustSetupTotp: false`. Accounts that opted in *are* always challenged. `smoke-signup-2fa` skips. Still a Critical item in the readiness plan |
 | D3 | Platform login has no rate limiter and no 2FA | **Fixed, both.** See §3.5 |
 | D4 | SharePoint token cache not tenant-keyed (= T2) | **Fixed.** See §2 |
@@ -754,7 +840,7 @@ longer does the thing described and, where relevant, a comment or a suite says w
 | T4 | `/moodle/status` reports `process.env.MOODLE_URL` | **Fixed.** Primes `cfg.load("moodle")` first and reports the institution's own configuration |
 | T5 | Branding hard-coded per file | **Mostly fixed** — see §3.6. Three literals survive in `StaffHub.jsx`; tracked as T5b |
 | T6 | Platform-operator management incomplete | **Mostly fixed** — see T6b |
-| T7 | `lastTestedAt` / `lastTestOk` / `lastTestNote` are dead columns | **Fixed.** `POST /api/integrations/:provider/test` runs a read-only connection check and writes all three; `IntegrationSettings.jsx:244` is the button; the platform dashboard's health indicator reads the result |
+| T7 | `lastTestedAt` / `lastTestOk` / `lastTestNote` are dead columns | **Fixed.** `POST /api/integrations/:provider/test` runs a read-only connection check and writes all three; `IntegrationSettings.jsx:244` is the button. The second reader — the platform dashboard's health indicator — went on 30 Aug, so the college's own Settings screen is now the only one |
 | T8 | Scripts outside the request path bypass isolation | **Mostly fixed** — see T8b |
 | T9 | Deployment config does not mention the tenancy variables | **Still true** |
 | S1 | `npm run setup` does not work out of the box | **Fixed.** `server/.env.example` now ships a PostgreSQL `DATABASE_URL` and documents `DEFAULT_TENANT_SLUG`, `TENANT_BASE_DOMAIN`, `TENANT_CACHE_MS`, `CREDENTIALS_KEY` and `APP_TIMEZONE`, with the reason each exists. `prisma/assertDisposable.js` now refuses to seed a remote database whose name does not mark it disposable |
@@ -826,14 +912,17 @@ before assuming it deployed.
 | # | Severity | Item |
 |---|---|---|
 | D2 | **high** | Mandatory 2FA is off (above). A decision, not an oversight — but an undecided one |
-| D12 | medium | **`/api/admission-apply` is a public, unauthenticated write with only a honeypot.** `routes/registrations.js` added a limiter to a structurally identical endpoint the same day; this one did not get the same treatment. It writes special-category personal data |
+| D12 | medium | **`/api/admission-apply` is a public, unauthenticated write with only a honeypot.** It writes special-category personal data. `routes/registrations.js` had a limiter on a structurally identical endpoint and was never copied here; that file was deleted on 30 Aug, so the pattern now has to be fetched from git history or written again |
 | D13 | medium | **The upload cap disagrees with itself.** `sharepoint.MAX_BYTES` is 15 MB and `storage.MAX_BYTES` is 10 MB; `routes/admissionsUpload.js:58` and `routes/applicant.js:250` both use the SharePoint figure as the body limit. On a deployment using the Supabase fallback, a 12 MB file is accepted and then rejected downstream |
 | D14 | medium | **The offer letter contradicts the accept link.** `src/offerLetter.js:224` prints "reply to the email containing this offer" while `/api/admission-offers` is a one-click acceptance. Now worse than before: a college may have replaced the letter with its own via `TenantDocTemplate`, in which case the built-in text and the college's text can say different things about the same offer |
 | D15 | medium | **A student is never told their query was answered.** `routes/studentQueries.js` contains no notification or email call of any kind. The answer sits in the portal until they happen to look |
 | D16 | low | **Two grantable pages have no label on the screen that grants them.** `PAGE_LABELS` in `StaffHub.jsx` has 29 entries against `ADMIN_PAGES`' 31; `prediction` and `mitigations` are missing, so the Access tab renders them as a checkbox with no words beside it. The two `ADMIN_PAGES` copies *are* in sync — this is a third hand-maintained list in the same file that nothing checks. Predates the NFC work; `live-attendance` and `attendance-tags` were both labelled when they were added |
-| T5b | medium | Three EdTech literals in `StaffHub.jsx` (above) |
-| T8b | low | `seed-admissions.js` on a bare client; five tools now fail closed rather than running |
-| ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026** |
+| T5b | medium | Three EdTech literals in `StaffHub.jsx` (above). Less severe than it was — the deployment's one college now sees the supplier's address rather than another customer's — but still text nobody can edit |
+| ~~D17~~ | — | **FIXED 30 Aug, same day it was filed.** `server/create-admin.js` imported `runInTenant` and `crossTenant` from `src/db`, which exports neither, so the documented way to create or recover the first administrator threw on require. It no longer resolves an institution at all — there is one — and `Staff.email` is a plain unique again. Not covered by any suite, so this is code-read and `node --check`, not a demonstrated run |
+| ~~D18~~ | — | **RESOLVED 30 Aug by deletion.** `src/usage.js` had no caller once the platform dashboard went. It was deleted rather than kept against a Settings screen that does not exist; the tenant-aware original is in git history at the commit before the removal, and the de-tenanted rewrite in that commit's parent working tree was not kept |
+| D19 | low | **`sharepoint.forgetCached()` has no caller.** The old `forgetTenant(tenantId)` was called when a college saved its SharePoint credentials; the de-tenanted replacement is not called by anything. The three id caches have no TTL, so an administrator who corrects a wrong site address waits for a restart. Its own doc comment says as much — it is not dead code, it is uncalled code |
+| ~~T8b~~ | — | ~~`seed-admissions.js` on a bare client; five tools fail closed~~ — **dissolved 30 Aug**, see §2 |
+| ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026**; its `DEFAULT_TENANT_SLUG` / `TENANT_BASE_DOMAIN` entries now name variables nothing in `server/src` reads |
 | 6 | low | `GET /student-reviews/roster` is open to any authenticated staff member with no page gate — a documented widening (a `pat`-only admin cannot call `/hnd/students`), and still the broadest read surface in that area |
 | 7 | low | `admissionDocs.js` says its document-type list is duplicated in `client/src/StaffHub.jsx` and must be kept in sync by hand |
 | 5 | — | "Personal template" documents (`scope:"personal"` with no assignee) are invisible to everyone. Still needs a product decision |
@@ -843,13 +932,13 @@ before assuming it deployed.
 | # | Item | Notes |
 |---|---|---|
 | 1 | JWT has revocation but no refresh | `tokenVersion` revokes on reset/change. A shorter expiry plus refresh tokens is still the production-grade answer, and there is no "sign out my other devices" button |
-| 2 | Every rate limiter and the leave-decision lock are **in-process** | Module-level `Map`s and promises — now seven of them: staff login, TOTP verify, platform login, applicant check-email, registration submit, the student tap limiter (`routes/student.js`), and the leave lock. Correct for one Node process; a clustered deployment needs Redis and a database-level lock. Each one says so in a comment, which is at least honest, but it is now a systemic property rather than an exception |
+| 2 | Every rate limiter and the leave-decision lock are **in-process** | Module-level `Map`s and promises. Seven were counted on 28 Aug; the platform-login and registration-submit limiters went with their routes on 30 Aug, and `routes/tags.js` has one on new-sticker claims, so **the count has not been re-taken**. Staff login, TOTP verify, applicant check-email, the student tap limiter and the leave lock are certainly still there. Correct for one Node process; a clustered deployment needs Redis and a database-level lock. Each one says so in a comment, which is at least honest, but it is a systemic property rather than an exception |
 | 3 | Client bundle size | 1.22 MB / 313 kB gzipped in July; `StaffHub.jsx` alone is now **14,256 lines**. **Unverified since July** — certainly larger, with `pdf-lib` on the server and pdfjs on the client since 23 Aug and `@capgo/capacitor-nfc` since 28 Aug. pdfjs is loaded on demand (`TemplateEditor.jsx`) and the NFC plugin is imported lazily and only on a native platform (`nfc.js`), which is the pattern the rest of the client still needs. Nothing else is code-split except the Capacitor plugins |
-| 4 | Throughput ceiling | ~110 req/s in July, limited by synchronous bcrypt blocking the event loop. **Unverified since July**; Postgres, the tenant middleware and the audit write all change the picture. See `STRESS-TEST.md` |
+| 4 | Throughput ceiling | ~110 req/s in July, limited by synchronous bcrypt blocking the event loop. **Unverified since July**; Postgres and the audit write change the picture, and the tenant middleware and per-query isolation extension that were also in it have since been removed. See `STRESS-TEST.md` |
 | ~~8~~ | ~~SQLite, single file~~ | **RESOLVED** — PostgreSQL, 9 migrations |
 | ~~9~~ | ~~Tailwind from the Play CDN~~ | **RESOLVED** — compiled at build time |
 | ~~10~~ | ~~"Today" derived in UTC~~ | **RESOLVED** — `src/clock.js` pins `APP_TIMEZONE`; D8 was the last exception and is fixed |
-| ~~11~~ | ~~Thin automated coverage, no CI~~ | **Largely resolved** — 26 suites and CI, and there is now a local PostgreSQL to run them against (§5). The list of uncovered areas in §5 is now short enough to read |
+| ~~11~~ | ~~Thin automated coverage, no CI~~ | **Largely resolved** — a suite per feature area and CI, and there is now a local PostgreSQL to run them against (§5). The list of uncovered areas in §5 is short enough to read. Three suites were deleted on 30 Aug and the total has not been re-counted |
 
 ---
 
@@ -892,12 +981,12 @@ Beware: `npm run setup` **re-seeds**, which clears the demo tables it owns.
 
 | File | State |
 |---|---|
-| `STATUS.md` | This file. Rewritten 23 Aug 2026 (evening) after the previous edition was found to be listing sixteen fixed defects as open; extended 25, 28 and 29 Aug. **Not current for the last two commits on `nfc-tap-check-in`** — prediction trajectory, intake profile and divergence (`17b1a96`, `74774a9`) landed after §3.8.2 was written and have no section here |
-| `README.md` | **Partly stale.** Updated earlier on 23 Aug — setup, PostgreSQL, migrations, `npm test`, multi-tenancy, the data model and the API mount map are current. It knows nothing about anything after 17:26 today: branding, document templates, email templates, per-tenant email, college registration, the audit trail, or the Super Admin dashboard. `grep -i` finds no mention of any of them. Its page figures have now gone stale too: `README.md:449` says "28 pages … 27 grantable" where the counted answer is 33 tabs and 31 grantable |
+| `STATUS.md` | This file. Rewritten 23 Aug 2026 (evening) after the previous edition was found to be listing sixteen fixed defects as open; extended 25, 28 and 29 Aug; de-tenanted 30 Aug. **Not current for the last two commits on `nfc-tap-check-in`** — prediction trajectory, intake profile and divergence (`17b1a96`, `74774a9`) landed after §3.8.2 was written and have no section here. It is also not current for the timetabling and assessment-tracker work landing alongside the 30 Aug change, and no count in it was re-taken on that date |
+| `README.md` | **Stale, and now wrong rather than merely incomplete.** Updated on 23 Aug — setup, PostgreSQL, migrations and `npm test` are current, but its **multi-tenancy section describes machinery deleted on 30 Aug**, and the data model and API mount map predate several features. It knows nothing about branding, document templates, email templates, the institution's email configuration or the audit trail. Its page figures are stale too: `README.md:449` says "28 pages … 27 grantable" where the 28 Aug count was 33 tabs and 31 grantable. **Not touched by the 30 Aug documentation pass**, which covered only `CLAUDE.md`, `STATUS.md` and `API.md` |
 | `scripts/README.md` | **Partly stale.** The runner, the `PASS`/`FAIL`/`SKIP` convention, the throwaway-database warning and the "adding a suite" contract are all accurate and worth keeping. Its suite table lists **9 of the 26** — every suite added since 23 Aug is missing from it. The `smoke-signup-2fa` skip note is still correct. Worth noting that its database advice was right all along: it tells you to create a local scratch database (`postgresql://postgres:postgres@localhost:5432/edtech_test`), which is what §5 has only now caught up with. It names `edtech_test`; the one that exists is `edtech_dev` |
-| `API.md` | **Badly out of date.** Counted on 23 Aug: **62 endpoints across 10 route modules** — auth (including password reset, activation, 2FA), sign-up, staff, check-ins, leave, adjustments, documents, notifications, devices and HND. Nothing on admissions (6 modules), the applicant portal, the student portal, student queries, assessments, timesheets, timetable, the three review modules, PAT, ISM, SLC, Moodle, attendance emails, integrations, branding, document templates, email templates, audit, registrations, prediction, mitigations, NFC tags, or the platform surface. **That numerator has not been re-measured, and the denominator has moved twice since** — the API is now 275 endpoints across 41 modules, so 62 would be 23%. `API.md` is being revised in a parallel change as this section is written; **re-count it before quoting a figure**. It remains the single largest documentation gap |
+| `API.md` | **Badly out of date.** Counted on 23 Aug: **62 endpoints across 10 route modules** — auth (including password reset, activation, 2FA), sign-up, staff, check-ins, leave, adjustments, documents, notifications, devices and HND. Nothing on admissions (6 modules), the applicant portal, the student portal, student queries, assessments, timesheets, timetable, the three review modules, PAT, ISM, SLC, Moodle, attendance emails, integrations, branding, document templates, email templates, audit, prediction, mitigations or NFC tags. **That numerator has not been re-measured, and the denominator has moved several times since**; on 28 Aug the API was 275 endpoints across 41 modules, so 62 would have been 23%. **Re-count before quoting a figure.** It was edited on 30 Aug only to remove tenancy — the platform and registration surfaces it never documented are now also gone, and `X-Tenant` is no longer sent — which changes nothing about its coverage. It remains the single largest documentation gap |
 | `server/prisma/migrations/README.md` | Accurate. Covers why `db push` was abandoned and the rules for changing the schema |
-| `DEPLOY.md`, `render.yaml` | Correct for what they cover, but predate tenancy — see T9 |
+| `DEPLOY.md`, `render.yaml` | Brought up to date for tenancy on 25 Aug (T9), which has now made them wrong in the other direction: `render.yaml` declares `DEFAULT_TENANT_SLUG` and `TENANT_BASE_DOMAIN`, and nothing in `server/src` reads either. Not reviewed in the 30 Aug pass |
 | `BUG-AUDIT.md`, `STRESS-TEST.md` | Historic. July 2026 figures, not re-measured |
 | `SHAREPOINT_SETUP.md`, `MOBILE.md`, `PRIVACY.md`, `DELETE-ACCOUNT.md`, `SUBMISSION_CHECKLIST.md` | Not reviewed in this pass |
 
@@ -911,15 +1000,29 @@ the previous edition of this document was the most misleading thing in the repo.
 duplicate of T2, so 17 distinct defects), 3 are partly fixed, and 3 are still open —
 most of them closed within hours of being written down.
 
+**That paragraph describes 23 Aug and is kept as written.** The largest change since is
+the 30 Aug removal of multi-tenancy: the product is one deployment per college, the
+supplier-facing operator tier is gone, and isolation moved from the query layer to the
+infrastructure. The honest summary of that is that a whole category of defect stopped
+being possible and a whole category of proof stopped being available at the same time.
+
 What is genuinely left, in order:
 
+0. **Run the suite.** Nothing has been run since the de-tenanting, so every
+   demonstration in this file is currently a claim about older code (§5). Two items
+   found by reading — D17 (`create-admin.js` importing functions that no longer exist)
+   and D18 (`usage.js` with no caller) — were both closed on 30 Aug, and the suite has
+   since been run: 26 passed, 0 failed, 1 skipped against local edtech_dev, alongside
+   1,207 server unit tests. Three suites fewer than the 28 Aug baseline of 29, which is
+   exactly the three that were deleted.
 1. **Decide D2.** Mandatory 2FA is still off. Every other item from both security
    sweeps is closed; this is the one that is a decision nobody has made rather than
    work nobody has done. Setting `TOTP_ENFORCED = true` also reactivates ~35
    assertions that currently skip.
 2. **Rate-limit `/api/admission-apply` (D12).** A public, unauthenticated write that
    stores special-category personal data, guarded by a honeypot. The pattern to copy
-   is thirty lines away in `routes/registrations.js`.
+   used to be thirty lines away in `routes/registrations.js`; that file was deleted on
+   30 Aug, so it now comes out of git history.
 3. **Bring `API.md` up to date.** It documents a quarter of the API and fell further
    behind today.
 4. **Update `README.md` and `scripts/README.md`** — seventeen missing suites between
@@ -929,12 +1032,13 @@ What is genuinely left, in order:
    One Android phone and a packet of stickers closes it; iOS additionally needs two
    manual Xcode steps that nobody has done.
 6. **Extend coverage** to the timetable, PAT, attendance emails, the Moodle sync,
-   templates — the areas §5 still lists as untested. Registrations, mitigations and the
-   NFC tap have since got suites of their own.
+   templates — the areas §5 still lists as untested. Mitigations and the NFC tap have
+   since got suites of their own.
 7. **Run a fresh security sweep.** The July one covered 4 of 12 planned areas against a
-   much smaller product, which is now 275 endpoints across four identity tiers, a
-   supplier dashboard, and — newly — a route by which a student writes their own
-   attendance mark. The August fixes closed reported findings; they were not a sweep.
+   much smaller product, which is now a few hundred endpoints across three identity
+   kinds and — newly — a route by which a student writes their own attendance mark. The
+   August fixes closed reported findings; they were not a sweep. The supplier tier that
+   would have been a fourth area no longer exists.
 
 Nothing in this file should be read as a claim that the system has been verified end to
 end. The HTTP surface has been exercised (§5); the client has no test framework at all;

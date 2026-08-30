@@ -27,12 +27,11 @@ const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
-// Every row belongs to an institution now. This client is deliberately bare — it
-// verifies what the API did, so nothing injects a tenant for it — which means the
-// fixtures below have to name one themselves. They target the seeded institution,
-// the same one the API resolves to when no X-Tenant header is sent.
-const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
-if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
+// This client is deliberately bare: it verifies what the API did, so it must not be
+// the one the API writes through. It used to also have to look up the seeded tenant
+// and stamp tenantId onto every fixture below, because a bare client got no tenant
+// injected for it. One deployment now serves one college, tenantId is gone from the
+// schema, and a fixture simply belongs to the only institution there is.
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -72,7 +71,7 @@ async function mkStaff(suffix, allowance = 28) {
 // Plant a live reset token and use it
 async function resetPasswordOf(staffId, newPassword) {
   const raw = crypto.randomBytes(32).toString("hex");
-  await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId, tokenHash: crypto.createHash("sha256").update(raw).digest("hex"), expiresAt: new Date(Date.now() + 30 * 60000) } });
+  await db.passwordReset.create({ data: { staffId, tokenHash: crypto.createHash("sha256").update(raw).digest("hex"), expiresAt: new Date(Date.now() + 30 * 60000) } });
   return call("/auth/reset-password", { method: "POST", body: { token: raw, newPassword } });
 }
 
@@ -128,7 +127,7 @@ async function resetPasswordOf(staffId, newPassword) {
 {
   const u = await mkStaff("race");
   const raw = crypto.randomBytes(32).toString("hex");
-  await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId: u.id, tokenHash: crypto.createHash("sha256").update(raw).digest("hex"), expiresAt: new Date(Date.now() + 30 * 60000) } });
+  await db.passwordReset.create({ data: { staffId: u.id, tokenHash: crypto.createHash("sha256").update(raw).digest("hex"), expiresAt: new Date(Date.now() + 30 * 60000) } });
   const [a, b] = await Promise.all([
     call("/auth/reset-password", { method: "POST", body: { token: raw, newPassword: "RaceOne111!" } }),
     call("/auth/reset-password", { method: "POST", body: { token: raw, newPassword: "RaceTwo222!" } }),

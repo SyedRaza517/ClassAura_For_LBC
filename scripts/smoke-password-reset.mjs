@@ -41,12 +41,11 @@ const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
-// Every row belongs to an institution now. This client is deliberately bare — it
-// verifies what the API did, so nothing injects a tenant for it — which means the
-// fixtures below have to name one themselves. They target the seeded institution,
-// the same one the API resolves to when no X-Tenant header is sent.
-const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
-if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
+// This client is deliberately bare: it verifies what the API did, so it must not be
+// the one the API writes through. It used to also have to look up the seeded tenant
+// and stamp tenantId onto every fixture below, because a bare client got no tenant
+// injected for it. One deployment now serves one college, tenantId is gone from the
+// schema, and a fixture simply belongs to the only institution there is.
 
 const EMAILS = [PLAIN_EMAIL, MFA_EMAIL];
 const wipe = async () => {
@@ -67,7 +66,7 @@ const hashToken = (raw) => crypto.createHash("sha256").update(String(raw)).diges
 async function issueKnownToken(staffId, { expiresInMs = 30 * 60 * 1000 } = {}) {
   const raw = crypto.randomBytes(32).toString("hex");
   await db.passwordReset.updateMany({ where: { staffId, usedAt: null }, data: { usedAt: new Date() } });
-  await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId, tokenHash: hashToken(raw), expiresAt: new Date(Date.now() + expiresInMs) } });
+  await db.passwordReset.create({ data: { staffId, tokenHash: hashToken(raw), expiresAt: new Date(Date.now() + expiresInMs) } });
   return raw;
 }
 

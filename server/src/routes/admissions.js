@@ -75,7 +75,6 @@ const ADMISSION_OUT = [
 //   tokenVersion, active              the applicant's session/account state; the admin
 //                                     screen never reads either, and tokenVersion tells
 //                                     an attacker how often that session was revoked
-//   tenantId                          an internal id that only leaks the estate's shape
 
 // The uploaded-document rows that ride along on `documents`. Same rule — named, not
 // stripped. spItemId / storagePath / webUrl are storage locations the client never
@@ -219,8 +218,8 @@ router.put("/documents/:docId/confirm", async (req, res) => {
     after: { confirmed, admissionId: doc.admissionId },
   });
   // An AdmissionDocument, not an Admission — this used to be run through sAdmission,
-  // which under the old denylist quietly echoed the document row back (tenantId and the
-  // storage keys included). The client reloads the list after this call and ignores the
+  // which under the old denylist quietly echoed the document row back, storage keys
+  // included. The client reloads the list after this call and ignores the
   // body, so nothing depended on the wrong shape; return the right one.
   res.json(sAdmissionDoc(updated));
 });

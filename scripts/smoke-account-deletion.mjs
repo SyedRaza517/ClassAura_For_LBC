@@ -17,12 +17,11 @@ const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
-// Every row belongs to an institution now. This client is deliberately bare — it
-// verifies what the API did, so nothing injects a tenant for it — which means the
-// fixtures below have to name one themselves. They target the seeded institution,
-// the same one the API resolves to when no X-Tenant header is sent.
-const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
-if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
+// This client is deliberately bare: it verifies what the API did, so it must not be
+// the one the API writes through. It used to also have to look up the seeded tenant
+// and stamp tenantId onto every fixture below, because a bare client got no tenant
+// injected for it. One deployment now serves one college, tenantId is gone from the
+// schema, and a fixture simply belongs to the only institution there is.
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -91,7 +90,7 @@ await call("/adjustments", { method: "POST", token: admin.token, body: { staffId
 await call(`/leave/${lv.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved" } });
 const doc = (await call("/documents", { method: "POST", token: admin.token, body: { name: `Del Probe Doc ${TAG}`, type: "Payroll", scope: "personal", assignedTo: d.id } })).data;
 // and a sign-up request carrying the same email + a password hash
-await db.signupRequest.create({ data: { tenantId: TENANT.id, name: "Del data", email: d.email, passwordHash: "x", jobTitle: "T", dept: "T", status: "approved" } });
+await db.signupRequest.create({ data: { name: "Del data", email: d.email, passwordHash: "x", jobTitle: "T", dept: "T", status: "approved" } });
 
 const before = {
   checkIns: await db.checkIn.count({ where: { staffId: d.id } }),

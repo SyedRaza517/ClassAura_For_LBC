@@ -19,9 +19,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, 
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
-// A bare client, deliberately: it verifies what the API did, so nothing injects a
-// tenant for it. Used only to clear mustChangePassword, which no endpoint exposes —
-// smoke-account-deletion.mjs does the same, for the same reason.
+// A bare client, deliberately: it verifies what the API did, so it must not be the
+// client the API wrote through. Used only to clear mustChangePassword, which no endpoint
+// exposes — smoke-account-deletion.mjs does the same, for the same reason.
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
@@ -182,9 +182,14 @@ check("an unknown resource type is refused", (await call("/my-timetable/resource
 
 console.log("\n--- settings ---");
 const badKey = await call("/timetabling/settings", { method: "PUT", token: admin.token, body: { view: "day", isSuperUser: true, view2: "spiral" } });
-check("an unknown settings key is DROPPED, not stored", !!badKey.data?.tenant && !("isSuperUser" in badKey.data.tenant) && !("view2" in badKey.data.tenant), JSON.stringify(badKey.data?.tenant));
-check("a valid key was kept", badKey.data?.tenant?.view === "day");
-check("an invalid value for a known key is dropped", (await call("/timetabling/settings", { method: "PUT", token: admin.token, body: { view: "spiral" } })).data?.tenant?.view === "day");
+// The college-wide half of this response is keyed `institution`; it was `tenant` until
+// multi-tenancy was removed and the object was renamed after the concept it outlived.
+// Same object, same allowlist. These three assertions are about the allowlist and not
+// about tenancy, so they follow the rename rather than being dropped — and the truthiness
+// guard on the first one is what stops a future rename passing silently.
+check("an unknown settings key is DROPPED, not stored", !!badKey.data?.institution && !("isSuperUser" in badKey.data.institution) && !("view2" in badKey.data.institution), JSON.stringify(badKey.data?.institution));
+check("a valid key was kept", badKey.data?.institution?.view === "day");
+check("an invalid value for a known key is dropped", (await call("/timetabling/settings", { method: "PUT", token: admin.token, body: { view: "spiral" } })).data?.institution?.view === "day");
 
 await call("/timetabling/settings", { method: "PUT", token: admin.token, body: { notice: { enabled: true, text: "College says" } } });
 await call("/my-timetable/settings", { method: "PUT", token: lecturerToken, body: { notice: { enabled: true, text: "I say" }, view: "month" } });

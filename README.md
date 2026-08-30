@@ -1,8 +1,8 @@
 # EdTech — Staff Hub (Full-Stack)
 
-A multi-tenant college management platform. It started as staff attendance and leave,
-and is now the system a whole institution runs on — admissions through to grades —
-with several institutions sharing one deployment.
+A college management platform. It started as staff attendance and leave, and is now
+the system a whole institution runs on — admissions through to grades. One deployment
+serves one college, with its own database.
 
 **Staff and HR**
 
@@ -30,8 +30,8 @@ with several institutions sharing one deployment.
 
 **Platform**
 
-- **Multi-tenancy** — one shared database, many institutions, isolation enforced centrally. See *Multi-tenancy* below.
-- **Moodle / VLE sync** — imports courses, students and attendance from each institution's own Moodle.
+- **Per-institution configuration** — branding, letters, email wording, attendance bands and integration credentials are all supplied by the college rather than compiled in. See *One deployment, one college* below.
+- **Moodle / VLE sync** — imports courses, students and attendance from the institution's own Moodle.
 - **CSV export** — one click on holiday balances, leave requests, daily summaries, the staff list, and both HND views.
 
 It has a real **PostgreSQL database**, **login (JWT)**, **role-based access**, and a
@@ -39,7 +39,7 @@ It has a real **PostgreSQL database**, **login (JWT)**, **role-based access**, a
 
 ```
 edtech-hub/
-├── server/   Express + Prisma + PostgreSQL API (auth, RBAC, tenant isolation, all endpoints)
+├── server/   Express + Prisma + PostgreSQL API (auth, RBAC, all endpoints)
 ├── client/   React (Vite) app — staff app, admin dashboard, student + applicant portals
 └── scripts/  setup, the test runner and its suites, load test, screenshots
 ```
@@ -100,7 +100,7 @@ npm run studio      # Prisma Studio, against whatever DATABASE_URL says
 
 ## Seeded login accounts
 
-The seed creates one institution (tenant slug `default`) and these accounts in it.
+The seed creates this deployment's institution (slug `default`) and these accounts in it.
 **They all share whatever you set `SEED_PASSWORD` to** — there is no fixed password.
 
 | Role  | Email |
@@ -111,8 +111,10 @@ The seed creates one institution (tenant slug `default`) and these accounts in i
 - **Admin** sees a VIEW MODE toggle (Staff App ↔ Admin Dashboard) and can act on all data.
 - **Staff** see only their own staff app; the "Manager Approval" tile and dashboard are hidden.
 
-To seed a *different* institution, set `SEED_TENANT_SLUG` — the seed creates that
-tenant if it does not exist and puts the demo data inside it.
+`SEED_TENANT_SLUG` names that institution row and defaults to `default`. It does not
+choose between institutions — there is only one — so leave it alone unless the row
+already exists under a different slug: changing it makes the seed create a *second*
+institution row rather than rename the first.
 
 For a real (non-demo) administrator, use the recovery script rather than the seed:
 
@@ -121,107 +123,69 @@ cd server
 ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-long-passphrase' node create-admin.js
 ```
 
-> **Unverified:** `create-admin.js` looks up the account with `where: { email }`, but
-> `Staff.email` is only unique *per tenant* now (`@@unique([tenantId, email])`) and the
-> script sets no tenant. It has not been re-run since tenancy landed and is expected to
-> fail. Create the first admin with the seed, or in Prisma Studio, until it is fixed.
+It creates the super admin if that email is new and resets it if not. A reset bumps
+`tokenVersion`, so every session and reset link issued under the old password dies at
+once, and clears two-step verification — this is the documented recovery path, and an
+account locked out by a lost authenticator cannot be rescued any other way, because the
+super-admin guard stops other admins resetting it. The password must be at least 12
+characters, the defaults this project once shipped are refused outright, and it is
+never printed.
 
 Browse the database visually anytime with: **`npm run studio`** (opens Prisma Studio).
 
 ---
 
-## Multi-tenancy
+## One deployment, one college
 
-Several institutions share one deployment and one database. Each is a **Tenant**, and
-every other table carries a `tenantId`.
+Each college gets its own deployment and its own database. There is no `X-Tenant`
+header, no subdomain to resolve and no "which institution is this request for?"
+question — every request is about this institution, because it is the only one whose
+data the database holds.
 
-### Isolation is enforced in one place, not in every route
+That was not always so. Until 30 Aug 2026 several colleges shared one database, and
+isolation was enforced centrally in `server/src/db.js`: a Prisma client extension
+filtered every read by the caller's tenant, stamped the tenant onto every write, and
+threw rather than return rows if a query ran with no tenant context at all.
+`scripts/smoke-tenant-isolation.mjs` proved it, by building two institutions that
+deliberately collided and failing to reach one from the other through the real HTTP API.
 
-With a shared database, isolation is a property of the code rather than of the
-infrastructure: one query that forgets `tenantId` is a cross-customer data leak. There
-are ~210 endpoints, so asking each one to remember a filter is not a security model.
+Both are gone, and the trade is worth stating plainly. Isolation is now a property of
+the infrastructure rather than of the code: a query that forgets a filter can only
+reach rows belonging to the institution whose server it is running on, because there
+are no others. But there is also no longer any automated proof that one college cannot
+read another's data. If this product ever serves two institutions from one database
+again, `db.js` and that suite are the first things that have to come back — both are in
+git history at the commit that removed them.
 
-Instead the Prisma client itself refuses. `server/src/db.js` wraps the client in an
-extension that:
+`20260830T210000_remove_multi_tenancy` is the migration that took the columns out. It
+**refuses to run** against a database holding more than one institution, because
+`tenantId` was half of 18 unique constraints: dropping it does not separate the
+colleges, it merges them, and the only record of who belonged to whom is the column
+being dropped.
 
-- **filters** every `findMany` / `count` / `updateMany` / `deleteMany` etc. by the
-  caller's tenant, and merges the tenant into the `where` of `findUnique` / `update` /
-  `delete` (asking for another tenant's id simply matches nothing);
-- **stamps** the tenant onto every `create`;
-- **throws** if a query runs with no tenant context at all, rather than quietly
-  returning every institution's rows.
+### The institution's own record
 
-A route added tomorrow is isolated without its author knowing that file exists. Only
-`Tenant` and `PlatformAdmin` are exempt — the registry of institutions, and the
-operators who sit above them.
-
-The escape hatch is `crossTenant(fn)`, and it is deliberately conspicuous: it has to be
-typed out, so reading across institutions is always visible in the diff. Outside a
-request — schedulers, scripts, the seed — code must say `runInTenant(tenantId, fn)` or
-`crossTenant(fn)` explicitly.
-
-`scripts/smoke-tenant-isolation.mjs` builds two institutions that deliberately collide
-(the same admin email address at both) and tries, from one, to read and modify the
-other's data through the real HTTP API. It runs as part of `npm test`.
-
-### Which institution is a request for?
-
-`server/src/tenant.js` resolves it **before authentication**, because `Staff.email` is
-unique per tenant now — the same person can work at two colleges, so a login cannot
-find an account from an email address alone. First match wins:
-
-1. the **`X-Tenant`** header — the tenant's slug;
-2. the **subdomain** — `brookes.example.com` → `brookes` (bare hosts, IPs, and
-   `www`/`api`/`app`/`staging` are ignored);
-3. **`DEFAULT_TENANT_SLUG`** — for single-institution deployments;
-4. `"default"` — the tenant the tenancy migration adopted every pre-existing row into,
-   so nothing broke on upgrade.
-
-An unknown slug gets `404 Unknown institution` — deliberately not "tenant x does not
-exist", which would let anyone probe which colleges use the platform. A suspended one
-gets `403`. `/api/health` and `/api/platform` are exempt.
-
-Sessions are bound to their institution: the JWT carries the tenant id, and a token
-presented against a different tenant is rejected even though its signature is valid.
-
-> **Note:** the web client does not currently send an `X-Tenant` header. In practice it
-> relies on the subdomain, or on `DEFAULT_TENANT_SLUG` in a single-institution
-> deployment. The header is what the API accepts and what the tests use.
-
-Tenant lookups are cached by slug for 60 seconds, so there is not a database round trip
-per request. The trade-off is stated plainly: **suspending a customer takes up to that
-long to bite.** Set `TENANT_CACHE_MS=0` for immediate effect (the test runner does).
-
-### The platform surface
-
-Operators of the platform are `PlatformAdmin` rows, not staff. They are deliberately a
-separate tier: `Staff.isSuperAdmin` already means "top of *one* college", and
-conflating the two is how a customer's admin ends up able to read every customer's data.
-
-- Reached in the browser at **`?platform`** — e.g. `http://localhost:5173/?platform`.
-  It is checked before any college session, has its own login, and its own token.
-- The API lives at `/api/platform`, mounted **before** the tenant middleware (demanding
-  a tenant there would be circular) and guarded by `requirePlatformAdmin`, which
-  rejects any staff, student or applicant token however valid its signature.
-- Platform sessions expire in **8 hours**, not the 7 days a staff session gets — these
-  accounts can read every customer's data.
-- There is no sign-up and no password reset. Create one from the command line:
-  ```bash
-  cd server
-  PLATFORM_EMAIL=you@example.com PLATFORM_PASSWORD='a-long-passphrase' node create-platform-admin.js
-  ```
-
-From the dashboard an operator can list institutions, create one, suspend or reactivate
-one, and delete one.
+One `Tenant` row survives. It is no longer a registry of customers but this
+deployment's own settings row — the institution's name, and the parent of its branding,
+letters, email templates and integration credentials. `SEED_TENANT_SLUG` names it. Its
+only remaining direct reader is `server/src/branding.js`, which uses the institution's
+name as the display name until somebody types one on the branding screen.
 
 ### Per-institution integration credentials
 
-Moodle and SharePoint credentials used to be process-level environment variables, which
-cannot work once there is more than one college — every tenant would sync from, and
-upload into, the same institution's systems. They are now rows in `TenantIntegration`,
-one per institution per provider, managed by that college's own admin under
-**Settings → Integrations** (`/api/integrations`, inside the tenant middleware, so an
-admin can only ever reach their own).
+Moodle, Canvas, Blackboard, SharePoint and SMTP credentials are rows in
+`TenantIntegration`, one per provider, managed by the college's own admin under
+**Settings → Integrations** (`/api/integrations`) rather than set as process-level
+environment variables and redeployed.
+
+What the college has saved wins; `process.env` is the fallback, so a deployment
+configured entirely by environment keeps working unchanged. That fallback used to be
+fenced off to one named institution, because `MOODLE_*`, `SMTP_*` and `SP_*` describe
+**one** college's systems, and handing them to a college that had configured none of
+its own is how a student receives an offer letter "from" another institution. With one
+college per deployment the host's environment describes the only institution there is,
+so the fence is gone — `server/src/integrationConfig.js` sets out the reasoning at
+length.
 
 The secret half is **encrypted at rest** with AES-256-GCM (`server/src/secrets.js`) and
 is never returned to any client — the API reports only whether it is configured, the
@@ -237,14 +201,17 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 The key is read per call rather than at import, so a missing key fails the one request
 that tries to save a credential instead of stopping the server from booting.
 
-### Tenancy environment variables
+### Institution environment variables
 
 | Variable | Default | What it does |
 |---|---|---|
-| `DEFAULT_TENANT_SLUG` | `default` | Which institution a request belongs to when it carries no `X-Tenant` header and no subdomain. Single-institution deployments set this and never think about tenancy again. |
-| `CREDENTIALS_KEY` | *(unset)* | 32-byte base64/hex key encrypting per-institution Moodle and SharePoint credentials. Unset, those credentials cannot be saved (`503`); everything else works. |
-| `TENANT_CACHE_MS` | `60000` | How long a resolved tenant is cached. `0` disables caching, so a suspension takes effect immediately. |
-| `PLATFORM_JWT_EXPIRES` | `8h` | Platform-operator session lifetime. |
+| `SEED_TENANT_SLUG` | `default` | The slug of the single institution row the seed creates or updates. It *names* this deployment's institution; it does not choose between several. |
+| `CREDENTIALS_KEY` | *(unset)* | 32-byte base64/hex key encrypting this institution's Moodle, Canvas, Blackboard, SharePoint and SMTP credentials. Unset, those credentials cannot be saved (`503`); everything else works. |
+
+`DEFAULT_TENANT_SLUG`, `TENANT_BASE_DOMAIN` and `TENANT_CACHE_MS` are gone and nothing
+reads them. If they are still set on a service that has already been deployed, take
+them off by hand: a Render Blueprint only applies `render.yaml` when a service is
+*created*, so removing them from that file does not unset them on an existing one.
 
 ---
 
@@ -269,7 +236,6 @@ session exists:
 
 | URL | Who it's for |
 |---|---|
-| `?platform` | Platform operators — every institution on the system. Its own login and token; see *Multi-tenancy*. |
 | `?apply` | A prospective student filling in the public application form. No account needed. |
 | `?upload=<token>` | An applicant uploading their documents from an emailed link (30-day token). |
 | `?offer=<token>` | An applicant accepting their offer from an emailed link. |
@@ -442,7 +408,6 @@ applicant is told to sign in rather than wait for an approval that will never co
 - **Sessions are JWTs**, 7 days by default and `JWT_EXPIRES=1d` in the shipped Render
   config. If a token expires or is rejected, the app drops you straight back to the
   login screen rather than leaving a broken page.
-- **Platform-operator sessions are separate and shorter** (8 hours) — see *Multi-tenancy*.
 
 ### Per-page admin access
 
@@ -478,10 +443,11 @@ The bell in the staff app loads your **unread** notifications on sign-in; pressi
 swallowed, so a notification problem can never break the action that triggered it —
 approving leave still succeeds even if the notification doesn't.
 
-The scheduled jobs above run in-process on an hourly tick, not on external cron, and
-each one is fanned out **per institution** (`server/src/eachTenant.js`): one college's
-unreachable mailbox or expired Moodle token is logged and stepped over rather than
-cancelling the job for everyone else.
+The scheduled jobs above run in-process on an hourly tick, not on external cron. Each
+run catches its own failures, so an unreachable mailbox or an expired Moodle token is
+logged and stepped over rather than killing the timer. (They used to be fanned out per
+institution by `server/src/eachTenant.js`; with one college there is nothing to
+iterate, and the `.catch` that wrapper also provided is still there.)
 
 > A reply to a student query does **not** currently notify the student — they see it
 > the next time they open their queries.
@@ -597,10 +563,14 @@ covers switched off in this build, so the gap stays visible instead of reading a
 coverage. `smoke-signup-2fa` is currently skipped — mandatory two-factor enrolment is
 deliberately off (`TOTP_ENFORCED = false`).
 
-The suite worth knowing about is **`smoke-tenant-isolation`**: it builds two
-institutions that deliberately collide and proves one cannot reach the other's data
-through the real API. Full details, including how to add a suite, are in
-`scripts/README.md`.
+The suites are deliberately weighted toward **negative** assertions — who is refused,
+what never leaves the building, which decisions cannot be made twice. Full details,
+including how to add a suite, are in `scripts/README.md`.
+
+> `smoke-tenant-isolation`, `smoke-platform` and `smoke-registrations` were deleted
+> rather than adapted when the platform stopped being multi-tenant. With no tenancy
+> their assertions would have passed while discriminating nothing, which reads as
+> coverage on the summary line and is the failure mode `SKIP` exists to avoid.
 
 ---
 
@@ -619,7 +589,6 @@ through the real API. Full details, including how to add a suite, are in
 | `node scripts/check-push.mjs [token]` | Verify Firebase settings, optionally send a test push |
 | `node scripts/check-email.mjs [address]` | Verify SMTP settings, optionally send a test email |
 | `node scripts/stress-test.mjs [workers] [secs]` | Closed-loop load test — see `STRESS-TEST.md` |
-| `node server/create-platform-admin.js` | Create or reset a platform operator |
 
 To start the database over, drop and recreate the Postgres database, then run
 `npm run setup` again. (There is no `dev.db` file any more.)
@@ -658,8 +627,7 @@ member's **Holiday Balance** and the decision note shows in their history.
 | Assign which admin pages other admins may open | — | Super Admin only |
 
 "ADMIN" above means an admin **who has been granted that page** — see *Per-page admin
-access*. Nobody, at any tier below platform operator, can see another institution's
-data at all.
+access*.
 
 Staff can see colleagues' names, departments and initials (the calendar needs them),
 but **not** their email, allowance or account role — `GET /staff` returns a reduced
@@ -748,12 +716,11 @@ writes nothing. `POST /api/moodle/sync` returns `202` immediately and the caller
 for over an hour is swept to `failed`. A nightly sync also runs at **02:00**
 Europe/London.
 
-> **Known gaps, unresolved.** The nightly sync's off-switch is the process-wide
-> `MOODLE_AUTO_SYNC` env var — the per-institution `autoSync` setting is stored by the
-> integrations UI but never read, so turning it off for one college does nothing.
-> `GET /api/moodle/status` likewise reports `process.env.MOODLE_URL` rather than the
-> institution's saved URL, and can report "not set up" for a tenant whose credentials
-> are saved but whose config cache is cold. Both are tenancy leftovers.
+> The nightly sync is switched on and off in **Settings → Connected systems**;
+> `MOODLE_AUTO_SYNC` is only the server-wide default, used when nothing is saved there.
+> `GET /api/moodle/status` reports the institution's own saved URL, and says whether
+> that came from Settings or from the environment — both readings used to be about the
+> server's configuration rather than the college's.
 
 ## Database & migrations
 
@@ -763,13 +730,13 @@ you test against behaves like the one you deploy to.
 
 ### The data model
 
-The schema is `server/prisma/schema.prisma` — 39 models, every one of them except
-`Tenant` and `PlatformAdmin` carrying a `tenantId` and an index on it. The baseline
-migration built 36 tables; tenancy and the platform tier added the three above it.
+The schema is `server/prisma/schema.prisma` — 62 models. Not one of them carries a
+`tenantId` any more: the column, and the 18 compound uniques it was half of, came out
+when the platform stopped being multi-tenant.
 
 | Area | Models |
 |---|---|
-| **Platform & tenancy** | `Tenant`, `PlatformAdmin`, `TenantIntegration` |
+| **This institution** | `Tenant`, `TenantIntegration`, `TenantBranding` |
 | **People & accounts** | `Staff`, `Student`, `SignupRequest`, `DeviceToken`, `PasswordReset`, `Notification`, `SentNotification` |
 | **Attendance, leave & documents** | `CheckIn`, `Leave`, `Adjustment`, `Document` |
 | **Curriculum & timetable** | `Course`, `Unit`, `Cohort`, `Term`, `Semester`, `Enrolment`, `TimetableSlot`, `TermCalendar` |
@@ -806,12 +773,18 @@ npm run migrate:status --workspace server   # what has this database got?
 ```
 
 `0_init` is the whole schema as it stood on 23 Aug 2026, verified against the live
-database before it was written; the two migrations after it add tenancy and the
-platform-admin tier. The tenancy migration is hand-written rather than Prisma-generated,
-because the generated version adds `tenantId NOT NULL` with no backfill — correct
-against an empty database, and an immediate failure against any database with rows in
-it. It adds the column nullable, backfills every table into one adopting tenant, then
-enforces the constraint.
+database before it was written. The migrations that added tenancy and the platform tier
+are still in the directory and always will be: Prisma identifies a migration by its
+directory name, so renaming or deleting one that has been applied anywhere makes it
+look new, it re-runs, fails, and every later migration is then refused with P3009.
+
+`20260830T210000_remove_multi_tenancy` takes it back out. It is hand-written rather
+than Prisma-generated, for the same reason the tenancy migration was: the generated
+version is correct against an empty database and destructive against one with rows in
+it. It raises before any destructive statement if `Tenant` holds more than one row, and
+it renumbers the five config singletons onto a constant primary key first — their id
+used to be a cuid guaranteed unique per tenant, and an upsert on the new literal would
+otherwise insert a second row beside the real one.
 
 Read `server/prisma/migrations/README.md` before changing the schema. It has the rules
 that matter — never edit an applied migration, never run `migrate dev` or
@@ -819,13 +792,11 @@ that matter — never edit an applied migration, never run `migrate dev` or
 
 ## The API surface
 
-Every mount in `server/src/index.js`. `/api/platform` sits above tenancy; everything
-else runs inside one institution's scope.
+Every mount in `server/src/index.js`.
 
 | Mount | What it covers | Who |
 |---|---|---|
-| `/api/platform` | Institutions: list, provision, suspend, delete; platform operators | Platform operator |
-| `/api/health` | Liveness. No tenant needed | Anyone |
+| `/api/health` | Liveness. No authentication needed | Anyone |
 | `/api/auth` | Login, 2FA, password change, `/me`, account deletion | All account kinds |
 | `/api/signup` | Self-service staff sign-up and the admin approval queue | Public → admin |
 | `/api/passwords` | Admin-initiated password resets | Admin |
@@ -857,7 +828,7 @@ else runs inside one institution's scope.
 | `/api/ism` | Intention to Study Meeting records | Admin |
 | `/api/slc` | Student Loans Company application tracker | Admin |
 | `/api/moodle` | VLE sync status, dry-run preview, and sync | Admin |
-| `/api/integrations` | This institution's own Moodle / SharePoint credentials | Admin |
+| `/api/integrations` | This institution's own VLE / SharePoint / SMTP credentials | Admin |
 
 ## Security notes for production
 
@@ -865,16 +836,14 @@ Already in place: **bcrypt** password hashing, **login and reset rate limiting**
 **two-step verification** via an authenticator app, **admin-approved sign-up**, a
 **hashed single-use password-reset flow** with session revocation, **invited accounts**
 that cannot be signed into until activated, server-side **RBAC** on every route with
-per-page admin grants, **central tenant isolation** with an automated suite proving it,
-**encrypted integration credentials**, security headers and a CORS allowlist on every
+per-page admin grants, **encrypted integration credentials**, security headers and a CORS allowlist on every
 response, and a `JWT_SECRET` that refuses to fall back to a default when
 `NODE_ENV=production`.
 
 Still to do before going live:
 
 - Set a long random `JWT_SECRET` in `server/.env` (the shipped value is a placeholder).
-- Set `CREDENTIALS_KEY`, or per-institution Moodle/SharePoint credentials cannot be saved.
-- Set `DEFAULT_TENANT_SLUG` if you run one institution and are not using subdomains.
+- Set `CREDENTIALS_KEY`, or this institution's integration credentials cannot be saved.
 - Serve the API over HTTPS and restrict CORS to your client origin (`CORS_ORIGINS`).
 - Shorten the token lifetime and add refresh tokens. Revocation exists
   (`tokenVersion`); refresh does not.
@@ -884,14 +853,12 @@ Still to do before going live:
   links into the log.
 - Move login and reset rate-limiting, and the leave-decision lock, to a shared store
   (Redis) if you run more than one process. They are in-process module-level maps.
-- **Rate-limit and add 2FA to `POST /api/platform/login`.** It is the highest-privilege
-  login in the product and currently has neither, while the ordinary staff login has both.
-- Fix `server/create-admin.js` for tenancy (see *Seeded login accounts*).
 
 See **API.md** for the endpoint reference — but note it currently documents only the
 original auth/leave/HND surface, not the ~20 feature areas added since. **DEPLOY.md**
-covers hosting, and `render.yaml` is a working Blueprint (it does not yet list
-`CREDENTIALS_KEY` or `DEFAULT_TENANT_SLUG`).
+covers hosting, and `render.yaml` is a working Blueprint. It now lists
+`CREDENTIALS_KEY`, but a Blueprint only applies its settings when a service is
+*created*, so an already-deployed service still needs that key set by hand.
 
 ## Tech stack
 
@@ -911,8 +878,8 @@ covers hosting, and `render.yaml` is a working Blueprint (it does not yet list
 - **bcrypt** — scrambles passwords so they're stored safely
 
 **Database (where data is stored)**
-- **PostgreSQL** — the database, shared by every institution
-- **Prisma** — lets the code talk to the database, and is where tenant isolation is enforced
+- **PostgreSQL** — the database, one per college
+- **Prisma** — lets the code talk to the database
 
 > **In one sentence:** the **React** frontend talks to a **Node.js + Express** backend, which stores everything in a **PostgreSQL** database (through Prisma).
 
@@ -928,9 +895,8 @@ Full-stack JavaScript monorepo managed with **npm workspaces** (`server/` + `cli
 | Runtime | **Node.js** (CommonJS) |
 | Web framework | **Express 4** |
 | Database | **PostgreSQL** |
-| ORM | **Prisma 5** (`@prisma/client` + `prisma` CLI), with a **client extension** that enforces tenant isolation on every query |
+| ORM | **Prisma 5** (`@prisma/client` + `prisma` CLI) |
 | Migrations | `prisma migrate deploy` over reviewed SQL in `server/prisma/migrations` |
-| Tenant context | `AsyncLocalStorage` (`node:async_hooks`) — request-scoped, so no handler threads a tenant id through |
 | Auth | **JWT** (`jsonwebtoken`) + **bcrypt** password hashing (`bcryptjs`) |
 | 2FA | **TOTP** (RFC 6238) hand-rolled on Node `crypto` — no dependency, no third-party service |
 | Secrets at rest | **AES-256-GCM** on Node `crypto` (`src/secrets.js`) |
@@ -938,7 +904,7 @@ Full-stack JavaScript monorepo managed with **npm workspaces** (`server/` + `cli
 | Email | **Resend** HTTP API, or **nodemailer** over SMTP; console stub when unconfigured |
 | PDFs | **pdfkit** — application forms and offer letters |
 | File storage | **SharePoint** via Microsoft Graph, falling back to **Supabase Storage** (private bucket, signed URLs) — both over plain `fetch`, no SDK |
-| Scheduling | in-process hourly `setInterval`s, each fanned out per tenant (`src/eachTenant.js`) |
+| Scheduling | in-process hourly `setInterval`s |
 | Dev reload | `node --watch` |
 
 REST API under `/api` — 33 route modules, roughly 210 endpoints. Access is enforced
@@ -971,6 +937,6 @@ added tomorrow is closed to them by default.
 | Prisma Studio | visual DB browser (`npm run studio`) |
 
 **Architecture in one line:** React (Vite) SPA → REST/JSON over `fetch` → Express with
-JWT + RBAC → tenant middleware → Prisma (isolation extension) → PostgreSQL. Every
+JWT + RBAC → Prisma → PostgreSQL. Every
 mutation writes to the DB and the client refetches, keeping the staff app and admin
 dashboard in sync.

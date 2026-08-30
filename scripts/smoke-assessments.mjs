@@ -46,8 +46,8 @@ if (!process.env.DATABASE_URL) {
 
 // A BARE client: the two actors this suite needs (an admin restricted to one page,
 // and a student who can actually sign in) cannot be produced through the API at all.
-// Bypassing the tenant extension is deliberate, and every row it touches is undone in
-// the finally block.
+// Reading back through a different client from the one the API writes with is
+// deliberate, and every row it touches is undone in the finally block.
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
@@ -62,8 +62,6 @@ async function check(label, fn) {
 const call = async (path, { method = "GET", body, token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
-  // X-Tenant is omitted on purpose: DEFAULT_TENANT_SLUG is unset, so the fallback
-  // slug "default" IS the seeded institution. Same choice smoke-fixes makes.
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
@@ -97,9 +95,6 @@ const STUDENT_PW = "smoke-assessments-student-2026";
 let narrowId = null, studentTouched = false, assessmentId = null;
 
 try {
-  const tenant = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || "default" } });
-  assert.ok(tenant, "the seeded tenant is missing — was the database seeded?");
-
   /* ================================================== who may look at marks === */
 
   await check("no token gets nothing", async () => {
@@ -138,7 +133,7 @@ try {
   // adminPages is set by a super-admin route no seeded account can reach.
   const narrow = await db.staff.create({
     data: {
-      tenantId: tenant.id, name: "Smoke Narrow Admin", jobTitle: "Principal", dept: "Leadership",
+      name: "Smoke Narrow Admin", jobTitle: "Principal", dept: "Leadership",
       email: NARROW_EMAIL, passwordHash: bcrypt.hashSync(NARROW_PW, 10),
       accountRole: "ADMIN", adminPages: JSON.stringify(["executive"]),
       initials: "NA", colour: "#334155",

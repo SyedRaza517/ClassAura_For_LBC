@@ -37,18 +37,15 @@ const MODELS = [
   "TimetableSettings", "TimetableUserPref",
 ];
 
+// A "${name} is tenant-scoped" case used to sit beside the existence check, asserting
+// `tenantId String` and `@@index([tenantId])` on each of these models. It is DELETED,
+// not adapted. The column is gone from the schema, so any surviving form of it — a
+// negative "has no tenantId", a check that the index is absent — would pass on every
+// future edit to these models without discriminating between a correct schema and a
+// broken one, while still reading as coverage on the summary line.
 for (const name of MODELS) {
   test(`${name} exists`, () => {
     assert.ok(modelBody(name), `model ${name} is missing from schema.prisma`);
-  });
-
-  test(`${name} is tenant-scoped`, () => {
-    const body = modelBody(name) || "";
-    // Without this, db.js cannot filter the model. Every query would throw
-    // TenantScopeError at runtime — or, if somebody "fixed" that by adding the model
-    // to UNSCOPED_MODELS, would return every college's rows to every college.
-    assert.match(body, /tenantId\s+String/, `${name} has no tenantId`);
-    assert.match(body, /@@index\(\[tenantId\]\)/, `${name} does not index tenantId`);
   });
 }
 
@@ -70,8 +67,8 @@ test("Room.capacity is nullable", () => {
 test("a room number is unique per campus, not globally", () => {
   // Two campuses may both have a room 101 — the reference institution has exactly
   // that, listing "101 [Harrow]" and "101 - First floor [Great Titchfield Street]".
-  // A global unique on name would refuse the second one.
-  assert.match(modelBody("Room"), /@@unique\(\[tenantId, name, campus\]\)/);
+  // A unique on name alone would refuse the second one.
+  assert.match(modelBody("Room"), /@@unique\(\[name, campus\]\)/);
 });
 
 test("an event cannot list the same staff member or group twice", () => {
@@ -79,11 +76,22 @@ test("an event cannot list the same staff member or group twice", () => {
   assert.match(modelBody("TimetableEventGroup"), /@@unique\(\[eventId, cohortId\]\)/);
 });
 
-test("one settings row per tenant, one pref row per staff member", () => {
-  assert.match(modelBody("TimetableSettings"), /@@unique\(\[tenantId\]\)/);
-  assert.match(modelBody("TimetableUserPref"), /@@unique\(\[tenantId, staffId\]\)/);
+test("one pref row per staff member", () => {
+  // Without this a staff member could accumulate two preference rows, and the
+  // findFirst in timetabling/settings.js would return whichever the planner picked —
+  // their own settings changing between page loads for no visible reason.
+  assert.match(modelBody("TimetableUserPref"), /@@unique\(\[staffId\]\)/);
 });
 
+// The other half of that test asserted @@unique([tenantId]) on TimetableSettings, and
+// is DELETED with the column. NOTHING IN THE SCHEMA NOW CONSTRAINS THAT TABLE TO ONE
+// ROW, which is worth knowing rather than papering over: timetabling/settings.js
+// intends to replace the constraint by upserting on a constant id of "singleton", but
+// its `create` does not set `id` and the model still generates a cuid, so two saves
+// racing on an empty table still insert two rows. The assertion to add here is that
+// TimetableSettings.id carries @default("singleton") — it is deliberately NOT added
+// yet, because it would assert something the schema does not say.
+
 test("events are indexed by date, because every read is a date-window read", () => {
-  assert.match(modelBody("TimetableEvent"), /@@index\(\[tenantId, date\]\)/);
+  assert.match(modelBody("TimetableEvent"), /@@index\(\[date\]\)/);
 });

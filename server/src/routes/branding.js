@@ -1,7 +1,8 @@
 // An institution's own name, colours, logo and letterhead.
 //
-// Mounted inside the tenant middleware, so a college can only ever read or write its
-// own row — no code here checks a tenantId and none needs to.
+// One deployment serves one institution, so this is a single settings row: the
+// handlers below findFirst() rather than looking anything up by id, and there is no
+// identity for a caller to pass in and get wrong.
 //
 // GET is deliberately UNAUTHENTICATED. The sign-in screen has to be branded, and at
 // that point nobody has signed in: an app that shows a college's own colours only
@@ -147,7 +148,7 @@ router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
     ? await prisma.tenantBranding.update({ where: { id: existing.id }, data })
     : await prisma.tenantBranding.create({ data });
 
-  branding.invalidate(req.tenant?.id);
+  branding.invalidate();
 
   // The logo is a quarter-megabyte string; recording it in the audit log would put a
   // copy of every version of it in a table meant to be small and read often. That it
@@ -173,7 +174,7 @@ router.delete("/", requireAuth, requirePage("settings"), async (req, res) => {
   const existing = await prisma.tenantBranding.findFirst();
   if (!existing) return res.json({ reset: false });
   await prisma.tenantBranding.delete({ where: { id: existing.id } });
-  branding.invalidate(req.tenant?.id);
+  branding.invalidate();
   audit.record(req, {
     action: "branding.reset", entity: "TenantBranding", entityId: existing.id,
     summary: "Branding reset to the platform defaults",

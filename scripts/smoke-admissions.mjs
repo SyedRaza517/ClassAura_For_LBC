@@ -34,7 +34,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
-// A BARE client, deliberately. It bypasses the tenant extension so this suite can
+// A BARE client, deliberately. It is not the client the API writes through, so this suite can
 // (a) plant the hashed halves of the emailed magic links without going anywhere near
 // the email-sending routes, and (b) look at the columns the serializer is supposed to
 // be keeping OUT of every response — you cannot prove a password hash never shipped by
@@ -48,10 +48,7 @@ const check = (name, ok, detail = "") => {
 };
 
 async function call(path, { method = "GET", body, token, raw, contentType } = {}) {
-  // X-Tenant is not strictly required (the fallback slug is the seeded one) but it is
-  // sent on every call so a future TENANT_BASE_DOMAIN cannot silently repoint this
-  // suite at some other institution's applicants.
-  const headers = { "X-Tenant": "default" };
+  const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (raw !== undefined) headers["Content-Type"] = contentType || "application/octet-stream";
   else if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -99,9 +96,6 @@ async function cleanup() {
 }
 
 try {
-  const tenant = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || "default" } });
-  if (!tenant) throw new Error("the seeded tenant is missing — run the seed first");
-
   const adminToken = await login("admin@edtech.co.uk");
   const staffToken = await login("j.whitfield@edtech.co.uk"); // STAFF, not ADMIN
 
@@ -159,7 +153,13 @@ try {
       id: "chosen-by-the-caller",
       enrollStatus: "Enroll", offerStatus: "accepted", studentId: "999999",
       passwordHash: "$2a$10$notarealhashbutitisplentylongenough", tokenVersion: 99,
-      tenantId: "some-other-college",
+      // This was `tenantId: "some-other-college"` — half "you cannot file this
+      // application against another college", which is gone with tenancy, and half "a key
+      // pick() does not name is DROPPED rather than forwarded to Prisma". The second half
+      // is the one that matters and is kept: a key that exists on no model stands in, and
+      // the 201 asserted below is what proves it was dropped rather than passed through
+      // (a forwarded unknown key makes Prisma throw, and the create 500s).
+      notAColumnOnAnyModel: "x",
       medicalDetails: "z".repeat(6000),   // MAX_LEN is 5000
       city: "", phone: "   ",             // blank answers must store as null, not ""
     },
@@ -178,7 +178,6 @@ try {
   check("no password hash can be written through the admin create form",
     smuggleRow?.passwordHash === null && smuggleRow?.tokenVersion === 0,
     `passwordHash=${smuggleRow?.passwordHash} ver=${smuggleRow?.tokenVersion}`);
-  check("the row belongs to the caller's own institution", smuggleRow?.tenantId === tenant.id);
   check("one giant paste is capped at 5000 characters", smuggleRow?.medicalDetails?.length === 5000, `${smuggleRow?.medicalDetails?.length} chars`);
   check("a blank answer is stored as no value, not an empty string",
     smuggleRow?.city === null && smuggleRow?.phone === null,
@@ -193,7 +192,10 @@ try {
   const list = await call("/admissions", { token: adminToken });
   check("an admin can list applications", list.status === 200 && Array.isArray(list.data), `HTTP ${list.status}`);
   const mine = (list.data || []).find((r) => r.id === smuggleId);
-  const LEAKS = ["passwordHash", "uploadTokenHash", "offerTokenHash", "tenantId", "tokenVersion", "active", "spFolderId"];
+  // tenantId used to head this list — it is gone from the schema, so naming it would be
+  // a clause that can never fire. The rest are live: two are magic-link hashes, and
+  // spFolderId is a SharePoint location.
+  const LEAKS = ["passwordHash", "uploadTokenHash", "offerTokenHash", "tokenVersion", "active", "spFolderId"];
   const leaked = LEAKS.filter((k) => mine && k in mine);
   check("no secret or internal column reaches the admin client", leaked.length === 0, leaked.join(", ") || "none");
   check("...while the fields the screen needs are still there",
@@ -341,16 +343,26 @@ try {
   const mkIntake = await call("/admission-config/intakes", { method: "POST", token: adminToken, body: { label: `Smoke Intake ${RUN}` } });
   if (mkIntake.data?.id) madeIntakes.add(mkIntake.data.id);
 
-  // These two lists shipped straight off Prisma, so tenantId went out with them — the
-  // one field routes/admissions.js names explicitly as leaking the estate's shape. The
-  // point of the allowlist is the column added tomorrow, not this one.
+  // These two lists shipped straight off Prisma, and tenantId went out with them — the
+  // one field routes/admissions.js named explicitly as leaking the estate's shape. That
+  // column is gone, and with it the only negative these two assertions made: what was
+  // left would have been "name and active are present", which every denylist in history
+  // also satisfies.
+  //
+  // Restated instead as the property the allowlist actually exists for, which is the one
+  // the comment in admissionConfig.js states — a column added to either model TOMORROW
+  // must not become public the moment it exists. So the key set is pinned EXACTLY against
+  // sCourse/sIntake rather than probed for one forbidden name. This fails on a new column
+  // reaching the client, which is what tenantId was only ever an instance of.
+  const COURSE_KEYS = ["id", "name", "active", "sortOrder", "createdAt"];
+  const INTAKE_KEYS = ["id", "label", "active", "sortOrder", "createdAt"];
+  const exactly = (row, keys) => !!row && Object.keys(row).sort().join(",") === [...keys].sort().join(",");
   const cfgList = await call("/admission-config/courses", { token: adminToken });
   const cfgRow = (cfgList.data || []).find((c) => c.id === courseId);
-  check("the course list carries no internal columns",
-    !!cfgRow && !("tenantId" in cfgRow) && "name" in cfgRow && "active" in cfgRow,
-    Object.keys(cfgRow || {}).join(","));
-  check("...and neither does the intake list",
-    !(mkIntake.data && "tenantId" in mkIntake.data), Object.keys(mkIntake.data || {}).join(","));
+  check("the course list says exactly what the serializer allows, and nothing else",
+    exactly(cfgRow, COURSE_KEYS), Object.keys(cfgRow || {}).join(","));
+  check("...and so does the intake list",
+    exactly(mkIntake.data, INTAKE_KEYS), Object.keys(mkIntake.data || {}).join(","));
 
   const publicCourses = await call("/admission-apply/courses");
   check("an active course is offered on the public form",
@@ -488,7 +500,7 @@ try {
   // at 503 and the document row is planted directly. What is under test is the
   // verification workflow above the transport, not the transport.
   const doc = await db.admissionDocument.create({
-    data: { tenantId: tenant.id, admissionId: upId, docType: "passport", fileName: "Passport.pdf", mimeType: "application/pdf", sizeBytes: 1234 },
+    data: { admissionId: upId, docType: "passport", fileName: "Passport.pdf", mimeType: "application/pdf", sizeBytes: 1234 },
   });
 
   const withDocs = await call("/admissions", { token: adminToken });
@@ -497,8 +509,8 @@ try {
   check("the uploaded document rides along on the application", !!outDoc && outDoc.id === doc.id);
   // Storage locations are not the client's business: it opens a file through the
   // authorising route below, which mints a short-lived link at the moment of asking.
-  const docLeaks = ["tenantId", "storagePath", "webUrl", "spItemId"].filter((k) => outDoc && k in outDoc);
-  check("...without its storage location or tenant", docLeaks.length === 0, docLeaks.join(", ") || "none");
+  const docLeaks = ["storagePath", "webUrl", "spItemId"].filter((k) => outDoc && k in outDoc);
+  check("...without its storage location", docLeaks.length === 0, docLeaks.join(", ") || "none");
 
   const confirm = await call(`/admissions/documents/${doc.id}/confirm`, { method: "PUT", token: adminToken, body: { confirmed: true } });
   check("an admin can verify a document", confirm.status === 200 && confirm.data?.confirmed === true, `HTTP ${confirm.status}`);

@@ -212,7 +212,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       // Drawn with the COLLEGE's settings over the platform defaults, never with this
       // administrator's personal ones. They are laying out a timetable other people
       // read, and their own hidden weekend would hide events they had scheduled on it.
-      setSettings({ ...st.defaults, ...st.tenant });
+      setSettings({ ...st.defaults, ...st.institution });
       setRooms(rm || []); setCats(ct || []);
     } catch (e) { setErr(e?.message || "Could not load the timetable."); }
     finally { setBusy(false); }
@@ -403,7 +403,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
 
       {settings && (
         <TimetableSettingsModal open={prefs} settings={settings} scope="college" onClose={() => setPrefs(false)}
-          onSave={async (patch) => { const r = await api.ttSaveSettings(patch); setSettings((s) => ({ ...s, ...r.tenant })); setPrefs(false); }} />
+          onSave={async (patch) => { const r = await api.ttSaveSettings(patch); setSettings((s) => ({ ...s, ...r.institution })); setPrefs(false); }} />
       )}
     </div>
   );

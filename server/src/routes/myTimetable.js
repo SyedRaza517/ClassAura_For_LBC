@@ -194,11 +194,11 @@ router.get("/", async (req, res) => {
 // The merged view is what the screen renders; the college's own layer is sent
 // alongside so "reset to the college default" has something to reset to.
 router.get("/settings", async (req, res) => {
-  const [settings, tenant] = await Promise.all([
+  const [settings, institution] = await Promise.all([
     timetableSettings.getEffective(req.user.id),
-    timetableSettings.getTenant(),
+    timetableSettings.getInstitution(),
   ]);
-  res.json({ settings, tenant });
+  res.json({ settings, institution });
 });
 
 // A patch of this person's own overrides. `notice` is not in USER_FIELDS and is

@@ -9,21 +9,13 @@
 // matches the register views, the student's own app and the executive dashboard —
 // one student, one attendance number, everywhere.
 //
-// Which % lands in which template is a PER-COLLEGE decision: the bands are resolved
-// through ./attendanceBandConfig, which serves that institution's own ladder and
-// falls back to the defaults in ./attendanceBands for a college that has set none.
+// Which % lands in which template is the COLLEGE'S decision, not the supplier's: the
+// bands are resolved through ./attendanceBandConfig, which serves this institution's
+// own ladder and falls back to the defaults in ./attendanceBands if it has set none.
 // ./attendanceBands also holds the default templates, used as the defensive fallback
 // whenever the caller passes a partial config.
 
 const prisma = require("./db");
-// Raw SQL sits outside the isolation extension (which hooks $allModels only), so the
-// aggregate below scopes itself rather than spanning every institution.
-const { currentTenantId } = require("./db");
-function tenantForSql() {
-  const t = currentTenantId();
-  if (!t) throw new Error("Raw SQL attempted with no tenant context");
-  return t;
-}
 const { summariseCounts } = require("./attendance");
 const email = require("./email");
 const bands = require("./attendanceBands");
@@ -232,10 +224,10 @@ function termFromRange(from, to) {
 // modules [] and bandKey null, so the caller can simply skip them.
 async function computeCurrentTermAttendance(term, bandList) {
   const semester = term; // same shape { start, end, name }; term.unitIds may restrict units
-  // THIS college's bands. Passed in by a caller that already resolved them (the route
-  // resolves them once to label its headcounts), otherwise looked up here — never the
-  // code defaults, unless that is genuinely what this college uses.
-  const tenantBands = Array.isArray(bandList) && bandList.length ? bandList : await bandConfig.get();
+  // This college's configured ladder. Passed in by a caller that already resolved it
+  // (the route resolves it once to label its headcounts), otherwise looked up here —
+  // never the code defaults, unless that is genuinely what this college uses.
+  const ladder = Array.isArray(bandList) && bandList.length ? bandList : await bandConfig.get();
   const unitFilter = term.unitIds ? new Set(term.unitIds) : null;
   // Active students, with their programme (cohort → course) and current enrolments.
   const students = await prisma.student.findMany({
@@ -252,8 +244,15 @@ async function computeCurrentTermAttendance(term, bandList) {
   const unitRows = await prisma.unit.findMany({ select: { id: true, code: true, name: true, course: { select: { name: true } } } });
   const unitMap = new Map(unitRows.map((u) => [u.id, { code: u.code, name: u.name, course: u.course && u.course.name }]));
 
-  // One aggregate row per (student, unit) — the four status counts, scoped to the
+  // One aggregate row per (student, unit) — the four status counts, restricted to the
   // semester's dates and joined to Enrolment so only current enrolments are counted.
+  //
+  // This SQL used to carry `am."tenantId" = …` as well, and had to: raw SQL bypassed
+  // the isolation extension in db.js (which hooked $allModels only), so an aggregate
+  // written by hand was the one query in the module that could span every institution.
+  // The database holds one college now, so the join is the whole filter — but note the
+  // shape that made the old bug possible is still here. Any raw SQL added below is
+  // filtered by exactly what it says and by nothing else.
   const perSU = await prisma.$queryRawUnsafe(`
     SELECT am."studentId" sid, se."unitId" mid,
       count(*) FILTER (WHERE am.status='P')::int p,
@@ -263,7 +262,7 @@ async function computeCurrentTermAttendance(term, bandList) {
     FROM "AttendanceMark" am
     JOIN "HndSession" se ON se.id = am."sessionId"
     JOIN "Enrolment" en ON en."studentId" = am."studentId" AND en."unitId" = se."unitId"
-    WHERE am."tenantId" = ${q(tenantForSql())} AND se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}
+    WHERE se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}
     GROUP BY am."studentId", se."unitId"`);
 
   // studentId -> Map(unitId -> { p, l, e, a }).
@@ -296,7 +295,7 @@ async function computeCurrentTermAttendance(term, bandList) {
 
     const overall = summariseCounts(acc.P, acc.L, acc.E, acc.A);
     const pct = overall.pct; // 0..100 (one decimal) or null when no marks this term
-    const band = pct == null ? null : bands.bandForPct(pct, tenantBands);
+    const band = pct == null ? null : bands.bandForPct(pct, ladder);
 
     return {
       id: s.id,
@@ -325,9 +324,12 @@ async function computeCurrentTermAttendance(term, bandList) {
   return {
     term: { name: term.name, start: term.start, end: term.end },
     period: term.name || monthYearLabel(),
-    // The bands these figures were classified against, returned WITH the figures so a
-    // caller cannot pair one college's percentages with another list's labels.
-    bands: tenantBands,
+    // The ladder these figures were classified against, returned WITH the figures. The
+    // caller must not re-resolve it to label them: bands are editable, the cache in
+    // attendanceBandConfig has a 30-second TTL, and an administrator who moves a
+    // threshold mid-run would otherwise have a table whose percentages and band labels
+    // come from two different ladders.
+    bands: ladder,
     students: outStudents,
   };
 }
@@ -470,12 +472,12 @@ function htmlShell(bodyHtml, meta) {
 // config = { values, templates, respondDays, brand }; opts = { period, respondByDate }.
 // Any missing piece falls back to the module defaults so a partial config still works.
 //
-// `config.brand` is the current institution's branding, resolved by the caller because
-// this builder is synchronous — sendToStudents below does it once for the whole run. A
-// caller that cannot await it (the single-student send in attendanceRunner) simply leaves
-// it out: the header then shows no logo and the {institution} token falls back to the
-// college's own attendance config, which is the value an admin typed. Neither path can
-// show another college's name, which is the only outcome that matters here.
+// `config.brand` is the institution's branding, resolved by the CALLER because this
+// builder is synchronous — sendToStudents below does it once for the whole run, so every
+// letter in a batch is built from one snapshot rather than re-reading branding mid-run.
+// A caller that leaves it out gets a header with no logo, and the {institution} token
+// falls back to the attendance config's own value, which is a string an admin typed.
+// Degraded, but never wrong.
 function buildEmailFor(student, config = {}, opts = {}) {
   // No band → no attendance figure this term → nothing to send.
   if (!student || student.bandKey == null) return null;
@@ -575,10 +577,10 @@ async function sendToStudents(students, config = {}, opts = {}) {
     emailConfigured: email.isConfigured(),
   };
 
-  // Resolved once for the whole run rather than per student: this is one institution's
-  // batch, and every message in it must carry the same identity. `from` is undefined when
-  // the college has not set an attendance mailbox, which sends as the server's own
-  // MAIL_FROM — never as another institution's attendance team.
+  // Resolved once for the whole run rather than per student: every message in the batch
+  // must carry the same identity, and branding is editable while a run is in flight.
+  // `from` is undefined when the college has not set an attendance mailbox, which sends
+  // as the server's own MAIL_FROM rather than inventing an address on its domain.
   const brand = config.brand || (await branding.get());
   const withBrand = { ...config, brand };
   const from = await mailFrom.resolve("attendance");

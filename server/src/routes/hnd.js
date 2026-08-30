@@ -3,19 +3,22 @@
 // rest of the admin console.
 const router = require("express").Router();
 const prisma = require("../db");
-// Raw SQL is NOT covered by the tenant isolation extension in db.js — that hooks
-// $allModels, and $queryRaw is a client-level method that never reaches it. Every raw
-// query in this file must therefore scope itself, and these exist so that is hard to
-// forget: requireTenant() throws rather than returning a query spanning customers.
-const { currentTenantId } = require("../db");
-function requireTenant() {
-  const t = currentTenantId();
-  if (!t) throw new Error("Raw SQL attempted with no tenant context");
-  return t;
-}
-// A cuid cannot contain a quote; escaped anyway, so that changing the id strategy
-// later cannot quietly turn this into an injection.
-const sqlTenant = () => "'" + String(requireTenant()).replace(/'/g, "''") + "'";
+// THE RAW SQL IN THIS FILE USED TO CARRY A TENANT PREDICATE, AND NO LONGER DOES.
+//
+// One database served every college, and $queryRaw bypassed the isolation extension in
+// db.js entirely — that hooked $allModels, while $queryRaw is a client-level method
+// that never reached it. So every raw query here scoped itself by hand, through a
+// requireTenant() helper that threw rather than let a query span customers.
+//
+// One deployment now serves one institution and its own database, so there is no other
+// college's rows for these aggregates to reach: `SELECT ... FROM "AttendanceMark"` is
+// this college's attendance by construction. The predicates are gone rather than
+// defaulted to a resolved id, because a predicate that is always true reads as a
+// working guard to the next person and would be the thing they trusted.
+//
+// If this product is ever served from a shared database again, these queries are the
+// ones that will NOT be protected by anything the ORM does, and they have to be scoped
+// first. The removed helpers are in git history at the commit that removed them.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
@@ -96,7 +99,7 @@ const { isStatus, summarise, summariseCounts } = require("../attendance");
 //
 // It delegates to teachingFromBody so the "unknown staff member" check has exactly one
 // implementation — a second copy is a second place for it to drift, and a drifted copy
-// here would silently accept a staff id belonging to another college.
+// here would silently accept a staff id that does not resolve to a real account.
 router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "assessment-tracker"]), async (req, res) => {
   const existing = await prisma.unit.findUnique({ where: { id: req.params.id }, select: { id: true, code: true, leaderStaffId: true } });
   if (!existing) return res.status(404).json({ error: "Unit not found" });
@@ -282,8 +285,9 @@ async function teachingFromBody(body, current = {}) {
     const id = str(body.leaderStaffId);
     if (!id) { out.leaderStaffId = null; }
     else {
-      // findUnique is tenant-scoped by db.js, so a staff id belonging to another
-      // college resolves to nothing and is refused as unknown rather than stored.
+      // Resolved against Staff rather than stored as given, so an id that names no
+      // account is refused as unknown instead of being written to the column and
+      // reappearing later as a module leader nobody can find.
       const staff = await prisma.staff.findUnique({ where: { id }, select: { id: true } });
       if (!staff) return { error: "Unknown staff member" };
       out.leaderStaffId = staff.id;
@@ -758,14 +762,19 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   if (dob && !isDate(dob)) return res.status(400).json({ error: "Date of birth must be a valid date (YYYY-MM-DD)" });
 
   // Enrolments are created as their OWN top-level call, never nested under the
-  // student. The tenant extension in db.js stamps tenantId onto `args.data` for the
-  // model being called and nothing deeper, so a nested `enrolments: { create: [...] }`
-  // reaches Prisma with no tenantId on the child rows — which it rejects outright
-  // ("Argument `unit` is missing", because without tenantId the unchecked-create
-  // variant no longer matches). The whole of "add a student and put them on their
-  // units", the normal way a student is added, therefore 500'd. Keeping child writes
-  // at the top level is the rule that makes multi-tenancy hold; see the identical
-  // shape in PUT /students/:id/enrolments below.
+  // student.
+  //
+  // This was once a hard requirement: the tenant extension in db.js stamped tenantId
+  // onto `args.data` for the model being called and nothing deeper, so a nested
+  // `enrolments: { create: [...] }` reached Prisma with no tenantId on the child rows
+  // and was rejected outright — which 500'd the normal way a student is added. That
+  // extension is gone and a nested create would now work.
+  //
+  // The shape is kept anyway, for the two reasons it independently earns: `createMany`
+  // takes `skipDuplicates`, which a nested create does not, so re-submitting the same
+  // unit list is not an error; and the ids are validated in one `count` up front rather
+  // than discovered as a foreign-key violation halfway through a write. See the
+  // identical shape in PUT /students/:id/enrolments below.
   let s = await prisma.student.create({
     data: {
       firstName, lastName, studentRef, email, cohortId,
@@ -1538,11 +1547,9 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
       count(*) FILTER (WHERE am.status='E')::int e,
       count(*) FILTER (WHERE am.status='A')::int a
     FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId" ${unitJoin}`;
-  // Seeded FIRST and unconditionally, so the tenant predicate can never be dropped by
-  // a later change to the optional filters.
-  const TENANT = requireTenant();
+  // Every filter here is optional, so `conds` is legitimately empty for the unfiltered
+  // dashboard and the WHERE clause is omitted entirely — see the guard below.
   const conds = [], params = [];
-  params.push(TENANT); conds.push(`am."tenantId" = $${params.length}`);
   if (studentId) { params.push(studentId); conds.push(`am."studentId" = $${params.length}`); }
   if (unitId) { params.push(unitId); conds.push(`se."unitId" = $${params.length}`); }
   if (courseId) { params.push(courseId); conds.push(`u."courseId" = $${params.length}`); }
@@ -1561,7 +1568,6 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   // so the dashboard's "Total Sessions" tracks the filters too.
   const sJoin = needUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
   const sConds = [], sParams = [];
-  sParams.push(TENANT); sConds.push(`se."tenantId" = $${sParams.length}`);
   if (unitId) { sParams.push(unitId); sConds.push(`se."unitId" = $${sParams.length}`); }
   if (courseId) { sParams.push(courseId); sConds.push(`u."courseId" = $${sParams.length}`); }
   if (byYear) { sParams.push(yearNum); sConds.push(`u."year" = $${sParams.length}`); }
@@ -1612,13 +1618,13 @@ router.get("/attendance", requireAuth, async (req, res) => {
         count(*) FILTER (WHERE am.status='E')::int e,
         count(*) FILTER (WHERE am.status='A')::int a
       FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId"
-      WHERE am."tenantId" = ${sqlTenant()} AND ${dateCond("se.date")}
+      WHERE ${dateCond("se.date")}
       GROUP BY am."studentId", se."unitId"`),
     // Session counts per unit: all-time and scoped, in one pass.
     prisma.$queryRawUnsafe(`
       SELECT "unitId" mid, count(*)::int all_c,
         count(*) FILTER (WHERE ${dateCond("date")})::int scoped_c
-      FROM "HndSession" WHERE "tenantId" = ${sqlTenant()} GROUP BY "unitId"`),
+      FROM "HndSession" GROUP BY "unitId"`),
     prisma.enrolment.groupBy({ by: ["unitId"], _count: { _all: true } }),
   ]);
 

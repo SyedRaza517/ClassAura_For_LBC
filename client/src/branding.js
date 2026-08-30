@@ -146,18 +146,14 @@ export function onBranding(fn) {
  * An app that refuses to open because it does not know its own colours is worse than
  * an app that opens looking plain.
  */
-export async function loadBranding(apiBase, currentTenant = () => null) {
+export async function loadBranding(apiBase) {
   try {
-    // WHICH college. Without this the request resolves to the server's default
-    // institution, so every browser was served the default's colours and name no matter
-    // whose college it was actually looking at — a college could save its branding and
-    // never see it, and the banner kept the platform's own name. The header is the only
-    // thing that distinguishes institutions on a shared hostname.
-    const headers = { "Content-Type": "application/json" };
-    const tenant = currentTenant();
-    if (tenant) headers["X-Tenant"] = tenant;
+    // This used to send an X-Tenant header naming WHICH college was asking, because one
+    // hostname served many and the server would otherwise answer with its default
+    // institution's colours. One deployment now serves exactly one college, so the
+    // question no longer has more than one answer and the header has gone with it.
     const res = await fetch(apiBase.replace(/\/$/, "") + "/branding", {
-      headers,
+      headers: { "Content-Type": "application/json" },
       cache: "no-store",
     });
     if (!res.ok) return current;

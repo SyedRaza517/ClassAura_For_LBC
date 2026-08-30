@@ -59,19 +59,24 @@ function firstNameOf(name) {
 
 // Has an email with this key already been recorded as sent?
 async function alreadySent(key) {
-  // [tenantId, key] is the primary key now, so { key } alone is not a selector.
-  const row = await prisma.sentNotification.findFirst({ where: { key } });
+  const row = await prisma.sentNotification.findUnique({ where: { key } });
   return Boolean(row);
 }
 
 // Record a key as sent. A collision from two ticks racing is expected and ignored —
 // the ledger only needs to end up containing the key, not who wrote it.
 //
-// Until the primary key became [tenantId, key], this also swallowed a very different
-// failure: keys like "bankholiday:2026-12-25" are identical across institutions, so
-// the SECOND tenant's write collided with the first tenant's row and was discarded
-// here in silence. That tenant then had no ledger entry, lost its dedupe guarantee,
-// and could send the same notification again.
+// Swallowing the collision is only safe because one deployment serves one college. It
+// was NOT safe when one database served several: keys like "bankholiday:2026-12-25"
+// carry no institution, so the second college's write collided with the first's row
+// and was discarded right here, in silence. That college then had no ledger entry of
+// its own, lost its dedupe guarantee, and could send the same notification again. The
+// fix at the time was to put the tenant in the primary key; the fix now is that there
+// is one college, and every key in this ledger belongs to it.
+//
+// So the invariant to preserve is: a key must be unique across everything this
+// deployment sends. The `<kind>:<id>:<year>` shapes below satisfy that; a key that
+// named only a date would collide with itself the moment a second job used dates.
 async function markSent(key) {
   try {
     await prisma.sentNotification.create({ data: { key } });
@@ -94,9 +99,9 @@ const esc = (s) =>
     .replace(/'/g, "&#39;");
 
 // How the institution is named inside a sentence, and how it signs off. Two different
-// fallbacks on purpose: "the college" is true of every institution on the platform, so it
-// reads correctly mid-sentence when a name is missing, but as a sign-off it is dropped
-// entirely — "Best wishes, the college" reads like a placeholder nobody replaced.
+// fallbacks on purpose: "the college" is true of any institution, so it reads correctly
+// mid-sentence when a name is missing, but as a sign-off it is dropped entirely —
+// "Best wishes, the college" reads like a placeholder nobody replaced.
 const inSentence = (brand) => brand.displayName || "the college";
 const signOff = (brand, closing) => (brand.displayName ? `${closing},\n${brand.displayName}` : closing);
 const signOffHtml = (brand, closing) =>
@@ -104,9 +109,10 @@ const signOffHtml = (brand, closing) =>
 
 // The shared branded email shell. `eyebrow` and `heading` are plain text (escaped here);
 // `bodyHtml` is trusted HTML the caller has already assembled (escaping its own values).
-// `brand` is threaded in from the job rather than resolved here because these jobs run
-// once per tenant under the scheduler: the shell must never carry the previous tenant's
-// logo, colours or footer.
+// `brand` is threaded in from the job rather than resolved here, and stays that way now
+// there is one institution: a job sends hundreds of messages, and resolving branding per
+// message would both re-read it needlessly and let an edit made mid-run split one
+// broadcast across two looks. One snapshot per job, passed down.
 function shell(brand, eyebrow, heading, bodyHtml) {
   // Dropped whole when the college has given neither an address nor any contact detail,
   // rather than rendering an empty grey bar with the separators still in it.
@@ -131,8 +137,8 @@ function shell(brand, eyebrow, heading, bodyHtml) {
 // Greet every active student and non-pending staff member whose DOB (month + day) is
 // today. Keyed per person per calendar year so it fires once a year, exactly once.
 async function runBirthdays() {
-  // Once per job, not once per recipient: the whole batch is one institution's mail and
-  // has to be built from one snapshot of its branding.
+  // Once per job, not once per recipient: the whole batch has to be built from one
+  // snapshot of the branding, or a save made while it runs splits the batch in two.
   const brand = await branding.get();
   const t = today();
   const mmdd = t.slice(5);   // "MM-DD"
@@ -262,8 +268,8 @@ async function runBankHolidayReminders() {
 // from today. Keyed per (assessment, student) so each student is nudged once per assessment.
 async function runAssessmentReminders() {
   const brand = await branding.get();
-  // This institution's ASK mailbox, or undefined when it has not set one — in which case
-  // the send falls back to the server's own MAIL_FROM rather than another college's team.
+  // The college's ASK mailbox, or undefined when it has not set one — in which case the
+  // send falls back to the server's own MAIL_FROM rather than an invented address.
   const from = await mailFrom.resolve("ask");
   const target = addDays(today(), 14); // due in 2 weeks
   let sent = 0, skipped = 0;

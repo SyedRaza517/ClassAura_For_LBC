@@ -114,10 +114,12 @@ if (!external) {
       NODE_ENV: "test",
       JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production",
       CREDENTIALS_KEY,
-      // No tenant caching under test: the isolation suite suspends an institution and
-      // immediately checks it is locked out. With the production 60s cache that
-      // assertion would pass or fail depending on timing, which is worse than useless.
-      TENANT_CACHE_MS: "0",
+      // TENANT_CACHE_MS: "0" used to be set here. It existed for one suite:
+      // smoke-tenant-isolation suspended an institution through the platform tier and
+      // immediately checked it was locked out, and with the production 60s tenant cache
+      // that assertion passed or failed on timing. Multi-tenancy is gone, that suite is
+      // deleted, and the API reads no such variable — leaving it set would be a knob
+      // nothing turns, which is how somebody later concludes caching is disabled here.
     },
   });
   let bootLog = "";

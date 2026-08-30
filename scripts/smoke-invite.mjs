@@ -19,12 +19,11 @@ const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
 // touches the database directly fail schema validation before running a single query.
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
-// Every row belongs to an institution now. This client is deliberately bare — it
-// verifies what the API did, so nothing injects a tenant for it — which means the
-// fixtures below have to name one themselves. They target the seeded institution,
-// the same one the API resolves to when no X-Tenant header is sent.
-const TENANT = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default" } });
-if (!TENANT) { console.error("No seeded tenant found — run the seed before this suite."); process.exit(1); }
+// This client is deliberately bare: it verifies what the API did, so it must not be
+// the one the API writes through. It used to also have to look up the seeded tenant
+// and stamp tenantId onto every fixture below, because a bare client got no tenant
+// injected for it. One deployment now serves one college, tenantId is gone from the
+// schema, and a fixture simply belongs to the only institution there is.
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const SEED_PW = process.env.SEED_PASSWORD || "password123";
@@ -48,7 +47,7 @@ const hash = (raw) => crypto.createHash("sha256").update(raw).digest("hex");
 async function inviteTokenFor(staffId) {
   const raw = crypto.randomBytes(32).toString("hex");
   await db.passwordReset.updateMany({ where: { staffId, purpose: "invite", usedAt: null }, data: { usedAt: new Date() } });
-  await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId, tokenHash: hash(raw), purpose: "invite", expiresAt: new Date(Date.now() + 7 * 864e5) } });
+  await db.passwordReset.create({ data: { staffId, tokenHash: hash(raw), purpose: "invite", expiresAt: new Date(Date.now() + 7 * 864e5) } });
   return raw;
 }
 
@@ -96,7 +95,7 @@ const inviteTok = await inviteTokenFor(s2.id);
 check("an invite token is refused by the password-reset endpoint", (await call("/auth/reset-password", { method: "POST", body: { token: inviteTok, newPassword: "Whatever123!" } })).status === 400);
 // ...and the reverse
 const rawReset = crypto.randomBytes(32).toString("hex");
-await db.passwordReset.create({ data: { tenantId: TENANT.id, staffId: s2.id, tokenHash: hash(rawReset), purpose: "reset", expiresAt: new Date(Date.now() + 18e5) } });
+await db.passwordReset.create({ data: { staffId: s2.id, tokenHash: hash(rawReset), purpose: "reset", expiresAt: new Date(Date.now() + 18e5) } });
 check("a reset token is refused by the invite endpoint", (await call("/auth/invite/accept", { method: "POST", body: { token: rawReset, newPassword: "Whatever123!" } })).status === 400);
 
 console.log("\n--- re-sending an invitation ---");

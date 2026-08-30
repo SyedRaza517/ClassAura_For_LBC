@@ -34,7 +34,7 @@ if (!process.env.DATABASE_URL) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-// A BARE client: no tenant extension. Used only to mint the two fixtures the HTTP API
+// A BARE client. Used only to mint the two fixtures the HTTP API
 // deliberately refuses to mint for us — a page-scoped admin account and a student
 // password — to verify that a refused write really wrote nothing, and to sweep up.
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
@@ -47,7 +47,7 @@ async function check(label, fn) {
 }
 
 const call = async (path, { method = "GET", body, token } = {}) => {
-  const headers = { "Content-Type": "application/json", "X-Tenant": "default" };
+  const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
   const res = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
@@ -88,9 +88,6 @@ async function cleanup() {
 try {
   /* ================================ fixtures ================================ */
 
-  const tenant = await db.tenant.findFirst({ where: { slug: process.env.SEED_TENANT_SLUG || "default" } });
-  assert.ok(tenant, "the seeded tenant is missing — run the seed first");
-
   const course = await call("/hnd/courses", { method: "POST", token: admin, body: { name: `Smoke HND ${RUN}` } });
   assert.equal(course.status, 201, `course create: ${course.status} ${JSON.stringify(course.body)}`);
   made.courses.push(course.body.id);
@@ -126,7 +123,7 @@ try {
   // directly. The alternative is not testing the permission grid at all.
   async function narrowAdmin(key, pages) {
     const row = await db.staff.create({ data: {
-      tenantId: tenant.id, name: `Narrow ${key} ${RUN}`, jobTitle: "Administrator", dept: "Administration",
+      name: `Narrow ${key} ${RUN}`, jobTitle: "Administrator", dept: "Administration",
       email: `narrow-${key}-${RUN}@smoke.test`, passwordHash: bcrypt.hashSync(NARROW_PW, 10),
       accountRole: "ADMIN", adminPages: JSON.stringify(pages), initials: "NA", colour: "#334155",
     }});
@@ -150,18 +147,21 @@ try {
   console.log("--- adding a student and putting them on their units ---");
 
   await check("a new student is enrolled in the same call that creates them", async () => {
-    // This 500'd. The route nested `enrolments: { create: [...] }` inside the student
-    // create, and the tenant extension only stamps tenantId onto the model it is called
-    // on — never onto child rows — so Prisma rejected the whole insert. Adding a student
-    // to their units is THE way a student is added, so the normal path was dead while
-    // the fiddly two-step one (create, then PUT enrolments) worked.
+    // This 500'd. The route nests `enrolments: { create: [...] }` inside the student
+    // create, and the old tenant extension stamped tenantId onto the model it was called
+    // on and never onto child rows, so Prisma rejected the whole insert. Adding a student
+    // to their units is THE way a student is added, so the normal path was dead while the
+    // fiddly two-step one (create, then PUT enrolments) worked.
+    //
+    // The cause is gone with tenancy, but the assertion is KEPT: it is a check that the
+    // nested write still happens at all, and a nested create is exactly the shape that
+    // gets quietly refactored into a two-step by someone who does not know the two-step
+    // is the fallback. What has gone is the third assertion, that every child row carried
+    // the creating institution's tenantId — there is one institution and no such column.
     assert.equal(ada.unitIds?.length, 2, `expected 2 unitIds back, got ${JSON.stringify(ada.unitIds)}`);
     const rows = await db.enrolment.findMany({ where: { studentId: ada.id } });
     assert.equal(rows.length, 2, `expected 2 enrolment rows, found ${rows.length}`);
-    // And every child row must carry the institution that created it, or the next
-    // college on the platform reads this student's enrolments as its own.
-    assert.ok(rows.every((r) => r.tenantId === tenant.id), "an enrolment was written without its tenant");
-    return "2 enrolments, both tenant-stamped";
+    return "2 enrolments written by the nested create";
   });
 
   console.log("\n--- who can reach the registers at all ---");

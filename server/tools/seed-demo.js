@@ -11,14 +11,18 @@
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 const crypto = require("crypto");
 const { hashPassword } = require("../src/auth");
-// The EXTENDED client, deliberately. This script performs fourteen unfiltered
-// deleteMany() calls. On a bare PrismaClient the isolation extension never runs, so
-// since tenancy landed "clear the demo data" would have meant deleting every paying
-// customer's students, courses, registers and attendance. Through the extended client
-// those deletes are either scoped to one institution or refused outright.
+// THIS SCRIPT PERFORMS FOURTEEN UNFILTERED deleteMany() CALLS, and nothing narrows
+// them any more. While the product was multi-tenant the isolation extension scoped
+// every one of them to a single institution, which meant a demo seed pointed at the
+// wrong database wiped one college rather than all of them. With one deployment per
+// college that scoping is gone — correctly, there is only one institution here — but
+// so is the accident-limiter, so the same guard prisma/seed.js uses stands in its
+// place: an allowlist of databases that are obviously disposable, with a typed
+// confirmation as the only way past. See prisma/assertDisposable.js.
+require("../prisma/assertDisposable").assertDisposable(
+  "tools/seed-demo.js DELETES this institution's students, courses, registers, attendance, leave and check-ins before reseeding"
+);
 const prisma = require("../src/db");
-const { runInTenant, crossTenant } = require("../src/db");
-const DEMO_TENANT_SLUG = process.env.SEED_TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default";
 
 const uid = () => crypto.randomUUID();
 const rnd = (n) => Math.floor(Math.random() * n);
@@ -194,15 +198,9 @@ async function main() {
   console.log("\n✅  Seed complete. Login: raza@edtech.co.uk / 123456789 (super admin)\n");
 }
 
-// Everything runs inside ONE institution, so the deleteMany calls above clear that
-// institution's demo data and nobody else's.
+// One deployment, one institution: there is no slug to look up and nothing to run
+// "inside". The database named by DATABASE_URL is the institution.
 (async () => {
-  const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { slug: DEMO_TENANT_SLUG } }));
-  if (!tenant) {
-    console.error("No tenant with slug " + DEMO_TENANT_SLUG + " — set SEED_TENANT_SLUG, or create it first.");
-
-    process.exit(1);
-  }
-  console.log("Seeding demo data into tenant: " + tenant.slug + " (this DELETES that tenant's existing data)");
-  await runInTenant(tenant.id, () => main());
+  console.log("Seeding demo data (this DELETES the existing data in this database)");
+  await main();
 })().catch((e) => { console.error("Seed failed:", e); process.exit(1); }).finally(() => prisma.$disconnect());

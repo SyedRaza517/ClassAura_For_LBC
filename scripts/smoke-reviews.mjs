@@ -27,7 +27,6 @@ const require = createRequire(pathToFileURL(join(server, "package.json")));
 // nothing to do with the feature under test.
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 const PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
-const TENANT = "default";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required — point it at a throwaway database.");
@@ -36,7 +35,7 @@ if (!process.env.DATABASE_URL) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-// A BARE client: no tenant extension. Several assertions here are precisely "the API
+// A BARE client. Several assertions here are precisely "the API
 // did not write what the caller asked it to write" — the stored staffId, the stripped
 // hidden answer, the row that survived a delete attempt — and those can only be settled
 // by reading the row the API produced rather than the JSON it chose to hand back.
@@ -49,7 +48,7 @@ const check = (name, ok, detail = "") => {
 };
 
 async function call(path, { method = "GET", body, token } = {}) {
-  const headers = { "Content-Type": "application/json", "X-Tenant": TENANT };
+  const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
@@ -395,11 +394,10 @@ try {
   // "students", so granting either silently handed over every lecturer's pastoral
   // records — including the right to edit and delete them — with no checkbox anywhere on
   // the Access grid saying so. A permission grid nobody can trust is worse than a narrow one.
-  const tenant = await db.tenant.findFirst({ where: { slug: TENANT } });
   const narrowEmail = `narrow-reviews-${RUN}@edtech.test`;
   const narrow = await db.staff.create({
     data: {
-      tenantId: tenant.id, name: "Narrow Admin", jobTitle: "Data Officer", dept: "Administration",
+      name: "Narrow Admin", jobTitle: "Data Officer", dept: "Administration",
       email: narrowEmail, passwordHash: bcrypt.hashSync(PASSWORD, 10), accountRole: "ADMIN",
       adminPages: JSON.stringify(["students", "pat"]), initials: "NA", colour: "#475569",
     },

@@ -42,9 +42,10 @@ if (!process.env.DATABASE_URL) {
 }
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
-// A BARE client: the tenant-extended one in src/db.js would answer the very questions
-// this suite is trying to verify independently. We need to read the raw Admission row
-// to prove the API did NOT write the columns an applicant must never control.
+// A BARE client, kept bare on purpose even though src/db.js no longer carries a tenant
+// extension: this suite verifies what the API wrote, so it must not read back through
+// the same client the API wrote with. We need the raw Admission row to prove the API did
+// NOT write the columns an applicant must never control.
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 let pass = 0, fail = 0;
@@ -53,10 +54,9 @@ const check = (name, ok, detail = "") => {
   ok ? pass++ : fail++;
 };
 
-async function call(path, { method = "GET", body, token, tenant = "default" } = {}) {
+async function call(path, { method = "GET", body, token } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (tenant) headers["X-Tenant"] = tenant;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await res.json(); } catch (_) { /* empty or non-JSON body */ }
@@ -65,7 +65,7 @@ async function call(path, { method = "GET", body, token, tenant = "default" } = 
 
 // Uploads are a raw byte body, not JSON — the route mounts express.raw({type:"*/*"}).
 async function upload(path, { token, bytes, contentType = "application/pdf" } = {}) {
-  const headers = { Authorization: `Bearer ${token}`, "X-Tenant": "default" };
+  const headers = { Authorization: `Bearer ${token}` };
   if (bytes) headers["Content-Type"] = contentType;
   const res = await fetch(BASE + path, { method: "POST", headers, body: bytes });
   let data = null;
@@ -76,7 +76,7 @@ async function upload(path, { token, bytes, contentType = "application/pdf" } = 
 // A download is judged by its bytes, not by a 200 — a JSON error served as a "PDF" is
 // what an applicant's browser would try to open.
 async function download(path, token) {
-  const res = await fetch(BASE + path, { headers: { Authorization: `Bearer ${token}`, "X-Tenant": "default" } });
+  const res = await fetch(BASE + path, { headers: { Authorization: `Bearer ${token}` } });
   const buf = Buffer.from(await res.arrayBuffer());
   return { status: res.status, type: res.headers.get("content-type") || "", magic: buf.subarray(0, 5).toString("latin1"), bytes: buf.length };
 }
@@ -226,7 +226,10 @@ try {
   // The portal view is hand-built rather than serialised off the row, and this is why:
   // the row carries the login hash and two single-use link hashes (upload + offer). Any
   // of those in the applicant's own JSON is a handed-over credential.
-  check("...with no password or link-token hashes in it", !/hash/i.test(meJson) && !meJson.includes("tenantId"));
+  // This also used to assert the view carried no tenantId. That column is gone from the
+  // schema, so the clause could never fail again; the hash clause is the one that was
+  // ever load-bearing and it is untouched.
+  check("...with no password or link-token hashes in it", !/hash/i.test(meJson));
   check("...and the full document checklist", Array.isArray(meA.data?.documents) && meA.data.documents.length === 10 && meA.data.documents.every((d) => d.uploaded === false), `${meA.data?.documents?.length} types`);
 
   const meB = await call("/applicant/me", { token: tokenB });
@@ -259,7 +262,14 @@ try {
       offerStatus: "accepted", offerAcceptedAt: new Date().toISOString(),
       enrollStatus: "Enroll", ismOutcome: "Yes", interviewStatus: "Passed",
       studentId: "st-100121", applicationSubmittedAt: new Date().toISOString(),
-      active: false, tokenVersion: 99, passwordHash: "not-a-hash", id: idB, tenantId: "somewhere-else",
+      active: false, tokenVersion: 99, passwordHash: "not-a-hash", id: idB,
+      // The last key used to be `tenantId: "somewhere-else"`, and it was doing two jobs:
+      // proving an applicant could not move their row to another college, and proving a
+      // key that is not in pick()'s allowlist is DROPPED rather than passed through to
+      // Prisma (which would throw, and the 200 asserted below is what catches that). The
+      // first job is gone with tenancy; the second is real and survives, so a key that
+      // exists on no model at all stands in for it deliberately.
+      notAColumnOnAnyModel: "x",
     },
   });
   const rowA = await db.admission.findUnique({ where: { id: idA } });

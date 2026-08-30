@@ -12,16 +12,11 @@
 // `$env:VAR = "value"`.
 require("dotenv").config();
 const { hashPassword } = require("./src/auth");
-// The EXTENDED client. On a bare PrismaClient the isolation extension never runs, so
-// the create below would supply no tenantId — which is now required — and the whole
-// documented recovery path would fail. Through the extended client, running inside
-// runInTenant stamps it automatically.
+// A plain client. This needed the EXTENDED one while the isolation extension existed:
+// a create issued outside runInTenant supplied no tenantId, that column was required,
+// and so this entire documented recovery path failed on it. There is no column to
+// stamp now — see the header of src/db.js.
 const prisma = require("./src/db");
-const { runInTenant, crossTenant } = require("./src/db");
-
-// Which institution this administrator belongs to. A super admin is the top of ONE
-// college, not of the platform — that tier is create-platform-admin.js.
-const TENANT_SLUG = process.env.TENANT_SLUG || process.env.DEFAULT_TENANT_SLUG || "default";
 
 const MIN_PASSWORD = 12;
 // Passwords this project has shipped before, plus the usual suspects. Refused outright
@@ -48,33 +43,39 @@ const BANNED = ["123456789", "password123", "password", "changeme", "admin123"];
     process.exitCode = 1; return;
   }
 
-  // A super admin is the top of ONE institution, not of the platform — that tier is
-  // create-platform-admin.js. So this has to say which institution it means.
-  const tenant = await crossTenant(() => prisma.tenant.findUnique({ where: { slug: TENANT_SLUG } }));
-  if (!tenant) {
-    console.error(`\n✗ No institution with slug "${TENANT_SLUG}". Set TENANT_SLUG, or create the institution first.\n`);
-    process.exitCode = 1; return;
-  }
-
+  // THIS USED TO HAVE TO SAY WHICH INSTITUTION IT MEANT.
+  //
+  // It read TENANT_SLUG, looked the institution up, and refused when the slug named
+  // none — because a super admin was the top of one college among several, and
+  // creating one without saying which college would have been meaningless. One
+  // deployment now serves one college, so there is nothing to choose and nothing to
+  // get wrong. The separate platform-operator tier the old comment pointed at
+  // (create-platform-admin.js) no longer exists at all.
   try {
-    // Inside the tenant, so the isolation extension stamps tenantId on the create.
-    await runInTenant(tenant.id, async () => {
     let passwordHash = hashPassword(password);
     if (passwordHash && typeof passwordHash.then === "function") passwordHash = await passwordHash;
     const initials = name.split(/\s+/).map((p) => p[0] || "").join("").slice(0, 2).toUpperCase() || "A";
-    // findFirst + create/update rather than upsert: Staff is @@unique([tenantId, email])
-    // now, so { where: { email } } is no longer a unique selector and Prisma rejects it.
+    // findFirst + update/create rather than upsert. Staff.email is a plain unique
+    // again, so an upsert WOULD now work — it was findFirst because the unique had
+    // become [tenantId, email] and `{ where: { email } }` stopped being a unique
+    // selector. It stays split because the two payloads differ in more than a field
+    // or two: the update clears two-step verification and bumps tokenVersion, the
+    // create fills in a whole employee record. Spelling them out says which applies.
     const existing = await prisma.staff.findFirst({ where: { email } });
     const s = existing
       ? await prisma.staff.update({
           where: { id: existing.id },
-      // tokenVersion increments so any session or reset link issued under the previous
-      // password stops working the moment this runs.
-          data: { passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null, pendingActivation: false, tokenVersion: { increment: 1 },
-        // Also clear two-step verification. This is the documented recovery script,
-        // and an account locked out by a lost authenticator could not otherwise be
-        // recovered — the super-admin guard stops any other admin resetting it.
-            totpEnabled: false, totpSecret: null, mustSetupTotp: false },
+          // tokenVersion increments so any session or reset link issued under the
+          // previous password stops working the moment this runs.
+          data: {
+            passwordHash, accountRole: "ADMIN", isSuperAdmin: true, adminPages: null,
+            pendingActivation: false, tokenVersion: { increment: 1 },
+            // Also clear two-step verification. This is the documented recovery
+            // script, and an account locked out by a lost authenticator could not
+            // otherwise be recovered — the super-admin guard stops any other admin
+            // resetting it.
+            totpEnabled: false, totpSecret: null, mustSetupTotp: false,
+          },
         })
       : await prisma.staff.create({
           data: {
@@ -84,9 +85,7 @@ const BANNED = ["123456789", "password123", "password", "changeme", "admin123"];
           },
         });
     console.log(`\n✓ Super admin ready: ${s.email}`);
-    console.log(`  Institution: ${tenant.slug}`);
     console.log("  The password is the one you passed in — deliberately not printed here.\n");
-    });
   } catch (e) {
     console.error("\n✗ Failed:", e.message, "\n");
     process.exitCode = 1;

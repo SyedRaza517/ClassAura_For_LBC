@@ -34,9 +34,9 @@ async function tick() {
 }
 
 function start() {
-  // Per institution — each has its own staff, students and send hour. See eachTenant.js.
-  const { forEachTenant } = require("./eachTenant");
-  const runAll = () => forEachTenant("daily-notifications", () => tick())
+  // One institution per deployment, so this simply runs. See attendanceScheduler.js
+  // for what the per-tenant wrapper used to do and why it is gone.
+  const runAll = () => tick()
     .catch((e) => console.error("[notifications-scheduler] failed:", e.message));
   setInterval(runAll, 60 * 60 * 1000); // hourly
   setTimeout(runAll, 30 * 1000);       // and once ~30s after boot, in case we start in the send hour

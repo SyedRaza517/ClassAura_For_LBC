@@ -1,7 +1,7 @@
 {
   "name": "staff-hub",
   "version": "1.0.0",
-  "description": "Staff Hub — multi-tenant staff platform, full-stack (server + client)",
+  "description": "Staff Hub — college management platform, one deployment per institution (server + client)",
   "private": true,
   "workspaces": ["server", "client"],
   "scripts": {

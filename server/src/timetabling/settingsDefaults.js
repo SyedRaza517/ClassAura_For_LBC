@@ -7,7 +7,7 @@
 // these staff use both the website and the phone app, so localStorage would mean a
 // lecturer's hidden weekend followed them on one device and not the other.
 //
-//   defaults (here)  ->  tenant blob (TENANT_FIELDS)  ->  user blob (USER_FIELDS)
+//   defaults (here)  ->  tenant blob (INSTITUTION_FIELDS)  ->  user blob (USER_FIELDS)
 //
 // Pure. No database, no cache, no Prisma — settings.js does that part, and keeping
 // the rules here is what makes them testable without one.
@@ -62,7 +62,7 @@ const VARIANTS = new Set(["normal", "light"]);
 const ANNOTATIONS = new Set(["title", "unit", "category", "room", "staff", "group", "department", "eventId"]);
 
 // A college sets everything, including the banner.
-const TENANT_FIELDS = [
+const INSTITUTION_FIELDS = [
   "view", "layout", "days", "periods", "colourBy", "colourVariant",
   "showEventTimes", "showEventId", "showAvailability", "swapAxes",
   "highlightChangedDays", "annotations", "notice",
@@ -71,7 +71,7 @@ const TENANT_FIELDS = [
 // — at the reference institution, what a student must do to stay eligible for a
 // maintenance loan — so it is an institutional statement, and a lecturer editing
 // their copy would be editing what every reader of their timetable is told.
-const USER_FIELDS = TENANT_FIELDS.filter((f) => f !== "notice");
+const USER_FIELDS = INSTITUTION_FIELDS.filter((f) => f !== "notice");
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const isBool = (v) => typeof v === "boolean";
@@ -156,7 +156,7 @@ function clean(patch, allowed) {
   return out;
 }
 
-const cleanTenant = (patch) => clean(patch, TENANT_FIELDS);
+const cleanInstitution = (patch) => clean(patch, INSTITUTION_FIELDS);
 const cleanUser = (patch) => clean(patch, USER_FIELDS);
 
 /**
@@ -167,15 +167,15 @@ const cleanUser = (patch) => clean(patch, USER_FIELDS);
  * or be edited by hand in a console, and a stored `view: "spiral"` would otherwise
  * reach a client that has no such view and render nothing at all.
  */
-function mergeSettings(tenantBlob, userBlob) {
+function mergeSettings(institutionBlob, userBlob) {
   return {
     ...DEFAULTS,
-    ...cleanTenant(tenantBlob),
+    ...cleanInstitution(institutionBlob),
     ...cleanUser(userBlob),
   };
 }
 
 module.exports = {
-  DEFAULTS, TENANT_FIELDS, USER_FIELDS,
-  mergeSettings, cleanTenant, cleanUser,
+  DEFAULTS, INSTITUTION_FIELDS, USER_FIELDS,
+  mergeSettings, cleanInstitution, cleanUser,
 };

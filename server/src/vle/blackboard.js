@@ -18,11 +18,14 @@
 // make the 401 message name it, rather than reporting "invalid credentials" to
 // somebody whose credentials are fine.
 //
-// The key and secret are held per tenant like every other integration secret. A
-// college with its own developer registration uses its own; one without can be given
-// the platform's. Per tenant either way, because the alternative — one global
-// registration — puts every customer under one site quota that a single busy college
-// can exhaust.
+// The key and secret are held in this deployment's integration settings, AES-encrypted
+// like every other integration secret, rather than in code or in a shared registration.
+// They used to be per tenant, and the reason they were is the reason they are still
+// configuration: the daily call quota below is per developer registration, so a shared
+// one would put every college the supplier serves under a single ceiling that one busy
+// college can exhaust. Separate deployments now give that separation by themselves —
+// but a college that brings its own developer registration must still be able to say
+// so, and that is a value an administrator types, not one a deploy sets.
 //
 // ENTITLEMENTS, WHICH BLOCK READS IN NON-OBVIOUS WAYS
 //
@@ -57,9 +60,11 @@ const LIMIT = 100;
 // quota, hence the cache rather than a request per call.
 const TOKEN_SKEW_MS = 5 * 60_000;
 
-// host -> { token, expiresAt }. Keyed by HOST, not by tenant: two colleges on the
-// same Learn site would share a token anyway, because Blackboard issues one per
-// application per site.
+// host -> { token, expiresAt }. Keyed by HOST, and it stays a Map now the tenant is
+// gone, because the host was always the right key: Blackboard issues one token per
+// application per site, so the site is what a token belongs to. This deployment reads
+// one Learn site today, but testConnection() hits whatever host an administrator has
+// just typed, which is a second host in the same process.
 const tokenCache = new Map();
 
 /** Drop a cached token — after a 401, and available to tests. */
@@ -301,6 +306,9 @@ async function testConnection() {
 
   let site = "";
   try {
+    // `info.tenantId` here is BLACKBOARD's own identifier for the Learn site — nothing
+    // to do with the multi-tenancy this platform used to have. Newer builds report
+    // siteId; older ones only tenantId, hence reading both.
     const info = await get("/v1/system/info", {}, { settings: s, timeoutMs: 15_000 });
     if (info && (info.siteId || info.tenantId)) site = " (site " + (info.siteId || info.tenantId) + ")";
   } catch {

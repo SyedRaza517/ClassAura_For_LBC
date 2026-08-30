@@ -244,9 +244,9 @@ screen ≤640px wide **or** whenever the app is running inside Capacitor.
 ## White-labelling a build for one institution
 
 The app already brands itself at **runtime**: colours, logo and institution name all
-come from `GET /api/branding`, and the native shells load that same React bundle. So
-one installed binary already *looks* right for whichever college the signed-in user
-belongs to.
+come from `GET /api/branding`, and the native shells load that same React bundle. So a
+build already *looks* right for the college whose backend it points at, without a line
+of its branding being compiled in.
 
 Four things cannot work that way, because the operating system reads them before a
 single line of our JavaScript runs:
@@ -302,7 +302,7 @@ Two different mechanisms read it, for a reason worth knowing:
 | iOS signing bundle id | `codemagic.yaml` → `ios_signing.bundle_identifier` **and** `BUNDLE_ID` | Codemagic fetches signing assets *before* any script runs, so these cannot read `brand.properties`. The build fails fast if they disagree with it. |
 | App Store Connect app | `codemagic.yaml` → `APP_STORE_APPLE_ID` | The numeric id of *that college's* app record |
 | Android upload key | `client/android/keystore.properties` | Per listing. Never committed; losing it means Google has to intervene |
-| API URL | `codemagic.yaml` → `VITE_API_URL`, or `client/.env.production` | Only if that institution is on its own backend rather than a tenant of the shared one |
+| API URL | `codemagic.yaml` → `VITE_API_URL`, or `client/.env.production` | Always. Each college has its own deployment and its own database, so a build points at exactly one API and pointing two colleges' builds at one URL signs everybody into the same institution |
 | Play `versionCode` / iOS build number | `client/android/app/build.gradle` | Per listing, and only ever upwards |
 
 The Java package `namespace` in `build.gradle` deliberately does **not** follow

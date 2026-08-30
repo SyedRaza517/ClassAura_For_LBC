@@ -10,14 +10,16 @@
 require("dotenv").config();
 require("./assertDisposable").assertDisposable("prisma/seed.js deletes staff, students, check-ins, leave and documents before reseeding");
 const bcrypt = require("bcryptjs");
-// The EXTENDED client, deliberately — not a bare PrismaClient. Every create below
-// then has its tenantId stamped on automatically by the isolation extension, so the
-// seed did not need rewriting row by row when tenancy landed.
+// A plain client now. This used to be the EXTENDED one, deliberately, so that every
+// create below had its tenantId stamped on automatically and the seed did not need
+// rewriting row by row when tenancy landed. With no tenantId to stamp there is
+// nothing left to extend — see the header of src/db.js.
 const prisma = require("../src/db");
-const { runInTenant, crossTenant } = require("../src/db");
 
-// Which institution this demo data belongs to. Defaults to the tenant the tenancy
-// migration adopted every pre-existing row into.
+// The institution this deployment serves. One row, and the only thing that still
+// reads it is branding.js, as the fallback display name for a college that has not
+// set one. SEED_TENANT_SLUG is kept as the override because deployments and CI
+// already set it; there is simply no longer anything to choose BETWEEN.
 const SEED_TENANT_SLUG = process.env.SEED_TENANT_SLUG || "default";
 
 const hash = (pw) => bcrypt.hashSync(pw, 10);
@@ -197,13 +199,16 @@ async function main() {
   console.log("  STAFF:  j.whitfield@edtech.co.uk, a.rahman@edtech.co.uk, d.okoye@edtech.co.uk, s.marin@edtech.co.uk, p.nair@edtech.co.uk");
 }
 
-// Ensure the tenant exists, then run the whole seed inside it.
+// Ensure the institution row exists, then seed. It used to have to exist FIRST so
+// that runInTenant had an id to scope every subsequent write to; now it is simply
+// one more row, and it is upserted rather than created so a re-seed does not collide
+// on the slug.
 (async () => {
-  const tenant = await crossTenant(() => prisma.tenant.upsert({
+  const institution = await prisma.tenant.upsert({
     where: { slug: SEED_TENANT_SLUG },
     create: { slug: SEED_TENANT_SLUG, name: "Default Institution" },
     update: {},
-  }));
-  console.log("Seeding into tenant: " + tenant.slug + " (" + tenant.id + ")");
-  await runInTenant(tenant.id, () => main());
+  });
+  console.log("Seeding institution: " + institution.name + " (" + institution.slug + ")");
+  await main();
 })().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

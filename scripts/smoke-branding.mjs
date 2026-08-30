@@ -1,12 +1,16 @@
-// Each institution's own identity — and, more importantly, never anybody else's.
+// The institution's own identity on its letters, offers and emails.
 //
-// The defect this guards against is not cosmetic. Before per-tenant branding, a second
-// college on the platform would have sent its applicants letters and emails carrying
-// the FIRST college's name, address, phone number and admissions officer. A student
-// receiving an offer from the wrong institution is not a styling bug.
+// This suite was written when the platform was multi-tenant, and its original point was
+// that a second college would otherwise have sent ITS applicants letters carrying the
+// FIRST college's name, address, phone number and admissions officer. One deployment now
+// serves one college, so that particular accident is impossible by construction and the
+// assertion that covered it has gone (see "isolation" below).
 //
-// So the assertions here are mostly negative: given a college that has configured
-// nothing, prove that nothing belonging to another institution reaches it.
+// What remains is still worth asserting and is not merely cosmetic: branding is written
+// through an ALLOWLIST, an unset field falls back to a platform default rather than to
+// whatever happened to be in the column, a reset restores that default, and none of it is
+// writable without signing in. Those are the rules that decide what an applicant reads on
+// an offer letter, and they are all here.
 import { strict as assert } from "node:assert";
 
 // API_URL is what scripts/test.mjs actually exports to a suite (it also accepts an
@@ -23,10 +27,9 @@ async function check(label, fn) {
   try { const d = await fn(); ok(label, d); } catch (e) { bad(label, e); }
 }
 
-const call = async (path, { method = "GET", body, token, tenant } = {}) => {
+const call = async (path, { method = "GET", body, token } = {}) => {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
-  if (tenant) headers["X-Tenant"] = tenant;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
@@ -173,12 +176,17 @@ await check("resetting restores the built-in wording", async () => {
 });
 
 /* ------------------------------------------------------------- isolation --- */
-
-await check("an unknown institution is refused, branding included", async () => {
-  const r = await call("/branding", { tenant: "no-such-college" });
-  assert.equal(r.status, 404, `expected 404, got ${r.status}`);
-  return "branding does not leak the list of customers";
-});
+//
+// REMOVED: "an unknown institution is refused, branding included". It sent
+// X-Tenant: no-such-college to the unauthenticated GET /branding and demanded a 404,
+// which proved that the endpoint the login screen calls before anyone has signed in
+// could not be used to enumerate the supplier's customer list.
+//
+// There is no customer list to enumerate and no X-Tenant header to send. Restating it
+// would assert that an unrecognised request header is ignored — true of every header,
+// and it would sit on the summary line looking like isolation coverage. GET /branding
+// is still deliberately public, and that is correct: it serves the login screen its own
+// college's name and colours, which is the only thing it now knows.
 
 /* --------------------------------------------------------------- restore --- */
 

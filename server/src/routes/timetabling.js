@@ -62,8 +62,8 @@ router.post("/rooms", async (req, res) => {
     const row = await prisma.room.create({ data });
     res.status(201).json(sRoom(row));
   } catch (e) {
-    // The unique is (tenant, name, campus) — so this fires only for a genuine
-    // duplicate on the same campus, not for room 101 existing at another site.
+    // The unique is (name, campus) — so this fires only for a genuine duplicate on
+    // the same campus, not for room 101 existing at another site.
     if (e.code === "P2002") return res.status(409).json({ error: "That room already exists on that campus" });
     throw e;
   }
@@ -279,19 +279,18 @@ async function checkClashes(candidate, { roomId, staffIds, cohortIds }) {
 /**
  * Create an event and its staff/group assignments.
  *
- * THREE STATEMENTS, NOT ONE NESTED CREATE, AND THIS IS NOT A STYLE PREFERENCE.
+ * THREE STATEMENTS, NOT ONE NESTED CREATE.
  *
- * db.js stamps the tenant onto `args.data` at the TOP LEVEL only — `next.data = {
- * ...args.data, tenantId }`. A nested `staff: { create: [...] }` sits inside that
- * payload and is never reached, so the join rows would be written with no tenant at
- * all. Prisma happens to refuse the call outright here (the nested input type wants
- * a `staff` relation connect, not a `staffId` scalar), which is a lucky accident:
- * the failure is loud instead of silent. On a model whose nested shape Prisma did
- * accept, the same mistake would write rows belonging to no institution.
+ * This was once an isolation rule: db.js stamped the tenant onto `args.data` at the
+ * top level only, so join rows created inside a nested `staff: { create: [...] }`
+ * would have been written belonging to no institution. That extension is gone.
  *
- * Separate top-level calls go through the extension and are stamped. That is why
- * the update handler below already reads this way, and why this is a shared helper
- * — a third call site written from the pattern above would reintroduce the bug.
+ * The shape survives it, because Prisma refuses the nested form here anyway: the
+ * nested input type wants a `staff` relation connect, not the `staffId` scalar these
+ * join rows are built from. Writing the assignments as their own createMany calls is
+ * what makes them expressible at all, which is why the update handler below already
+ * reads this way and why this is a shared helper — a third call site written from
+ * first principles would rediscover the same wall.
  *
  * Wrapped in a transaction so an event cannot survive without the assignments that
  * were meant to come with it: a lecture that silently belongs to nobody is exactly
@@ -485,15 +484,15 @@ const { DEFAULTS: SETTINGS_DEFAULTS } = require("../timetabling/settingsDefaults
  * to, and every field looks equally deliberate.
  */
 router.get("/settings", async (_req, res) => {
-  res.json({ defaults: SETTINGS_DEFAULTS, tenant: await timetableSettings.getTenant() });
+  res.json({ defaults: SETTINGS_DEFAULTS, institution: await timetableSettings.getInstitution() });
 });
 
 // A patch: the screen sends the field it changed. Unknown and invalid keys are
-// dropped by cleanTenant rather than stored, so a client sending nonsense cannot
+// dropped by cleanInstitution rather than stored, so a client sending nonsense cannot
 // park it in the column for a later reader to trip over.
 router.put("/settings", async (req, res) => {
-  const saved = await timetableSettings.saveTenant(req.body || {}, req.user?.name || req.user?.email || "");
-  res.json({ tenant: saved });
+  const saved = await timetableSettings.saveInstitution(req.body || {}, req.user?.name || req.user?.email || "");
+  res.json({ institution: saved });
 });
 
 module.exports = router;
