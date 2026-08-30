@@ -2762,6 +2762,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
     { key: "timetable", label: "Timetable", I: CalendarClock },
+    { key: "my-timetable", label: "My Timetable", I: CalendarDays },
     { key: "scheduling", label: "Scheduling", I: CalendarRange },
     { key: "passwords", label: "Reset Passwords", I: KeyRound },
     { key: "settings", label: "Settings", I: Settings },
@@ -2788,6 +2789,15 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // It needs a key of its own rather than sharing "assessment-tracker" because
     // activeKey below matches on key alone and every nav button calls setTab(n.key),
     // so two entries sharing a key would both highlight and both render one screen.
+    // MY TIMETABLE NEEDS NO GRANT, and that mirrors the server rather than relaxing
+    // it: /api/my-timetable carries requireAuth and no requirePage, because it answers
+    // with the SIGNED-IN PERSON'S own teaching, keyed on req.user.id with no id
+    // parameter. There is nothing here to withhold from the person looking at it, and
+    // gating it would mean handing out an admin page just so a lecturer could see
+    // where they are teaching. Adding it to ADMIN_PAGES would also make it grantable,
+    // which would imply one person can be given somebody else's timetable — the
+    // endpoint cannot do that.
+    : n.key === "my-timetable" ? true
     : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
     : canAccessPage(me, n.key));
   const [tab, setTab] = useState(() => nav[0]?.key || "overview");
@@ -2929,6 +2939,11 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "staff" && <AdminStaff store={store} />}
         {activeKey === "timesheets" && <AdminTimesheets store={store} />}
         {activeKey === "timetable" && <AdminTimetable store={store} />}
+        {activeKey === "my-timetable" && (
+          <div className="-m-4 h-[calc(100vh-8rem)] min-h-[560px] overflow-hidden rounded-xl border border-slate-200 sm:-m-6">
+            <MyTimetable />
+          </div>
+        )}
         {activeKey === "scheduling" && <AdminTimetablePlanner store={store} />}
         {activeKey === "admissions" && <AdminAdmissions store={store} />}
         {activeKey === "ism" && <AdminIsm store={store} />}

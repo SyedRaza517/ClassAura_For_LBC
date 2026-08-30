@@ -104,7 +104,10 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
           </div>
           {dates.map((d) => (
             <div key={d} className="relative flex-1 border-l" style={{ borderColor: TT.grid, background: d === today ? TT.cellNow : TT.cell }}>
-              {periods.map((p, i) => <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid, background: i % 2 ? "rgba(255,255,255,.35)" : "transparent" }} className="border-b" />)}
+              {/* Uniform cells with a thin rule per period. An alternating band was tried and
+                  removed: the reference draws one flat wash, and the stripes read as
+                  meaning something when they mean nothing. */}
+              {periods.map((p) => <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid }} className="border-b" />)}
               {(byDate.get(d) || []).map((e) => {
                 const pos = placeEvent(e, periods);
                 // Null means the event falls entirely outside the periods this
