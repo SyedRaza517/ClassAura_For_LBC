@@ -110,6 +110,14 @@ app.use("/api/passwords", wrapAsync(require("./routes/passwords")));
 app.use("/api/my-reviews", wrapAsync(require("./routes/myReviews")));
 app.use("/api/student-reviews", wrapAsync(require("./routes/studentReviews")));
 app.use("/api/timetable", wrapAsync(require("./routes/timetable")));
+// The CELCAT-style timetabling module. Two routers, deliberately split by who
+// reads them: /api/timetabling is the planner and is gated on the "scheduling"
+// admin page; /api/my-timetable is what every lecturer reads and carries no page
+// gate at all, because gating it would mean granting an admin page to the whole
+// teaching staff. Both sit below tenantMiddleware — an administrator of a college
+// is a college user, unlike /api/platform and /api/registrations above.
+app.use("/api/timetabling", wrapAsync(require("./routes/timetabling")));
+app.use("/api/my-timetable", wrapAsync(require("./routes/myTimetable")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
 app.use("/api/admission-pdf", wrapAsync(require("./routes/admissionPdf")));

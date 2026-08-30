@@ -276,6 +276,36 @@ async function checkClashes(candidate, { roomId, staffIds, cohortIds }) {
   return out;
 }
 
+/**
+ * Create an event and its staff/group assignments.
+ *
+ * THREE STATEMENTS, NOT ONE NESTED CREATE, AND THIS IS NOT A STYLE PREFERENCE.
+ *
+ * db.js stamps the tenant onto `args.data` at the TOP LEVEL only — `next.data = {
+ * ...args.data, tenantId }`. A nested `staff: { create: [...] }` sits inside that
+ * payload and is never reached, so the join rows would be written with no tenant at
+ * all. Prisma happens to refuse the call outright here (the nested input type wants
+ * a `staff` relation connect, not a `staffId` scalar), which is a lucky accident:
+ * the failure is loud instead of silent. On a model whose nested shape Prisma did
+ * accept, the same mistake would write rows belonging to no institution.
+ *
+ * Separate top-level calls go through the extension and are stamped. That is why
+ * the update handler below already reads this way, and why this is a shared helper
+ * — a third call site written from the pattern above would reintroduce the bug.
+ *
+ * Wrapped in a transaction so an event cannot survive without the assignments that
+ * were meant to come with it: a lecture that silently belongs to nobody is exactly
+ * the "quietly wrong timetable" this module exists to prevent.
+ */
+function createEventWithAssignments(data, staffIds, cohortIds, include) {
+  return prisma.$transaction(async (tx) => {
+    const event = await tx.timetableEvent.create({ data });
+    if (staffIds.length) await tx.timetableEventStaff.createMany({ data: staffIds.map((staffId) => ({ eventId: event.id, staffId })) });
+    if (cohortIds.length) await tx.timetableEventGroup.createMany({ data: cohortIds.map((cohortId) => ({ eventId: event.id, cohortId })) });
+    return include ? tx.timetableEvent.findUnique({ where: { id: event.id }, include }) : event;
+  });
+}
+
 router.post("/events", async (req, res) => {
   const { data, error } = parseEvent(req.body, false);
   if (error) return res.status(400).json({ error });
@@ -284,14 +314,7 @@ router.post("/events", async (req, res) => {
   const cohortIds = ids(req.body?.cohortIds);
   const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
 
-  const row = await prisma.timetableEvent.create({
-    data: {
-      ...data,
-      staff: staffIds.length ? { create: staffIds.map((staffId) => ({ staffId })) } : undefined,
-      groups: cohortIds.length ? { create: cohortIds.map((cohortId) => ({ cohortId })) } : undefined,
-    },
-    include: EVENT_INCLUDE,
-  });
+  const row = await createEventWithAssignments(data, staffIds, cohortIds, EVENT_INCLUDE);
   res.status(201).json({ event: sEvent(row), warnings });
 });
 
@@ -412,17 +435,16 @@ router.post("/events/:id/repeat", async (req, res) => {
     // actionable and "there were clashes" is not.
     if (found.length) warnings.push({ date, clashes: found });
 
-    await prisma.timetableEvent.create({
-      data: {
-        date, startTime: source.startTime, endTime: source.endTime,
-        title: source.title, notes: source.notes,
-        unitId: source.unitId, courseId: source.courseId,
-        roomId: source.roomId, categoryId: source.categoryId,
-        published: source.published,
-        staff: staffIds.length ? { create: staffIds.map((staffId) => ({ staffId })) } : undefined,
-        groups: cohortIds.length ? { create: cohortIds.map((cohortId) => ({ cohortId })) } : undefined,
-      },
-    });
+    // Same helper as the create handler, for the same reason: a nested create would
+    // leave the join rows unstamped by db.js. A repeat is the call most likely to
+    // have got this wrong quietly, because it writes a whole term at once.
+    await createEventWithAssignments({
+      date, startTime: source.startTime, endTime: source.endTime,
+      title: source.title, notes: source.notes,
+      unitId: source.unitId, courseId: source.courseId,
+      roomId: source.roomId, categoryId: source.categoryId,
+      published: source.published,
+    }, staffIds, cohortIds, null);
     created++;
   }
 
