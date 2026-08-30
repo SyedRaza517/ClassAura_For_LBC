@@ -7062,7 +7062,7 @@ function AdminStudents({ store }) {
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[680px] text-sm">
             <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
-              <tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Email address</th><th className="px-5 py-3 whitespace-nowrap" title="Based on attendance across ALL units">Attendance risk</th><th className="px-5 py-3">Units</th><th className="px-5 py-3 text-center whitespace-nowrap" title="Current units only">Current %</th><th className="px-5 py-3 text-right">Actions</th></tr>
+              <tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Email address</th><th className="px-5 py-3 whitespace-nowrap" title="Based on attendance across ALL units">Attendance risk</th><th className="px-5 py-3 text-center whitespace-nowrap" title="Current units only">Current %</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {paged.slice.map(s => {
@@ -7084,12 +7084,6 @@ function AdminStudents({ store }) {
                     <td className="px-5 py-3">
                       {(() => { const b = riskBand(lifetimePct); return <span className="inline-block rounded-full px-2.5 py-1 text-[11px] font-bold" style={{ background: b.bg, color: b.colour }} title={lifetimePct == null ? "No attendance data" : `${lifetimePct}% attendance across all units`}>{b.label}</span>; })()}
                     </td>
-                    <td className="px-5 py-3">
-                      <div className="flex max-w-[200px] flex-wrap gap-1">
-                        {(s.unitIds || []).map(id => { const m = unitById[id]; return m ? <span key={id} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600" title={m.name}>{m.code}</span> : null; })}
-                        {(s.unitIds || []).length === 0 && <span className="text-[11px] text-slate-300">none</span>}
-                      </div>
-                    </td>
                     <td className="px-5 py-3 text-center">
                       <button onClick={() => setAttnFor(s)} title="View attendance breakdown" className={`press rounded-lg px-2 py-1 text-xs font-extrabold tabular-nums transition hover:ring-2 hover:ring-inset hover:ring-slate-300 ${tone.bg} ${tone.text}`}>{fmtPct(pct ?? null)}</button>
                     </td>
@@ -7103,7 +7097,7 @@ function AdminStudents({ store }) {
                   </tr>
                 );
               })}
-              {paged.slice.length === 0 && <tr><td colSpan={6} className="px-5 py-10"><EmptyState Icon={Users} title={total === 0 ? "No students yet" : "No students match"} msg={total === 0 ? "Add your first student to start building registers." : "Try a different search or filter."} /></td></tr>}
+              {paged.slice.length === 0 && <tr><td colSpan={5} className="px-5 py-10"><EmptyState Icon={Users} title={total === 0 ? "No students yet" : "No students match"} msg={total === 0 ? "Add your first student to start building registers." : "Try a different search or filter."} /></td></tr>}
             </tbody>
           </table>
         </div>
