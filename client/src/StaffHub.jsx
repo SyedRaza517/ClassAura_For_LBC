@@ -10449,6 +10449,45 @@ function UnitGradeGrid({ store, unit, assessments }) {
   );
 }
 
+/* ----- Did this student hand the work in? -----
+ *
+ * A separate question from the mark beside it, and it cannot be answered from a mark:
+ * a grade exists only once work has been MARKED, so the gradebook alone cannot tell a
+ * student who submitted and is waiting from one who submitted nothing at all.
+ *
+ * A NULL ROW IS NEVER RENDERED AS "NOT SUBMITTED". The LMS sync writes a row per
+ * enrolled student, so a missing row means the sync did not cover this student — not
+ * that they handed nothing in. Saying "not submitted" against a named individual on the
+ * strength of a row nobody wrote is the version of this bug that reaches a student, and
+ * "not_submitted" already exists as an explicit status for when the LMS says so.
+ *
+ * `recordsSubmissions` chooses only the wording of that unknown: "Not synced" when no
+ * integration anywhere feeds this, "Awaiting sync" when the college does record
+ * submissions and this assessment has not been covered.
+ */
+function SubmittedCell({ submission, recordsSubmissions }) {
+  if (!submission) {
+    return <span className="text-[11px] italic text-slate-400">{recordsSubmissions ? "Awaiting sync" : "Not synced"}</span>;
+  }
+  if (submission.status === "submitted") {
+    return (
+      <>
+        <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">SUBMITTED</span>
+        {submission.submittedOn && <span className="ml-1.5 text-[11px] text-slate-500">{fmtDate(submission.submittedOn)}</span>}
+        {/* onTime === false is late. onTime === null is NOT late — it means there was
+            nothing to be late against (no due date), and treating it as late would
+            accuse a student of something the data does not say. */}
+        {submission.onTime === false && <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-bold text-amber-700 ring-1 ring-amber-100">LATE</span>}
+      </>
+    );
+  }
+  if (submission.status === "not_submitted") {
+    // The one case that earns a warning colour: the LMS actually said so.
+    return <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">NOT SUBMITTED</span>;
+  }
+  return <span className="text-[11px] italic text-slate-400">Unknown</span>;
+}
+
 /* ----- Grade entry for one assessment (all enrolled students) ----- */
 function GradeEntry({ store, assessment, onBack }) {
   const [data, setData] = useState(null);
@@ -10545,8 +10584,10 @@ function GradeEntry({ store, assessment, onBack }) {
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
+          {/* 560 → 700 because a sixth column was added; the old floor let the
+              Submitted and Marks columns collide before the scroll container kicked in. */}
+          <table className="w-full min-w-[700px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Submitted</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
             <tbody>
               {paged.slice.map(r => {
                 const v = draft[r.student.id] ?? "";
@@ -10564,19 +10605,25 @@ function GradeEntry({ store, assessment, onBack }) {
                             {r.source === "moodle" && <span className="ml-1.5 rounded bg-violet-50 px-1 py-0.5 text-[9px] font-bold text-violet-600 ring-1 ring-violet-100">MOODLE</span>}</>
                         : <span className="text-[11px] text-slate-300">—</span>}
                     </td>
+                    <td className="px-5 py-2.5 whitespace-nowrap"><SubmittedCell submission={r.submission} recordsSubmissions={data.recordsSubmissions} /></td>
                     <td className="px-5 py-2.5"><input inputMode="numeric" value={v} onChange={e => setMark(r.student.id, e.target.value)} placeholder="—" className={`w-24 rounded-lg border px-2.5 py-1.5 text-sm outline-none transition focus:ring-2 ${bad ? "border-rose-300 focus:border-rose-400 focus:ring-rose-100" : "border-slate-200 focus:border-blue-400 focus:ring-blue-100"}`} /></td>
                     <td className="px-5 py-2.5 text-center tabular-nums text-slate-500">{pct == null ? "—" : `${pct}%`}</td>
                     <td className="px-5 py-2.5 text-center">{band ? <span className={`rounded-lg px-2 py-1 text-[11px] font-extrabold ${gt.bg} ${gt.text}`}>{band}</span> : <span className="text-slate-300">—</span>}</td>
                   </tr>
                 );
               })}
-              {paged.slice.length === 0 && <tr><td colSpan={5} className="px-5 py-10"><EmptyState Icon={Users} title={rows.length === 0 ? "No students enrolled" : "No students match"} msg={rows.length === 0 ? "Enrol students onto this unit first." : "Try a different search."} /></td></tr>}
+              {paged.slice.length === 0 && <tr><td colSpan={6} className="px-5 py-10"><EmptyState Icon={Users} title={rows.length === 0 ? "No students enrolled" : "No students match"} msg={rows.length === 0 ? "Enrol students onto this unit first." : "Try a different search."} /></td></tr>}
             </tbody>
           </table>
         </div>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
       <p className="mt-3 text-[11px] text-slate-400">Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail. Leave a mark blank to clear it.</p>
+      {/* Says why the column is empty, so nobody reads a missing integration as a
+          cohort that handed nothing in. */}
+      {!data.recordsSubmissions && (
+        <p className="mt-1 text-[11px] text-slate-400">Submission data is imported from the LMS and no import has run yet, so the Submitted column reads “Not synced”.</p>
+      )}
     </>
   );
 }
