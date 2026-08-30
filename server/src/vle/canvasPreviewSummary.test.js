@@ -68,6 +68,27 @@ test("no visible courses says the token is the problem, not the data", () => {
   assert.match(verdictText(s), /account administrator/);
 });
 
+test("the verdict names WHICH courses it read", () => {
+  // A finding from three courses one teacher owns is worth having, but it is not a
+  // statement about the institution. Somebody deciding whether to commission an
+  // importer has to be able to tell those apart from the sentence alone.
+  const s = summarisePreview([course({
+    submissions: [{ studentId: "a", submittedOn: "2026-05-01", status: "submitted" }],
+  })]);
+  assert.match(verdictText(s, "account"), /this account/);
+  assert.match(verdictText(s, "teacher"), /courses this token's user teaches/);
+  // The finding itself is the same either way — submitted_at does not change by scope.
+  assert.match(verdictText(s, "teacher"), /real hand-in dates/);
+});
+
+test("the no-dates verdict is equally explicit about scope", () => {
+  const s = summarisePreview([course({
+    submissions: [{ studentId: "a", submittedOn: null, status: "submitted" }],
+  })]);
+  assert.match(verdictText(s, "teacher"), /courses this token's user teaches/);
+  assert.match(verdictText(s, "teacher"), /NOT ONE carried a hand-in date/);
+});
+
 test("malformed input summarises to zeroes rather than throwing", () => {
   // A preview must never 500 on an oddly-shaped Canvas response — the whole point is to
   // report what was found, including "something unexpected".

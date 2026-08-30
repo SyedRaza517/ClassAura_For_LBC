@@ -39,20 +39,47 @@ async function preview() {
   const issues = [];
   const note = (m) => { if (issues.length < 30) issues.push(m); };
 
-  // Reuse the connection test rather than re-deriving "is this usable". It already
-  // knows that a valid token belonging to a non-administrator is a FAILURE, not a
-  // success — a sync configured that way runs, finds nothing and reports fine.
-  const conn = await canvas.testConnection();
-  if (!conn.ok) return { ok: false, note: conn.note, summary: null, courses: [], issues };
-
+  // TWO SCOPES, TRIED IN ORDER — and the connection test is deliberately NOT the gate.
+  //
+  // testConnection() fails a token that cannot see accounts, and that is right for an
+  // IMPORT: a sync configured that way runs, finds nothing and reports success, which
+  // is the most confusing possible outcome for whoever set it up. It is wrong for a
+  // PREVIEW, whose whole job is to find out what a token can see.
+  //
+  // So a non-admin token is not turned away here. Canvas Free-for-Teacher is free and
+  // instant, and a teacher token can read /courses — the courses that user teaches —
+  // plus their students, assignments and submissions. Every field this preview's verdict
+  // rests on, `submitted_at` included, exists at course scope. That means the one
+  // question worth answering ("does Canvas give real hand-in dates?") can be answered
+  // today on a free account, with no trial and no procurement.
+  //
+  // The scope IS reported, because what a teacher account cannot prove is the
+  // multi-course, whole-account shape a real import would run against.
   let courseList = [];
+  let scope = "account";
+  const conn = await canvas.testConnection();
+
   try {
-    // The account's courses. `state[]=available` excludes unpublished shells, which are
-    // course-shaped and contain nobody — counting them would inflate every figure here
-    // and mislead the decision this preview is for.
+    // `state[]=available` excludes unpublished shells, which are course-shaped and
+    // contain nobody — counting them would inflate every figure here.
     courseList = await canvas.paginate("/accounts/self/courses", { "state[]": "available" });
   } catch (e) {
-    return { ok: false, note: `Canvas is connected, but the course list could not be read — ${e.message}`, summary: null, courses: [], issues };
+    note(`Account-level courses could not be read (${e.message}) — falling back to the courses this token's own user teaches.`);
+  }
+
+  if (!Array.isArray(courseList) || !courseList.length) {
+    scope = "teacher";
+    try {
+      courseList = await canvas.paginate("/courses", { enrollment_state: "active" });
+    } catch (e) {
+      // Both scopes failed, so the token cannot read courses at all. The connection
+      // test's wording is the more useful of the two messages here.
+      return {
+        ok: false,
+        note: conn.ok ? `Canvas is connected, but no courses could be read — ${e.message}` : conn.note,
+        summary: null, courses: [], scope, issues,
+      };
+    }
   }
 
   const sample = (Array.isArray(courseList) ? courseList : []).slice(0, MAX_COURSES);
@@ -97,7 +124,16 @@ async function preview() {
   if (courseList.length > sample.length) {
     note(`Sampled ${sample.length} of ${courseList.length} courses — a preview answers a yes/no question and does not sweep the whole account.`);
   }
-  return { ok: true, note: verdictText(summary), summary, courses: courses.map((c) => ({ id: c.id, name: c.name, students: c.students, assignments: c.assignments, submissions: c.submissions.length })), issues };
+  if (scope === "teacher") {
+    note("Read at TEACHER scope: these are the courses this token's own user teaches, not the whole account. The hand-in-date finding transfers — submitted_at behaves identically at both scopes — but a full import needs an account-administrator token to see every course.");
+  }
+  return {
+    ok: true,
+    note: verdictText(summary, scope),
+    summary, scope,
+    courses: courses.map((c) => ({ id: c.id, name: c.name, students: c.students, assignments: c.assignments, submissions: c.submissions.length })),
+    issues,
+  };
 }
 
 module.exports = { preview, MAX_COURSES, MAX_SUBMISSIONS };

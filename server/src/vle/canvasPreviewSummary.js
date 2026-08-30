@@ -78,17 +78,22 @@ function summarisePreview(courses) {
  * for an importer to be built, and "0 of 412 submissions carried a hand-in date" is the
  * sentence that supports that decision.
  */
-function verdictText(s) {
+function verdictText(s, scope = "account") {
+  // Named so the sentence says which courses were actually read. A finding from three
+  // courses one teacher owns is worth having, but it is not a statement about the
+  // institution, and a reader deciding whether to commission an importer needs to know
+  // which of those they are looking at.
+  const where = scope === "teacher" ? "the courses this token's user teaches" : "this account";
   if (!s || !s.coursesSampled) {
-    return "No courses were visible to this token. Canvas is reachable, but the account it belongs to can see nothing to import — generate the token from an account administrator.";
+    return "No courses were visible to this token. Canvas is reachable, but nothing can be read — generate the token from an account administrator, or from a teacher who has at least one course.";
   }
   if (!s.submissionRows) {
-    return `Read ${s.coursesSampled} course(s), ${s.students} student(s) and ${s.assignments} assignment(s), but Canvas returned no submissions at all. Nothing has been handed in yet, or this token cannot read submissions.`;
+    return `Read ${s.coursesSampled} course(s), ${s.students} student(s) and ${s.assignments} assignment(s) from ${where}, but Canvas returned no submissions at all. Nothing has been handed in yet, or this token cannot read submissions.`;
   }
   if (s.submissionDatesAvailable) {
-    return `Canvas gives real hand-in dates: ${s.withDates} of ${s.submissionRows} submission rows carry one (${s.datedPercent}%). An importer built on this would produce true submission rates, not the floors the Moodle/Turnitin route is limited to.`;
+    return `Canvas gives real hand-in dates: ${s.withDates} of ${s.submissionRows} submission rows from ${where} carry one (${s.datedPercent}%). An importer built on this would produce true submission rates, not the floors the Moodle/Turnitin route is limited to.`;
   }
-  return `Canvas returned ${s.submissionRows} submission row(s) but NOT ONE carried a hand-in date. On this account an importer would be no better than the Moodle/Turnitin route — submission counts would again come only from who has been marked.`;
+  return `Canvas returned ${s.submissionRows} submission row(s) from ${where} but NOT ONE carried a hand-in date. Here an importer would be no better than the Moodle/Turnitin route — submission counts would again come only from who has been marked.`;
 }
 
 module.exports = { summarisePreview, verdictText };
