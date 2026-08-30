@@ -2721,6 +2721,30 @@ function ExecutiveDashboard({ store }) {
   );
 }
 
+// The page on screen, kept in the URL fragment so a refresh comes back to it.
+//
+// A fragment rather than component state or a storage key. State is gone by
+// definition on reload, which is the complaint. A stored key restores a page that
+// the URL still calls the front door, so the address bar, a bookmark and a second
+// tab all disagree about where you are — and the fragment is the one place the
+// browser already carries across a refresh AND shows to the person, which makes a
+// page linkable to a colleague for nothing extra.
+//
+// Written with replaceState, never pushState. Every nav click pushing an entry would
+// turn browser Back into a page-by-page undo of the whole session, and on Android it
+// would fight useBackHandler below: the handler returns to the first tab while the
+// history pop drags the fragment somewhere else, and one press does both. Replacing
+// keeps Back meaning "leave the console", exactly as it meant before.
+//
+// The path and query are rebuilt rather than assumed. `?tenant=` names the
+// institution on a shared host, and dropping it on the first nav click would send
+// the next reload to a different college.
+const pageFromHash = () => {
+  if (typeof window === "undefined") return null;
+  const m = /^#\/([a-z0-9-]+)$/i.exec(window.location.hash || "");
+  return m ? m[1] : null;
+};
+
 export function AdminDashboard({ store, onExitToStaffApp }) {
   const me = store.currentUser;
   // Collapsible sidebar (desktop) so an admin can reclaim full width; remembered across
@@ -2805,10 +2829,24 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     : n.key === "my-timetable" ? true
     : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
     : canAccessPage(me, n.key));
-  const [tab, setTab] = useState(() => nav[0]?.key || "overview");
+  const [tab, setTab] = useState(() => pageFromHash() || nav[0]?.key || "overview");
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
   // fall back to the first one they can see, so no forbidden page ever renders.
   const activeKey = nav.some(n => n.key === tab) ? tab : (nav[0]?.key || null);
+  // Keep the fragment on the page actually RENDERED — activeKey, not tab. A link to a
+  // page this account cannot open falls back above to the first one it can, and the
+  // address bar has to follow, or the reader is handed a URL that shows one screen and
+  // names another. Writing `tab` would preserve the key they were refused.
+  useEffect(() => {
+    if (typeof window === "undefined" || !activeKey) return;
+    if (window.location.hash === `#/${activeKey}`) return;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/${activeKey}`);
+  }, [activeKey]);
+  // Every page arrives at the top. Without this, switching pages keeps the offset of
+  // the one before it, so a long screen opens halfway down; on a refresh the browser
+  // does the same thing against completely different content, with no click to explain
+  // it. `main` is not a scrollport — the window scrolls — so this is the right handle.
+  useEffect(() => { if (typeof window !== "undefined") window.scrollTo(0, 0); }, [activeKey]);
   // The sidebar tree, and which groups are expanded.
   //
   // Groups start CLOSED and open on click, which is the behaviour asked for. The one

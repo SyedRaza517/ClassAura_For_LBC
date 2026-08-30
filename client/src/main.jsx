@@ -13,6 +13,17 @@ import App from "./App";
 // blank screen on a slow connection.
 loadBranding(API_BASE, currentTenant);
 
+// A reload lands at the top of the screen, not where the last one was left.
+//
+// Browsers restore the previous scroll offset on a refresh, which is right for a
+// document and wrong here: the app decides what to render AFTER the restore, so the
+// offset gets applied to whichever screen comes back — often a shorter one, or a
+// different one entirely. Turning it off is the whole fix; each screen puts itself at
+// the top, and the browser stops arguing about it.
+if (typeof window !== "undefined" && window.history && "scrollRestoration" in window.history) {
+  window.history.scrollRestoration = "manual";
+}
+
 // Catches any render/runtime error in the tree so a single crashing component
 // shows a friendly, recoverable screen instead of a blank white page.
 class ErrorBoundary extends React.Component {
