@@ -435,6 +435,13 @@ model Tenant {
   attendanceTapConfig      AttendanceTapConfig?
 
   @@index([active])
+  rooms                Room[]
+  eventCategories      EventCategory[]
+  timetableEvents      TimetableEvent[]
+  timetableEventStaff  TimetableEventStaff[]
+  timetableEventGroups TimetableEventGroup[]
+  timetableSettings    TimetableSettings[]
+  timetableUserPrefs   TimetableUserPref[]
 }
 
 model Staff {
@@ -512,6 +519,9 @@ model Staff {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@unique([tenantId, email])
   @@index([tenantId])
+  // Timetabled events this person teaches, and their own display settings.
+  timetableEvents TimetableEventStaff[]
+  timetablePref   TimetableUserPref[]
 }
 
 // A phone (or browser) registered to receive push notifications.
@@ -763,6 +773,7 @@ model Course {
   @@unique([tenantId, name])
   @@unique([tenantId, moodleCourseId])
   @@index([tenantId])
+  timetableEvents TimetableEvent[]
 }
 
 // One row of a weekly timetable, shown to students on their app.
@@ -859,6 +870,7 @@ model Cohort {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+  timetableEvents TimetableEventGroup[]
 }
 
 // One teaching term within a cohort. An HND cohort runs 6: Year 1 Terms 1-3 and
@@ -961,6 +973,7 @@ model Unit {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+  timetableEvents TimetableEvent[]
 }
 
 // An assessment belonging to a unit (course) — e.g. "Assignment 1" worth 40%.
@@ -1672,6 +1685,13 @@ model Admission {
   updatedAt DateTime @updatedAt
 
   @@index([surname, firstName])
+  // Declared here because the database already has it: migration
+  // 20260828T230000_link_finance_to_student created Admission_linkedStudentId_idx,
+  // and this model never said so. The schema and the database therefore disagreed,
+  // and Prisma swept a DROP INDEX for it into the NEXT migration generated for any
+  // reason at all — which is how an unrelated production index came to be inside a
+  // timetabling migration. Declaring it makes the schema honest and the drop go away.
+  @@index([linkedStudentId])
 
   // Which institution this row belongs to. Enforced centrally — see db.js.
   tenantId String
@@ -3222,6 +3242,223 @@ model VleEngagement {
   @@unique([studentId, unitId, observedOn])
   @@index([studentId])
   @@index([observedOn])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// ============================================================================
+// TIMETABLING
+//
+// A manually-assigned timetable, in the shape CELCAT uses: an EVENT is placed on a
+// date at a time, and a room, one or more staff and one or more groups are assigned
+// to it. Everything that identifies a resource is a real foreign key.
+//
+// WHY THIS IS NOT AN EXTENSION OF TimetableSlot OR HndSession
+//
+// TimetableSlot.lecturer and .room are free text. Answering "show me my timetable"
+// over them means matching a person's NAME, so two lecturers sharing a surname see
+// each other's classes, a lecturer entered once as "S. Raza" and once as "Syed Raza"
+// sees half their week, and nothing anywhere reports that it happened. A timetable
+// that is quietly wrong is worse than no timetable, because staff plan around it.
+//
+// HndSession was the other candidate -- one row, one truth, a register and a
+// timetable that cannot disagree. It was rejected on unitId, which is NOT NULL and
+// which the whole attendance pipeline assumes. Exams, workshops, study support and
+// staff meetings belong to no module, so representing them there would mean making
+// unitId nullable, and that migration reaches attendance, banding and prediction for
+// a feature that has not shipped.
+//
+// The seam is planned and not yet built: HndSession will later carry a
+// timetableEventId FK back to the event it came from, so that moving an event moves
+// its register. Until then the two are separate records and can drift.
+// ============================================================================
+
+// A teachable space. Decomposed rather than stored as one label because the source
+// system displays "101 - First floor [Great Titchfield Street]" -- name, floor and
+// campus are three facts, and a room search by campus needs them apart.
+model Room {
+  id        String   @id @default(cuid())
+  name      String
+  floor     String   @default("")
+  campus    String   @default("")
+  // NULLABLE ON PURPOSE. Null means "we have not recorded how many this room seats",
+  // which is not the same as zero. A zero would make the room unusable by any future
+  // capacity check, and would put a real room permanently out of use because nobody
+  // had got round to measuring it.
+  capacity  Int?
+  // "Lecture", "Lab", "Studio" -- free text by design; every college has its own
+  // vocabulary for its rooms, and an enum would be one college's.
+  kind      String   @default("")
+  // Retired rooms stay, so historic events keep the room they were actually in.
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events TimetableEvent[]
+
+  // Two campuses may both have a room 101, and the reference institution has exactly
+  // that. A unique on name alone would refuse the second one.
+  @@unique([tenantId, name, campus])
+  @@index([tenantId, active])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// What kind of thing an event is -- "Lecture", "Seminar", "Exam", "Tutorial".
+// A table rather than the free string HndSession.kind uses, because the colour key
+// colours BY category and a colour needs somewhere to live.
+model EventCategory {
+  id        String   @id @default(cuid())
+  name      String
+  colour    String   @default("#1a3a8f")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events TimetableEvent[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, active])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// One timetabled event on one date.
+model TimetableEvent {
+  id        String @id @default(cuid())
+  // Strings, compared as strings, like every other academic date in this schema.
+  date      String
+  startTime String
+  endTime   String
+  title     String
+  notes     String @default("")
+
+  // NULLABLE, and that nullability is the point of this table. An exam, a workshop,
+  // a study-support session or a staff meeting belongs to no module -- which is
+  // exactly what HndSession.unitId being NOT NULL cannot express.
+  unit       Unit?          @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  unitId     String?
+  course     Course?        @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  courseId   String?
+  // SetNull, not Cascade: deleting a room must not delete the classes that were in
+  // it. The event survives with no room, which is visibly wrong on the screen and
+  // therefore gets fixed -- a silently vanished lecture does not.
+  room       Room?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomId     String?
+  category   EventCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId String?
+
+  // Draft events are invisible to staff, exactly as TimetableSlot.published already
+  // governs what students see.
+  published Boolean @default(false)
+
+  // WHEN this event last moved in time or space. A TIMESTAMP, deliberately, and not
+  // a stored day count: "changed 3 days ago" written to a column is wrong by the
+  // next morning with nothing to correct it, while the timestamp is true forever.
+  // The screen subtracts. This backs "Highlight recently changed events".
+  changedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff  TimetableEventStaff[]
+  groups TimetableEventGroup[]
+
+  // Every read of this table is a date-window read.
+  @@index([tenantId, date])
+  @@index([roomId])
+  @@index([unitId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Which staff member teaches an event. Several are allowed -- a lecture with a
+// demonstrator is two.
+//
+// THIS JOIN IS THE POINT OF THE WHOLE MODULE. It is what turns "show me my
+// timetable" into a query on an id instead of a match on a name.
+model TimetableEventStaff {
+  id      String         @id @default(cuid())
+  event   TimetableEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+  staff   Staff          @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId String
+
+  @@unique([eventId, staffId])
+  @@index([staffId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// Which group (intake) attends an event.
+model TimetableEventGroup {
+  id       String         @id @default(cuid())
+  event    TimetableEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId  String
+  cohort   Cohort         @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  cohortId String
+
+  @@unique([eventId, cohortId])
+  @@index([cohortId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// One college's timetable display defaults, and its notice banner.
+//
+// Same shape as attendanceBandConfig and branding: platform defaults in code, one
+// JSON column per tenant merged over them, no row until somebody edits something, an
+// allowlist on the way out, a short cache invalidated on save.
+model TimetableSettings {
+  id        String   @id @default(cuid())
+  // Everything the college sets for everybody. Shape and allowlist live in
+  // timetabling/settingsDefaults.js; nothing here validates it, deliberately, so a
+  // key added tomorrow needs no migration.
+  display   Json     @default("{}")
+  updatedBy String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId])
+
+  // Which institution this row belongs to. Enforced centrally -- see db.js.
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+// One staff member's own overrides, merged OVER the college's.
+//
+// WHY THIS IS A TABLE AND NOT localStorage
+//
+// These staff use the web app and the phone app. A lecturer who hides the weekend
+// and the 20:00 period would have done it on one device only, and the app would
+// disagree with the website about their own settings. It is also how the source
+// system behaves: My Settings follows the person.
+model TimetableUserPref {
+  id        String   @id @default(cuid())
+  staff     Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId   String
+  display   Json     @default("{}")
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, staffId])
 
   // Which institution this row belongs to. Enforced centrally -- see db.js.
   tenantId String
