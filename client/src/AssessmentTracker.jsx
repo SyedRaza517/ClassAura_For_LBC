@@ -29,10 +29,16 @@
 // which question any given cell answered, so they stop trusting all of them.
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Gauge, Loader2, AlertTriangle, RefreshCw, CloudDownload, Users, Info,
+  Gauge, Loader2, AlertTriangle, RefreshCw, CloudDownload, Users, Info, ClipboardList, Upload, CheckCircle2,
 } from "lucide-react";
 import { api } from "./api";
 import { NAVY } from "./branding";
+import StatCard from "./StatCard";
+
+// The dashboards's mid-blue. Declared here rather than imported: StaffHub keeps it as a
+// local constant and does not export it, and reaching into that file for one hex would
+// be a circular import for a colour.
+const BLUE_LT = "#3b82f6";
 
 function Banner({ tone, Icon, children }) {
   const tones = {
@@ -184,6 +190,47 @@ export default function AssessmentTracker({ me }) {
   // The page resets whenever the filters change, because page 3 of an unfiltered list
   // is very rarely page 3 of a filtered one — staying put shows an empty screen and
   // reads as "no results".
+  // THE FOUR HEADLINE FIGURES, over every row currently in view — so they answer the
+  // question the filters were just used to ask, rather than always describing the whole
+  // college.
+  //
+  // Each is aggregated from COUNTS, never by averaging the per-row percentages. A mean
+  // of percentages weights a 4-student module the same as a 200-student one, which is
+  // how a headline figure ends up disagreeing with every row beneath it.
+  //
+  // And every one of them excludes what it cannot measure rather than treating it as
+  // zero: an assessment nobody has reported submissions for is left out of the
+  // denominator, not counted as nobody submitting.
+  const kpis = useMemo(() => {
+    let enrolled = 0, submitted = 0, marked = 0, markedOfSubmitted = 0;
+    let measurable = 0, inferred = 0, overdue = 0;
+    for (const r of rows) {
+      if (r.submitted != null) {
+        measurable++;
+        enrolled += r.enrolled;
+        submitted += r.submitted;
+        markedOfSubmitted += Math.min(r.marked, r.submitted);
+        // A row whose count came only from marks makes the WHOLE headline a floor —
+        // one unmeasured assessment is enough to make the total an underestimate.
+        if (r.submittedDatesKnown === false) inferred++;
+      }
+      marked += r.marked;
+      if (r.markingState === "overdue") overdue++;
+    }
+    const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+    return {
+      assessments: rows.length,
+      modules: grouped.length,
+      submissionRate: pct(submitted, enrolled),
+      markingRate: pct(markedOfSubmitted, submitted),
+      overdue,
+      measurable,
+      // True when at least one contributing row was inferred from marks rather than
+      // measured — the headline then carries the same ≥ the rows do.
+      atLeast: inferred > 0,
+    };
+  }, [rows, grouped]);
+
   const PER_PAGE = 8;
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [course, cohort]);
@@ -293,6 +340,42 @@ export default function AssessmentTracker({ me }) {
         has been marked — at least that many submitted. “Not synced” means Moodle reported nothing at all for that
         assessment. Canvas and Blackboard are not connected.
       </Banner>
+
+      {/* The four headline tiles. Status colour is used ONCE — on overdue marking, the
+          only card that describes a problem — so that red keeps meaning something. The
+          other three are neutral brand tones because a count is not a state. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Assessments" value={kpis.assessments} Icon={ClipboardList} tone={NAVY}
+          sub={`across ${kpis.modules} module${kpis.modules === 1 ? "" : "s"}`}
+          delay={0} animate
+        />
+        <StatCard
+          label="Submission rate"
+          value={kpis.submissionRate == null ? "—" : `${kpis.atLeast ? "≥ " : ""}${kpis.submissionRate}%`}
+          Icon={Upload} tone="#0d7a5f"
+          sub={kpis.submissionRate == null
+            ? "no submission data yet"
+            : kpis.atLeast ? "a minimum — see the ≥ note below" : `over ${kpis.measurable} assessment${kpis.measurable === 1 ? "" : "s"}`}
+          delay={60}
+        />
+        <StatCard
+          label="Marked of submitted"
+          value={kpis.markingRate == null ? "—" : `${kpis.markingRate}%`}
+          Icon={CheckCircle2} tone={BLUE_LT}
+          sub={kpis.markingRate == null ? "needs submission data" : "the marking backlog"}
+          delay={120}
+        />
+        <StatCard
+          label="Marking overdue"
+          value={kpis.overdue} Icon={AlertTriangle}
+          // The one status colour on the row, and only when it is not zero — a red
+          // tile reading 0 trains people to stop looking at red tiles.
+          tone={kpis.overdue > 0 ? "#e11d48" : "#94a3b8"}
+          sub={kpis.overdue > 0 ? "past deadline with work unmarked" : "nothing past its deadline"}
+          delay={180} animate
+        />
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <label className="text-[12px] font-semibold text-slate-600">

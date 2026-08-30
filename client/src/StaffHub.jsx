@@ -23,6 +23,7 @@ import {
 } from "recharts";
 import { downloadCSV } from "./csv";
 import { groupNav } from "./navGroups";
+import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
@@ -58,7 +59,6 @@ import { NAVY, NAVY_DARK, MAROON, BUTTON, BUTTON_TEXT, alpha } from "./branding"
 const BLUE = "#1e40af";
 const BLUE_LT = "#3b82f6";
 // A tone's soft gradient (for icon badges, accents) and a translucent tint.
-const grad = (c) => `linear-gradient(135deg, ${c}, ${alpha(c, 80)})`;
 
 // Today as YYYY-MM-DD in the college's own timezone (Europe/London), matching the
 // server's localDate(). Using the browser's UTC date instead put the client a day
@@ -141,16 +141,6 @@ function avgCheckInTime(checkins) {
   return `${String(Math.floor(avg / 60)).padStart(2, "0")}:${String(avg % 60).padStart(2, "0")}`;
 }
 const leaveTypeMeta = (key) => LEAVE_TYPES.find(x => x.key === key) || { key, label: key, icon: FileText, colour: NAVY };
-
-function useCountUp(target, dur = 700) {
-  const [v, setV] = useState(0);
-  useEffect(() => {
-    let raf; const start = performance.now();
-    const tick = (t) => { const p = Math.min(1, (t - start) / dur); setV(Math.round(target * (1 - Math.pow(1 - p, 3)))); if (p < 1) raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick); return () => cancelAnimationFrame(raf);
-  }, [target, dur]);
-  return v;
-}
 
 const LEAVE_TYPES = [
   { key: "annual",   label: "Annual Leave",  icon: Plane,         colour: "#1a3a8f" },
@@ -4748,31 +4738,6 @@ function AdminHeader({ title, subtitle, action, Icon, tone = BLUE }) {
     </div>
   );
 }
-function StatCard({ label, value, sub, Icon, tone = NAVY, delay = 0, animate, trend }) {
-  // Only count-up real numbers. Some cards pass a formatted string ("28d", "85%"),
-  // and animating that multiplied a string by a number → NaN, which rendered
-  // literally as "NaN". Strings (and non-finite numbers) now render as-is.
-  const canAnimate = animate && typeof value === "number" && Number.isFinite(value);
-  const av = useCountUp(canAnimate ? value : 0);
-  // Optional trend chip: { up: bool, text: "+12", tone?: "#..." }. Up is green, down rose.
-  const tc = trend ? (trend.tone || (trend.up ? "#059669" : "#e11d48")) : null;
-  return (
-    <div className="hover-lift group relative overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${delay}ms` }}>
-      <div className="absolute inset-x-0 top-0 h-1" style={{ background: grad(tone) }} />
-      <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-60 transition-transform duration-500 group-hover:scale-150" style={{ background: tone + "12" }} />
-      <div className="relative flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-          <p className="mt-1 text-3xl font-extrabold tabular-nums" style={{ color: tone }}>{canAnimate ? av : value}</p>
-          {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
-          {trend && <span className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold" style={{ background: tc + "1a", color: tc }}>{trend.up ? "▲" : "▼"} {trend.text}</span>}
-        </div>
-        <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${alpha(tone, 50)}` }}><Icon size={22} /></span>
-      </div>
-    </div>
-  );
-}
-
 function AdminOverview({ store, setTab }) {
   const today = todayISO();
   const inToday = store.checkins.filter(c => c.date === today && c.in);
