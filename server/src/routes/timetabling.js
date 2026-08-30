@@ -161,4 +161,199 @@ router.delete("/categories/:id", async (req, res) => {
   }
 });
 
+/* ----------------------------------------------------------------- events -- */
+
+const { findClashes } = require("../timetabling/overlap");
+const { sEvent } = require("../timetabling/serialize");
+
+// Everything sEvent names. Kept in one constant because four handlers need the same
+// shape and a query that forgets one of these returns an event whose room is null on
+// the screen for no reason a reader could work out.
+const EVENT_INCLUDE = {
+  unit: { select: { code: true, name: true } },
+  course: { select: { name: true } },
+  room: { select: { id: true, name: true, floor: true, campus: true } },
+  category: { select: { name: true, colour: true } },
+  staff: { include: { staff: { select: { name: true } } } },
+  groups: { include: { cohort: { select: { name: true } } } },
+};
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const ids = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === "string" && x))] : []);
+
+router.get("/events", async (req, res) => {
+  const from = str(req.query.from), to = str(req.query.to);
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+  if (to < from) return res.status(400).json({ error: "to must not be before from" });
+
+  const where = { date: { gte: from, lte: to } };
+  if (str(req.query.roomId)) where.roomId = str(req.query.roomId);
+  if (str(req.query.unitId)) where.unitId = str(req.query.unitId);
+  if (str(req.query.staffId)) where.staff = { some: { staffId: str(req.query.staffId) } };
+  if (str(req.query.cohortId)) where.groups = { some: { cohortId: str(req.query.cohortId) } };
+  // Absent means BOTH. An administrator building next term needs to see the drafts
+  // they are building; that is the difference between this router and the other one.
+  if (req.query.published === "true") where.published = true;
+  if (req.query.published === "false") where.published = false;
+
+  const rows = await prisma.timetableEvent.findMany({
+    where, include: EVENT_INCLUDE, orderBy: [{ date: "asc" }, { startTime: "asc" }],
+  });
+  res.json(rows.map(sEvent));
+});
+
+/** Validate an event body. `partial` allows omitted fields on update. */
+function parseEvent(body, partial) {
+  const data = {};
+  const need = (k) => !partial || body?.[k] !== undefined;
+
+  if (need("date")) {
+    const date = str(body?.date);
+    if (!DATE_RE.test(date)) return { error: "date must be YYYY-MM-DD" };
+    data.date = date;
+  }
+  if (need("start")) {
+    const s = str(body?.start);
+    if (!TIME_RE.test(s)) return { error: "start must be HH:MM" };
+    data.startTime = s;
+  }
+  if (need("end")) {
+    const e = str(body?.end);
+    if (!TIME_RE.test(e)) return { error: "end must be HH:MM" };
+    data.endTime = e;
+  }
+  if (need("title")) {
+    const t = str(body?.title);
+    if (!t) return { error: "A title is required" };
+    data.title = t.slice(0, MAX);
+  }
+  if (body?.notes !== undefined) data.notes = str(body.notes).slice(0, 4000);
+  if (body?.published !== undefined) data.published = !!body.published;
+
+  // Nullable relations. An empty string clears the link; that is how a screen says
+  // "no room" without a separate verb.
+  for (const [key, field] of [["unitId", "unitId"], ["courseId", "courseId"], ["roomId", "roomId"], ["categoryId", "categoryId"]]) {
+    if (body?.[key] !== undefined) data[field] = str(body[key]) || null;
+  }
+
+  const start = data.startTime, end = data.endTime;
+  if (start && end && end <= start) return { error: "The end time must be after the start time" };
+  return { data };
+}
+
+/**
+ * Who else is already using this room, these staff or these groups at this time.
+ *
+ * A WARNING, NOT A BLOCK, and the handlers below treat it as one. A college has
+ * legitimate reasons to overlap — a room split between two half-groups, a lecturer
+ * nominally on two registers — and a hard refusal gets worked around by saving the
+ * event with the room left blank, which loses the information entirely. A visible
+ * warning that somebody overrode is a record; a refusal is a data-entry workaround.
+ */
+async function checkClashes(candidate, { roomId, staffIds, cohortIds }) {
+  const sameDay = await prisma.timetableEvent.findMany({
+    where: {
+      date: candidate.date,
+      OR: [
+        ...(roomId ? [{ roomId }] : []),
+        ...(staffIds.length ? [{ staff: { some: { staffId: { in: staffIds } } } }] : []),
+        ...(cohortIds.length ? [{ groups: { some: { cohortId: { in: cohortIds } } } }] : []),
+      ],
+    },
+    include: EVENT_INCLUDE,
+  });
+  // OR with no branches matches everything in Prisma, so an event with no room, no
+  // staff and no group would otherwise collect the entire day as a clash.
+  if (!roomId && !staffIds.length && !cohortIds.length) return [];
+
+  const out = [];
+  for (const e of findClashes(candidate, sameDay)) {
+    if (roomId && e.roomId === roomId) out.push({ kind: "room", resource: e.room ? e.room.name : "", event: sEvent(e) });
+    for (const s of e.staff || []) if (staffIds.includes(s.staffId)) out.push({ kind: "staff", resource: s.staff?.name || "", event: sEvent(e) });
+    for (const g of e.groups || []) if (cohortIds.includes(g.cohortId)) out.push({ kind: "group", resource: g.cohort?.name || "", event: sEvent(e) });
+  }
+  return out;
+}
+
+router.post("/events", async (req, res) => {
+  const { data, error } = parseEvent(req.body, false);
+  if (error) return res.status(400).json({ error });
+
+  const staffIds = ids(req.body?.staffIds);
+  const cohortIds = ids(req.body?.cohortIds);
+  const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
+
+  const row = await prisma.timetableEvent.create({
+    data: {
+      ...data,
+      staff: staffIds.length ? { create: staffIds.map((staffId) => ({ staffId })) } : undefined,
+      groups: cohortIds.length ? { create: cohortIds.map((cohortId) => ({ cohortId })) } : undefined,
+    },
+    include: EVENT_INCLUDE,
+  });
+  res.status(201).json({ event: sEvent(row), warnings });
+});
+
+router.put("/events/:id", async (req, res) => {
+  const { data, error } = parseEvent(req.body, true);
+  if (error) return res.status(400).json({ error });
+
+  const existing = await prisma.timetableEvent.findUnique({ where: { id: req.params.id }, include: EVENT_INCLUDE });
+  if (!existing) return res.status(404).json({ error: "Event not found" });
+
+  // Assignments are replaced wholesale when sent, and untouched when omitted. A
+  // screen that only moves the time must not silently drop the staff on the event.
+  const staffIds = req.body?.staffIds === undefined ? (existing.staff || []).map((s) => s.staffId) : ids(req.body.staffIds);
+  const cohortIds = req.body?.cohortIds === undefined ? (existing.groups || []).map((g) => g.cohortId) : ids(req.body.cohortIds);
+
+  const candidate = {
+    id: existing.id,
+    date: data.date ?? existing.date,
+    startTime: data.startTime ?? existing.startTime,
+    endTime: data.endTime ?? existing.endTime,
+  };
+  if (candidate.endTime <= candidate.startTime) return res.status(400).json({ error: "The end time must be after the start time" });
+
+  const roomId = data.roomId !== undefined ? data.roomId : existing.roomId;
+  const warnings = await checkClashes(candidate, { roomId: roomId || null, staffIds, cohortIds });
+
+  // changedAt tracks MOVEMENT — a retitled event has not moved, and highlighting it
+  // as "recently changed" would train readers to ignore the highlight.
+  const moved = (data.date && data.date !== existing.date) ||
+                (data.startTime && data.startTime !== existing.startTime) ||
+                (data.endTime && data.endTime !== existing.endTime) ||
+                (data.roomId !== undefined && data.roomId !== existing.roomId);
+
+  const row = await prisma.$transaction(async (tx) => {
+    if (req.body?.staffIds !== undefined) {
+      await tx.timetableEventStaff.deleteMany({ where: { eventId: existing.id } });
+      if (staffIds.length) await tx.timetableEventStaff.createMany({ data: staffIds.map((staffId) => ({ eventId: existing.id, staffId })) });
+    }
+    if (req.body?.cohortIds !== undefined) {
+      await tx.timetableEventGroup.deleteMany({ where: { eventId: existing.id } });
+      if (cohortIds.length) await tx.timetableEventGroup.createMany({ data: cohortIds.map((cohortId) => ({ eventId: existing.id, cohortId })) });
+    }
+    return tx.timetableEvent.update({
+      where: { id: existing.id },
+      data: { ...data, ...(moved ? { changedAt: new Date() } : {}) },
+      include: EVENT_INCLUDE,
+    });
+  });
+
+  res.json({ event: sEvent(row), warnings });
+});
+
+router.delete("/events/:id", async (req, res) => {
+  try {
+    // The join rows go with it — those FKs are Cascade, unlike room and category,
+    // because an assignment has no meaning without the event it assigns to.
+    await prisma.timetableEvent.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === "P2025") return res.status(404).json({ error: "Event not found" });
+    throw e;
+  }
+});
+
 module.exports = router;
