@@ -11859,6 +11859,22 @@ const MOODLE_COUNTS = [
   ["studentsMatched", "Students matched"], ["gradesSkippedManual", "Marks left alone"],
   ["attendanceSessionsCreated", "Registers imported"], ["attendanceMarksCreated", "Attendance marks imported"],
   ["attendanceSkippedConflict", "Attendance left alone"], ["attendanceSkippedNoStudent", "Attendance skipped — student not matched"],
+  // Submissions, and the reason the tracker may still say "Not synced".
+  //
+  // "Assessments with no submission data" is the diagnostic, not an error: it counts
+  // activities where NOT ONE student had a submission date or a mark, which is the case
+  // the sync refuses to guess about — a Turnitin activity that publishes no dates and a
+  // cohort that handed in nothing are indistinguishable, so it writes nothing rather
+  // than reporting a whole cohort as having submitted nothing. A large number here
+  // beside zero recorded is the fingerprint of a VLE that does not expose submissions.
+  ["submissionsRecorded", "Submissions imported"],
+  ["submissionsUnobserved", "Assessments with no submission data"],
+  ["teachersLinked", "Module leaders / lecturers set"],
+  // These two existed before and were never listed, so a run that observed engagement
+  // reported a total that omitted it. Same omission as the three above: the counter is
+  // written by the sync and the screen simply had no row for it.
+  ["engagementObserved", "VLE engagement observed"],
+  ["engagementNotObservable", "Students this Moodle would not let us observe"],
 ];
 const moodleTotal = (s) => MOODLE_COUNTS.reduce((n, [k]) => n + (Number(s?.[k]) || 0), 0);
 
