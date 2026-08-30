@@ -172,7 +172,7 @@ async function readMoodle() {
 // nothing — so an admin can see the effect before committing to it. In a preview a
 // row that would be created has no id yet, so everything hanging off it is likewise
 // counted as new; that keeps a first-run preview's numbers honest rather than empty.
-async function syncFromMoodle({ dryRun = false } = {}) {
+async function syncFromMoodle({ dryRun = false, onProgress = null } = {}) {
   const summary = {
     coursesCreated: 0, coursesUpdated: 0,
     unitsCreated: 0, unitsUpdated: 0,
@@ -213,7 +213,9 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     for (const r of rows) touched.add(r.studentId);
   };
 
-  for (const { course, sections, users, usergrades } of await readMoodle()) {
+  const everything = await readMoodle();
+  let coursesDone = 0;
+  for (const { course, sections, users, usergrades } of everything) {
     const label = clean(course.shortname) || `course ${course.id}`;
 
     // ---------- Course ----------
@@ -757,6 +759,18 @@ async function syncFromMoodle({ dryRun = false } = {}) {
         }
       }
     }
+
+    // One course finished. Reported so a long first import shows movement rather than
+    // a spinner that could equally mean "working" or "hung" — the failure mode the
+    // 120-second call timeout above was added for, seen from the outside.
+    //
+    // Never allowed to throw: a progress write failing must not abandon an import that
+    // has already landed students and marks.
+    coursesDone++;
+    if (onProgress) {
+      try { await onProgress({ coursesDone, coursesTotal: everything.length, summary }); }
+      catch (_) { /* reporting is not the job */ }
+    }
   }
 
   // ---------- Attendance ----------
@@ -808,7 +822,22 @@ async function runSync({ dryRun = false, startedBy = null, mode = "manual" } = {
   inFlight = (async () => {
     const run = await prisma.moodleSync.create({ data: { status: "running", mode, startedBy } });
     try {
-      const { summary, issues } = await syncFromMoodle({});
+      // Progress is written into the run's `summary` column as it goes, rather than
+      // only at the end. A first import at a real college takes minutes, and until now
+      // the only thing an admin could see was "running" — indistinguishable from hung,
+      // which is exactly the failure the 120-second call timeout exists to prevent and
+      // which was invisible from the screen.
+      //
+      // No new column: `summary` is already JSON, already returned by /moodle/status,
+      // and already rendered. The final write below replaces this with the real
+      // counters, so a finished run looks exactly as it always did.
+      const onProgress = async ({ coursesDone, coursesTotal, summary }) => {
+        await prisma.moodleSync.update({
+          where: { id: run.id },
+          data: { summary: JSON.stringify({ ...summary, coursesDone, coursesTotal }) },
+        });
+      };
+      const { summary, issues } = await syncFromMoodle({ onProgress });
       await prisma.moodleSync.update({
         where: { id: run.id },
         data: { status: "ok", finishedAt: new Date(), summary: JSON.stringify(summary), issues: JSON.stringify(issues) },

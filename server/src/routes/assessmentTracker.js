@@ -90,13 +90,31 @@ router.get("/", async (req, res) => {
 
   // Three grouped counts, not one query per row. At a college with 40 units and 200
   // assessments the per-row shape would be 600 round trips to paint one screen.
-  const [enrolCounts, gradeCounts, submissionCounts, everRecorded] = await Promise.all([
+  const [enrolCounts, gradeCounts, submissionCounts, datedCounts, everRecorded] = await Promise.all([
     prisma.enrolment.groupBy({ by: ["unitId"], where: { unitId: { in: unitIds } }, _count: { _all: true } }),
     assessmentIds.length
       ? prisma.assessmentGrade.groupBy({ by: ["assessmentId"], where: { assessmentId: { in: assessmentIds } }, _count: { _all: true } })
       : [],
     assessmentIds.length
       ? prisma.assessmentSubmission.groupBy({ by: ["assessmentId", "status"], where: { assessmentId: { in: assessmentIds } }, _count: { _all: true } })
+      : [],
+    // DID THE VLE ACTUALLY GIVE US A SUBMISSION DATE, or did we only infer submission
+    // from the presence of a mark?
+    //
+    // This distinction is the difference between a measured submission rate and the
+    // marking coverage wearing a different name. The ingest counts a mark as proof of
+    // submission — correctly, since nobody marks work that was never handed in, and
+    // without it the marking rate could exceed 100%. But where the VLE reports no dates
+    // at all (a Turnitin LTI activity, typically), the only evidence available IS the
+    // marks, and "submitted" silently collapses to "marked": 23 marked, 23 submitted,
+    // a 79.3% "submission rate" that is really the marking coverage.
+    //
+    // A row with a real submittedOn is the evidence that the VLE told us something
+    // about hand-ins in their own right. With none, the count is a LOWER BOUND — at
+    // least this many submitted — and the client says so rather than presenting it as
+    // a measurement.
+    assessmentIds.length
+      ? prisma.assessmentSubmission.groupBy({ by: ["assessmentId"], where: { assessmentId: { in: assessmentIds }, submittedOn: { not: null } }, _count: { _all: true } })
       : [],
     recordsSubmissions(),
   ]);
@@ -113,6 +131,9 @@ router.get("/", async (req, res) => {
     if (r.status === "submitted") cur.submitted += r._count._all;
     submissions.set(r.assessmentId, cur);
   }
+  // Assessments where at least one row carries a real hand-in date — see the query's
+  // comment. Everything else is inferred from marks and is a floor, not a rate.
+  const dated = new Set(datedCounts.filter((r) => r._count._all > 0).map((r) => r.assessmentId));
 
   const today = localDate();   // APP_TIMEZONE, never the host clock
   const unitById = new Map(units.map((u) => [u.id, u]));
@@ -137,6 +158,10 @@ router.get("/", async (req, res) => {
       dueState: calc.deadlineState(a.dueDate, today),
       submitted: submittedCount,
       submissionRate: calc.submissionRate(submittedCount, enrolledCount),
+      // false when the VLE gave no hand-in dates and the count came only from who has
+      // been marked. The figure is then a MINIMUM, and the screen must say so — an
+      // unqualified 79.3% here is the marking coverage relabelled.
+      submittedDatesKnown: submittedCount == null ? null : dated.has(a.id),
       marked: markedCount,
       coverageRate: calc.coverageRate(markedCount, enrolledCount),
       markingRate: calc.markingRate(markedCount, submittedCount),

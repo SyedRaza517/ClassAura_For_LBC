@@ -2,10 +2,15 @@
 //
 // THE RENDERING RULE THIS SCREEN EXISTS TO GET RIGHT.
 //
-// Three of these columns have no data source yet: AssessmentSubmission is read by the
-// prediction engine and written by nothing until the LMS sync is built. So `submitted`,
-// the submission rate and the marking percentage all arrive as null, and they are shown
-// as "Not synced" — never as 0%, never as an empty cell.
+// The submission columns can be in three states, and they are three different facts:
+//
+//   MEASURED     Moodle gave hand-in dates. The rate is a real submission rate.
+//   A FLOOR      Moodle gave no dates, so the only evidence is who has been marked.
+//                Shown as "≥ 23 / 29" — at least this many submitted. Without the ≥ it
+//                would read as a measurement, and since marked students are the only
+//                ones counted, it would silently be the marking coverage relabelled.
+//   UNKNOWN      Nothing at all was reported for this assessment: no dates, no marks.
+//                Shown as "Not synced" / "Awaiting sync" — never as 0%.
 //
 // A 0% submission rate would put every module in the college on a watchlist for
 // something nobody has measured, and an empty cell reads as a rendering fault. The
@@ -57,8 +62,27 @@ const Unknown = ({ recordsSubmissions }) => (
   </span>
 );
 
-const Pct = ({ value, recordsSubmissions }) =>
-  value == null ? <Unknown recordsSubmissions={recordsSubmissions} /> : <span className="font-semibold tabular-nums">{value}%</span>;
+// `atLeast` marks a figure the VLE did not actually measure.
+//
+// Where Moodle reports no hand-in dates — a Turnitin LTI activity, typically — the only
+// evidence of submission is who has been marked. That is sound as far as it goes (you
+// cannot mark work nobody handed in) but it means "submitted" collapses into "marked":
+// 23 marked, 23 submitted, and a 79.3% "submission rate" that is really the marking
+// coverage under another name.
+//
+// So it is shown as a FLOOR, with the ≥ sign and a tooltip. At least 23 of 29 did
+// submit; how many more, this VLE will not say. Presenting that as a measurement is the
+// mistake — the number is not wrong, the confidence is.
+const LOWER_BOUND_HINT = "Moodle reported no hand-in dates for this activity, so this counts only students whose work has been marked. At least this many submitted — the true figure may be higher.";
+
+const Pct = ({ value, recordsSubmissions, atLeast }) =>
+  value == null
+    ? <Unknown recordsSubmissions={recordsSubmissions} />
+    : (
+      <span className={`font-semibold tabular-nums ${atLeast ? "text-slate-500" : ""}`} title={atLeast ? LOWER_BOUND_HINT : undefined}>
+        {atLeast ? "≥ " : ""}{value}%
+      </span>
+    );
 
 // Colour by state. `complete` is deliberately neutral even though its date has passed:
 // an assessment fully marked a week late is finished, and painting it red fills the
@@ -113,6 +137,7 @@ export default function AssessmentTracker({ me }) {
   const [busy, setBusy] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncNote, setSyncNote] = useState("");
+  const [syncProgress, setSyncProgress] = useState("");
   const [course, setCourse] = useState("");
   const [cohort, setCohort] = useState("");
 
@@ -150,13 +175,77 @@ export default function AssessmentTracker({ me }) {
     return [...byUnit.values()];
   }, [rows]);
 
+  // MODULES ARE PAGED, not appended for ever.
+  //
+  // A college with forty modules rendered forty tables one under another, so the page
+  // grew without limit and the module somebody wanted was reached by scrolling past
+  // every other one. Paging keeps the screen a fixed height whatever the college's size.
+  //
+  // The page resets whenever the filters change, because page 3 of an unfiltered list
+  // is very rarely page 3 of a filtered one — staying put shows an empty screen and
+  // reads as "no results".
+  const PER_PAGE = 8;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [course, cohort]);
+  const totalPages = Math.max(1, Math.ceil(grouped.length / PER_PAGE));
+  // Clamped rather than stored: deleting modules can leave `page` beyond the end, and a
+  // page number past the last one must show the last page, not nothing at all.
+  const safePage = Math.min(page, totalPages);
+  const shown = grouped.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
+  // Run the sync and FOLLOW IT, rather than firing and hoping.
+  //
+  // A first import at a real college takes minutes. The old version returned "started,
+  // reload in a moment" and left the admin with no way to tell working from hung — the
+  // same ambiguity the sync's 120-second call timeout exists to resolve inside the
+  // server, and which was invisible from outside it.
+  //
+  // /moodle/status carries `running` plus the run's summary, and the server now writes
+  // coursesDone/coursesTotal into that summary as each course completes, so polling it
+  // shows real movement and the finished counters can be reported in place.
+  const pollSync = useCallback(async () => {
+    // Bounded rather than open-ended: an unbounded poll outlives the page and keeps
+    // calling an API whose answer will not change. 20 minutes at 5s is far longer than
+    // any real import, and the message says what to do if it is ever reached.
+    const MAX_TRIES = 240;
+    for (let i = 0; i < MAX_TRIES; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      let st;
+      try { st = await api.moodleStatus(); }
+      catch { continue; }   // a network blip mid-sync is not a failed sync
+      const s = st?.last?.summary || {};
+      if (st?.running) {
+        setSyncProgress(s.coursesTotal ? `Course ${s.coursesDone || 0} of ${s.coursesTotal}…` : "Starting…");
+        continue;
+      }
+      const done = [];
+      if (s.submissionsRecorded) done.push(`${s.submissionsRecorded} submissions`);
+      if (s.gradesCreated) done.push(`${s.gradesCreated} marks`);
+      if (s.enrolmentsCreated) done.push(`${s.enrolmentsCreated} enrolments`);
+      if (s.teachersLinked) done.push(`${s.teachersLinked} leaders/lecturers`);
+      // Reported prominently, because it is the answer to "why is this still empty" and
+      // it is a finding rather than a fault.
+      const unobserved = s.submissionsUnobserved
+        ? ` ${s.submissionsUnobserved} assessment(s) reported no submission data — Moodle does not publish hand-ins for those activities.`
+        : "";
+      setSyncProgress("");
+      if (st?.last?.status === "failed") setErr(st.last.error || "The sync failed.");
+      else setSyncNote(`Sync finished.${done.length ? " Imported " + done.join(", ") + "." : " Nothing new to import."}${unobserved}`);
+      await load();
+      return;
+    }
+    setSyncProgress("");
+    setSyncNote("The sync is still running. It will finish on its own — reload this page in a few minutes.");
+  }, [load]);
+
   const runSync = async () => {
-    setSyncing(true); setErr(""); setSyncNote("");
+    setSyncing(true); setErr(""); setSyncNote(""); setSyncProgress("Starting…");
     try {
       await api.moodleSync();
-      setSyncNote("Sync started. Enrolments and marks will update; reload in a moment.");
+      await pollSync();
     } catch (e) {
       setErr(e?.message || "Could not start the sync.");
+      setSyncProgress("");
     } finally { setSyncing(false); }
   };
 
@@ -183,7 +272,7 @@ export default function AssessmentTracker({ me }) {
               className="press inline-flex items-center gap-1.5 rounded-xl border-2 border-slate-200 px-3 py-2 text-[13px] font-bold text-slate-700 transition hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
             >
               {syncing ? <Loader2 size={15} className="animate-spin" /> : <CloudDownload size={15} />}
-              {syncing ? "Syncing…" : "Sync from Moodle"}
+              {syncing ? (syncProgress || "Syncing…") : "Sync from Moodle"}
             </button>
           )}
           <button onClick={load} className="press rounded-lg p-2.5 text-slate-500 hover:bg-slate-50" aria-label="Reload the tracker" title="Reload">
@@ -199,9 +288,10 @@ export default function AssessmentTracker({ me }) {
           marks, which moves the "Marked" and "Marked of cohort" columns — it does not
           fetch submissions, and must not imply that it does. */}
       <Banner tone="slate" Icon={Info}>
-        Syncing refreshes enrolments and marks from Moodle. Submission data is not yet imported from any
-        LMS — Canvas and Blackboard are not connected — so the submitted and marking-progress columns read
-        “Not synced”.
+        Syncing imports enrolments, marks, hand-in deadlines and submissions from Moodle. A figure shown as
+        <b> ≥</b> means Moodle published no hand-in dates for that activity, so it counts only students whose work
+        has been marked — at least that many submitted. “Not synced” means Moodle reported nothing at all for that
+        assessment. Canvas and Blackboard are not connected.
       </Banner>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -237,7 +327,7 @@ export default function AssessmentTracker({ me }) {
         </p>
       ) : (
         <div className="space-y-3">
-          {grouped.map(({ unit, items }) => (
+          {shown.map(({ unit, items }) => (
             <section key={unit.unitId} className="rounded-2xl border border-slate-200 bg-white">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3.5">
                 <div className="min-w-0">
@@ -304,9 +394,16 @@ export default function AssessmentTracker({ me }) {
                         <td className="px-3 py-2.5">
                           {r.submitted == null
                             ? <Unknown recordsSubmissions={recordsSubmissions} />
-                            : <span className="tabular-nums font-semibold">{r.submitted} / {r.enrolled}</span>}
+                            : (
+                              <span
+                                className={`tabular-nums font-semibold ${r.submittedDatesKnown === false ? "text-slate-500" : ""}`}
+                                title={r.submittedDatesKnown === false ? LOWER_BOUND_HINT : undefined}
+                              >
+                                {r.submittedDatesKnown === false ? "≥ " : ""}{r.submitted} / {r.enrolled}
+                              </span>
+                            )}
                         </td>
-                        <td className="px-3 py-2.5"><Pct value={r.submissionRate} recordsSubmissions={recordsSubmissions} /></td>
+                        <td className="px-3 py-2.5"><Pct value={r.submissionRate} recordsSubmissions={recordsSubmissions} atLeast={r.submittedDatesKnown === false} /></td>
                         {/* The two deadlines. The state is carried as COLOUR on the date
                             rather than as its own column: it saves a column on an
                             already-wide table, and a date that is its own status reads
@@ -323,6 +420,34 @@ export default function AssessmentTracker({ me }) {
               </div>
             </section>
           ))}
+
+          {/* Only when there is more than one page. A pager under a single module is
+              furniture that says nothing. */}
+          {totalPages > 1 && (
+            <nav className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3" aria-label="Module pages">
+              <p className="text-[12px] text-slate-500">
+                Modules <b className="text-slate-700">{(safePage - 1) * PER_PAGE + 1}–{Math.min(safePage * PER_PAGE, grouped.length)}</b> of{" "}
+                <b className="text-slate-700">{grouped.length}</b>
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPage(safePage - 1)}
+                  disabled={safePage <= 1}
+                  className="press rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white"
+                >
+                  Previous
+                </button>
+                <span className="text-[12px] font-semibold text-slate-500">Page {safePage} of {totalPages}</span>
+                <button
+                  onClick={() => setPage(safePage + 1)}
+                  disabled={safePage >= totalPages}
+                  className="press rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white"
+                >
+                  Next
+                </button>
+              </div>
+            </nav>
+          )}
         </div>
       )}
 
