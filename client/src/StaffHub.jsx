@@ -14,6 +14,7 @@ import {
   Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy,
   Radio,
   Nfc,
+  Gauge,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -26,6 +27,8 @@ import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
 import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance from "./AdminLiveAttendance";
+import AssessmentTracker from "./AssessmentTracker";
+import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import MyTimetable from "./MyTimetable";
 import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
@@ -2195,8 +2198,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
 // A grantable page is named in THREE hand-maintained places and nothing joins them:
 // ADMIN_PAGES above (which the server duplicates a fourth time in validate.js),
@@ -2218,8 +2221,9 @@ const warnOnPageListDrift = (allNav) => {
   const noNav = ADMIN_PAGES.filter(k => !navKeys.has(k));
   // The reverse direction too: a label for a page nobody can be granted is dead weight,
   // usually the fossil of a page renamed in one list only. allNav is deliberately NOT
-  // checked in reverse — "audit" and "access" are meant to be absent from ADMIN_PAGES
-  // (see the comments on each), so flagging them would train people to ignore this.
+  // checked in reverse — "audit", "access" and "assessment-tracker-setup" are meant to
+  // be absent from ADMIN_PAGES (see the comments on each), so flagging them would train
+  // people to ignore this.
   const orphanLabels = Object.keys(PAGE_LABELS).filter(k => !ADMIN_PAGES.includes(k));
   if (noLabel.length) console.warn("[StaffHub] ADMIN_PAGES keys with no PAGE_LABELS entry (they render as an unlabelled checkbox on the Access tab):", noLabel);
   if (noNav.length) console.warn("[StaffHub] ADMIN_PAGES keys with no allNav entry (grantable, but they reach no screen):", noNav);
@@ -2677,6 +2681,10 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "ism", label: "ISM", I: MessageSquare },
     { key: "slc", label: "SLC", I: Wallet },
     { key: "assessments", label: "Assessments", I: Award },
+    { key: "assessment-tracker", label: "Assessment Tracker", I: Gauge },
+    // Two screens, ONE permission. See the nav filter below for why this key is
+    // deliberately absent from ADMIN_PAGES.
+    { key: "assessment-tracker-setup", label: "Tracker Setup", I: SlidersHorizontal },
     { key: "pat", label: "PAT", I: MessageSquare },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
@@ -2703,6 +2711,16 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // sensible thing to be able to configure.
   const nav = allNav.filter(n => n.key === "audit"
     ? AUDIT_READER_PAGES.some(p => canAccessPage(me, p))
+    // The tracker's setup screen is a second SCREEN behind one permission, not a
+    // second permission. Deriving its visibility here — rather than adding it to
+    // ADMIN_PAGES — keeps the grantable list at four hand-maintained copies instead of
+    // five, and makes it impossible to hold the screen that configures the tracker
+    // without holding the tracker it configures. Same reasoning as "audit" above.
+    //
+    // It needs a key of its own rather than sharing "assessment-tracker" because
+    // activeKey below matches on key alone and every nav button calls setTab(n.key),
+    // so two entries sharing a key would both highlight and both render one screen.
+    : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
     : canAccessPage(me, n.key));
   const [tab, setTab] = useState(() => nav[0]?.key || "overview");
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
@@ -2780,6 +2798,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}
+        {activeKey === "assessment-tracker" && <AssessmentTracker me={me} />}
+        {activeKey === "assessment-tracker-setup" && <AssessmentTrackerSetup />}
         {activeKey === "pat" && <AdminPAT store={store} />}
         {activeKey === "prediction" && <AdminPrediction store={store} />}
         {activeKey === "mitigations" && <AdminMitigations />}
