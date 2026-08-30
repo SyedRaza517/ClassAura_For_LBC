@@ -283,6 +283,48 @@ export const api = {
   updateTimetableSlot: (id, data) => request(`/timetable/slots/${id}`, { method: "PUT", body: data }),
   removeTimetableSlot: (id) => request(`/timetable/slots/${id}`, { method: "DELETE" }),
 
+  // CELCAT-style timetabling. Two groups, and the split is the point: `myTimetable*`
+  // is what every lecturer calls and needs no admin page, while `tt*` is the planner
+  // and 403s for anyone without the "scheduling" page. Naming them apart keeps a
+  // planner call from being pasted into a staff screen, where it would work for the
+  // developer testing it as an admin and 403 for every real user of that screen.
+  myTimetable: (from, to, type, ids) => {
+    const q = new URLSearchParams({ from, to });
+    // Sent only together. `type` without `ids` means "my own", which is the default
+    // the server already applies — sending a bare type would be a no-op that reads
+    // like a filter.
+    if (type && ids?.length) { q.set("type", type); q.set("ids", ids.join(",")); }
+    return request(`/my-timetable?${q.toString()}`);
+  },
+  myTimetableResources: (type, q = "", limit = 25) =>
+    request(`/my-timetable/resources?${new URLSearchParams({ type, q, limit: String(limit) })}`),
+  myTimetableSettings: () => request("/my-timetable/settings"),
+  saveMyTimetableSettings: (patch) => request("/my-timetable/settings", { method: "PUT", body: patch }),
+
+  ttRooms: () => request("/timetabling/rooms"),
+  ttCreateRoom: (d) => request("/timetabling/rooms", { method: "POST", body: d }),
+  ttUpdateRoom: (id, d) => request(`/timetabling/rooms/${id}`, { method: "PUT", body: d }),
+  ttDeleteRoom: (id) => request(`/timetabling/rooms/${id}`, { method: "DELETE" }),
+
+  ttCategories: () => request("/timetabling/categories"),
+  ttCreateCategory: (d) => request("/timetabling/categories", { method: "POST", body: d }),
+  ttUpdateCategory: (id, d) => request(`/timetabling/categories/${id}`, { method: "PUT", body: d }),
+  ttDeleteCategory: (id) => request(`/timetabling/categories/${id}`, { method: "DELETE" }),
+
+  ttEvents: (params) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    return request(`/timetabling/events?${q.toString()}`);
+  },
+  ttCreateEvent: (d) => request("/timetabling/events", { method: "POST", body: d }),
+  ttUpdateEvent: (id, d) => request(`/timetabling/events/${id}`, { method: "PUT", body: d }),
+  ttDeleteEvent: (id) => request(`/timetabling/events/${id}`, { method: "DELETE" }),
+  ttRepeatEvent: (id, d) => request(`/timetabling/events/${id}/repeat`, { method: "POST", body: d }),
+  ttPublish: (d) => request("/timetabling/events/publish", { method: "POST", body: d }),
+
+  ttSettings: () => request("/timetabling/settings"),
+  ttSaveSettings: (patch) => request("/timetabling/settings", { method: "PUT", body: patch }),
+
   // SLC (admin) — Student Loans Company application tracking
   slcList: () => request("/slc"),
   addSlc: (data) => request("/slc", { method: "POST", body: data }),
