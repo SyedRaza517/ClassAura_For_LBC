@@ -450,4 +450,28 @@ router.post("/events/publish", async (req, res) => {
   res.json({ updated: count });
 });
 
+/* --------------------------------------------------------------- settings -- */
+
+const timetableSettings = require("../timetabling/settings");
+const { DEFAULTS: SETTINGS_DEFAULTS } = require("../timetabling/settingsDefaults");
+
+/**
+ * What the college has set, and what it would be if it set nothing.
+ *
+ * Both, deliberately. The screen needs to show an administrator which values are
+ * theirs and which are inherited — otherwise "reset to default" has nothing to reset
+ * to, and every field looks equally deliberate.
+ */
+router.get("/settings", async (_req, res) => {
+  res.json({ defaults: SETTINGS_DEFAULTS, tenant: await timetableSettings.getTenant() });
+});
+
+// A patch: the screen sends the field it changed. Unknown and invalid keys are
+// dropped by cleanTenant rather than stored, so a client sending nonsense cannot
+// park it in the column for a later reader to trip over.
+router.put("/settings", async (req, res) => {
+  const saved = await timetableSettings.saveTenant(req.body || {}, req.user?.name || req.user?.email || "");
+  res.json({ tenant: saved });
+});
+
 module.exports = router;
