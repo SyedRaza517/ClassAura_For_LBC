@@ -95,4 +95,118 @@ router.get("/resources", async (req, res) => {
   res.json({ type, total, results: rows.map((r) => sResource(type, r)) });
 });
 
+/* ------------------------------------------------------- the timetable -- */
+
+const { sEvent } = require("../timetabling/serialize");
+const timetableSettings = require("../timetabling/settings");
+
+// Repeated from routes/timetabling.js rather than shared, because the two routers
+// must be able to diverge: this one will grow a "published only" constraint that the
+// planner must never inherit.
+const EVENT_INCLUDE = {
+  unit: { select: { code: true, name: true } },
+  course: { select: { name: true } },
+  room: { select: { id: true, name: true, floor: true, campus: true } },
+  category: { select: { name: true, colour: true } },
+  staff: { include: { staff: { select: { name: true } } } },
+  groups: { include: { cohort: { select: { name: true } } } },
+};
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// A window, not a firehose. Twelve months is more than any view asks for — the
+// widest is a month — and it stops a hand-written request pulling every event the
+// college has ever held.
+const MAX_WINDOW_DAYS = 366;
+
+const daysBetween = (from, to) =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+
+/**
+ * The events this reader asked for, in a date window.
+ *
+ * With no `type`, the answer is THEIR OWN teaching — the equivalent of the source
+ * system's "My Resources" checkbox, which is its entire answer to "my timetable".
+ * That is one join on an id. It is not a match on their name, and the difference is
+ * the whole point of the module: two lecturers sharing a surname would otherwise see
+ * each other's classes with nothing reporting it.
+ *
+ * PUBLISHED ONLY, always. A draft term an administrator is still building must not
+ * appear in a lecturer's app, where it would be indistinguishable from a real one.
+ */
+router.get("/", async (req, res) => {
+  const from = str(req.query.from), to = str(req.query.to);
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+  if (to < from) return res.status(400).json({ error: "to must not be before from" });
+  if (daysBetween(from, to) > MAX_WINDOW_DAYS) return res.status(400).json({ error: "That date range is too wide — ask for a year or less" });
+
+  const type = str(req.query.type);
+  const wanted = str(req.query.ids).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
+
+  let scope, where = { published: true, date: { gte: from, lte: to } };
+  if (!type || !wanted.length) {
+    scope = { type: "me", ids: [req.user.id] };
+    where.staff = { some: { staffId: req.user.id } };
+  } else {
+    scope = { type, ids: wanted };
+    switch (type) {
+      case "room":    where.roomId = { in: wanted }; break;
+      case "staff":   where.staff = { some: { staffId: { in: wanted } } }; break;
+      case "group":   where.groups = { some: { cohortId: { in: wanted } } }; break;
+      case "module":  where.unitId = { in: wanted }; break;
+      case "student": {
+        // A student's timetable is derived rather than stored: the groups they are
+        // in, plus the units they are enrolled on. A third join table naming
+        // individual students would earn its keep only for one-to-one tutorials,
+        // which nothing has asked for.
+        const students = await prisma.student.findMany({
+          where: { id: { in: wanted } },
+          select: { cohortId: true, enrolments: { select: { unitId: true } } },
+        });
+        const cohortIds = [...new Set(students.map((s) => s.cohortId).filter(Boolean))];
+        const unitIds = [...new Set(students.flatMap((s) => s.enrolments.map((e) => e.unitId)))];
+        // No cohort and no enrolments means no timetable — not "every event".
+        if (!cohortIds.length && !unitIds.length) {
+          return res.json({ from, to, scope, events: [], settings: await timetableSettings.getEffective(req.user.id) });
+        }
+        where.OR = [
+          ...(cohortIds.length ? [{ groups: { some: { cohortId: { in: cohortIds } } } }] : []),
+          ...(unitIds.length ? [{ unitId: { in: unitIds } }] : []),
+        ];
+        break;
+      }
+      default: return res.status(400).json({ error: "type must be one of: module, room, staff, student, group" });
+    }
+  }
+
+  const [rows, settings] = await Promise.all([
+    prisma.timetableEvent.findMany({ where, include: EVENT_INCLUDE, orderBy: [{ date: "asc" }, { startTime: "asc" }] }),
+    // Sent WITH the events, in one round trip. The grid cannot draw a row until it
+    // knows which periods and days to draw, so a second request would mean a visible
+    // reflow on every load.
+    timetableSettings.getEffective(req.user.id),
+  ]);
+
+  res.json({ from, to, scope, events: rows.map(sEvent), settings });
+});
+
+/* --------------------------------------------------------- my settings -- */
+
+// The merged view is what the screen renders; the college's own layer is sent
+// alongside so "reset to the college default" has something to reset to.
+router.get("/settings", async (req, res) => {
+  const [settings, tenant] = await Promise.all([
+    timetableSettings.getEffective(req.user.id),
+    timetableSettings.getTenant(),
+  ]);
+  res.json({ settings, tenant });
+});
+
+// A patch of this person's own overrides. `notice` is not in USER_FIELDS and is
+// silently dropped: the banner is the college's statement about itself, and an
+// individual editing their copy would be editing what every reader is told.
+router.put("/settings", async (req, res) => {
+  await timetableSettings.saveUser(req.user.id, req.body || {});
+  res.json({ settings: await timetableSettings.getEffective(req.user.id) });
+});
+
 module.exports = router;
