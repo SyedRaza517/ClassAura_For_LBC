@@ -294,6 +294,21 @@ router.get("/:id/grades", requireAuth, async (req, res) => {
   const a = await prisma.assessment.findUnique({ where: { id: req.params.id }, include: { unit: true, grades: true } });
   if (!a) return res.status(404).json({ error: "Assessment not found" });
   const enrolments = await prisma.enrolment.findMany({ where: { unitId: a.unitId }, include: { student: true } });
+  // Did each student hand the work in? A separate table from AssessmentGrade, and a
+  // separate question: a grade exists only once work has been MARKED, so a gradebook
+  // alone cannot tell a student who submitted and is waiting from one who submitted
+  // nothing at all. Written by the LMS sync; empty until that exists.
+  const submissionRows = await prisma.assessmentSubmission.findMany({
+    where: { assessmentId: a.id },
+    select: { studentId: true, status: true, submittedOn: true },
+  });
+  const subByStudent = new Map(submissionRows.map((s) => [s.studentId, s]));
+  // The institution-wide question, asked once and unfiltered by student. It decides
+  // only the wording on the client — "Not synced" when no integration anywhere feeds
+  // this, "Awaiting sync" when the college records submissions but this assessment has
+  // not been covered. Hoisted out of the per-student map for the reason CLAUDE.md
+  // gives: computing it from the rows in view answers a question about the view.
+  const collegeRecordsSubmissions = (await prisma.assessmentSubmission.count()) > 0;
   const byStudent = new Map(a.grades.map((g) => [g.studentId, g]));
   // Keep a graded student who has since been un-enrolled.
   const extraIds = a.grades.filter((g) => !enrolments.some((e) => e.studentId === g.studentId)).map((g) => g.studentId);
@@ -301,6 +316,10 @@ router.get("/:id/grades", requireAuth, async (req, res) => {
   const students = [...enrolments.map((e) => e.student), ...extra].sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName));
   res.json({
     assessment: sAssessment(a), unit: sUnit(a.unit),
+    // Whether this college records submission data anywhere at all — see the comment
+    // where it is computed. The client needs it to choose between "Not synced" and
+    // "Awaiting sync"; neither is a statement about any student.
+    recordsSubmissions: collegeRecordsSubmissions,
     rows: students.map((s) => {
       const g = byStudent.get(s.id);
       const pct = g ? pctOf(g.marks, a.maxMarks) : null;
@@ -315,6 +334,26 @@ router.get("/:id/grades", requireAuth, async (req, res) => {
         // gradedOn is Moodle's own grading date and can be much older, so both travel.
         gradedAt: g ? g.gradedAt : null, gradedOn: g ? (g.gradedOn ?? null) : null,
         enrolled: enrolments.some((e) => e.studentId === s.id),
+        // NULL when this student has no submission row, and NEVER "not_submitted".
+        //
+        // The sync writes a row per enrolled student, so a missing row means the sync
+        // did not cover this student — not that they handed nothing in. Rendering "not
+        // submitted" against a NAMED INDIVIDUAL on the strength of a row nobody wrote
+        // is the version of this bug that reaches a student, and "not_submitted"
+        // already exists as an explicit status for when the LMS actually says so.
+        //
+        // onTime is null for anything not submitted: you cannot be late for work you
+        // never handed in, and a false there would report every non-submitter as a late
+        // submitter. It is also null when the assessment has no dueDate — there is
+        // nothing to be late against.
+        submission: (() => {
+          const sub = subByStudent.get(s.id);
+          if (!sub) return null;
+          const onTime = sub.status === "submitted" && a.dueDate && sub.submittedOn
+            ? sub.submittedOn <= a.dueDate
+            : null;
+          return { status: sub.status, submittedOn: sub.submittedOn ?? null, onTime };
+        })(),
       };
     }),
   });
