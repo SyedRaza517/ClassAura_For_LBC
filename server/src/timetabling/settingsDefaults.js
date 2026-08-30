@@ -18,10 +18,13 @@
 const DEFAULTS = {
   view: "week",              // day | week | month | timeline
   layout: "grid",            // grid | list
-  // Mon-Fri. Not Mon-Sun: a college that teaches at weekends turns those on, and
-  // starting with two permanently empty columns makes the grid harder to read for
-  // everyone who does not.
-  days: [1, 2, 3, 4, 5],     // ISO weekdays, 1 = Monday
+  // All seven, matching the reference product, which shows Saturday and Sunday
+  // columns even when they are empty. Mon-Fri was the earlier default on the
+  // argument that two blank columns cost readability — but a college teaching at
+  // weekends would then have had its weekend classes INVISIBLE until somebody found
+  // the setting, and a timetable that silently omits real classes is the worse
+  // failure of the two. Colleges that never teach at weekends switch them off.
+  days: [1, 2, 3, 4, 5, 6, 7],   // ISO weekdays, 1 = Monday
   // Hour bands, as the source system shows them. An explicit list rather than a
   // start/end pair because a college running 50-minute periods, or a lunch gap, can
   // then say so — which a pair cannot express.

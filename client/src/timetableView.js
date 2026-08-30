@@ -94,7 +94,12 @@ export function shiftAnchor(view, anchor, delta, big = false) {
  * settings blob, and quietly showing the whole week instead would hide the fault;
  * an empty grid is visibly wrong and gets reported.
  */
-export function datesIn(from, to, days) {
+export function datesIn(from, to, days, view) {
+  // A DAY VIEW IS AN EXPLICIT NAVIGATION AND OUTRANKS THE WEEKDAY LIST. The list
+  // says which columns a week or month grid should carry; applying it to a single
+  // requested date deletes the only thing on screen, which is what a reader opening
+  // their timetable on a Sunday actually saw.
+  if (view === "day") return from <= to ? [from] : [];
   const allowed = new Set(days || []);
   const out = [];
   if (!allowed.size || to < from) return out;
@@ -205,5 +210,12 @@ export function RANGE_LABEL(view, from, to) {
   const yr = t.getUTCFullYear();
   if (view === "day") return `${f.toLocaleDateString("en-GB", { ...DMY, year: "numeric", timeZone: "UTC" })}`;
   if (view === "month") return f.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-  return `${f.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" })} - ${t.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" })} ${String(yr).slice(2)}`;
+  // Within one month the month name is printed once — "24 - 30 Aug 26", which is
+  // what the reference shows. Repeating it ("24 Aug - 30 Aug 26") is longer and says
+  // nothing extra; across a boundary both are needed and both are shown.
+  const sameMonth = from.slice(0, 7) === to.slice(0, 7);
+  const left = sameMonth
+    ? String(f.getUTCDate())
+    : f.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" });
+  return `${left} - ${t.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" })} ${String(yr).slice(2)}`;
 }

@@ -11,6 +11,7 @@ import {
   windowFor, datesIn, isoDay, placeEvent, colourOf, annotationLines, changedWithin, minutes,
 } from "./timetableView";
 import { NAVY, alpha } from "./branding";
+import { TT } from "./timetableTheme";
 import { useIsHandset } from "./PhoneShell";
 
 const DAY_SHORT = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -84,10 +85,10 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
     <div className="overflow-x-auto">
       <div className="min-w-[640px]">
         {/* Day headers */}
-        <div className="flex border-b border-slate-200">
+        <div className="flex border-b" style={{ borderColor: TT.grid }}>
           <div className="w-14 shrink-0" />
           {dates.map((d) => (
-            <div key={d} className={`flex-1 px-2 py-1.5 text-center text-[11px] font-bold ${d === today ? "text-sky-600" : "text-slate-500"}`}>
+            <div key={d} className="flex-1 border-l px-2 py-1.5 text-center text-[12px]" style={{ borderColor: TT.grid, color: d === today ? TT.todayText : "#64748b" }}>
               {dayLabel(d)}
             </div>
           ))}
@@ -96,14 +97,14 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
           {/* Hour gutter */}
           <div className="w-14 shrink-0">
             {periods.map((p) => (
-              <div key={p.start} style={{ height: ROW_H }} className="border-b border-slate-100 pr-1 text-right text-[10px] font-semibold text-slate-400">
+              <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid }} className="border-b pr-1 text-right text-[11px] text-slate-500">
                 {p.start}
               </div>
             ))}
           </div>
           {dates.map((d) => (
-            <div key={d} className={`relative flex-1 border-l border-slate-200 ${d === today ? "bg-sky-50/60" : "bg-white"}`}>
-              {periods.map((p) => <div key={p.start} style={{ height: ROW_H }} className="border-b border-slate-100" />)}
+            <div key={d} className="relative flex-1 border-l" style={{ borderColor: TT.grid, background: d === today ? TT.cellNow : TT.cell }}>
+              {periods.map((p, i) => <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid, background: i % 2 ? "rgba(255,255,255,.35)" : "transparent" }} className="border-b" />)}
               {(byDate.get(d) || []).map((e) => {
                 const pos = placeEvent(e, periods);
                 // Null means the event falls entirely outside the periods this
@@ -139,12 +140,12 @@ function MonthGrid({ dates, events, settings, today, onSelectEvent, selectedId, 
 
   return (
     <div className="overflow-x-auto">
-      <div className="grid min-w-[640px] gap-px bg-slate-200" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}>
+      <div className="grid min-w-[640px] gap-px" style={{ background: TT.grid, gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}>
         {dates.map((d) => {
           const inMonth = d.slice(0, 7) === month;
           const list = byDate.get(d) || [];
           return (
-            <div key={d} className={`min-h-[92px] p-1 ${inMonth ? "bg-white" : "bg-slate-50"} ${d === today ? "ring-2 ring-inset ring-sky-400" : ""}`}>
+            <div key={d} className={`min-h-[92px] p-1 ${d === today ? "ring-2 ring-inset ring-sky-400" : ""}`} style={{ background: inMonth ? TT.cell : TT.cellAlt }}>
               {/* Days outside the anchored month are dimmed rather than blank — the
                   grid is whole weeks, and an empty cell reads as "no classes" when
                   it actually means "not this month". */}
@@ -249,7 +250,7 @@ function ListView({ dates, events, settings, today, onSelectEvent, selectedId })
 export default function TimetableCalendar({ events = [], settings, view = "week", anchor, today, onSelectEvent, selectedId }) {
   const handset = useIsHandset();
   const { from, to } = useMemo(() => windowFor(view, anchor), [view, anchor]);
-  const dates = useMemo(() => datesIn(from, to, settings?.days), [from, to, settings?.days]);
+  const dates = useMemo(() => datesIn(from, to, settings?.days, view), [from, to, settings?.days, view]);
 
   if (!settings) return null;
 

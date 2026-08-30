@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 
 import {
   windowFor, shiftAnchor, datesIn, isoDay, minutes,
-  placeEvent, colourOf, annotationLines, changedWithin,
+  placeEvent, colourOf, annotationLines, changedWithin, RANGE_LABEL,
 } from "./timetableView.js";
 
 const PERIODS = [
@@ -162,4 +162,24 @@ test("recently-changed is computed from the timestamp at render time", () => {
 
 test("zero days means the highlight is off, not 'changed today'", () => {
   assert.equal(changedWithin({ changedAt: "2026-09-03T10:00:00.000Z" }, 0, "2026-09-03"), false);
+});
+
+test("a DAY view shows the day you navigated to, even if that weekday is switched off", () => {
+  // 30 Aug 2026 is a Sunday, and the default day list is Mon-Fri. Filtering a Day
+  // view by the weekday setting deleted the only date on screen and left the reader
+  // staring at "no days are switched on" — on a weekend, for a setting they never
+  // knowingly chose. The list decides which COLUMNS a week grid shows; navigating to
+  // a specific date is an explicit request and outranks it.
+  assert.deepEqual(datesIn("2026-08-30", "2026-08-30", [1, 2, 3, 4, 5], "day"), ["2026-08-30"]);
+  // A week view still hides it.
+  assert.equal(datesIn("2026-08-24", "2026-08-30", [1, 2, 3, 4, 5], "week").includes("2026-08-30"), false);
+});
+
+test("the range label prints the month once inside a month, twice across one", () => {
+  assert.equal(RANGE_LABEL("week", "2026-08-24", "2026-08-30"), "24 - 30 Aug 26");
+  // "Sept", not "Sep" — that is what en-GB actually produces for September in
+  // current ICU, and the assertion is pinned to the real output rather than to what
+  // the abbreviation "ought" to be.
+  assert.equal(RANGE_LABEL("week", "2026-08-31", "2026-09-06"), "31 Aug - 6 Sept 26");
+  assert.equal(RANGE_LABEL("month", "2026-08-31", "2026-10-04"), "August 2026");
 });

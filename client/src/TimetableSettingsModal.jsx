@@ -8,7 +8,7 @@
 // nothing.
 import React, { useState } from "react";
 import { X, ArrowUp, ArrowDown, Plus } from "lucide-react";
-import { NAVY } from "./branding";
+import { TT } from "./timetableTheme";
 
 const DAYS = [[1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"], [7, "Sunday"]];
 const COLOUR_BY = [["category", "Event Category"], ["module", "Module Offering"], ["room", "Room"], ["group", "Group"], ["course", "Course Offering"]];
@@ -79,7 +79,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: TT.green }}>
           <p className="text-base font-extrabold">{scope === "me" ? "My Settings" : "Timetable display — college defaults"}</p>
           <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
         </div>
@@ -88,7 +88,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
           {[["calendar", "Calendar view"], ["events", "Events"], ["annotations", "Annotations"]].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`rounded-t-lg px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}
-              style={tab === k ? { borderColor: NAVY } : undefined}>{l}</button>
+              style={tab === k ? { borderColor: TT.green } : undefined}>{l}</button>
           ))}
         </div>
 
@@ -203,7 +203,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
           <button disabled={saving}
             onClick={async () => { setSaving(true); try { await onSave?.(changedOnly(seeded, draft)); } finally { setSaving(false); } }}
-            className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: NAVY }}>
+            className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: TT.green }}>
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
