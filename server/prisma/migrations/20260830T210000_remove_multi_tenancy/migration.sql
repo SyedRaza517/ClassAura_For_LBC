@@ -48,6 +48,7 @@ END $$;
 -- Safe because each table holds at most one row per institution and the guard above
 -- has already established there is at most one institution: at most one row each, so
 -- no primary key can collide. Nothing references these ids as a foreign key.
+UPDATE "Tenant"                  SET "id" = 'singleton';
 UPDATE "TenantBranding"          SET "id" = 'singleton';
 UPDATE "AttendanceBandConfig"    SET "id" = 'singleton';
 UPDATE "PredictionModelSettings" SET "id" = 'singleton';
@@ -58,6 +59,13 @@ UPDATE "TimetableSettings"       SET "id" = 'singleton';
 -- lands on the constant. Renumbering without this fixes today's row and leaves the
 -- next insert to generate a cuid again.
 ALTER TABLE "TimetableSettings" ALTER COLUMN "id" SET DEFAULT 'singleton';
+ALTER TABLE "Tenant" ALTER COLUMN "id" SET DEFAULT 'singleton';
+
+-- A SIXTH table, AttendanceEmailConfig, also carries @default('singleton') in the
+-- schema and is deliberately absent from the renumbering above. It has held that
+-- literal since 0_init created the column with it; the per-tenant migration only
+-- changed its PRIMARY KEY, never the value. Said here because an auditor checking
+-- "every singleton table was renumbered" will otherwise find a sixth and no reason.
 
 -- DropForeignKey
 ALTER TABLE "Adjustment" DROP CONSTRAINT "Adjustment_tenantId_fkey";

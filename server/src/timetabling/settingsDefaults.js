@@ -7,7 +7,7 @@
 // these staff use both the website and the phone app, so localStorage would mean a
 // lecturer's hidden weekend followed them on one device and not the other.
 //
-//   defaults (here)  ->  tenant blob (INSTITUTION_FIELDS)  ->  user blob (USER_FIELDS)
+//   defaults (here)  ->  institution blob (INSTITUTION_FIELDS)  ->  user blob (USER_FIELDS)
 //
 // Pure. No database, no cache, no Prisma — settings.js does that part, and keeping
 // the rules here is what makes them testable without one.

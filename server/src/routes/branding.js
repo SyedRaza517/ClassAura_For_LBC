@@ -143,10 +143,21 @@ router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
   if (!Object.keys(data).length) return res.status(400).json({ error: "Nothing to update." });
   data.updatedBy = req.user?.email || null;
 
+  // UPSERT ON THE CONSTANT ID, like every other config singleton here.
+  //
+  // `existing` is still read, because the audit entry below needs the before-image
+  // and needs to say "configured" versus "updated". But the WRITE no longer depends
+  // on it: find-then-create is not atomic, and two administrators pressing Save
+  // within a few hundred milliseconds on a college that has never set branding both
+  // saw null and both called create. The constant primary key stopped that becoming
+  // two rows — it became a P2002 instead, uncaught, so one of them got a 500 and lost
+  // their save. An upsert on a known id cannot do either.
   const existing = await prisma.tenantBranding.findFirst();
-  const saved = existing
-    ? await prisma.tenantBranding.update({ where: { id: existing.id }, data })
-    : await prisma.tenantBranding.create({ data });
+  const saved = await prisma.tenantBranding.upsert({
+    where: { id: existing?.id || "singleton" },
+    update: data,
+    create: data,
+  });
 
   branding.invalidate();
 
@@ -173,7 +184,11 @@ router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
 router.delete("/", requireAuth, requirePage("settings"), async (req, res) => {
   const existing = await prisma.tenantBranding.findFirst();
   if (!existing) return res.json({ reset: false });
-  await prisma.tenantBranding.delete({ where: { id: existing.id } });
+  // deleteMany, not delete: `delete` throws P2025 when the row has gone between the
+  // read and the write — two administrators pressing Reset together, or a Reset
+  // racing a Reset. Removing nothing is the correct outcome of a reset, not an error.
+  // attendanceBandConfig.save() takes the same line for the same reason.
+  await prisma.tenantBranding.deleteMany({ where: { id: existing.id } });
   branding.invalidate();
   audit.record(req, {
     action: "branding.reset", entity: "TenantBranding", entityId: existing.id,

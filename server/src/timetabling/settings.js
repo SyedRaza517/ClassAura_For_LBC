@@ -18,8 +18,9 @@ const { mergeSettings, cleanInstitution, cleanUser, DEFAULTS } = require("./sett
 const TTL_MS = Number(process.env.TIMETABLE_SETTINGS_CACHE_MS ?? 30_000);
 let cached = null; // { value, at }
 
-// The tenant id parameter is gone. Callers that passed one — routes/timetabling.js
-// among them — now call invalidate() with nothing, which is the whole cache.
+// The tenant id parameter is gone; this clears the whole cache, which is now one
+// value. The only caller is saveInstitution below — it is exported because the
+// sibling config modules export theirs, not because anything outside reaches for it.
 function invalidate() {
   cached = null;
 }
@@ -102,8 +103,16 @@ async function saveUser(staffId, patch) {
   const existing = await prisma.timetableUserPref.findFirst({ where: { staffId } });
   const next = { ...cleanUser(existing?.display || {}), ...cleanUser(patch) };
 
-  if (existing) await prisma.timetableUserPref.update({ where: { id: existing.id }, data: { display: next } });
-  else await prisma.timetableUserPref.create({ data: { staffId, display: next } });
+  // Upsert on staffId, which is a plain unique now that the compound
+  // [tenantId, staffId] has lost its head. Milder than the institution-wide case
+  // above — the unique already stopped a duplicate row, so the worst that
+  // find-then-create could do was turn one person double-saving their own
+  // preferences into a P2002 and a 500. Still worth not doing.
+  await prisma.timetableUserPref.upsert({
+    where: { staffId },
+    update: { display: next },
+    create: { staffId, display: next },
+  });
 
   return next;
 }

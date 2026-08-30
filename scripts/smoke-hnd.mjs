@@ -153,11 +153,21 @@ try {
     // to their units is THE way a student is added, so the normal path was dead while the
     // fiddly two-step one (create, then PUT enrolments) worked.
     //
-    // The cause is gone with tenancy, but the assertion is KEPT: it is a check that the
-    // nested write still happens at all, and a nested create is exactly the shape that
-    // gets quietly refactored into a two-step by someone who does not know the two-step
-    // is the fallback. What has gone is the third assertion, that every child row carried
-    // the creating institution's tenantId — there is one institution and no such column.
+    // THE ROUTE NO LONGER NESTS, AND THAT IS NOW THE INTENDED SHAPE — this comment
+    // said the opposite for a while, which would have sent someone "fixing" it back.
+    // routes/hnd.js creates the enrolments as their own top-level createMany, and
+    // earns that shape twice over independently of tenancy: createMany takes
+    // skipDuplicates, so re-submitting the same unit list is not a 500 on a unique
+    // violation, and the unit ids are validated in one count up front, so a bad id is
+    // a 400 rather than a mid-write foreign key error.
+    //
+    // The assertion is KEPT regardless, because what it actually checks is that
+    // adding a student to their units in one call works at all — that is THE way a
+    // student is added, and it was dead once. It passes whichever shape the route
+    // uses, so it does not police the refactor; the comment above does.
+    //
+    // What has gone is the third assertion, that every child row carried the creating
+    // institution's tenantId — there is one institution and no such column.
     assert.equal(ada.unitIds?.length, 2, `expected 2 unitIds back, got ${JSON.stringify(ada.unitIds)}`);
     const rows = await db.enrolment.findMany({ where: { studentId: ada.id } });
     assert.equal(rows.length, 2, `expected 2 enrolment rows, found ${rows.length}`);

@@ -245,11 +245,11 @@ login is ever wanted.
 
 Two consequences worth knowing:
 
-- **`src/usage.js` survives but nothing calls it.** Its only caller was the platform
-  dashboard. It was rewritten for one database per college — `pg_database_size()` is now
-  the figure rather than an apportioned share, so the bytes stopped being an estimate —
-  but there is no route to it. Either a Settings screen picks it up or it is dead code;
-  that decision has not been taken.
+- **`src/usage.js` is gone.** Its only caller was the platform dashboard. It was briefly
+  rewritten for one database per college — `pg_database_size()` as the figure rather than
+  an apportioned share — and then deleted, because nothing routed to it and dead code that
+  looks live is worse than no code. If a storage panel is ever wanted on Settings, the
+  tenant-aware original is in git history at the commit before the removal. See D18.
 - **A college that locks itself out has no supplier remedy through the API any more.**
   "Restore access" went with the dashboard, so the only route back in is
   `server/create-admin.js` on the server command line — and **as this was written that

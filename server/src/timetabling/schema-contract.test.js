@@ -84,13 +84,22 @@ test("one pref row per staff member", () => {
 });
 
 // The other half of that test asserted @@unique([tenantId]) on TimetableSettings, and
-// is DELETED with the column. NOTHING IN THE SCHEMA NOW CONSTRAINS THAT TABLE TO ONE
-// ROW, which is worth knowing rather than papering over: timetabling/settings.js
-// intends to replace the constraint by upserting on a constant id of "singleton", but
-// its `create` does not set `id` and the model still generates a cuid, so two saves
-// racing on an empty table still insert two rows. The assertion to add here is that
-// TimetableSettings.id carries @default("singleton") — it is deliberately NOT added
-// yet, because it would assert something the schema does not say.
+// is DELETED with the column. What replaced the guarantee is a constant primary key,
+// and THAT is what the test below pins — for a while this comment said the schema
+// carried no such thing, which was true of an earlier draft and would have sent a
+// reader off to fix a gap that had already been closed.
+
+// One settings row, and the schema has to say so. settings.js upserts on the literal
+// "singleton" and its `create` does not set an id, so it relies entirely on this
+// default; if the default reverted to cuid(), two saves racing on an empty table
+// would insert two rows and findFirst() would then pick between two sets of the
+// college's settings. The same constant guards TenantBranding,
+// AttendanceBandConfig, PredictionModelSettings, AttendanceTapConfig and Tenant.
+test("the timetable settings row is a singleton, by constant primary key", () => {
+  const model = modelBody("TimetableSettings");
+  assert.match(model, /id\s+String\s+@id @default\("singleton"\)/,
+    "TimetableSettings.id must default to the literal \"singleton\" — see settings.js saveInstitution()");
+});
 
 test("events are indexed by date, because every read is a date-window read", () => {
   assert.match(modelBody("TimetableEvent"), /@@index\(\[date\]\)/);

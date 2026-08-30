@@ -204,9 +204,15 @@ async function main() {
 // one more row, and it is upserted rather than created so a re-seed does not collide
 // on the slug.
 (async () => {
+  // Upserted on the CONSTANT id, not on the slug. Keyed on the slug, changing
+  // SEED_TENANT_SLUG after the first seed would match nothing and try to create a
+  // second institution — which the constant primary key now refuses, so the seed
+  // would simply fail. Keyed on the id it is a no-op instead: the institution
+  // already exists, and renaming it is the college's job on the Settings screen,
+  // not a side effect of re-running fixtures.
   const institution = await prisma.tenant.upsert({
-    where: { slug: SEED_TENANT_SLUG },
-    create: { slug: SEED_TENANT_SLUG, name: "Default Institution" },
+    where: { id: "singleton" },
+    create: { id: "singleton", slug: SEED_TENANT_SLUG, name: "Default Institution" },
     update: {},
   });
   console.log("Seeding institution: " + institution.name + " (" + institution.slug + ")");

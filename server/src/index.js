@@ -65,9 +65,10 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, service: "edtech-hub-
 // wrapAsync makes a rejected promise inside an async handler reach the error
 // middleware below instead of terminating the process — see asyncRoutes.js.
 const { wrapAsync } = require("./asyncRoutes");
-// The same protection for an async MIDDLEWARE, which would otherwise reject into an
+// A wrapAsyncMw lived here, giving an async MIDDLEWARE the same protection. Its only
+// user was the tenant middleware, and it went with it — there is no async middleware
+// left. Bring it back if one appears; an async middleware that rejects becomes an
 // unhandled rejection rather than a 500.
-const wrapAsyncMw = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 // MOUNT ORDER USED TO CARRY MEANING HERE, AND NO LONGER DOES.
 //
 // Two routers were mounted above everything else — /api/platform, the supplier's

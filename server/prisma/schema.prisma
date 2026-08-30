@@ -256,7 +256,18 @@ model TenantEmailTemplate {
 /// Kept rather than dropped because the alternative was moving what remains into env
 /// vars or a new singleton table, which is what this already is.
 model Tenant {
-  id        String   @id @default(cuid())
+  /// A CONSTANT PRIMARY KEY, for the reason the five config singletons have one.
+  ///
+  /// Everything above rests on "this table holds THE institution", and nothing
+  /// enforced that: the id was a cuid, so a second row was insertable, and the only
+  /// reader is an unordered findFirst() — which would then return one of two
+  /// institutions at the planner's discretion, and the college's name in its own
+  /// letters would change between requests. The table every config singleton is
+  /// modelled on was the one without the guarantee.
+  ///
+  /// A second insert now collides instead. That is a loud failure in the one place a
+  /// silent one would be worst.
+  id        String   @id @default("singleton")
   /// Named the subdomain the customer was reached on ("brookes" ->
   /// brookes.edtech.co.uk) back when one server answered for several colleges.
   /// Nothing resolves a subdomain any more; this is now just a stable short name,
