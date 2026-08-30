@@ -46,6 +46,42 @@ async function flagAssessmentChange(unitIds, assessmentId) {
 // staring at an empty dashboard.
 router.get("/exec-summary", requireAuth, requireAnyPage(["executive", "assessments"]), (req, res, next) => execSummary(req, res).catch(next));
 
+// The assessment tracker's setup grid sets a marking deadline, and only a marking
+// deadline. Registered ABOVE the router-wide requirePage("assessments") gate below,
+// exactly as /exec-summary is, because that gate is deliberately strict: the gradebook
+// is admin-only since it holds student marks, and a tracker admin must not be handed
+// those merely so they can type a date.
+//
+// So this is NOT a widening of the gradebook's permission. It is a separate and much
+// narrower door: it reads one field off the body and writes one column. maxMarks,
+// weight, title and unitId cannot be reached through it, which the smoke suite asserts
+// directly — if a later edit turns this into a general update, that assertion is what
+// catches it.
+//
+// No flagAssessmentChange() call, deliberately: a marking deadline is an internal
+// staffing date. It moves no mark, no denominator and no percentage, so nobody's
+// progression score changes, and flagging a whole enrolment stale on every save of
+// this grid would be a large recompute for nothing.
+router.put("/:id/marking-deadline", requireAuth, requireAnyPage(["assessments", "assessment-tracker"]), requireAdmin, async (req, res) => {
+  const existing = await prisma.assessment.findUnique({ where: { id: req.params.id }, include: { unit: { select: { code: true } } } });
+  if (!existing) return res.status(404).json({ error: "Assessment not found" });
+  const raw = str(req.body?.markingDueDate);
+  if (raw && !isRealDate(raw)) return res.status(400).json({ error: "Marking deadline must be a valid date (YYYY-MM-DD)" });
+  const markingDueDate = raw || null;
+  const a = await prisma.assessment.update({
+    where: { id: existing.id },
+    data: { markingDueDate },
+    include: { unit: { select: { code: true, name: true } }, _count: { select: { grades: true } } },
+  });
+  audit.record(req, {
+    action: "assessment.markingDeadlineSet", entity: "Assessment", entityId: a.id,
+    summary: `Marking deadline for "${a.title}" on ${existing.unit?.code || "a unit"} set to ${markingDueDate || "none"}`,
+    before: { markingDueDate: existing.markingDueDate ?? null },
+    after: { markingDueDate },
+  });
+  res.json(sAssessment(a));
+});
+
 // DEF-01: the gradebook is admin-only (student marks are sensitive; no staff/mobile
 // flow reads them). Guard every route, reads included, against non-admin tokens.
 router.use(requireAuth, requirePage("assessments"));
@@ -119,6 +155,14 @@ async function validateAssessment(body, partial) {
     const d = str(body.dueDate);
     if (d && !isRealDate(d)) return { error: "Due date must be a valid date (YYYY-MM-DD)" };
     data.dueDate = d || null;
+  }
+  // The marking deadline is also settable from the full editor here, not only through
+  // the narrow /:id/marking-deadline door above — that door exists so a tracker admin
+  // need not hold the gradebook, not because this field is special.
+  if (body?.markingDueDate !== undefined) {
+    const d = str(body.markingDueDate);
+    if (d && !isRealDate(d)) return { error: "Marking deadline must be a valid date (YYYY-MM-DD)" };
+    data.markingDueDate = d || null;
   }
   return { data };
 }

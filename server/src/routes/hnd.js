@@ -78,6 +78,47 @@ const requireHndWrite = requireAnyPage(["registers", "students"]);
 const requireLiveAttendance = requireAnyPage(["live-attendance", "registers"]);
 const { isStatus, summarise, summariseCounts } = require("../attendance");
 
+// THE ASSESSMENT TRACKER'S SETUP GRID SETS A MODULE LEADER, AND ONLY A MODULE LEADER.
+//
+// Registered ABOVE the router-wide gate below, and given its own narrow guard, because
+// neither of the obvious alternatives is safe:
+//
+//   - Widening the router-wide gate would hand a tracker admin the whole HND read
+//     surface: the student directory, the attendance matrix, every register.
+//   - Widening requireRegisters, which is what PUT /units/:id uses, would hand them
+//     DELETE /units/:id as well — the power to delete a unit and cascade away its
+//     sessions and marks — in exchange for the ability to name a module leader.
+//
+// The comment on requireRegisters puts it better than this one can: a permission grid
+// nobody can trust is worse than a narrow one. So this is a separate, much smaller
+// door. It writes one column and reads none. Precedent for the shape:
+// /assessments/exec-summary, registered above its own router's gate for the same reason.
+//
+// It delegates to teachingFromBody so the "unknown staff member" check has exactly one
+// implementation — a second copy is a second place for it to drift, and a drifted copy
+// here would silently accept a staff id belonging to another college.
+router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "assessment-tracker"]), async (req, res) => {
+  const existing = await prisma.unit.findUnique({ where: { id: req.params.id }, select: { id: true, code: true, leaderStaffId: true } });
+  if (!existing) return res.status(404).json({ error: "Unit not found" });
+  // Only leaderStaffId is passed through, so a body carrying tutorStaffId or
+  // submissionDate cannot reach the update by way of this route.
+  const parsed = await teachingFromBody({ leaderStaffId: req.body?.leaderStaffId });
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  if (parsed.leaderStaffId === undefined) return res.status(400).json({ error: "leaderStaffId is required" });
+  const unit = await prisma.unit.update({
+    where: { id: existing.id },
+    data: { leaderStaffId: parsed.leaderStaffId },
+    include: { tutorStaff: { select: { name: true } }, leaderStaff: { select: { name: true } } },
+  });
+  audit.record(req, {
+    action: "unit.leaderSet", entity: "Unit", entityId: unit.id,
+    summary: `Module leader for ${existing.code} set to ${unit.leaderStaff?.name || "nobody"}`,
+    before: { leaderStaffId: existing.leaderStaffId ?? null },
+    after: { leaderStaffId: unit.leaderStaffId ?? null },
+  });
+  res.json(sUnit(unit));
+});
+
 // DEF-01: HND registers are an admin-only feature (they live entirely in the admin
 // dashboard; no staff/mobile flow reads them). Guard EVERY route — reads included —
 // so a non-admin token cannot read the student directory, attendance matrix or
@@ -208,7 +249,7 @@ function placeFromBody(body) {
 // whether the unit has finished, which is the whole point of holding them.
 // The submission deadline and the teaching staff. Both optional and independent of
 // each other, so a unit can have a tutor with no deadline set, or the reverse.
-// Returns { submissionDate, tutorStaffId, tutor } or { error }.
+// Returns { submissionDate, tutorStaffId, tutor, leaderStaffId } or { error }.
 async function teachingFromBody(body, current = {}) {
   const out = {};
   if (body?.submissionDate !== undefined) {
@@ -227,6 +268,25 @@ async function teachingFromBody(body, current = {}) {
       // Mirror the name into the free-text field, so anything still reading `tutor`
       // keeps working and the name survives if the account is later removed.
       out.tutor = staff.name;
+    }
+  }
+  // The module LEADER, which is a different person from the tutor above and is set on
+  // the assessment tracker's setup grid rather than here. Handled in this helper anyway
+  // so there is exactly one place that resolves a staff id onto a unit — a second
+  // implementation is a second place for the "unknown staff member" check to drift.
+  //
+  // No mirror into a free-text field, unlike tutorStaffId: `tutor` exists only because
+  // units were assigned by name before accounts were linked, and there is no such
+  // history to carry here.
+  if (body?.leaderStaffId !== undefined) {
+    const id = str(body.leaderStaffId);
+    if (!id) { out.leaderStaffId = null; }
+    else {
+      // findUnique is tenant-scoped by db.js, so a staff id belonging to another
+      // college resolves to nothing and is refused as unknown rather than stored.
+      const staff = await prisma.staff.findUnique({ where: { id }, select: { id: true } });
+      if (!staff) return { error: "Unknown staff member" };
+      out.leaderStaffId = staff.id;
     }
   }
   return out;
