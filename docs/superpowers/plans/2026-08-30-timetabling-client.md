@@ -146,19 +146,16 @@ Insert into the `api` object in `client/src/api.js`, immediately after the exist
   ttSaveSettings: (patch) => request("/timetabling/settings", { method: "PUT", body: patch }),
 ```
 
-- [ ] **Step 2: Verify every method exists and the file still parses**
+- [ ] **Step 2: Verify every method exists**
+
+**Do not try to `import` `api.js` under plain `node`.** It reads `import.meta.env.VITE_API_URL` at module top level, which Vite injects and Node leaves `undefined`, so the module throws during evaluation before any export is reachable — on the unmodified file just as much as on yours. Check the source text instead, with a shell loop rather than a `node -e` regex (the escaping does not survive the layers), then let the build do the rest.
 
 ```bash
-cd "c:/Users/Lenovo/Documents/Edtech/client" && node -e "
-import('./src/api.js').then(m => {
-  const want = ['myTimetable','myTimetableResources','myTimetableSettings','saveMyTimetableSettings','ttRooms','ttCreateRoom','ttUpdateRoom','ttDeleteRoom','ttCategories','ttCreateCategory','ttUpdateCategory','ttDeleteCategory','ttEvents','ttCreateEvent','ttUpdateEvent','ttDeleteEvent','ttRepeatEvent','ttPublish','ttSettings','ttSaveSettings'];
-  const missing = want.filter(k => typeof m.api[k] !== 'function');
-  console.log(missing.length ? 'FAIL missing: ' + missing.join(', ') : 'PASS: all ' + want.length + ' methods present');
-  process.exit(missing.length ? 1 : 0);
-}).catch(e => { console.log('FAIL: ' + e.message); process.exit(1); });"
+cd "c:/Users/Lenovo/Documents/Edtech" && for m in myTimetable myTimetableResources myTimetableSettings saveMyTimetableSettings ttRooms ttCreateRoom ttUpdateRoom ttDeleteRoom ttCategories ttCreateCategory ttUpdateCategory ttDeleteCategory ttEvents ttCreateEvent ttUpdateEvent ttDeleteEvent ttRepeatEvent ttPublish ttSettings ttSaveSettings; do grep -q "  $m:" client/src/api.js || echo "MISSING $m"; done | grep MISSING || echo "PASS: all 20 present"
+npm run --workspace client build 2>&1 | tail -3
 ```
 
-Expected: `PASS: all 20 methods present`.
+Expected: `PASS: all 20 present`, then `✓ built in …`.
 
 - [ ] **Step 3: Commit**
 
@@ -1834,15 +1831,17 @@ git commit -m "Rooms and categories get a screen, and a deleted room says what i
 - Consumes: Task 8's file; `./TimetableCalendar`; `./TimetableSettingsModal`; `./timetableView` (`windowFor`, `shiftAnchor`, `RANGE_LABEL`); `api.ttEvents/ttCreateEvent/ttUpdateEvent/ttDeleteEvent/ttRepeatEvent/ttPublish/ttSettings/ttSaveSettings`; `api.hndCourses`-style lookups for units and cohorts (**verify the existing method names in `api.js` before using them** — do not invent).
 - Produces: the working planner tab and the `"scheduling"` admin page.
 
-- [ ] **Step 1: Find the existing lookup calls for units and cohorts**
+- [ ] **Step 1: Confirm the lookups (already verified — this step is a re-check, not a search)**
 
-The event editor needs to offer units, cohorts and staff. Those endpoints already exist and this plan must not invent names for them.
+The event editor offers units, cohorts and staff. **These come from the `store` that `StaffHub` already loads, not from new API calls** — verified against `client/src/StaffHub.jsx`, which uses `store.units` (48 times), `store.staff` (52), `store.cohorts` (11) and `store.courses` (28). Add no endpoint.
 
 ```bash
-cd "c:/Users/Lenovo/Documents/Edtech/client/src" && grep -n "units:\|cohorts:\|staff:\|courses:" api.js | head -12
+cd "c:/Users/Lenovo/Documents/Edtech/client/src" && node -e "
+const s=require('fs').readFileSync('StaffHub.jsx','utf8');
+for (const k of ['store.units','store.staff','store.cohorts','store.courses']) console.log((s.includes(k)?'PASS  ':'FAIL  ')+k);"
 ```
 
-Use whatever those are actually called. If a needed list has no method, prefer `store.units` / `store.staff` already loaded by `StaffHub` and passed in as props over adding an endpoint.
+Expected: four `PASS` lines. Label a cohort the way the rest of the file already does — `${course.name} — ${cohort.name}`, falling back to the cohort name when the course is missing — because a bare intake label like "SEP 2025" repeats across every course in the college.
 
 - [ ] **Step 2: Replace `PlannerCalendarTab`**
 
