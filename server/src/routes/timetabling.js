@@ -356,4 +356,98 @@ router.delete("/events/:id", async (req, res) => {
   }
 });
 
+/* ---------------------------------------------------- repeat and publish -- */
+
+const { weeklyDates } = require("../timetabling/recurrence");
+const bankHolidays = require("../bankHolidays");
+
+/**
+ * Copy one event forward, weekly, to `until`.
+ *
+ * This exists because hand-entering twelve weeks of a Tuesday lecture is not a
+ * feature, it is a reason a tool goes unused.
+ *
+ * Bank holidays are skipped BY DEFAULT but the caller can say otherwise. The
+ * register generator does not consult bankHolidays.js at all, which is why registers
+ * get generated on Easter Monday; that is a known defect and this does not repeat
+ * it. It stays a flag rather than a rule because whether a college teaches on a
+ * given holiday is that college's policy, and hardcoding one answer to somebody
+ * else's policy is the worse failure.
+ */
+router.post("/events/:id/repeat", async (req, res) => {
+  const until = str(req.body?.until);
+  if (!DATE_RE.test(until)) return res.status(400).json({ error: "until must be YYYY-MM-DD" });
+
+  const source = await prisma.timetableEvent.findUnique({ where: { id: req.params.id }, include: EVENT_INCLUDE });
+  if (!source) return res.status(404).json({ error: "Event not found" });
+  if (until <= source.date) return res.status(400).json({ error: "until must be after the event's own date" });
+
+  const skip = new Set(ids(req.body?.skip));
+  if (req.body?.skipBankHolidays !== false) {
+    const years = new Set([source.date.slice(0, 4), until.slice(0, 4)]);
+    // ukBankHolidays(year) — the England & Wales dates as an array of 'YYYY-MM-DD'
+    // strings, which is exactly the shape `skip` wants. Named for the jurisdiction
+    // on purpose: it encodes the England & Wales rules including the Christmas and
+    // New Year weekend substitutions, and a Scottish or Northern Irish college would
+    // need a different list rather than a different call. The sibling export
+    // namedUkBankHolidays() carries the same dates with their names and is for
+    // messaging ("college closed tomorrow"); pairing the name with each date here
+    // would mean carrying a label nothing on this path ever reads.
+    for (const y of years) for (const d of bankHolidays.ukBankHolidays(Number(y)) || []) skip.add(d);
+  }
+
+  // The source date itself is dropped: the event already exists on it, and copying
+  // it would double-book the room against itself on day one.
+  const dates = weeklyDates(source.date, until, { skip: [...skip] }).filter((d) => d !== source.date);
+
+  const staffIds = (source.staff || []).map((s) => s.staffId);
+  const cohortIds = (source.groups || []).map((g) => g.cohortId);
+
+  const warnings = [];
+  let created = 0;
+  for (const date of dates) {
+    const candidate = { id: null, date, startTime: source.startTime, endTime: source.endTime };
+    const found = await checkClashes(candidate, { roomId: source.roomId || null, staffIds, cohortIds });
+    // Reported per date rather than as one lump, because "week 4 clashes" is
+    // actionable and "there were clashes" is not.
+    if (found.length) warnings.push({ date, clashes: found });
+
+    await prisma.timetableEvent.create({
+      data: {
+        date, startTime: source.startTime, endTime: source.endTime,
+        title: source.title, notes: source.notes,
+        unitId: source.unitId, courseId: source.courseId,
+        roomId: source.roomId, categoryId: source.categoryId,
+        published: source.published,
+        staff: staffIds.length ? { create: staffIds.map((staffId) => ({ staffId })) } : undefined,
+        groups: cohortIds.length ? { create: cohortIds.map((cohortId) => ({ cohortId })) } : undefined,
+      },
+    });
+    created++;
+  }
+
+  res.json({ created, dates, warnings });
+});
+
+/**
+ * Flip `published` across a date range. This is the one switch that makes a term's
+ * work visible to staff, exactly as TimetableSlot's publish flag governs what
+ * students see.
+ */
+router.post("/events/publish", async (req, res) => {
+  const from = str(req.body?.from), to = str(req.body?.to);
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+  if (to < from) return res.status(400).json({ error: "to must not be before from" });
+  if (typeof req.body?.published !== "boolean") return res.status(400).json({ error: "published must be true or false" });
+
+  const { count } = await prisma.timetableEvent.updateMany({
+    where: { date: { gte: from, lte: to } },
+    data: { published: req.body.published },
+  });
+  // NOT a changedAt bump. Publishing does not move anything; marking a whole term as
+  // "recently changed" the moment it goes live would make the highlight meaningless
+  // on the first day anybody used it.
+  res.json({ updated: count });
+});
+
 module.exports = router;
