@@ -30,7 +30,14 @@ const suites = readdirSync(join(root, "scripts"))
   .filter((f) => !filter.length || filter.some((q) => f.includes(q)))
   .sort();
 
-if (!suites.length) {
+// Whether the unit-test blocks below will run. Hoisted above the bail deliberately:
+// the filter is matched against smoke-suite FILENAMES, so `npm test -- unit` exited
+// here with "No suite matches" and never reached the unit tests it named. The unit
+// blocks were only reachable by a bare `npm test`, or by a filter that happened to
+// drag in a smoke suite as well.
+const runUnit = !filter.length || filter.some((q) => "unit".includes(q));
+
+if (!suites.length && !runUnit) {
   console.error(filter.length ? `No suite matches: ${filter.join(", ")}` : "No suites found.");
   process.exit(1);
 }
@@ -140,7 +147,7 @@ const results = [];
 //
 // They run first because they are the fastest thing in the suite and they fail on the
 // kind of mistake that would otherwise take the whole HTTP run to surface.
-if (!filter.length || filter.some((q) => "unit".includes(q))) {
+if (runUnit) {
   console.log(`${"─".repeat(64)}\n▶ unit tests (server/src)\n${"─".repeat(64)}`);
   // An explicit glob, NOT `node --test src/`. Given a bare directory the runner walks
   // into every file under it, including src/index.js — which binds a port and starts
