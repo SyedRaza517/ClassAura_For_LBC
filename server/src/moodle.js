@@ -25,6 +25,8 @@ const predictionRunner = require("./prediction/runner");
 const engagement = require("./vle/engagementNormalise");
 const { assessmentTypeFor: itemType } = require("./vle/moodleItemType");
 const { dueDatesByCmid } = require("./vle/moodleActivityDates");
+const { submissionsForAssessment: submissionsFor } = require("./vle/moodleSubmissions");
+const { soleEditingTeacher } = require("./vle/moodleTeachers");
 const { isoDate } = require("./vle/isoDate");
 const { localDate, ZONE } = require("./clock");
 
@@ -184,6 +186,15 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     // is using the VLE" and "this site hides lastaccess", and no later count can
     // reconstruct it.
     engagementObserved: 0, engagementNotObservable: 0,
+    // Submission rows written, and assessments this Moodle would not let us observe.
+    // The second is reported rather than swallowed, for the same reason as
+    // engagementNotObservable: it is the difference between "this cohort handed nothing
+    // in" and "this activity type does not publish submission dates". A Turnitin site
+    // that reports nothing will show a large submissionsUnobserved and zero recorded,
+    // which is the honest diagnosis rather than a screen of 0% submission rates.
+    submissionsRecorded: 0, submissionsUnobserved: 0,
+    // Units whose lecturer or module leader this run filled in from Moodle.
+    teachersLinked: 0,
   };
   const issues = [];
   const note = (m) => { if (issues.length < 300) issues.push(m); };
@@ -518,6 +529,49 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     // has no assessments yet with nobody on it — you could not open a register for
     // a unit until after its first assignment existed, which is backwards.
     const courseUnitIds = [...new Set(courseUnits.map((u) => u.id).filter(Boolean))];
+
+    // ---------- Lecturer and module leader, where Moodle is unambiguous ----------
+    //
+    // COSTS NO EXTRA CALL: core_enrol_get_enrolled_users is already in hand for this
+    // course, and every user's `roles` came with it. The sync read only "student" and
+    // discarded the rest — the same shape as the activity dates and lastcourseaccess.
+    //
+    // Only fires when the course has EXACTLY ONE editing teacher (see
+    // vle/moodleTeachers.js for why anything else is a guess), and only ever FILLS AN
+    // EMPTY FIELD. Roles are per course while units are sections, so this writes the
+    // same person onto every unit of the course — correct for a single-lecturer course,
+    // and the reason it must never overwrite what a human set on a shared one.
+    if (!dryRun && courseUnitIds.length) {
+      try {
+        const lead = soleEditingTeacher(users);
+        if (lead) {
+          // Matched by email against an existing account. This never CREATES staff: a
+          // Moodle teacher without an account here is somebody the college has chosen
+          // not to give one, and inventing logins from a VLE roster is not this sync's
+          // business.
+          const staff = await prisma.staff.findFirst({
+            where: { email: { equals: lead.email, mode: "insensitive" } },
+            select: { id: true, name: true },
+          });
+          if (staff) {
+            const filled = await prisma.unit.updateMany({
+              where: { id: { in: courseUnitIds }, leaderStaffId: null },
+              data: { leaderStaffId: staff.id },
+            });
+            const taught = await prisma.unit.updateMany({
+              where: { id: { in: courseUnitIds }, tutorStaffId: null },
+              data: { tutorStaffId: staff.id, tutor: staff.name },
+            });
+            summary.teachersLinked += filled.count + taught.count;
+          } else {
+            note(`${label}: ${lead.fullname || lead.email} is the only editing teacher on this course, but no staff account here has that email — module leader left unset.`);
+          }
+        }
+      } catch (e) {
+        // Never allowed to abort a sync that has already imported students and marks.
+        note(`${label}: could not set the module leader from Moodle — ${e.message}`);
+      }
+    }
     const wantEnrol = new Set();
     for (const st of studentByMoodleId.values()) {
       for (const unitId of courseUnitIds) wantEnrol.add(`${st.id}|${unitId}`);
@@ -593,12 +647,35 @@ async function syncFromMoodle({ dryRun = false } = {}) {
       ).map((g) => [`${g.assessmentId}|${g.studentId}`, g])
     );
 
+    // ---------- Submissions: who handed the work in ----------
+    //
+    // Collected in the SAME pass as the grades below, but decided afterwards, because
+    // the decision is per ASSESSMENT across the whole cohort and this loop runs per
+    // STUDENT. See vle/moodleSubmissions.js: an activity that reports nothing about
+    // anybody cannot be told apart from a cohort that submitted nothing, so the guard
+    // needs every student's entry for an item before it can answer.
+    //
+    // assessmentId -> [{ studentId, submittedOn, hasGrade }]
+    const submissionObs = new Map();
+
     for (const ug of usergrades) {
       const st = studentByMoodleId.get(ug.userid);
       if (!st) continue;
       for (const item of ug.gradeitems || []) {
         const target = assessByItem.get(item.id);
         if (!target) continue;
+        // BEFORE the graderaw skip below, deliberately. That skip is what discarded the
+        // submitted-but-unmarked student — the entire population the marking percentage
+        // measures — and moving this line after it would reintroduce the bug this
+        // feature exists to fix.
+        if (target.row?.id) {
+          if (!submissionObs.has(target.row.id)) submissionObs.set(target.row.id, []);
+          submissionObs.get(target.row.id).push({
+            studentId: st.id,
+            submittedOn: tsToDate(item.gradedatesubmitted),
+            hasGrade: item.graderaw != null && item.graderaw !== "",
+          });
+        }
         if (item.graderaw == null || item.graderaw === "") continue;  // not marked in Moodle yet
         const value = Number(item.graderaw);
         if (!Number.isFinite(value)) continue;
@@ -641,6 +718,42 @@ async function syncFromMoodle({ dryRun = false } = {}) {
             // is what tells a score whether work was late, not merely what it scored.
             touched.add(existing.studentId);
           }
+        }
+      }
+    }
+
+    // ---------- Submissions, decided and written ----------
+    //
+    // One assessment at a time, from the whole cohort's entries. An unobserved activity
+    // writes NOTHING — no rows, no deletions — so the tracker keeps reading null and
+    // saying "Not synced", which is the truth about a Turnitin activity that does not
+    // publish submission dates.
+    for (const [assessmentId, observations] of submissionObs) {
+      const { observed, rows } = submissionsFor(observations);
+      if (!observed) { summary.submissionsUnobserved++; continue; }
+      for (const r of rows) {
+        try {
+          if (!dryRun) {
+            // Upsert on the pair the table is unique over. `update` rather than skip:
+            // a student who submits late moves from not_submitted to submitted, and a
+            // row frozen at the first sync would keep the tracker reporting a hand-in
+            // that has since arrived as missing.
+            //
+            // recordedBy names the source in the same vocabulary AssessmentGrade uses,
+            // so a row this sync wrote is distinguishable from one a person entered if
+            // manual entry is ever added.
+            await prisma.assessmentSubmission.upsert({
+              where: { assessmentId_studentId: { assessmentId, studentId: r.studentId } },
+              create: { assessmentId, studentId: r.studentId, status: r.status, submittedOn: r.submittedOn, source: "moodle", recordedBy: "Moodle" },
+              update: { status: r.status, submittedOn: r.submittedOn, source: "moodle", recordedBy: "Moodle" },
+            });
+          }
+          summary.submissionsRecorded++;
+          // Whether work was handed in, and whether it was late, are inputs to the
+          // progression score — the missing-work and on-time signals read this table.
+          touched.add(r.studentId);
+        } catch (e) {
+          note(`could not record a submission for assessment ${assessmentId} — ${e.message}`);
         }
       }
     }
