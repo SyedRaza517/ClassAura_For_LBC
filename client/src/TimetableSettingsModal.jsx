@@ -18,6 +18,28 @@ const ALL_PERIODS = Array.from({ length: 15 }, (_, i) => {
   return { start: `${String(h).padStart(2, "0")}:00`, end: `${String(h + 1).padStart(2, "0")}:00` };
 });
 
+/**
+ * Only the keys whose value actually changed.
+ *
+ * SENDING THE WHOLE BLOB WOULD BREAK "INHERITED". The server stores a college's
+ * settings as a patch merged over the platform defaults, and returns both so a screen
+ * can show which values are the college's own and which are simply inherited. PUT the
+ * entire merged object and every field becomes explicitly set the first time anybody
+ * presses Save — after which "reset to default" has nothing to reset to, and a later
+ * change to a platform default can never reach that college again.
+ *
+ * Compared by JSON rather than identity because periods, days and annotations are
+ * arrays rebuilt on every edit, so a reference check would call all three changed
+ * whenever any one of them was touched.
+ */
+function changedOnly(before, after) {
+  const out = {};
+  for (const k of Object.keys(after || {})) {
+    if (JSON.stringify(before?.[k]) !== JSON.stringify(after[k])) out[k] = after[k];
+  }
+  return out;
+}
+
 function Check({ on, onChange, label }) {
   return (
     <label className="flex cursor-pointer items-center gap-2 py-1 text-sm text-slate-700">
@@ -30,6 +52,8 @@ function Check({ on, onChange, label }) {
 export default function TimetableSettingsModal({ open, settings, scope = "me", onSave, onClose }) {
   const [tab, setTab] = useState("calendar");
   const [draft, setDraft] = useState(settings || {});
+  // What the modal was opened with, so Save can send only what actually changed.
+  const [seeded] = useState(settings || {});
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -178,7 +202,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
         <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
           <button disabled={saving}
-            onClick={async () => { setSaving(true); try { await onSave?.(draft); } finally { setSaving(false); } }}
+            onClick={async () => { setSaving(true); try { await onSave?.(changedOnly(seeded, draft)); } finally { setSaving(false); } }}
             className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: NAVY }}>
             {saving ? "Saving…" : "Save"}
           </button>

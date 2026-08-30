@@ -1096,13 +1096,19 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
 }
 ```
 
-- [ ] **Step 2: Build**
+- [ ] **Step 2: Build, AND parse the file directly**
+
+**The build alone cannot fail on this file yet.** Nothing imports it until Task 6, so Rollup never reaches the module and `✓ built` would print over a syntax error or a missing file. Parse it explicitly with the esbuild already in `client/node_modules`:
 
 ```bash
-cd "c:/Users/Lenovo/Documents/Edtech" && npm run --workspace client build 2>&1 | tail -5
+cd "c:/Users/Lenovo/Documents/Edtech/client" && node -e "
+const esbuild=require('esbuild');
+const src=require('fs').readFileSync('src/SelectTimetablesModal.jsx','utf8');
+try { esbuild.transformSync(src,{loader:'jsx'}); console.log('PARSE OK'); } catch(e){ console.log('PARSE FAIL', e.message); process.exit(1); }"
+cd "c:/Users/Lenovo/Documents/Edtech" && npm run --workspace client build 2>&1 | tail -3
 ```
 
-Expected: `✓ built in …`.
+Expected: `PARSE OK`, then `✓ built in …`.
 
 - [ ] **Step 3: Commit**
 
@@ -1122,7 +1128,7 @@ git commit -m "Whose timetable am I looking at — five types, students behind a
 - Consumes: `./branding` (`NAVY`), `lucide-react`.
 - Produces: default export `TimetableSettingsModal({ open, settings, scope, onSave, onClose })`.
   - `scope` is `"me"` or `"college"`. `"me"` hides the notice banner tab section entirely — the server drops it from a user patch, and offering a control that is silently ignored is worse than not offering it.
-  - `onSave(patch)` receives only changed keys.
+  - `onSave(patch)` receives **only the keys that actually changed**, via a `changedOnly(seeded, draft)` helper. Sending the whole merged blob would make every field an explicit setting the first time anyone pressed Save, after which "inherited" means nothing, "reset to default" has nothing to reset to, and a later change to a platform default could never reach that college again.
 
 - [ ] **Step 1: Write the component**
 
@@ -1161,6 +1167,8 @@ function Check({ on, onChange, label }) {
 export default function TimetableSettingsModal({ open, settings, scope = "me", onSave, onClose }) {
   const [tab, setTab] = useState("calendar");
   const [draft, setDraft] = useState(settings || {});
+  // What the modal was opened with, so Save can send only what actually changed.
+  const [seeded] = useState(settings || {});
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -1309,7 +1317,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
         <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
           <button disabled={saving}
-            onClick={async () => { setSaving(true); try { await onSave?.(draft); } finally { setSaving(false); } }}
+            onClick={async () => { setSaving(true); try { await onSave?.(changedOnly(seeded, draft)); } finally { setSaving(false); } }}
             className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50" style={{ background: NAVY }}>
             {saving ? "Saving…" : "Save"}
           </button>
