@@ -2234,6 +2234,11 @@ const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kp
 // navGroups.test.js, which pins the empty-parent invariant described above.
 const NAV_GROUPS = {
   "assessments-record": { label: "Assessments Record", I: ClipboardList },
+  // Seeing a timetable and building one are different jobs for different people, but
+  // they are the same subject, so they collapse under one parent. Permission still
+  // sits on each child: "My Timetable" needs no grant because it shows only your own
+  // teaching, "Scheduling" is grantable. The parent grants nothing — see above.
+  "timetabling": { label: "Timetabling", I: CalendarRange },
 };
 
 // One sidebar button, used at both levels — `indent` is the only difference between a
@@ -2762,8 +2767,8 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
     { key: "timetable", label: "Timetable", I: CalendarClock },
-    { key: "my-timetable", label: "My Timetable", I: CalendarDays },
-    { key: "scheduling", label: "Scheduling", I: CalendarRange },
+    { key: "my-timetable", label: "My Timetable", I: CalendarDays, group: "timetabling" },
+    { key: "scheduling", label: "Scheduling", I: CalendarRange, group: "timetabling" },
     { key: "passwords", label: "Reset Passwords", I: KeyRound },
     { key: "settings", label: "Settings", I: Settings },
     { key: "audit", label: "Audit Trail", I: History },
