@@ -16,6 +16,42 @@
 // is the ADMIN_PAGES problem, and that one is only survivable because a test checks it.
 const SELF_CHECKIN_STAMP = "Self check-in (NFC)";
 
+// The same thing, written by the rotating QR code instead of a sticker.
+//
+// A SECOND stamp is the whole difficulty, and it is worth being explicit about why there
+// is not just one. hnd.js builds the lecturer's live view with an exact equality —
+// `takenBy === SELF_CHECKIN_STAMP` — so a second string would make `selfMarked` come back
+// FALSE for every QR check-in. The lecturer would then see a student who marked
+// themselves rendered exactly like a student a human marked, on the one screen that
+// exists to tell those two apart.
+//
+// The alternative — one stamp for both — was rejected. An administrator reconciling a
+// disputed register needs to know whether a mark came off a sticker in the room or a code
+// on a screen, because the two have different failure modes and different answers to "how
+// did this get here": a sticker needs physical proximity, a screen can be photographed.
+// Collapsing them would destroy that distinction to save a predicate.
+//
+// SELF_CHECKIN_STAMP itself is FROZEN at its current wording. Rows in both live databases
+// already carry it and the live view reads it back, so changing the string would silently
+// reclassify every self check-in ever recorded as staff-marked. A test pins it.
+const SELF_CHECKIN_QR_STAMP = "Self check-in (QR)";
+
+// Every stamp that means "the student did this, not a member of staff". A third capture
+// method adds its stamp here and needs no other change; a test asserts every member is
+// recognised by the predicate, so the list and the check cannot drift apart.
+const SELF_CHECKIN_STAMPS = Object.freeze([SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP]);
+
+/**
+ * Was this mark written by the student themselves?
+ *
+ * Exact matching, deliberately. A prefix or case-insensitive test would read a lecturer
+ * who typed "self check-in" into the remark box as a machine, and the value of this column
+ * is that it distinguishes a claim from an observation.
+ */
+function isSelfCheckIn(takenBy) {
+  return typeof takenBy === "string" && SELF_CHECKIN_STAMPS.includes(takenBy);
+}
+
 /** "HH:MM" → minutes since midnight, or null when the string is not a time. */
 function toMins(hhmm) {
   const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm ?? ""));
@@ -108,4 +144,7 @@ function statusFor(session, now, settings) {
   return now.time <= addMinutes(session.startTime, late) ? "P" : "L";
 }
 
-module.exports = { addMinutes, subMinutes, resolveTapSession, statusFor, SELF_CHECKIN_STAMP };
+module.exports = {
+  addMinutes, subMinutes, resolveTapSession, statusFor,
+  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn,
+};

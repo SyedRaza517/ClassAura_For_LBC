@@ -98,7 +98,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, SELF_CHECKIN_STAMP } = require("../attendanceTap");
+const { subMinutes, isSelfCheckIn } = require("../attendanceTap");
 const isDate = (v) => isRealDate(v);
 const isTime = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
@@ -1343,7 +1343,12 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
       checkedInAt: mark?.checkedInAt ?? null,
       // Whether the student put themselves on this register or a member of staff did.
       // takenBy already carries provenance this way for the Moodle importer.
-      selfMarked: mark?.takenBy === SELF_CHECKIN_STAMP,
+      //
+      // A PREDICATE, not an equality against one stamp. There is now more than one way a
+      // student marks themselves — a sticker and a code on screen — and comparing against
+      // just the NFC string would report every QR check-in as staff-marked, which is the
+      // exact opposite of the truth on the one screen built to show the difference.
+      selfMarked: isSelfCheckIn(mark?.takenBy),
       takenBy: mark?.takenBy || null,
       enrolled: enrolments.some((e) => e.studentId === s.id),
     };
