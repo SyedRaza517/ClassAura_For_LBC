@@ -9,9 +9,13 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
+  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon,
 } from "lucide-react";
 import { api } from "./api";
 import { NAVY, alpha } from "./branding";
+import TimetableCalendar from "./TimetableCalendar";
+import TimetableSettingsModal from "./TimetableSettingsModal";
+import { windowFor, shiftAnchor, RANGE_LABEL } from "./timetableView";
 
 function Field({ label, children, hint }) {
   return (
@@ -153,7 +157,7 @@ function CategoriesTab() {
 
 /* ------------------------------------------------------------------- root -- */
 
-export default function AdminTimetablePlanner() {
+export default function AdminTimetablePlanner({ store }) {
   const [tab, setTab] = useState("calendar");
   const TABS = [["calendar", "Calendar", CalendarDays], ["rooms", "Rooms", DoorOpen], ["categories", "Categories", Tag]];
   return (
@@ -167,15 +171,240 @@ export default function AdminTimetablePlanner() {
           </button>
         ))}
       </div>
-      {/* Filled by Task 9. Left explicit rather than blank so a half-finished build
-          says so instead of looking like a broken tab. */}
-      {tab === "calendar" && <PlannerCalendarTab />}
+      {/* The lists come from the store StaffHub already loads, not from new endpoints
+          — store.staff, store.units, store.cohorts and store.courses are all already
+          fetched for other pages, and adding an endpoint for them would be a second
+          source of truth for the same rows. */}
+      {tab === "calendar" && <PlannerCalendarTab staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} />}
       {tab === "rooms" && <RoomsTab />}
       {tab === "categories" && <CategoriesTab />}
     </div>
   );
 }
 
-function PlannerCalendarTab() {
-  return <p className="py-10 text-center text-sm text-slate-400">The event planner lands in the next change.</p>;
+function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = [] }) {
+  const [today] = useState(() => new Date().toISOString().slice(0, 10));
+  const [anchor, setAnchor] = useState(today);
+  const [view, setView] = useState("week");
+  const [events, setEvents] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [warnings, setWarnings] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [prefs, setPrefs] = useState(false);
+  const [rooms, setRooms] = useState([]);
+  const [cats, setCats] = useState([]);
+
+  const { from, to } = windowFor(view, anchor);
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr("");
+    try {
+      // Drafts INCLUDED, deliberately: an administrator building next term must see
+      // what they are building. That is the whole difference between this screen and
+      // the staff one, which is published-only.
+      const [ev, st, rm, ct] = await Promise.all([
+        api.ttEvents({ from, to }), api.ttSettings(), api.ttRooms(), api.ttCategories(),
+      ]);
+      setEvents(ev || []);
+      // Drawn with the COLLEGE's settings over the platform defaults, never with this
+      // administrator's personal ones. They are laying out a timetable other people
+      // read, and their own hidden weekend would hide events they had scheduled on it.
+      setSettings({ ...st.defaults, ...st.tenant });
+      setRooms(rm || []); setCats(ct || []);
+    } catch (e) { setErr(e?.message || "Could not load the timetable."); }
+    finally { setBusy(false); }
+  }, [from, to]);
+  useEffect(() => { load(); }, [load]);
+
+  const blank = () => ({
+    date: anchor, start: "09:00", end: "10:00", title: "", notes: "",
+    roomId: "", categoryId: "", unitId: "", staffIds: [], cohortIds: [], published: false,
+  });
+
+  // A cohort's own name is an intake label like "SEP 2025", which repeats across every
+  // course in the college. Prefixing the course is how the rest of StaffHub already
+  // renders these, and without it the Groups list is a wall of identical entries.
+  const cohortLabel = (c) => {
+    const course = courses.find((x) => x.id === c.courseId);
+    return course ? `${course.name} — ${c.name}` : c.name;
+  };
+
+  const save = async () => {
+    setErr(""); setNote(""); setWarnings([]);
+    try {
+      const body = { ...editing, staffIds: editing.staffIds || [], cohortIds: editing.cohortIds || [] };
+      const r = editing.id ? await api.ttUpdateEvent(editing.id, body) : await api.ttCreateEvent(body);
+      // A CLASH IS A WARNING, NOT A FAILURE. The server saved it. Closing the editor
+      // and showing the warnings above the grid is the honest reading — refusing to
+      // close would imply the save had not happened, and an administrator would try
+      // again and create a second copy.
+      setWarnings(r.warnings || []);
+      setEditing(null);
+      load();
+    } catch (e) { setErr(e?.message || "Could not save the event."); }
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button onClick={() => setAnchor(today)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Today</button>
+        <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1))} aria-label="Previous" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><ChevronLeft size={16} /></button>
+        <p className="min-w-[150px] text-center text-sm font-extrabold text-slate-700">{RANGE_LABEL(view, from, to)}</p>
+        <button onClick={() => setAnchor((a) => shiftAnchor(view, a, 1))} aria-label="Next" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><ChevronRight size={16} /></button>
+        <input type="date" value={anchor} onChange={(e) => e.target.value && setAnchor(e.target.value)} aria-label="Jump to date"
+          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold text-slate-600" />
+        <select value={view} onChange={(e) => setView(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold text-slate-600">
+          {["day", "week", "month", "timeline"].map((v) => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
+        </select>
+        <div className="ml-auto flex items-center gap-1">
+          <button onClick={() => setEditing(blank())} className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}><Plus size={14} /> New event</button>
+          <button
+            onClick={async () => {
+              if (!window.confirm(`Publish every event from ${from} to ${to}? Staff will see them immediately.`)) return;
+              setErr(""); setNote("");
+              try { const r = await api.ttPublish({ from, to, published: true }); setNote(`${r.updated} event(s) published.`); load(); }
+              catch (e) { setErr(e?.message || "Could not publish."); }
+            }}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"><Send size={14} /> Publish this period</button>
+          <button onClick={() => setPrefs(true)} aria-label="Display settings" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><SettingsIcon size={16} /></button>
+        </div>
+      </div>
+
+      {/* An outcome and a failure are different things and are told apart on purpose:
+          "12 events published" in slate, "could not publish" in rose. One colour for
+          both trains people to ignore the colour. */}
+      {note && <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">{note}</div>}
+      {err && <div className="mb-3 flex items-center gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"><AlertTriangle size={15} /> {err}</div>}
+
+      {/* Clash warnings sit ABOVE the grid and stay until the next save. They are the
+          only thing on this screen reporting a decision the administrator may want to
+          undo, and burying them in a toast that vanishes is the same as not showing
+          them at all. */}
+      {!!warnings.length && (
+        <div className="mb-3 rounded-xl bg-amber-50 p-3 ring-1 ring-amber-200">
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-extrabold text-amber-800">
+            <AlertTriangle size={15} /> Saved, but this clashes
+            <button onClick={() => setWarnings([])} className="ml-auto rounded px-2 py-0.5 text-[11px] font-bold hover:bg-amber-100">Dismiss</button>
+          </div>
+          <ul className="space-y-0.5 text-xs text-amber-800">
+            {warnings.map((w, i) => (
+              <li key={i}>
+                {w.date ? <b>{w.date}: </b> : null}
+                {(w.clashes || [w]).map((c, j) => (
+                  <span key={j}>
+                    {c.kind === "room" ? "Room" : c.kind === "staff" ? "Staff" : "Group"} <b>{c.resource}</b> is already on “{c.event?.title}” {c.event?.start}–{c.event?.end}
+                    {j < (w.clashes || [w]).length - 1 ? "; " : ""}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {busy && !settings ? (
+        <div className="flex justify-center py-16 text-slate-400"><Loader2 className="animate-spin" size={20} /></div>
+      ) : (
+        <TimetableCalendar events={events} settings={settings} view={view} anchor={anchor} today={today}
+          onSelectEvent={(e) => setEditing({ ...e, staffIds: (e.staff || []).map((s) => s.id), cohortIds: (e.groups || []).map((g) => g.id) })}
+          selectedId={editing?.id} />
+      )}
+
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: NAVY }}>
+              <p className="text-base font-extrabold">{editing.id ? "Edit event" : "New event"}</p>
+              <button onClick={() => setEditing(null)} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
+            </div>
+            <div className="grid flex-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2">
+              <Field label="Title"><input className={inputCls} value={editing.title || ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></Field>
+              <Field label="Date"><input type="date" className={inputCls} value={editing.date || ""} onChange={(e) => setEditing({ ...editing, date: e.target.value })} /></Field>
+              <Field label="Start"><input type="time" className={inputCls} value={editing.start || ""} onChange={(e) => setEditing({ ...editing, start: e.target.value })} /></Field>
+              <Field label="End"><input type="time" className={inputCls} value={editing.end || ""} onChange={(e) => setEditing({ ...editing, end: e.target.value })} /></Field>
+              <Field label="Room">
+                <select className={inputCls} value={editing.roomId || ""} onChange={(e) => setEditing({ ...editing, roomId: e.target.value })}>
+                  <option value="">No room</option>
+                  {rooms.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Category">
+                <select className={inputCls} value={editing.categoryId || ""} onChange={(e) => setEditing({ ...editing, categoryId: e.target.value })}>
+                  <option value="">No category</option>
+                  {cats.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+              {/* Nullable on purpose. An exam, a workshop or a staff meeting belongs to
+                  no module — which is exactly what HndSession.unitId being NOT NULL
+                  cannot express, and the reason this feature has its own table. */}
+              <Field label="Module" hint="Optional — exams and meetings have none">
+                <select className={inputCls} value={editing.unitId || ""} onChange={(e) => setEditing({ ...editing, unitId: e.target.value })}>
+                  <option value="">No module</option>
+                  {units.map((u) => <option key={u.id} value={u.id}>{u.code ? `${u.code} — ` : ""}{u.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Teaching staff" hint="Ctrl/Cmd-click for more than one">
+                <select multiple size={4} className={inputCls} value={editing.staffIds || []}
+                  onChange={(e) => setEditing({ ...editing, staffIds: [...e.target.selectedOptions].map((o) => o.value) })}>
+                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Groups" hint="Ctrl/Cmd-click for more than one">
+                <select multiple size={4} className={inputCls} value={editing.cohortIds || []}
+                  onChange={(e) => setEditing({ ...editing, cohortIds: [...e.target.selectedOptions].map((o) => o.value) })}>
+                  {cohorts.map((c) => <option key={c.id} value={c.id}>{cohortLabel(c)}</option>)}
+                </select>
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Notes"><textarea rows={2} className={inputCls} value={editing.notes || ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} /></Field>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
+                <input type="checkbox" checked={!!editing.published} onChange={(e) => setEditing({ ...editing, published: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                Published — visible to staff
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 p-3">
+              {editing.id && (
+                <>
+                  <button
+                    onClick={async () => {
+                      const until = window.prompt("Repeat weekly until (YYYY-MM-DD)?");
+                      if (!until) return;
+                      setErr(""); setNote("");
+                      try {
+                        const r = await api.ttRepeatEvent(editing.id, { until });
+                        // Per-date, because "week 4 clashes" is actionable and "there
+                        // were clashes" is not.
+                        setWarnings(r.warnings || []);
+                        setNote(`${r.created} weekly copies created.`);
+                        setEditing(null); load();
+                      } catch (e) { setErr(e?.message || "Could not repeat the event."); }
+                    }}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"><Repeat size={14} /> Repeat weekly</button>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm("Delete this event?")) return;
+                      try { await api.ttDeleteEvent(editing.id); setEditing(null); load(); }
+                      catch (e) { setErr(e?.message || "Could not delete."); }
+                    }}
+                    className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Delete</button>
+                </>
+              )}
+              <button onClick={() => setEditing(null)} className="ml-auto rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
+              <button onClick={save} disabled={!editing.title?.trim() || !editing.date}
+                className="flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}><Check size={15} /> Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {settings && (
+        <TimetableSettingsModal open={prefs} settings={settings} scope="college" onClose={() => setPrefs(false)}
+          onSave={async (patch) => { const r = await api.ttSaveSettings(patch); setSettings((s) => ({ ...s, ...r.tenant })); setPrefs(false); }} />
+      )}
+    </div>
+  );
 }

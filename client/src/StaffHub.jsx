@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Clock, Check, Calendar, Plus, FileText, ThumbsUp, UserPlus, ArrowRight,
   LogIn, LogOut, ChevronLeft, ChevronRight, X, Bell, BellRing, Search, CalendarClock,
-  LayoutDashboard, Users, CalendarDays, Inbox, BarChart3, Settings, Download,
+  LayoutDashboard, Users, CalendarDays, CalendarRange, Inbox, BarChart3, Settings, Download,
   CheckCircle2, XCircle, Clock3, MapPin, Mail, Briefcase, AlertCircle,
   Smartphone, Monitor, Coffee, Plane, Heart, Stethoscope, GraduationCap,
   Edit3, Trash2, PlusCircle, MinusCircle, Wifi, BatteryFull, SlidersHorizontal,
@@ -26,6 +26,8 @@ import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
 import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance from "./AdminLiveAttendance";
+import MyTimetable from "./MyTimetable";
+import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
 import PhoneShell, { useIsHandset } from "./PhoneShell";
 import DeleteAccount from "./DeleteAccount";
@@ -466,7 +468,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
   // Tapping a push notification opens the screen it refers to — the `link` the
   // server attached (e.g. "balance" for a leave decision, "approvals" for admins).
   useEffect(() => {
-    const KNOWN = ["home", "checkin", "balance", "calendar", "request", "documents", "approval", "summary", "timesheet", "reflection", "studentreview", "more"];
+    const KNOWN = ["home", "checkin", "timetable", "balance", "calendar", "request", "documents", "approval", "summary", "timesheet", "reflection", "studentreview", "more"];
     const onOpen = (e) => {
       const link = e.detail === "approvals" ? "approval" : e.detail;
       setScreen(KNOWN.includes(link) ? link : "home");
@@ -488,6 +490,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
     >
       {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} />}
       {screen === "checkin" && <CheckInScreen store={store} me={me} />}
+      {screen === "timetable" && <MyTimetable />}
       {screen === "balance" && <BalanceScreen store={store} me={me} />}
       {screen === "calendar" && <CalendarScreen store={store} me={me} />}
       {screen === "request" && <RequestLeaveScreen store={store} me={me} setScreen={setScreen} />}
@@ -522,7 +525,7 @@ function StatusBar() {
 }
 
 function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, showNotes, setShowNotes }) {
-  const title = { home: "Staff Hub", checkin: "Daily Check-In", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
+  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
   const unread = store.notes.length;
   const greet = greetingFor();
   const Greet = greet.Icon;
@@ -599,6 +602,7 @@ function NotePanel({ store, onClose }) {
 
 const TILES = [
   { key: "checkin", label: "Daily Check-In", Icon: Clock, sub: "Clock in & out" },
+  { key: "timetable", label: "My Timetable", Icon: CalendarDays, sub: "Where you're teaching" },
   { key: "balance", label: "Holiday Balance", Icon: Check, sub: "Days remaining" },
   { key: "calendar", label: "Holiday Calendar", Icon: Calendar, sub: "Who's off & when" },
   { key: "request", label: "Request Leave", Icon: Plus, sub: "Book time off" },
@@ -2682,6 +2686,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
     { key: "timetable", label: "Timetable", I: CalendarClock },
+    { key: "scheduling", label: "Scheduling", I: CalendarRange },
     { key: "passwords", label: "Reset Passwords", I: KeyRound },
     { key: "settings", label: "Settings", I: Settings },
     { key: "audit", label: "Audit Trail", I: History },
@@ -2785,6 +2790,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "staff" && <AdminStaff store={store} />}
         {activeKey === "timesheets" && <AdminTimesheets store={store} />}
         {activeKey === "timetable" && <AdminTimetable store={store} />}
+        {activeKey === "scheduling" && <AdminTimetablePlanner store={store} />}
         {activeKey === "admissions" && <AdminAdmissions store={store} />}
         {activeKey === "ism" && <AdminIsm store={store} />}
         {activeKey === "slc" && <AdminSlc store={store} />}
