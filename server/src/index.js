@@ -99,6 +99,7 @@ app.use("/api/hnd", wrapAsync(require("./routes/hnd")));
 app.use("/api/tags", wrapAsync(require("./routes/tags")));
 app.use("/api/interactions", wrapAsync(require("./routes/interactions")));
 app.use("/api/assessments", wrapAsync(require("./routes/assessments")));
+app.use("/api/assessment-tracker", wrapAsync(require("./routes/assessmentTracker")));
 app.use("/api/prediction", wrapAsync(require("./routes/prediction")));
 app.use("/api/mitigations", wrapAsync(require("./routes/mitigations")));
 app.use("/api/timesheets", wrapAsync(require("./routes/timesheets")));
