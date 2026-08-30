@@ -2239,6 +2239,17 @@ const NAV_GROUPS = {
   // sits on each child: "My Timetable" needs no grant because it shows only your own
   // teaching, "Scheduling" is grantable. The parent grants nothing — see above.
   "timetabling": { label: "Timetabling", I: CalendarRange },
+  // Admissions and ISM are two halves of one journey — the application, then the
+  // interview that decides it — and an admissions officer moves between them all day.
+  // ISM keeps the college's own name for the screen rather than being renamed
+  // "Interviews" underneath the parent: the staff who use it ask for it by those three
+  // letters, and a nav label is not the place to correct somebody's vocabulary.
+  "admissions-interviews": { label: "Admissions", I: ClipboardList },
+  // The three student screens likewise: the list, the reviews written about them and
+  // the queries they raise are one subject approached from three sides. The child
+  // labels drop the word "Student" because the parent already says it — three rows
+  // reading "Student …" indented under "Students" is noise, not navigation.
+  "student-records": { label: "Students", I: GraduationCap },
 };
 
 // One sidebar button, used at both levels — `indent` is the only difference between a
@@ -2769,10 +2780,12 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "registers", label: "Registers — HND", I: ClipboardList },
     { key: "live-attendance", label: "Live Attendance", I: Radio },
     { key: "attendance-tags", label: "NFC Tags", I: Nfc },
-    { key: "students", label: "Students", I: GraduationCap },
+    { key: "students", label: "All Students", I: GraduationCap, group: "student-records" },
+    { key: "studentreviews", label: "Reviews", I: MessageSquare, group: "student-records" },
+    { key: "studentqueries", label: "Queries", I: Inbox, group: "student-records" },
     { key: "attendance-emails", label: "Attendance Emails", I: Mail },
-    { key: "admissions", label: "Admissions", I: ClipboardList },
-    { key: "ism", label: "ISM", I: MessageSquare },
+    { key: "admissions", label: "Applications", I: ClipboardList, group: "admissions-interviews" },
+    { key: "ism", label: "ISM", I: MessageSquare, group: "admissions-interviews" },
     { key: "slc", label: "SLC", I: Wallet },
     // The three assessment screens collapse under one parent — see NAV_GROUPS. The
     // labels are the CHILD labels, so they read sensibly indented beneath it
@@ -2786,8 +2799,6 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
     { key: "staffreviews", label: "Staff Reviews", I: ClipboardList },
-    { key: "studentreviews", label: "Student Reviews", I: MessageSquare },
-    { key: "studentqueries", label: "Student Queries", I: Inbox },
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
     { key: "timetable", label: "Timetable", I: CalendarClock },
@@ -2915,6 +2926,16 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
             // not a page, so it can never be activeKey itself — without this the sidebar
             // shows nothing highlighted while a child page is open.
             const holdsActive = node.children.some(c => c.key === activeKey);
+            // A count on a CLOSED parent, summed from its children. The amber badge exists
+            // to be noticed without a click, and Student Queries — the one screen that
+            // carries a waiting-for-you number — now sits one level down; leaving the
+            // header bare would mean the only sign that somebody is waiting is hidden
+            // inside a shut group, which is worse than the flat nav it replaced.
+            //
+            // Dropped once the group is open, because the child is then showing the same
+            // number a few pixels below. Two amber pills for one queue reads as two
+            // queues, and the reader has no way to tell that it isn't.
+            const rolledBadge = open ? 0 : node.children.reduce((a, c) => a + (navBadges[c.key] || 0), 0);
             return (
               <div key={node.id}>
                 <button
@@ -2924,6 +2945,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
                 >
                   <node.I size={18} className="transition-transform duration-200 group-hover:scale-110" />
                   <span className="flex-1 text-left">{node.label}</span>
+                  {rolledBadge > 0 && <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{rolledBadge}</span>}
                   {open ? <ChevronDown size={16} className="shrink-0 opacity-70" /> : <ChevronRight size={16} className="shrink-0 opacity-70" />}
                 </button>
                 {open && (
