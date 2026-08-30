@@ -148,6 +148,17 @@ if (!filter.length || filter.some((q) => "unit".includes(q))) {
   const r = spawnSync("node", ["--test", "src/**/*.test.js"], { cwd: server, stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (node --test)", status: r.status === 0 ? "passed" : "failed", code: r.status });
   console.log("");
+
+  // The client has no test framework, and this is not one. It is the single pure
+  // module in client/src — the timetable's date arithmetic — which is tested because
+  // the server half produced a clock-change bug in exactly this shape and the client
+  // repeats it. client/package.json is "type": "module", so node runs it directly.
+  // An explicit file, not a glob: there is one such file, and a glob would invite
+  // somebody to point it at src/ where every .jsx would be dragged in.
+  console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
+  console.log("");
 }
 
 for (const suite of suites) {
