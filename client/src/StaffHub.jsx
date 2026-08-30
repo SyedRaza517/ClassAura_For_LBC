@@ -22,6 +22,7 @@ import {
   LineChart, Line, RadialBarChart, RadialBar
 } from "recharts";
 import { downloadCSV } from "./csv";
+import { groupNav } from "./navGroups";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
@@ -2201,6 +2202,26 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
 const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
 
+// COLLAPSIBLE SIDEBAR GROUPS.
+//
+// A group is presentation only. It is NOT a page, has no key in ADMIN_PAGES, and
+// renders nothing — clicking it just expands and collapses its children. That is
+// deliberate: every permission decision stays on the CHILD, so a group can never
+// become a back door that shows somebody a screen their pages do not include.
+//
+// Consequences that the rendering below has to honour:
+//   * a group whose children are ALL filtered out by permissions must not appear at
+//     all — otherwise an admin without "assessments" or "assessment-tracker" gets a
+//     header that expands to nothing.
+//   * a group containing the active page must start expanded, or a reload lands on a
+//     screen whose sidebar entry is hidden inside a collapsed parent.
+// The metadata stays here because it carries a lucide icon; the grouping ITSELF lives
+// in navGroups.js, which is pure and therefore testable under plain node — see
+// navGroups.test.js, which pins the empty-parent invariant described above.
+const NAV_GROUPS = {
+  "assessments-record": { label: "Assessments Record", I: ClipboardList },
+};
+
 // A grantable page is named in THREE hand-maintained places and nothing joins them:
 // ADMIN_PAGES above (which the server duplicates a fourth time in validate.js),
 // PAGE_LABELS above (the wording beside each checkbox on the Access tab) and allNav
@@ -2680,11 +2701,14 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "admissions", label: "Admissions", I: ClipboardList },
     { key: "ism", label: "ISM", I: MessageSquare },
     { key: "slc", label: "SLC", I: Wallet },
-    { key: "assessments", label: "Assessments", I: Award },
-    { key: "assessment-tracker", label: "Assessment Tracker", I: Gauge },
+    // The three assessment screens collapse under one parent — see NAV_GROUPS. The
+    // labels are the CHILD labels, so they read sensibly indented beneath it
+    // ("Assessments Record → Assessments Data") rather than repeating the parent's word.
+    { key: "assessments", label: "Assessments Data", I: Award, group: "assessments-record" },
+    { key: "assessment-tracker", label: "Tracker", I: Gauge, group: "assessments-record" },
     // Two screens, ONE permission. See the nav filter below for why this key is
     // deliberately absent from ADMIN_PAGES.
-    { key: "assessment-tracker-setup", label: "Tracker Setup", I: SlidersHorizontal },
+    { key: "assessment-tracker-setup", label: "Tracker Setup", I: SlidersHorizontal, group: "assessments-record" },
     { key: "pat", label: "PAT", I: MessageSquare },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
@@ -2726,6 +2750,22 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
   // fall back to the first one they can see, so no forbidden page ever renders.
   const activeKey = nav.some(n => n.key === tab) ? tab : (nav[0]?.key || null);
+  // The sidebar tree, and which groups are expanded.
+  //
+  // Groups start CLOSED and open on click, which is the behaviour asked for. The one
+  // exception is the initial seed: the group holding the page already on screen opens,
+  // so a reload onto a child screen does not hide that child inside a shut parent.
+  //
+  // Seeded ONCE, deliberately. Re-deriving it whenever activeKey moves would re-open a
+  // group the user had just collapsed while standing on one of its pages, which reads
+  // as the collapse being ignored.
+  const navTree = useMemo(() => groupNav(nav, NAV_GROUPS), [nav]);
+  const [openGroups, setOpenGroups] = useState(() => {
+    const g = groupNav(nav, NAV_GROUPS).find(n => n.kind === "group" && n.children.some(c => c.key === activeKey));
+    return g ? { [g.id]: true } : {};
+  });
+  const toggleGroup = (id) => setOpenGroups(o => ({ ...o, [id]: !o[id] }));
+  const groupOpen = (g) => !!openGroups[g.id];
   const handset = useIsHandset();
   // Android back (mobile dashboard): return to the first tab, then out to the staff app.
   useBackHandler(handset, () => {
@@ -2757,15 +2797,47 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
           <button onClick={() => toggleSidebar(false)} title="Hide menu" aria-label="Hide menu" className="press ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><PanelLeftClose size={18} /></button>
         </div>
         <nav className="flex-1 space-y-1">
-          {nav.map((n, i) => (
-            <button key={n.key} onClick={() => setTab(n.key)} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${activeKey === n.key ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${alpha(BLUE, 60)}`, animationDelay: `${i * 35}ms` } : { animationDelay: `${i * 35}ms` }}>
-              <n.I size={18} className="transition-transform duration-200 group-hover:scale-110" /><span className="flex-1 text-left">{n.label}</span>
-              {(n.key === "requests" || n.key === "approvals") && pendingCount > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingCount}</span>}
-              {n.key === "signups" && pendingSignups > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingSignups}</span>}
-              {n.key === "studentqueries" && openQueries > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{openQueries}</span>}
-              {n.key === "timesheets" && timesheetsPending > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{timesheetsPending}</span>}
-            </button>
-          ))}
+          {(() => {
+            // One implementation of the nav button, used at both levels. `indent` is
+            // the only difference between a top-level entry and a child, so a child
+            // cannot drift out of step with the rest of the sidebar's styling.
+            const NavButton = ({ n, i, indent }) => (
+              <button key={n.key} onClick={() => setTab(n.key)} className={`group flex w-full items-center gap-3 rounded-xl py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${indent ? "pl-9 pr-3" : "px-3"} ${activeKey === n.key ? "text-white shadow-md" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 8px 20px -6px ${alpha(BLUE, 60)}`, animationDelay: `${i * 35}ms` } : { animationDelay: `${i * 35}ms` }}>
+                <n.I size={indent ? 16 : 18} className="transition-transform duration-200 group-hover:scale-110" /><span className="flex-1 text-left">{n.label}</span>
+                {(n.key === "requests" || n.key === "approvals") && pendingCount > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingCount}</span>}
+                {n.key === "signups" && pendingSignups > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{pendingSignups}</span>}
+                {n.key === "studentqueries" && openQueries > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{openQueries}</span>}
+                {n.key === "timesheets" && timesheetsPending > 0 && <span className="pop rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900 shadow-sm">{timesheetsPending}</span>}
+              </button>
+            );
+            return navTree.map((node, i) => {
+              if (node.kind === "item") return <NavButton key={node.item.key} n={node.item} i={i} />;
+              const open = groupOpen(node);
+              // A child being shown is what makes the PARENT look selected. The parent
+              // is not a page, so it can never be activeKey itself — without this the
+              // sidebar would show nothing highlighted while a child page is open.
+              const holdsActive = node.children.some(c => c.key === activeKey);
+              return (
+                <div key={node.id}>
+                  <button
+                    onClick={() => toggleGroup(node.id)}
+                    aria-expanded={open}
+                    className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.98] slide-in ${holdsActive && !open ? "bg-blue-50 text-blue-700" : "text-slate-500 hover:translate-x-1 hover:bg-blue-50 hover:text-blue-700"}`}
+                    style={{ animationDelay: `${i * 35}ms` }}
+                  >
+                    <node.I size={18} className="transition-transform duration-200 group-hover:scale-110" />
+                    <span className="flex-1 text-left">{node.label}</span>
+                    {open ? <ChevronDown size={16} className="shrink-0 opacity-70" /> : <ChevronRight size={16} className="shrink-0 opacity-70" />}
+                  </button>
+                  {open && (
+                    <div className="mt-1 space-y-1">
+                      {node.children.map((c, ci) => <NavButton key={c.key} n={c} i={ci} indent />)}
+                    </div>
+                  )}
+                </div>
+              );
+            });
+          })()}
         </nav>
         <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-400">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}</div>
       </aside>
@@ -2777,6 +2849,10 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
           {/* On a phone, a way back to the staff app — admins (incl. limited admins
               who registered on the app) keep both their staff view and the console. */}
           {onExitToStaffApp && <button onClick={onExitToStaffApp} className="flex shrink-0 items-center gap-1.5 rounded-full border-2 border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 active:scale-95"><ChevronLeft size={14} /> Staff App</button>}
+          {/* DELIBERATELY FLAT, unlike the sidebar. This is a horizontal scrolling strip
+              of pills, where a collapsible parent would hide its children behind an
+              extra tap and buy no space — the strip already scrolls. Every grouped
+              child keeps its own pill, so nothing becomes unreachable on a phone. */}
           {nav.map(n => <button key={n.key} onClick={() => setTab(n.key)} className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm transition-all active:scale-95 ${activeKey === n.key ? "text-white" : "bg-white text-slate-500 hover:bg-blue-50 hover:text-blue-700"}`} style={activeKey === n.key ? { background: `linear-gradient(135deg, ${BLUE}, ${NAVY_DARK})`, boxShadow: `0 6px 16px -6px ${alpha(BLUE, 60)}` } : {}}><n.I size={14} /> {n.label}</button>)}
         </div>
         {/* An admin granted no pages: show a friendly note rather than an empty console. */}
