@@ -24,6 +24,7 @@ const { importAttendance } = require("./moodleAttendance");
 const predictionRunner = require("./prediction/runner");
 const engagement = require("./vle/engagementNormalise");
 const { assessmentTypeFor: itemType } = require("./vle/moodleItemType");
+const { dueDatesByCmid } = require("./vle/moodleActivityDates");
 const { isoDate } = require("./vle/isoDate");
 const { localDate, ZONE } = require("./clock");
 
@@ -264,6 +265,10 @@ async function syncFromMoodle({ dryRun = false } = {}) {
     const unitByCode = new Map(existingUnits.map((u) => [u.code, u]));
 
     const placeOf = termsBySectionId(sections);
+    // Deadlines for this course's activities, keyed by course-module id. Built ONCE per
+    // course, from the core_course_get_contents response already in hand — see
+    // vle/moodleActivityDates.js. Costs no extra Moodle call.
+    const dueByCmid = dueDatesByCmid(sections);
     const unplaced = [];
 
     const unitByCmid = new Map();  // course-module id → unit, to trace a grade item home
@@ -410,6 +415,12 @@ async function syncFromMoodle({ dryRun = false } = {}) {
       const title = clean(item.itemname) || "Assessment";
       const max = Number(item.grademax) > 0 ? Math.round(Number(item.grademax)) : 100;
 
+      // The deadline Moodle holds for this activity, or undefined when it holds none.
+      // `undefined` rather than null matters: it is the difference between "Moodle does
+      // not say" and "Moodle says there is no deadline", and only the first must leave
+      // a date a human typed alone.
+      const moodleDue = item.cmid != null ? dueByCmid.get(Number(item.cmid)) : undefined;
+
       let row = existingByItem.get(itemId) || null;
       // An assessment of the same name may already have been created by hand.
       if (!row && unit.id) row = await prisma.assessment.findFirst({ where: { unitId: unit.id, title } });
@@ -436,9 +447,27 @@ async function syncFromMoodle({ dryRun = false } = {}) {
           // only those with a mark on file. A retitle changes nothing anybody is
           // measured on, hence the comparison.
           const rescaled = safeMax !== row.maxMarks;
+          // THE DEADLINE IS FILLED, NEVER OVERWRITTEN.
+          //
+          // Assessment.dueDate has no `source` column, so there is no way to tell a
+          // date this sync wrote from one an administrator typed on the Assessments
+          // page. Overwriting nightly would silently revert their correction — the
+          // failure moodleItemType.js already refuses to commit with `type`, where a
+          // correction "appears to work and silently reverts".
+          //
+          // So: set it when we have none, and when Moodle disagrees with a date already
+          // on file, REPORT it and change nothing. That mirrors how a manually-entered
+          // mark is handled a few dozen lines below, and it keeps the sync incapable of
+          // moving a deadline students have been told about.
+          const dueData = {};
+          if (moodleDue && !row.dueDate) {
+            dueData.dueDate = moodleDue;
+          } else if (moodleDue && row.dueDate && row.dueDate !== moodleDue) {
+            note(`${unit.code} · ${title}: Moodle has a deadline of ${moodleDue} but ${row.dueDate} is on file here — left unchanged. Change it on the Assessments page if Moodle is right.`);
+          }
           row = await prisma.assessment.update({
             where: { id: row.id },
-            data: { title, maxMarks: safeMax, moodleItemId: itemId, moodleCmid: item.cmid || null },
+            data: { title, maxMarks: safeMax, moodleItemId: itemId, moodleCmid: item.cmid || null, ...dueData },
           });
           if (rescaled) await touchUnitCohort(unit.id);
         }
@@ -458,7 +487,15 @@ async function syncFromMoodle({ dryRun = false } = {}) {
               // Assessments page, and a sync that re-flattened their correction every
               // night would be worse than never having mapped anything -- the correction
               // would appear to work and silently revert.
-              data: { unitId: unit.id, title, type: itemType(item.itemmodule) || "Assignment", maxMarks: max, moodleItemId: itemId, moodleCmid: item.cmid || null },
+              //
+              // dueDate arrives here for the first time. Until now the sync created
+              // every assessment with no deadline at all, so "when is this due" was
+              // unanswerable at exactly the colleges that import their assessments
+              // rather than typing them — and the assessment tracker is built around
+              // that column. `?? null` because the map omits activities with no
+              // deadline, and undefined would make Prisma skip the field rather than
+              // store "not recorded".
+              data: { unitId: unit.id, title, type: itemType(item.itemmodule) || "Assignment", maxMarks: max, moodleItemId: itemId, moodleCmid: item.cmid || null, dueDate: moodleDue ?? null },
             });
           } catch (e) { note(`${label} / ${unit.code}: could not create the assessment "${title}" — ${e.message}`); continue; }
           // A brand-new assessment is work nobody has done yet, so it enlarges the
