@@ -91,6 +91,12 @@ const sUnit = (m) => ({
   // the display name, so a unit assigned before this existed still shows a name.
   tutorStaffId: m.tutorStaffId ?? null,
   tutorName: m.tutorStaff?.name ?? m.tutor ?? "",
+  // The module leader, beside the lecturer above. Null when nobody has been named —
+  // "not recorded", which the tracker renders as "—" rather than as a finding. No
+  // fallback to a free-text name, unlike tutorName: there is no pre-relation history
+  // to carry here, so an empty string would invent a distinction that does not exist.
+  leaderStaffId: m.leaderStaffId ?? null,
+  leaderName: m.leaderStaff?.name ?? null,
   cohortId: m.cohortId ?? null, termId: m.termId ?? null,
   // Present only when the query asked Prisma to count relations.
   ...(m._count ? { sessionCount: m._count.sessions, studentCount: m._count.enrolments } : {}),
@@ -136,6 +142,9 @@ const sInteraction = (i) => ({
 const sAssessment = (a) => ({
   id: a.id, unitId: a.unitId, title: a.title, type: a.type, maxMarks: a.maxMarks,
   weight: a.weight, dueDate: a.dueDate, createdAt: a.createdAt,
+  // When the scripts are to be MARKED by, as opposed to dueDate above, which is when
+  // students hand them in. Null when the college sets no internal marking deadline.
+  markingDueDate: a.markingDueDate ?? null,
   ...(a._count ? { gradedCount: a._count.grades } : {}),
   ...(a.unit ? { unitCode: a.unit.code, unitName: a.unit.name } : {}),
 });
