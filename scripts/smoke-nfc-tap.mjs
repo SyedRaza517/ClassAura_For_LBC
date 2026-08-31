@@ -91,10 +91,19 @@ const shift = (hhmm, mins) => {
 // the seed left it — the suites share one seeded database and it is not re-run between
 // them.
 const made = { tags: [], sessions: [], units: [], enrolments: [], marks: [], taps: [], checkIns: [], terms: [], cohorts: [], courses: [] };
+// Seeded sessions parked out of the way for the duration — see the setup block below.
+let parkedSessionIds = [];
 let configExisted = false, priorConfig = null;
 
 async function cleanup() {
   try {
+    // Un-park the seeded sessions FIRST: they are the only thing here that belongs to
+    // another suite, and leaving them dated 1970 would quietly empty today's register
+    // for everything that runs after this.
+    if (parkedSessionIds.length) {
+      await db.hndSession.updateMany({ where: { id: { in: parkedSessionIds } }, data: { date: todayLocal() } })
+        .catch(() => {});
+    }
     for (const id of made.taps) await db.tagTap.delete({ where: { id } }).catch(() => {});
     for (const id of made.marks) await db.attendanceMark.delete({ where: { id } }).catch(() => {});
     for (const id of made.checkIns) await db.checkIn.delete({ where: { id } }).catch(() => {});
@@ -316,6 +325,26 @@ try {
 
   const today = todayLocal();
   const now = nowHHMM();
+
+  // PARK EVERY SESSION THE SEED ALREADY PUT ON TODAY, OR THIS SUITE ONLY PASSES AFTER
+  // THE COLLEGE HAS GONE HOME.
+  //
+  // The students here are the seeded ones, and they are enrolled in seeded units. The
+  // seed timetables those units during ordinary teaching hours — there is a 10:00-13:00
+  // lecture today — so resolveTapSession sees it as a candidate alongside the sessions
+  // this suite creates. Two consequences, both of which look like product bugs and are
+  // not: a tap meant to be refused because "the lecture has ended" succeeds against the
+  // seeded lecture instead, and a tap meant to resolve to one session comes back
+  // "ambiguous" because two are genuinely running.
+  //
+  // It went unnoticed because the suite is usually run in the evening, when nothing is
+  // timetabled. Moved to a date far in the past rather than deleted, and restored in
+  // cleanup, so the seed is untouched for the suites that run after this one.
+  const preexisting = await db.hndSession.findMany({ where: { date: today }, select: { id: true } });
+  parkedSessionIds = preexisting.map((s) => s.id);
+  if (parkedSessionIds.length) {
+    await db.hndSession.updateMany({ where: { id: { in: parkedSessionIds } }, data: { date: "1970-01-01" } });
+  }
 
   const unit = await db.unit.create({
     data: { code: `NFC${RUN}`.slice(0, 12), name: `Tap Suite Unit ${RUN}`, startDate: today, endDate: today },

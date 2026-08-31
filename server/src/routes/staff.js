@@ -4,6 +4,9 @@ const audit = require("../audit");
 const { sStaff } = require("../serializers");
 const { requireAuth, requireAdmin, requireSuperAdmin, requireAnyPage, hasPage, hashPassword, blockedByRank, EXPLICIT_ONLY } = require("../auth");
 const { notifyStaff } = require("../notify");
+// The college's support-department list, so membership can be validated against the
+// departments that actually exist rather than stored as free text.
+const supportDepartments = require("../supportDepartments");
 const { sendEmail } = require("../email");
 const { isInt32, MAX_ALLOWANCE_DAYS, isString, isNonEmptyString, isHomeSite, isRealDate, ADMIN_PAGES } = require("../validate");
 const { sendInvite, unguessablePassword } = require("../invite");
@@ -213,6 +216,34 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
   const { pages } = req.body || {};
   if (pages !== null && !Array.isArray(pages)) return res.status(400).json({ error: "pages must be an array or null" });
   if (Array.isArray(pages) && !pages.every((p) => isString(p))) return res.status(400).json({ error: "pages must be page-key strings" });
+
+  // SUPPORT-DEPARTMENT MEMBERSHIP, alongside the page grant but NOT one of the pages.
+  //
+  // The "referrals" page opens the feature; this decides which queues within it a
+  // person reads, and therefore who reads a student's disclosures to the wellbeing
+  // team. It cannot be a page key because the department list is configuration the
+  // college edits at runtime, and ADMIN_PAGES is hand-maintained in four files.
+  //
+  // Undefined means "not being changed", which matters because the access screen may
+  // save pages without touching membership. Null or [] clears it.
+  //
+  // Deliberately NOT collapsed to null-means-everything the way adminPages is. Null
+  // there is a convenience for the common case of a full administrator; null here
+  // would mean the most senior accounts silently read every case note, which is the
+  // outcome the whole confidentiality split exists to prevent. Membership is always
+  // an explicit list.
+  let departmentsData = {};
+  if (req.body?.supportDepartments !== undefined) {
+    const wanted = req.body.supportDepartments;
+    if (wanted !== null && !Array.isArray(wanted)) {
+      return res.status(400).json({ error: "supportDepartments must be an array or null" });
+    }
+    const known = new Set((await supportDepartments.all()).map((d) => d.key));
+    // Filtered against the college's OWN list, so a key that names no department
+    // cannot be stored and later resurrect if somebody creates that department.
+    const cleanDepts = wanted == null ? [] : [...new Set(wanted.filter((k) => isString(k) && known.has(k)))];
+    departmentsData = { supportDepartments: cleanDepts.length ? JSON.stringify(cleanDepts) : null };
+  }
   const target = await prisma.staff.findUnique({ where: { id: req.params.id } });
   if (!target) return res.status(404).json({ error: "Staff not found" });
   // The Super Admin always has everything and must never be demoted here.
@@ -236,14 +267,14 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
       && ADMIN_PAGES.filter((p) => !EXPLICIT_ONLY.has(p)).every((p) => clean.includes(p));
     data = { accountRole: "ADMIN", adminPages: full ? null : JSON.stringify(clean) };
   }
-  const staff = await prisma.staff.update({ where: { id: req.params.id }, data });
+  const staff = await prisma.staff.update({ where: { id: req.params.id }, data: { ...data, ...departmentsData } });
   // The single most consequential change one colleague can make to another: it
   // decides which admin pages they can reach, and therefore what data they can see.
   audit.record(req, {
     action: "staff.access.changed", entity: "Staff", entityId: staff.id,
     summary: `Access for ${staff.name} (${staff.email}) set to ${clean.length === 0 ? "none — no longer an administrator" : clean.length + " page(s): " + clean.join(", ")}`,
-    before: { accountRole: target.accountRole, adminPages: target.adminPages },
-    after: { accountRole: staff.accountRole, adminPages: staff.adminPages },
+    before: { accountRole: target.accountRole, adminPages: target.adminPages, supportDepartments: target.supportDepartments },
+    after: { accountRole: staff.accountRole, adminPages: staff.adminPages, supportDepartments: staff.supportDepartments },
   });
   res.json(sStaff(staff));
 });

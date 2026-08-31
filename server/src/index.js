@@ -117,6 +117,11 @@ app.use("/api/timetable", wrapAsync(require("./routes/timetable")));
 // teaching staff.
 app.use("/api/timetabling", wrapAsync(require("./routes/timetabling")));
 app.use("/api/my-timetable", wrapAsync(require("./routes/myTimetable")));
+// Handing a student to Wellbeing, ASK or Student Support. One grantable page opens
+// the feature; Staff.supportDepartments decides which queues within it a person sees,
+// because the department list is configuration the college edits at runtime and a
+// permission key cannot be minted into four source files at four in the afternoon.
+app.use("/api/referrals", wrapAsync(require("./routes/referrals")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
 app.use("/api/admission-pdf", wrapAsync(require("./routes/admissionPdf")));

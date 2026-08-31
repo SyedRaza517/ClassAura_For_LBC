@@ -309,6 +309,21 @@ model Staff {
   // admins are not locked out). '[]' means configured with NO pages. Ignored for a
   // Super Admin, who always has everything.
   adminPages   String?
+  /// Which SUPPORT DEPARTMENTS this person belongs to, as a JSON array of department
+  /// keys, e.g. '["wellbeing"]'. Null means none.
+  ///
+  /// A STRING ARRAY RATHER THAN A GRANTABLE PAGE, and that is forced rather than
+  /// chosen. The department list is configuration the college edits at runtime, so a
+  /// college adding "Careers" at four in the afternoon cannot also add a permission
+  /// key to the four hand-maintained copies of ADMIN_PAGES. The page "referrals"
+  /// grants the FEATURE; this column decides which queues within it a person sees.
+  ///
+  /// Deliberately NOT ignored for a Super Admin, unlike adminPages above. Holding
+  /// every admin page is a statement about administrative authority; being on the
+  /// wellbeing team is a statement about who reads a student's disclosures, and
+  /// "the most senior account sees every case note by default" is exactly the
+  /// outcome the confidentiality split exists to prevent.
+  supportDepartments String?
   allowance    Int      @default(28)
   initials     String
   colour       String
@@ -855,6 +870,9 @@ model Student {
   enrolments   Enrolment[]
   marks        AttendanceMark[]
   interactions Interaction[]
+  /// Handed to Wellbeing, ASK or Student Support. Cascades with the student, like
+  /// every other pastoral record: a deleted student takes their case history with them.
+  referrals    Referral[]
   grades       AssessmentGrade[]
   queries      StudentQuery[]
   reviews      StudentReview[]
@@ -945,6 +963,10 @@ model Interaction {
   tutor            String   @default("")  // staff member who conducted the meeting
   loggedBy         String?                // who recorded the interaction
   createdAt        DateTime @default(now())
+
+  /// Referrals raised out of this meeting. Optional on the far side — most meetings
+  /// produce none, and a referral can exist with no meeting behind it.
+  referrals        Referral[]
 
   @@index([studentId])
   @@index([followUpRequired])
@@ -3096,4 +3118,100 @@ model TimetableUserPref {
   updatedAt DateTime @updatedAt
 
   @@unique([staffId])
+}
+
+// ---------------------------------------------------------------------------
+// SUPPORT REFERRALS — handing a student on to Wellbeing, ASK or Student Support
+// ---------------------------------------------------------------------------
+
+/// The college's own list of support departments.
+///
+/// Configuration, not a constant, because "Wellbeing / ASK / Student Support" is one
+/// college's vocabulary and the next one merges two of them or adds Careers. Same
+/// pattern as AttendanceBandConfig and PredictionModelSettings: platform defaults in
+/// code, one JSON column merged over them, no row until somebody edits something.
+model SupportDepartmentConfig {
+  /// Constant primary key — the singleton guarantee. See TenantBranding for why
+  /// find-then-create is not good enough and the save path upserts on this literal.
+  id        String   @id @default("singleton")
+  /// [{ key, name, active }]. Validated and allowlisted by supportDepartments.js on
+  /// the way in and out; nothing here constrains it, so a field added tomorrow needs
+  /// no migration.
+  departments Json   @default("[]")
+  updatedBy String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+/// One student handed to one department, and what became of it.
+///
+/// NOT columns on Interaction, and not a reuse of Intervention. The PAT log sits
+/// behind a single grant, so a wellbeing case note stored there is readable by every
+/// tutor in the college; and every Intervention row carries a frozen snapshot of the
+/// student's risk band, because it answers "were they worse when we stepped in?" — a
+/// question a coursework referral to ASK has no business answering.
+model Referral {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  /// The receiving department's KEY, as a plain string — deliberately NOT a foreign
+  /// key to SupportDepartmentConfig.
+  ///
+  /// A college that merges two teams next year must not have its case records cascade
+  /// away with the department row, and a referral to a team that no longer exists
+  /// still has to render, under whatever key it was raised against. Same reasoning
+  /// that keeps loggedBy a plain string on Interaction: the record outlives the
+  /// organisation chart.
+  department String
+
+  /// The referrer's own words on why. Visible to BOTH sides — they wrote it.
+  reason    String  @default("")
+  /// "routine" | "urgent".
+  urgency   String  @default("routine")
+  /// "open" | "accepted" | "closed".
+  status    String  @default("open")
+
+  /// What became of it, as a CODE. Null until closed, and that null means "not closed
+  /// yet" — never "no outcome". Null-is-not-zero, pointed at a workflow.
+  outcome   String?
+
+  /// THE RECEIVING TEAM'S CASE NOTES. Never leaves the department.
+  ///
+  /// This field and outcomeDetail below are the two the referrer's serialiser must
+  /// never name. A tutor learns that their referral was picked up and closed as
+  /// "supported"; what the student disclosed is not theirs to read. Same line
+  /// MitigatingCircumstance draws between what the college decided and why.
+  notes         String  @default("")
+  /// Free text written at closure. Department-only, for the same reason as notes.
+  outcomeDetail String  @default("")
+
+  /// Who acted, and when. Names as plain strings and dates as YYYY-MM-DD, matching
+  /// Interaction: a referral must still say who closed it after that person has left,
+  /// and a SetNull relation erases precisely the fact worth keeping.
+  raisedBy   String?
+  raisedOn   String   // YYYY-MM-DD
+  acceptedBy String?
+  acceptedOn String?
+  closedBy   String?
+  closedOn   String?
+
+  /// Whether the referrer chose to tell the student. Recorded rather than derived,
+  /// because "did we tell them" is a question the college will be asked and the
+  /// default is off — an unticked box and a box nobody was offered look identical
+  /// afterwards unless one of them is written down.
+  studentNotified Boolean @default(false)
+
+  /// The PAT meeting this came out of, when there was one. Optional and SetNull on
+  /// delete, mirroring Intervention.studentReviewId: reorganising pastoral records
+  /// must never destroy a referral, and one raised from the student record or by the
+  /// department itself has no meeting behind it at all.
+  interaction   Interaction? @relation(fields: [interactionId], references: [id], onDelete: SetNull)
+  interactionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([department, status])
+  @@index([raisedBy])
 }

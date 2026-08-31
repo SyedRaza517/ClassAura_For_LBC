@@ -434,7 +434,22 @@ export const api = {
   resetStaffTotp: (id) => request(`/staff/${id}/totp`, { method: "DELETE" }),
   // Super-admin only: set which admin pages a staff member may access.
   // pages: array of page keys, or null to clear the restriction (full access).
-  updateStaffAccess: (id, pages) => request(`/staff/${id}/access`, { method: "PUT", body: { pages } }),
+  //
+  // `supportDepartments` — which support-department queues this person works — rides
+  // on the same call because it is set from the same screen and the two are one
+  // administrative decision: the "referrals" page opens the feature, the membership
+  // list decides which queues within it, and granting one without the other produces a
+  // person who can open Referrals and see nothing.
+  //
+  // It is OMITTED ENTIRELY when the caller does not pass it, rather than sent as [].
+  // Those say different things to the server — `undefined` means "leave membership
+  // alone", null or [] means "remove them from every department" — and every caller
+  // that predates this feature passes two arguments, so an absent third must never be
+  // read as a clear-out.
+  updateStaffAccess: (id, pages, supportDepartments) => request(`/staff/${id}/access`, {
+    method: "PUT",
+    body: { pages, ...(supportDepartments === undefined ? {} : { supportDepartments }) },
+  }),
   // check-ins
   listCheckins: (date) => request(`/checkins${date ? `?date=${date}` : ""}`),
   checkIn: (site) => request("/checkins/check-in", { method: "POST", body: site ? { site } : {} }),
@@ -596,6 +611,35 @@ export const api = {
   addMitigationAdjustment: (id, body) => request(`/mitigations/${id}/adjustments`, { method: "POST", body }),
   removeMitigationAdjustment: (id, adjustmentId) =>
     request(`/mitigations/${id}/adjustments/${adjustmentId}`, { method: "DELETE" }),
+
+  // Referrals to support departments (Wellbeing, ASK, Student Support, or whatever
+  // this college calls its own).
+  //
+  // TWO ROUTES RETURN A REFERRAL AND THEY ARE NOT THE SAME OBJECT. `listReferrals`
+  // is the RECEIVING department's view and carries the case notes and the free text
+  // written at closure; `myReferrals` is the view of the tutor who raised it and is
+  // built by a server-side allowlist that names neither. That asymmetry is the whole
+  // confidentiality model, so nothing in this client should ever call one route to
+  // fill in fields the other withheld — the omission is the feature, not a gap.
+  //
+  // Both are gated on the "referrals" page, and the queue additionally on membership:
+  // asking for a department you are not on is a 403, deliberately, because an empty
+  // queue and a queue you may not read are different answers.
+  referralDepartments: () => request("/referrals/departments"),
+  // Replaces the whole list — the editor edits all of it, and retiring a department
+  // has to be expressible. Needs "settings" as well as "referrals" on the server.
+  saveReferralDepartments: (departments) => request("/referrals/departments", { method: "PUT", body: { departments } }),
+  listReferrals: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== "" && v != null)).toString();
+    return request(`/referrals${q ? `?${q}` : ""}`);
+  },
+  myReferrals: () => request("/referrals/mine"),
+  addReferral: (body) => request("/referrals", { method: "POST", body }),
+  acceptReferral: (id) => request(`/referrals/${id}/accept`, { method: "PUT" }),
+  saveReferralNotes: (id, notes) => request(`/referrals/${id}/notes`, { method: "PUT", body: { notes } }),
+  // `outcome` is required and the server 400s without it, so the screen must never
+  // offer a close button that has not collected one.
+  closeReferral: (id, body) => request(`/referrals/${id}/close`, { method: "PUT", body }),
 
   // assessments (gradebook)
   listAssessments: (unitId) => request(`/assessments${unitId ? `?unitId=${unitId}` : ""}`),

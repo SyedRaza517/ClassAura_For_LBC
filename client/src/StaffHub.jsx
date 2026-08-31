@@ -15,6 +15,10 @@ import {
   Radio,
   Nfc,
   Gauge,
+  // Referrals: HeartHandshake for the sidebar parent (LifeBuoy is already Mitigating
+  // Circumstances, and two pastoral screens sharing an icon is how people click the
+  // wrong one), Forward for the "Refer" action wherever it appears.
+  HeartHandshake, Forward,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
@@ -2213,8 +2217,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "referrals", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
 
 // COLLAPSIBLE SIDEBAR GROUPS.
 //
@@ -2250,6 +2254,18 @@ const NAV_GROUPS = {
   // labels drop the word "Student" because the parent already says it — three rows
   // reading "Student …" indented under "Students" is noise, not navigation.
   "student-records": { label: "Students", I: GraduationCap },
+  // THE ONE GROUP WHOSE CHILDREN ARE NOT IN `allNav` AS WRITTEN. Every other group
+  // above collapses a fixed set of screens; this one's children are a queue per
+  // support department the signed-in person BELONGS TO, and the college edits that
+  // list at runtime. They are appended to the nav array before it is filtered and
+  // grouped (see `referralNav` in the dashboard) rather than special-cased in the
+  // render, so groupNav stays pure, stays tested, and keeps its one invariant: a
+  // parent with no children does not render.
+  //
+  // Named "Referrals" and not "Student Support", which is a DEPARTMENT this college
+  // happens to run — a parent sharing a name with one of its own children reads as
+  // the child being the whole thing.
+  "referrals": { label: "Referrals", I: HeartHandshake },
 };
 
 // One sidebar button, used at both levels — `indent` is the only difference between a
@@ -2299,7 +2315,15 @@ const warnOnPageListDrift = (allNav) => {
   pageListsChecked = true;
   const navKeys = new Set(allNav.map(n => n.key));
   const noLabel = ADMIN_PAGES.filter(k => !(k in PAGE_LABELS));
-  const noNav = ADMIN_PAGES.filter(k => !navKeys.has(k));
+  // "referrals" is the one page whose screens are named `referrals-<something>` rather
+  // than by the page key itself — one queue per department the college has configured,
+  // plus "Sent by me". There is deliberately no nav entry keyed "referrals": the
+  // parent is a group, groups are not pages, and a nav entry with that key would be a
+  // clickable screen that does not exist. So a prefix counts as reaching it. Without
+  // this the check would warn on every start-up about a page that is perfectly wired,
+  // which is exactly the kind of standing false alarm that trains people to ignore it.
+  const reached = (k) => navKeys.has(k) || [...navKeys].some(n => n.startsWith(k + "-"));
+  const noNav = ADMIN_PAGES.filter(k => !reached(k));
   // The reverse direction too: a label for a page nobody can be granted is dead weight,
   // usually the fossil of a page renamed in one list only. allNav is deliberately NOT
   // checked in reverse — "audit", "access" and "assessment-tracker-setup" are meant to
@@ -2768,6 +2792,61 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // NOTE: the isAdmin guard is deliberately below the hooks (see the return further
   // down). Returning before them would change the hook count if the flag ever flipped
   // while mounted, which React rejects and turns into an app-wide crash.
+
+  /* ---- Referrals: the one part of the nav that is not written down -------------
+     Every other sidebar entry is a literal in `allNav` below. The referral queues are
+     one per support department the signed-in person BELONGS TO, and the department
+     list is configuration the college edits at four in the afternoon — so they can
+     only come from the server.
+
+     THEY ARE APPENDED TO THE NAV ARRAY, NOT SPECIAL-CASED IN THE RENDER. groupNav is
+     pure and pinned by navGroups.test.js, and its one invariant — a parent with no
+     children never renders — is the whole reason it exists. Teaching the sidebar's
+     JSX about a second, differently-shaped kind of group would put that invariant in
+     two places, and the second copy is the one that gets it wrong. Feeding groupNav a
+     list that already contains these entries costs nothing and keeps the rule where
+     the test can reach it.
+
+     Child keys are `referrals-<deptkey>` and `referrals-mine`, which satisfy the
+     `^[a-z0-9-]+$` the fragment router matches — department keys are slugs on the
+     server for exactly this reason (see supportDepartments.KEY_RE), so no escaping is
+     needed and a queue is linkable to a colleague.
+
+     Fetched ONCE on mount, and only for somebody who holds the page: this is the
+     college's organisation chart plus one person's team membership, and asking for it
+     on behalf of an admin who cannot open the feature is a request that can only 403. */
+  const holdsReferrals = canAccessPage(me, "referrals");
+  const [referralDepts, setReferralDepts] = useState(null);   // null = not loaded yet
+  useEffect(() => {
+    if (!holdsReferrals) { setReferralDepts(null); return; }
+    let cancelled = false;
+    api.referralDepartments()
+      .then(d => { if (!cancelled) setReferralDepts(d); })
+      // A failure leaves an EMPTY membership rather than no answer at all, so the
+      // parent still renders with "Sent by me" under it. Falling back to `null` would
+      // leave the nav permanently in its "still loading" state, and a tutor who only
+      // ever raises referrals would never reach the one screen they need.
+      .catch(() => { if (!cancelled) setReferralDepts({ departments: [], mine: [] }); });
+    return () => { cancelled = true; };
+  }, [holdsReferrals]);
+  const referralQueueNav = useMemo(() => {
+    if (!holdsReferrals) return [];
+    const all = referralDepts?.departments || [];
+    const mine = referralDepts?.mine || [];
+    // Retired departments the person is still on KEEP their queue. Retiring a desk
+    // stops new referrals arriving at it; it does not close the cases already there,
+    // and hiding the queue would strand them with no screen that can reach them.
+    return all
+      .filter(d => mine.includes(d.key))
+      .map(d => ({ key: `referrals-${d.key}`, label: d.active ? d.name : `${d.name} (retired)`, I: Inbox, group: "referrals" }));
+  }, [holdsReferrals, referralDepts]);
+  // "Sent by me" is a LITERAL in allNav below, not part of the memo above, even though
+  // it belongs to the same group. Two reasons. It needs no server answer, so gating it
+  // behind the fetch would blank the one screen a tutor with no membership ever opens.
+  // And allNav is the catalogue every check reads — warnOnPageListDrift among them —
+  // so a `referrals` page whose only nav entry appeared conditionally would warn on
+  // start-up for every admin who happens not to hold it.
+
   const allNav = [
     { key: "executive", label: "Executive Dashboard", I: BarChart3 },
     { key: "overview", label: "Overview", I: LayoutDashboard },
@@ -2801,6 +2880,12 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "pat", label: "PAT", I: MessageSquare },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
+    // The Referrals group: one queue per department this person is on, then the
+    // outcomes of what they have sent. Beside PAT and Mitigating Circumstances
+    // because it is the same job — the thing a tutor does when a meeting turns up
+    // something they cannot act on themselves.
+    ...referralQueueNav,
+    { key: "referrals-mine", label: "Sent by me", I: Send, group: "referrals" },
     { key: "staffreviews", label: "Staff Reviews", I: ClipboardList },
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
@@ -2842,11 +2927,33 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // endpoint cannot do that.
     : n.key === "my-timetable" ? true
     : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
+    // MANY SCREENS, ONE PERMISSION — the same shape as the tracker's setup screen
+    // above, and for the same reason. A permission per department is not merely
+    // avoided here, it is impossible: the list is edited at runtime by the college,
+    // and a college adding "Careers" this afternoon cannot add a key to four source
+    // files. The page grants the feature; Staff.supportDepartments decides which
+    // queues, and referralQueueNav has already applied that — the server sent only
+    // the departments this person is on. The check here is therefore the page alone,
+    // and asking for a queue anyway is a 403 rather than an empty list.
+    : n.key.startsWith("referrals-") ? holdsReferrals
     : canAccessPage(me, n.key));
   const [tab, setTab] = useState(() => pageFromHash() || nav[0]?.key || "overview");
+  // A referral QUEUE is in the nav only once the department list has come back, so a
+  // reload straight onto `#/referrals-wellbeing` arrives before the sidebar knows that
+  // key exists. Without this, the fallback below would bounce to the first page they
+  // hold and — worse — the effect underneath would rewrite the fragment, destroying
+  // the deep link on the way past. So while the answer is still outstanding the tab is
+  // treated as UNDECIDED rather than as refused: activeKey is null, nothing renders,
+  // nothing is written to the address bar, and one tick later it resolves either into
+  // the queue or into the ordinary fallback.
+  //
+  // Narrow on purpose. It applies only to a `referrals-` key that is not yet in the
+  // nav; every other page decides synchronously, as it always did.
+  const referralNavPending = holdsReferrals && referralDepts === null
+    && String(tab).startsWith("referrals-") && !nav.some(n => n.key === tab);
   // If the current tab isn't in the allowed set (e.g. access was changed mid-session),
   // fall back to the first one they can see, so no forbidden page ever renders.
-  const activeKey = nav.some(n => n.key === tab) ? tab : (nav[0]?.key || null);
+  const activeKey = nav.some(n => n.key === tab) ? tab : referralNavPending ? null : (nav[0]?.key || null);
   // Keep the fragment on the page actually RENDERED — activeKey, not tab. A link to a
   // page this account cannot open falls back above to the first one it can, and the
   // address bar has to follow, or the reader is handed a URL that shows one screen and
@@ -2873,7 +2980,15 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   const navTree = useMemo(() => groupNav(nav, NAV_GROUPS), [nav]);
   const [openGroups, setOpenGroups] = useState(() => {
     const g = groupNav(nav, NAV_GROUPS).find(n => n.kind === "group" && n.children.some(c => c.key === activeKey));
-    return g ? { [g.id]: true } : {};
+    // The referral queues are not in `nav` yet at this point — the department list is
+    // still in flight — so the lookup above cannot find the group holding a
+    // `#/referrals-<dept>` deep link, and the seed would leave that child hidden inside
+    // a shut parent. The group id is a constant, so it can be seeded from the key
+    // alone. Deriving it in an effect once the departments land was the alternative and
+    // is worse: the seed is deliberately a ONE-OFF, and an effect watching the same
+    // data would re-open a group the user had just collapsed.
+    const referralDeepLink = String(tab).startsWith("referrals-") ? { referrals: true } : {};
+    return { ...referralDeepLink, ...(g ? { [g.id]: true } : {}) };
   });
   const toggleGroup = (id) => setOpenGroups(o => ({ ...o, [id]: !o[id] }));
   const groupOpen = (g) => !!openGroups[g.id];
@@ -2998,6 +3113,22 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "assessment-tracker" && <AssessmentTracker me={me} />}
         {activeKey === "assessment-tracker-setup" && <AssessmentTrackerSetup />}
         {activeKey === "pat" && <AdminPAT store={store} />}
+        {/* Referrals. The queue screen is keyed on activeKey so moving between two
+            departments REMOUNTS it: the list, the open row, the notes being typed and
+            the status filter are all per-department, and carrying any of them across
+            would show one desk's working state under another desk's name.
+
+            The department's display name is looked up from the config, with the raw
+            key as the fallback — a queue must still render for a department the
+            college has since removed from the list entirely, and rendering the slug is
+            better than rendering nothing. */}
+        {referralNavPending && <div className="flex items-center gap-2 rounded-2xl bg-white p-4 text-sm text-slate-400 shadow-sm ring-1 ring-slate-200/70"><Loader2 size={16} className="animate-spin" /> Opening referrals…</div>}
+        {activeKey === "referrals-mine" && <ReferralsMine store={store} />}
+        {activeKey && activeKey !== "referrals-mine" && activeKey.startsWith("referrals-") && (() => {
+          const deptKey = activeKey.slice("referrals-".length);
+          const dept = (referralDepts?.departments || []).find(d => d.key === deptKey);
+          return <ReferralsQueue key={activeKey} store={store} deptKey={deptKey} deptName={dept?.name || deptKey} deptActive={dept ? dept.active : true} />;
+        })()}
         {activeKey === "prediction" && <AdminPrediction store={store} />}
         {activeKey === "mitigations" && <AdminMitigations />}
         {activeKey === "staffreviews" && <AdminStaffReviews store={store} />}
@@ -4541,6 +4672,25 @@ function AdminAccess({ store }) {
   const [pages, setPages] = useState([]);   // working selection for the picked person
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
+  // SUPPORT-DEPARTMENT MEMBERSHIP — which referral queues this person works.
+  //
+  // It lives on this screen rather than beside the department list in Settings because
+  // it is a fact about a PERSON, and the question being answered here is "what may this
+  // colleague reach". The "referrals" page opens the feature; membership decides which
+  // queues within it, and a college cannot have a permission per department because the
+  // list is edited at runtime — a key has to exist in source before anyone can hold it.
+  //
+  // Deliberately NOT exempted for a Super Admin, mirroring canReadDepartment on the
+  // server: holding every admin page is a statement about administrative authority,
+  // being on the wellbeing team is a statement about who reads a student's disclosures.
+  const [supportDepts, setSupportDepts] = useState([]);  // the college's list
+  const [membership, setMembership] = useState([]);      // working selection
+  useEffect(() => {
+    // Fails quietly to an empty list: an environment where the referrals table has not
+    // been migrated yet must still let a Super Admin set page access, which is the job
+    // this screen existed to do before referrals were a feature.
+    api.referralDepartments().then(d => setSupportDepts(d.departments || [])).catch(() => setSupportDepts([]));
+  }, []);
 
   // The pages a person currently has: super admin & unrestricted admin = all;
   // a scoped admin = their list; anyone else = none.
@@ -4559,15 +4709,34 @@ function AdminAccess({ store }) {
   const list = people.filter(p => !ql || p.name.toLowerCase().includes(ql) || (p.email || "").toLowerCase().includes(ql));
 
   const sel = people.find(p => p.id === selId) || null;
-  const pick = (p) => { setSelId(p.id); setPages(grantOf(p)); };
+  // sStaff emits this as an array, but it is read defensively anyway: anything that is
+  // not an array of strings reads as NO membership rather than as full membership,
+  // matching membershipOf() on the server. A corrupt or missing value must not open
+  // every queue — and it is also what keeps this screen usable against an older API
+  // that does not send the field at all.
+  const membershipOf = (p) => (Array.isArray(p?.supportDepartments) ? p.supportDepartments.filter(k => typeof k === "string") : []);
+  const pick = (p) => { setSelId(p.id); setPages(grantOf(p)); setMembership(membershipOf(p)); };
   const toggle = (k) => setPages(ps => ps.includes(k) ? ps.filter(x => x !== k) : [...ps, k]);
+  const toggleDept = (k) => setMembership(ms => ms.includes(k) ? ms.filter(x => x !== k) : [...ms, k]);
   const allOn = ADMIN_PAGES.every(k => pages.includes(k));
   const toggleAll = () => setPages(allOn ? [] : ADMIN_PAGES.slice());
 
   const save = async () => {
     if (!sel) return;
     setBusy(true);
-    try { await store.updateAccess(sel.id, pages); } catch (_) {} finally { setBusy(false); }
+    // Called through `api` rather than `store.updateAccess`, which is declared as
+    // `(id, pages) => …` and would silently drop the third argument — the membership
+    // would appear to save and come back empty, which is the worst of the three
+    // possible failures because nothing on screen says it happened.
+    //
+    // Pages and membership go in ONE request because they are one decision. Two
+    // requests could half-succeed, leaving somebody on the wellbeing team without the
+    // page that shows it to them, or holding the page with the membership silently
+    // rolled back — and the audit trail would record two separate changes to an
+    // account where only one was made.
+    try { await api.updateStaffAccess(sel.id, pages, membership); store.notify?.("Access updated"); store.refresh?.().catch?.(() => {}); }
+    catch (e) { store.notify?.(e.message || "Action failed", "error"); store.refresh?.().catch?.(() => {}); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -4617,6 +4786,44 @@ function AdminAccess({ store }) {
                   );
                 })}
               </div>
+              {/* Department membership. Shown only when there are departments to show:
+                  a heading over an empty box on a college that runs no support desks
+                  reads as something failing to load. */}
+              {supportDepts.length > 0 && (
+                <div className="mt-5">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <HeartHandshake size={14} className="text-slate-400" />
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Support department queues</p>
+                  </div>
+                  <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-400">
+                    Which referral queues this person works. The <b>Referrals</b> page above opens the feature;
+                    these decide what they see inside it — including the case notes, which the tutor who raised
+                    a referral never sees. Somebody with the page and no departments gets only their own
+                    “Sent by me”.
+                  </p>
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {supportDepts.map(d => {
+                      const on = membership.includes(d.key);
+                      return (
+                        <button key={d.key} onClick={() => toggleDept(d.key)} className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition ${on ? "bg-blue-50 text-slate-800 ring-blue-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"}`}>
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={on ? { background: NAVY, borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{on && <Check size={13} className="text-white" />}</span>
+                          <span className="min-w-0 truncate">{d.name}</span>
+                          {/* A retired department still lists, because somebody has to
+                              be able to finish the cases already in its queue. */}
+                          {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">Retired</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {!pages.includes("referrals") && membership.length > 0 && (
+                    <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+                      <AlertCircle size={13} className="mt-px shrink-0" />
+                      They are on a department but do not hold the Referrals page, so they will not see the queue.
+                      Tick Referrals above as well.
+                    </p>
+                  )}
+                </div>
+              )}
               <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-100">
                 <AlertCircle size={13} className="mt-px shrink-0" /> Granting at least one page makes this person an admin for those pages. Clearing all removes their admin access entirely. Changes take effect the next time they open the app.
               </p>
@@ -6911,6 +7118,11 @@ function AdminStudents({ store }) {
   const [statusFilter, setStatusFilter] = useState("all");  // all | active | inactive
   const [riskFilter, setRiskFilter] = useState("all");  // all | High Risk | Monitor | Good | Excellent | Perfect
   const [attnFor, setAttnFor] = useState(null);             // student whose breakdown is open
+  // The student being referred to a support department, or null. There is no meeting
+  // behind a referral raised from here, and that is the point: a tutor looking at an
+  // attendance figure they do not like has somewhere to send it without first
+  // inventing a PAT record of a conversation that never happened.
+  const [referStudent, setReferStudent] = useState(null);
   // Which course's units the picker shows. Only 4 of 136 students have a cohort, so
   // the course is worked out from the units they are ALREADY enrolled on, which is
   // unambiguous for almost all of them; the dropdown lets an admin set or change it.
@@ -7153,6 +7365,7 @@ function AdminStudents({ store }) {
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1 whitespace-nowrap">
                         <button onClick={() => setAttnFor(s)} title="Attendance breakdown" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"><BarChart3 size={15} /></button>
+                        <button onClick={() => setReferStudent(s)} title="Refer to a support department" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"><Forward size={15} /></button>
                         <button onClick={() => openEdit(s)} title="Edit student" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><Edit3 size={15} /></button>
                         <button onClick={() => remove(s)} title="Delete student" className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={15} /></button>
                       </div>
@@ -7243,6 +7456,10 @@ function AdminStudents({ store }) {
       <Modal open={!!attnFor} onClose={() => setAttnFor(null)} title="Student dashboard" width={560}>
         {attnFor && <StudentAttendanceDetail student={attnFor} store={store} />}
       </Modal>
+
+      {/* Refer, with no meeting behind it. Nothing on this screen changes as a result,
+          so there is no refetch — the referral appears on Referrals → Sent by me. */}
+      <ReferralModal open={!!referStudent} onClose={() => setReferStudent(null)} student={referStudent} notify={store.notify} />
     </>
   );
 }
@@ -11061,6 +11278,16 @@ function AdminPAT({ store }) {
   const [typeFilter, setTypeFilter] = useState("");
   const [followFilter, setFollowFilter] = useState("all"); // all | required | none
   const [busy, setBusy] = useState(false);
+  // The meeting a referral is being raised from: { student, interactionId }. Held as
+  // one object rather than two pieces of state because they must move together — a
+  // student without the meeting loses the link, and a meeting without the student
+  // builds a request the server refuses.
+  //
+  // Offered on EVERY row, not only where a follow-up is flagged. "This needs a
+  // follow-up" is a note to the tutor themselves; a referral is work handed to
+  // somebody else, and the meeting where somebody first says something is exactly the
+  // one the tutor is looking at when they realise it is not theirs to act on.
+  const [referFrom, setReferFrom] = useState(null);
 
   // Needs students (for the picker) + interactions. Both load on open.
   useEffect(() => { refreshHnd(); refreshInteractions(); }, [refreshHnd, refreshInteractions]);
@@ -11224,6 +11451,11 @@ function AdminPAT({ store }) {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1 whitespace-nowrap">
+                        {/* Refer, carrying THIS meeting's id. The row's own click
+                            handler opens the interaction for editing, so this one
+                            stops propagation like its neighbours — without that, the
+                            referral dialog and the interaction dialog both open. */}
+                        {it.student?.id && <button onClick={(e) => { e.stopPropagation(); setReferFrom({ student: it.student, interactionId: it.id }); }} title="Refer this student to a support department" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-blue-50 hover:text-blue-600"><Forward size={15} /></button>}
                         <button onClick={(e) => { e.stopPropagation(); openEdit(it); }} title="Edit / view" className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><Edit3 size={15} /></button>
                         <button onClick={(e) => { e.stopPropagation(); remove(it); }} title="Delete" className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={15} /></button>
                       </div>
@@ -11281,7 +11513,667 @@ function AdminPAT({ store }) {
           <PrimaryBtn onClick={save} disabled={busy || !formValid} className="w-full">{busy ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> {edit ? "Save changes" : "Log interaction"}</>}</PrimaryBtn>
         </div>
       </Modal>
+
+      {/* Referring out of a meeting. Nothing is refetched afterwards: a referral does
+          not change the interaction log, and the tutor's own copy of what became of it
+          lives on the Referrals → Sent by me screen. Reloading the PAT list here would
+          redraw twelve rows to show nothing new. */}
+      <ReferralModal
+        open={!!referFrom}
+        onClose={() => setReferFrom(null)}
+        student={referFrom?.student}
+        interactionId={referFrom?.interactionId}
+        notify={store.notify}
+      />
     </>
+  );
+}
+
+/* ============================================================
+   Referrals to support departments
+
+   A PAT meeting turns up something the tutor cannot act on — a wellbeing concern, a
+   coursework question for ASK. This is where it goes, and what happened to it.
+
+   TWO VIEWS OF ONE ROW, AND THEY ARE NOT THE SAME OBJECT.
+
+   ReferralsQueue renders the RECEIVING department's view: everything, case notes
+   included. ReferralsMine renders the view of the tutor who raised it, which the
+   server builds from an allowlist naming neither `notes` nor `outcomeDetail`. That
+   asymmetry is the feature, not a gap in the API — a tutor learns their referral was
+   closed as "supported"; what the student disclosed to the wellbeing team is not
+   theirs to read. So nothing below fetches the queue to fill in what /mine withheld,
+   and there is deliberately no notes column on the Sent-by-me screen: an empty column
+   is an invitation to somebody to go and populate it.
+
+   Which queues a person sees is decided by Staff.supportDepartments, applied on the
+   server. There is no per-department permission and there cannot be — the department
+   list is configuration the college edits at runtime, and a permission key has to
+   exist in source before anyone can be granted it.
+   ============================================================ */
+
+// Codes, never display text, are what the server stores and validates — so the English
+// lives here and rewording an outcome cannot orphan a stored row. The list and its
+// order match OUTCOMES in server/src/routes/referrals.js; a code this client does not
+// recognise falls back to the raw string rather than rendering blank.
+const REFERRAL_OUTCOMES = ["supported", "referred_on", "no_response", "not_appropriate", "other"];
+const REFERRAL_OUTCOME_LABELS = {
+  supported: "Supported — we worked with the student",
+  referred_on: "Referred on — passed to somebody else",
+  no_response: "No response — the student did not engage",
+  not_appropriate: "Not appropriate for us",
+  other: "Other",
+};
+// The short form, for a badge in a list where the sentence above will not fit.
+const REFERRAL_OUTCOME_SHORT = {
+  supported: "Supported", referred_on: "Referred on", no_response: "No response",
+  not_appropriate: "Not for us", other: "Other",
+};
+const referralOutcomeLabel = (c) => REFERRAL_OUTCOME_LABELS[c] || c || "";
+const referralOutcomeShort = (c) => REFERRAL_OUTCOME_SHORT[c] || c || "";
+
+const REFERRAL_STATUS_TONE = {
+  open: "bg-amber-50 text-amber-700 ring-amber-200",
+  accepted: "bg-blue-50 text-blue-700 ring-blue-200",
+  closed: "bg-slate-100 text-slate-500 ring-slate-200",
+};
+const REFERRAL_STATUS_LABEL = { open: "Waiting", accepted: "Being worked", closed: "Closed" };
+
+/**
+ * Raise a referral. ONE MODAL, USED FROM THREE PLACES — the PAT log (carrying the
+ * meeting it came out of), the students list, and a department's own queue (a walk-in,
+ * with no meeting behind it). Three copies of this form would be three chances for the
+ * "tell the student" tickbox to default differently, and that tickbox is the one
+ * control here with a confidentiality consequence.
+ *
+ * Props:
+ *   student        — the student, when the caller already knows them. FIXED once
+ *                    passed: see the note by the picker below.
+ *   interactionId  — the PAT meeting this came out of, when there is one.
+ *   department     — a department key to preselect, used by a queue raising its own.
+ *
+ * The department list is fetched HERE rather than passed in. Two of the three callers
+ * (PAT, Students) have no reason to hold it and would only be fetching it so they
+ * could hand it over; threading it through them — or a context — would put the
+ * college's organisation chart into two screens that do not otherwise mention it. One
+ * request when the dialog opens is the cheaper trade.
+ */
+function ReferralModal({ open, onClose, student, interactionId, department, onSaved, notify }) {
+  const [depts, setDepts] = useState(null);
+  const [roster, setRoster] = useState([]);
+  const [studentId, setStudentId] = useState(student?.id || "");
+  const [dept, setDept] = useState(department || "");
+  const [reason, setReason] = useState("");
+  const [urgency, setUrgency] = useState("routine");
+  // UNTICKED, and it is a plain false rather than anything derived. The server defaults
+  // it off too and only accepts an explicit `true`, so this is the second of two
+  // barriers, not the only one — a tutor raising a safeguarding concern must not have
+  // to remember to suppress an email. Nothing below may make this default on for a
+  // particular department: "this desk always tells the student" is exactly the rule
+  // that is wrong for the one referral where it matters.
+  const [notifyStudent, setNotifyStudent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Reset every time the dialog opens. Kept mounted between opens, the previous
+  // referral's reason would still be in the box — and worse, a ticked "tell the
+  // student" would carry across to a student it was never ticked for.
+  useEffect(() => {
+    if (!open) return;
+    setStudentId(student?.id || ""); setDept(department || ""); setReason("");
+    setUrgency("routine"); setNotifyStudent(false); setErr("");
+    let cancelled = false;
+    api.referralDepartments()
+      .then(d => { if (!cancelled) setDepts(d.departments || []); })
+      .catch(e => { if (!cancelled) { setDepts([]); setErr(e.message); } });
+    // The roster only when the caller could not say who this is about. It is the
+    // student-reviews roster rather than /hnd/students because that one is open to any
+    // authenticated member of staff — a wellbeing officer holding "referrals" and
+    // nothing else would get an empty picker from the gated route, and a walk-in they
+    // could not record.
+    if (!student?.id) {
+      api.studentReviewRoster().then(r => { if (!cancelled) setRoster(r.students || []); }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [open, student?.id, department]);
+
+  // Only ACTIVE departments may receive something new — the server refuses a retired
+  // one with a 400, so offering it here would be offering a button that cannot work.
+  // Retired departments still resolve for READING, which is why their old queues keep
+  // rendering under their names.
+  const options = (depts || []).filter(d => d.active);
+  const valid = !!studentId && !!dept && !!reason.trim();
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.addReferral({
+        studentId, department: dept, reason: reason.trim(), urgency,
+        // Sent as an explicit boolean rather than omitted when false, so the request
+        // says what was decided instead of leaving the server to infer it.
+        notifyStudent,
+        ...(interactionId ? { interactionId } : {}),
+      });
+      notify?.(`Referred to ${options.find(d => d.key === dept)?.name || dept}`);
+      onSaved?.();
+      onClose?.();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={() => !busy && onClose?.()} title="Refer to a support department" width={540}>
+      <div className="space-y-3">
+        {student ? (
+          // FIXED, not a picker, when the caller knew the student. From the PAT log
+          // this referral carries `interactionId`, and the server checks that the
+          // meeting belongs to the student — letting the name be changed underneath
+          // would build a request it is bound to refuse. From the students list there
+          // is no such check, but "the row I clicked" is what the person meant, and a
+          // picker that starts on one name and can quietly land on another is how a
+          // wellbeing referral ends up filed against the wrong student.
+          <Field label="Student">
+            <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: student.colour || "#94a3b8" }}>{student.initials || "?"}</span>
+              <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{student.name}</p><p className="text-[11px] tabular-nums text-slate-400">{student.studentRef}</p></div>
+            </div>
+          </Field>
+        ) : (
+          <Field label="Student"><StudentCombo students={roster} value={studentId} onChange={setStudentId} /></Field>
+        )}
+
+        <Field label="Department">
+          <select value={dept} onChange={e => setDept(e.target.value)} className={inputCls}>
+            <option value="">Choose a department…</option>
+            {options.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
+          </select>
+          {depts && options.length === 0 && (
+            <p className="mt-1 text-[11px] font-semibold text-amber-600">
+              This college has no departments taking referrals. An administrator sets them up in Settings.
+            </p>
+          )}
+        </Field>
+
+        <Field label="Why you are referring them">
+          <textarea rows={4} value={reason} onChange={e => setReason(e.target.value)} className={`${inputCls} resize-y`} placeholder="What has come up, and what you think they need." />
+          {/* Said plainly, because the alternative is a tutor assuming otherwise and
+              writing something they would not have written. The reason is the one
+              field BOTH sides see — the department's case notes are theirs alone. */}
+          <p className="mt-1 text-[11px] text-slate-400">The receiving team reads this, and so does anyone else on that team. Their own case notes are not shown back to you.</p>
+        </Field>
+
+        <Field label="How urgent">
+          <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
+            {[{ v: "routine", l: "Routine" }, { v: "urgent", l: "Urgent" }].map(o => (
+              <button key={o.v} type="button" onClick={() => setUrgency(o.v)}
+                className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${urgency === o.v ? (o.v === "urgent" ? "bg-rose-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Urgent sits at the top of their queue and reaches them as a red notification.</p>
+        </Field>
+
+        {/* The tickbox. Rendered as an explicit control with its consequence written
+            beside it rather than a bare "notify student", because the person deciding
+            needs to know an email leaves the building — and needs to know it says
+            nothing about why. */}
+        <button type="button" onClick={() => setNotifyStudent(v => !v)}
+          className={`flex w-full items-start gap-2.5 rounded-xl px-3 py-2.5 text-left ring-1 transition ${notifyStudent ? "bg-blue-50 ring-blue-200" : "bg-white ring-slate-200 hover:bg-slate-50"}`}>
+          <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={notifyStudent ? { background: NAVY, borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{notifyStudent && <Check size={13} className="text-white" />}</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-700">Tell the student</span>
+            <span className="block text-[11px] leading-relaxed text-slate-400">
+              Emails them to say they have been referred to this team and somebody will be in touch. It never
+              includes your reason. Leave this off for anything you would not want landing in their inbox.
+            </span>
+          </span>
+        </button>
+
+        {interactionId && <p className="text-[11px] text-slate-400">Linked to the meeting you were looking at, so the department can see where this came from.</p>}
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+        <PrimaryBtn onClick={save} disabled={busy || !valid} className="w-full">
+          {busy ? <><Loader size={16} /> Sending…</> : <><Forward size={16} /> Refer</>}
+        </PrimaryBtn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ----- One department's queue ------------------------------------------------ */
+
+/**
+ * The work waiting for one support department, and the three things that can be done
+ * to it: pick it up, write case notes, close it with an outcome.
+ *
+ * Ordering comes from the SERVER — urgent first, then oldest first — and is not
+ * re-sorted here. A queue is worked from the top, and a second sort in the client is a
+ * second thing to drift from the one the API documents.
+ */
+function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
+  const [rows, setRows] = useState(null);
+  const [status, setStatus] = useState("open");
+  const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState("");
+  const [notesFor, setNotesFor] = useState(null);   // the referral whose notes are open
+  const [closeFor, setCloseFor] = useState(null);   // the referral being closed
+  const [referring, setReferring] = useState(false);
+
+  const load = async () => {
+    try { setRows(await api.listReferrals({ department: deptKey, status })); setErr(""); }
+    catch (e) { setErr(e.message); setRows([]); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [deptKey, status]);
+
+  const accept = async (r) => {
+    setBusyId(r.id);
+    // A 409 here is not a fault: somebody else on the team picked it up in the seconds
+    // since this list was drawn. Reloading turns that into the truth on screen rather
+    // than an error the reader has to interpret — the message is shown as well,
+    // because the row visibly changing hands with no explanation is worse.
+    try { await api.acceptReferral(r.id); setErr(""); }
+    catch (e) { setErr(e.message); }
+    finally { setBusyId(""); load(); }
+  };
+
+  const counts = { total: (rows || []).length, urgent: (rows || []).filter(r => r.urgency === "urgent").length };
+
+  return (
+    <>
+      <AdminHeader
+        title={deptName}
+        subtitle={deptActive ? "Students referred to this team, and what became of them" : "This department has been retired — no new referrals arrive here, but its cases stay open"}
+        Icon={HeartHandshake}
+        action={<PrimaryBtn onClick={() => setReferring(true)}><Forward size={16} /> Refer a student</PrimaryBtn>}
+      />
+
+      {!deptActive && (
+        <Card className="!mb-4 !bg-amber-50/70 !ring-amber-200">
+          <p className="flex items-start gap-2 text-xs font-semibold text-amber-900">
+            <Info size={15} className="mt-px shrink-0 text-amber-600" />
+            {deptName} is retired. Nothing new can be sent here, and the referrals below still need closing.
+          </p>
+        </Card>
+      )}
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {[["open", "Waiting"], ["accepted", "Being worked"], ["closed", "Closed"], ["", "All"]].map(([k, label]) => (
+          <button key={k} onClick={() => setStatus(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${status === k ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={status === k ? { background: grad(BLUE) } : {}}>{label}</button>
+        ))}
+        <span className="ml-auto text-xs font-semibold text-slate-400">
+          {counts.total} referral{counts.total === 1 ? "" : "s"}{counts.urgent > 0 ? ` · ${counts.urgent} urgent` : ""}
+        </span>
+      </div>
+
+      {err && <Card className="!mb-3 !bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+      {rows === null && <Card><div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-slate-300" /></div></Card>}
+      {rows && rows.length === 0 && (
+        <Card><EmptyState Icon={HeartHandshake} title="Nothing here" msg={status === "open" ? "No referrals are waiting to be picked up." : "Nothing matches this filter."} /></Card>
+      )}
+
+      <div className="space-y-2">
+        {(rows || []).map(r => (
+          <Card key={r.id} className="!p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student?.colour || "#94a3b8" }}>{r.student?.initials || "?"}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-slate-800">
+                    {r.student?.name || "Unknown student"}
+                    {r.student?.studentRef && <span className="ml-1.5 text-xs font-semibold text-slate-400">{r.student.studentRef}</span>}
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Raised by {r.raisedBy || "a member of staff"} on {fmtDate(r.raisedOn)}
+                    {r.acceptedBy ? ` · picked up by ${r.acceptedBy} on ${fmtDate(r.acceptedOn)}` : ""}
+                    {r.closedBy ? ` · closed by ${r.closedBy} on ${fmtDate(r.closedOn)}` : ""}
+                    {/* "Did we tell them" is a question the college will be asked, so
+                        it is on the row rather than buried in the record. */}
+                    {r.studentNotified ? " · the student was told" : " · the student was not told"}
+                    {r.interactionId ? " · from a PAT meeting" : ""}
+                  </p>
+                  {/* The department's OWN notes. Shown only here, never on Sent by me. */}
+                  {r.notes && (
+                    <p className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600 ring-1 ring-slate-100">{r.notes}</p>
+                  )}
+                  {r.status === "closed" && (
+                    <p className="mt-2 text-[12px] text-slate-500">
+                      <span className="font-bold text-slate-600">{referralOutcomeLabel(r.outcome)}</span>
+                      {r.outcomeDetail ? <span className="block whitespace-pre-wrap text-slate-500">{r.outcomeDetail}</span> : null}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  {r.urgency === "urgent" && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">Urgent</span>}
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${REFERRAL_STATUS_TONE[r.status] || REFERRAL_STATUS_TONE.closed}`}>{REFERRAL_STATUS_LABEL[r.status] || r.status}</span>
+                </div>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {/* Accept is offered ONLY while it is open. The server answers a
+                      second acceptance with 409 because that transition records who
+                      picked it up and when, and overwriting it loses the only thing it
+                      exists to say — so the button is not there to be pressed twice. */}
+                  {r.status === "open" && (
+                    <button onClick={() => accept(r)} disabled={busyId === r.id} className="press rounded-lg px-2.5 py-1.5 text-xs font-bold text-white disabled:opacity-50" style={{ background: grad(BLUE) }}>
+                      {busyId === r.id ? "Picking up…" : "Pick this up"}
+                    </button>
+                  )}
+                  <button onClick={() => setNotesFor(r)} className="press rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+                    {r.notes ? "Case notes" : "Add notes"}
+                  </button>
+                  {r.status !== "closed" && (
+                    <button onClick={() => setCloseFor(r)} className="press rounded-lg px-2.5 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}>Close</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {notesFor && <ReferralNotesModal referral={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(); }} />}
+      {closeFor && <ReferralCloseModal referral={closeFor} onClose={() => setCloseFor(null)} onSaved={() => { setCloseFor(null); load(); }} />}
+      {/* The walk-in. A student who turns up at the desk without a tutor sending them
+          is still a referral — recording it here is what keeps the queue an honest
+          account of the team's work rather than only of what tutors noticed. The
+          department is preselected but not locked: a wellbeing officer who realises
+          mid-conversation that this is really an ASK question should be able to send
+          it there without leaving the screen. */}
+      <ReferralModal open={referring} onClose={() => setReferring(false)} department={deptKey} notify={store?.notify} onSaved={load} />
+    </>
+  );
+}
+
+/** The receiving team's case notes. Their own record, and shown to nobody else. */
+function ReferralNotesModal({ referral, onClose, onSaved }) {
+  const [notes, setNotes] = useState(referral.notes || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    setBusy(true); setErr("");
+    try { await api.saveReferralNotes(referral.id, notes); onSaved(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={() => !busy && onClose()} title={`Case notes — ${referral.student?.name || "referral"}`} width={520}>
+      <div className="space-y-3">
+        <Field label="Notes">
+          <textarea rows={8} value={notes} onChange={e => setNotes(e.target.value)} className={`${inputCls} resize-y`} placeholder="What you have done, and what happens next." />
+        </Field>
+        <p className="flex items-start gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700 ring-1 ring-blue-100">
+          <ShieldCheck size={13} className="mt-px shrink-0" />
+          Only this department reads these. The tutor who raised the referral sees its status and its
+          outcome, never these notes — and the audit trail records that they changed, not what they say.
+        </p>
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+        <PrimaryBtn onClick={save} disabled={busy} className="w-full">{busy ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> Save notes</>}</PrimaryBtn>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Closing one, WHICH MEANS SAYING WHAT BECAME OF IT.
+ *
+ * The outcome starts empty and the button stays disabled until one is chosen. The
+ * server refuses a closure without an outcome — null on that column means "not closed
+ * yet", and a closure carrying no outcome would collapse two states into one — so a
+ * screen that let somebody press Close first and read a 400 afterwards would be
+ * offering a path that cannot work. Defaulting the dropdown to "supported" would be
+ * worse than either: it makes the commonest answer the one nobody chose.
+ */
+function ReferralCloseModal({ referral, onClose, onSaved }) {
+  const [outcome, setOutcome] = useState("");
+  const [detail, setDetail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    if (!outcome) return;
+    setBusy(true); setErr("");
+    try { await api.closeReferral(referral.id, { outcome, outcomeDetail: detail }); onSaved(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open onClose={() => !busy && onClose()} title={`Close — ${referral.student?.name || "referral"}`} width={520}>
+      <div className="space-y-3">
+        <Field label="What became of it">
+          <select value={outcome} onChange={e => setOutcome(e.target.value)} className={inputCls}>
+            <option value="">Choose…</option>
+            {REFERRAL_OUTCOMES.map(c => <option key={c} value={c}>{referralOutcomeLabel(c)}</option>)}
+          </select>
+          {!outcome && <p className="mt-1 text-[11px] font-semibold text-amber-600">Required — this is the one part of the closure the referrer is shown.</p>}
+        </Field>
+        <Field label="Detail (optional)">
+          <textarea rows={4} value={detail} onChange={e => setDetail(e.target.value)} className={`${inputCls} resize-y`} placeholder="Anything the team needs on the record." />
+          <p className="mt-1 text-[11px] text-slate-400">Stays with the department. The referrer sees the outcome above and not this.</p>
+        </Field>
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+        <PrimaryBtn onClick={save} disabled={busy || !outcome} className="w-full">{busy ? <><Loader size={16} /> Closing…</> : <><CheckCircle2 size={16} /> Close referral</>}</PrimaryBtn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ----- What I have sent, and what became of it ------------------------------- */
+
+/**
+ * The referrer's own list.
+ *
+ * THIS SCREEN IS DEFINED BY WHAT IS NOT ON IT. There is no case-notes column and no
+ * closure detail, because /referrals/mine does not carry them — the server builds this
+ * shape from an allowlist that names neither field, so a column added to Referral
+ * tomorrow cannot appear here by accident.
+ *
+ * Rendering an empty "Notes" column would be worse than leaving it out: an empty
+ * column reads as missing data, and the next person to look at it fixes it by fetching
+ * the department view. It is not missing. A tutor is told the status and the outcome
+ * code so they know the student was picked up and what happened — which is what keeps
+ * them referring rather than emailing the wellbeing lead directly and taking the whole
+ * conversation off the record.
+ */
+function ReferralsMine({ store }) {
+  const [rows, setRows] = useState(null);
+  const [deptNames, setDeptNames] = useState({});
+  const [err, setErr] = useState("");
+  const [referring, setReferring] = useState(false);
+
+  const load = async () => {
+    try { setRows(await api.myReferrals()); setErr(""); }
+    catch (e) { setErr(e.message); setRows([]); }
+  };
+  useEffect(() => { load(); }, []);
+  // Names only — retired departments included, so a referral raised last term against a
+  // desk the college has since closed still renders under its name rather than a slug.
+  useEffect(() => {
+    api.referralDepartments()
+      .then(d => setDeptNames(Object.fromEntries((d.departments || []).map(x => [x.key, x.name]))))
+      .catch(() => {});
+  }, []);
+  const nameOf = (k) => deptNames[k] || k;
+
+  const openCount = (rows || []).filter(r => r.status !== "closed").length;
+
+  return (
+    <>
+      <AdminHeader
+        title="Sent by me"
+        subtitle="Referrals you have raised, and what became of them"
+        Icon={Send}
+        action={<PrimaryBtn onClick={() => setReferring(true)}><Forward size={16} /> Refer a student</PrimaryBtn>}
+      />
+
+      {err && <Card className="!mb-3 !bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
+      {rows === null && <Card><div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-slate-300" /></div></Card>}
+      {rows && rows.length === 0 && (
+        <Card><EmptyState Icon={Send} title="You have not referred anyone" msg="Refer a student from here, from a PAT meeting, or from the students list." /></Card>
+      )}
+
+      {rows && rows.length > 0 && (
+        <>
+          <p className="mb-3 text-xs font-semibold text-slate-400">
+            {rows.length} referral{rows.length === 1 ? "" : "s"}{openCount > 0 ? ` · ${openCount} still open` : ""}
+          </p>
+          <div className="space-y-2">
+            {rows.map(r => (
+              <Card key={r.id} className="!p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student?.colour || "#94a3b8" }}>{r.student?.initials || "?"}</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-800">
+                        {r.student?.name || "Unknown student"}
+                        <span className="ml-1.5 text-xs font-semibold text-slate-400">→ {nameOf(r.department)}</span>
+                      </p>
+                      {/* The reason is shown because the tutor WROTE it. It is the one
+                          field both sides of this feature can read. */}
+                      <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Sent {fmtDate(r.raisedOn)}
+                        {r.acceptedOn ? ` · picked up ${fmtDate(r.acceptedOn)}` : ""}
+                        {r.closedOn ? ` · closed ${fmtDate(r.closedOn)}` : ""}
+                        {r.studentNotified ? " · the student was told" : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      {r.urgency === "urgent" && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">Urgent</span>}
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${REFERRAL_STATUS_TONE[r.status] || REFERRAL_STATUS_TONE.closed}`}>{REFERRAL_STATUS_LABEL[r.status] || r.status}</span>
+                    </div>
+                    {/* The outcome CODE, and nothing else about the closure. A closed
+                        referral always has one — the server will not close without it —
+                        so a blank here would mean a row that predates that rule. */}
+                    {r.status === "closed" && (
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">{referralOutcomeShort(r.outcome) || "Closed"}</span>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-100">
+        <ShieldCheck size={13} className="mt-px shrink-0" />
+        You are shown the status and the outcome of everything you send. The receiving team's case notes stay
+        with that team — this is not a gap in the screen, it is how the college keeps a student's disclosures
+        with the people they disclosed them to.
+      </p>
+
+      <ReferralModal open={referring} onClose={() => setReferring(false)} notify={store?.notify} onSaved={load} />
+    </>
+  );
+}
+
+/* ----- Settings: the college's own department list --------------------------- */
+
+// A key is a slug and NOTHING ELSE, matching supportDepartments.KEY_RE on the server:
+// it is stored as a plain string on every referral and travels in a URL fragment, so
+// it has to survive both without escaping. Derived from the name once, at creation, and
+// never again — see the editor below for why it can never be edited afterwards.
+const slugifyDeptKey = (name) => String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
+/**
+ * Add, rename and retire the college's support departments.
+ *
+ * THE KEY IS IMMUTABLE ONCE CREATED, and the editor does not offer to change it. Every
+ * referral stores the key as a plain string with no foreign key — deliberately, so
+ * that merging two teams cannot cascade a term's case records away, and so a referral
+ * to a department that no longer exists still renders. The price of that is that
+ * editing a key orphans every referral holding the old one: they would vanish from
+ * every queue with nothing on screen to say where they went. So names are editable and
+ * keys are not, and a department the college has finished with is RETIRED rather than
+ * deleted — retiring stops new referrals arriving while its open cases stay reachable.
+ */
+function SupportDepartmentSettings() {
+  const [rows, setRows] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [newName, setNewName] = useState("");
+
+  useEffect(() => {
+    api.referralDepartments()
+      // `saved:false` marks a row this session added and has not yet sent. Only such a
+      // row may be removed outright: one the server already knows may have referrals
+      // behind it, and dropping it from the list takes its name with it.
+      .then(d => setRows((d.departments || []).map(x => ({ ...x, saved: true }))))
+      .catch(e => { setErr(e.message); setRows([]); });
+  }, []);
+
+  const setRow = (key, patch) => { setRows(rs => (rs || []).map(r => r.key === key ? { ...r, ...patch } : r)); setDirty(true); setOk(""); };
+  const add = () => {
+    const name = newName.trim();
+    if (!name) return;
+    const key = slugifyDeptKey(name);
+    if (!key) { setErr("That name has no letters or numbers in it, so it cannot make a key."); return; }
+    if ((rows || []).some(r => r.key === key)) { setErr(`There is already a department with the key "${key}".`); return; }
+    setRows(rs => [...(rs || []), { key, name, active: true, saved: false }]);
+    setNewName(""); setErr(""); setOk(""); setDirty(true);
+  };
+  const drop = (key) => { setRows(rs => (rs || []).filter(r => r.key !== key)); setDirty(true); setOk(""); };
+
+  const save = async () => {
+    setBusy(true); setErr(""); setOk("");
+    try {
+      // A REPLACEMENT of the whole list, which is what the endpoint takes — the screen
+      // edits all of it at once, and retiring has to be expressible as a field rather
+      // than as an absence. `saved` is a flag this component invented and is stripped
+      // on the way out; the server allowlists three fields anyway, but sending junk it
+      // is about to discard would be sloppy.
+      const r = await api.saveReferralDepartments((rows || []).map(({ key, name, active }) => ({ key, name: name.trim(), active })));
+      setRows((r.departments || []).map(x => ({ ...x, saved: true })));
+      setDirty(false); setOk("Departments saved.");
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
+      <div className="mb-1 flex items-center gap-1.5"><HeartHandshake size={15} style={{ color: NAVY }} /><p className="text-sm font-bold text-slate-700">Support departments</p></div>
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+        The teams staff can refer students to. Yours, not ours — rename them to whatever this college calls
+        them. A department's key is fixed once it exists, because every referral is stored against it.
+      </p>
+
+      {rows === null && <p className="text-xs text-slate-400">Loading…</p>}
+
+      <div className="space-y-2">
+        {(rows || []).map(r => (
+          <div key={r.key} className={`flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5 ring-1 ${r.active ? "bg-slate-50 ring-slate-200" : "bg-white ring-slate-200"}`}>
+            <input value={r.name} onChange={e => setRow(r.key, { name: e.target.value })} className={`${inputCls} !w-auto min-w-[180px] flex-1 !bg-white`} placeholder="Department name" />
+            {/* The key, shown and NOT editable. Shown because staff see it in the URL
+                of a queue and will otherwise wonder where it came from; read-only
+                because changing it orphans every referral stored against it. */}
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-mono text-[11px] text-slate-500" title="Fixed once created — every referral is stored against this key">{r.key}</span>
+            <button onClick={() => setRow(r.key, { active: !r.active })} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold ring-1 transition ${r.active ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-slate-100 text-slate-500 ring-slate-200"}`}>
+              {r.active ? "Taking referrals" : "Retired"}
+            </button>
+            {/* Removal is offered ONLY for a row added in this session and never sent.
+                Anything the server already has may have cases behind it: retiring keeps
+                those reachable under the department's name, deleting the row takes the
+                name away and leaves the queue rendering a slug. */}
+            {!r.saved && (
+              <button onClick={() => drop(r.key)} title="Remove — not saved yet" className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={15} /></button>
+            )}
+          </div>
+        ))}
+        {rows && rows.length === 0 && <p className="text-xs text-slate-400">No departments yet — nobody can raise a referral until there is at least one.</p>}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }} placeholder="New department, e.g. Careers" className={`${inputCls} !w-auto min-w-[200px] flex-1`} />
+        <button onClick={add} disabled={!newName.trim()} className="press flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold text-white disabled:opacity-40" style={{ background: grad(BLUE) }}><Plus size={14} /> Add</button>
+      </div>
+      {newName.trim() && <p className="mt-1.5 text-[11px] text-slate-400">Its key will be <span className="font-mono text-slate-500">{slugifyDeptKey(newName) || "—"}</span>, and cannot be changed later.</p>}
+
+      {err && <p className="mt-3 text-xs font-semibold text-rose-600">{err}</p>}
+      {ok && <p className="mt-3 text-xs font-semibold text-emerald-600">{ok}</p>}
+      <PrimaryBtn onClick={save} disabled={busy || !dirty || rows === null} className="mt-3 w-full"><Save size={16} /> {busy ? "Saving…" : "Save departments"}</PrimaryBtn>
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+        Retiring a department stops new referrals reaching it. Its queue stays open to its members so the
+        cases already there can be finished.
+      </p>
+    </div>
   );
 }
 
@@ -14515,6 +15407,20 @@ function AdminSettings({ store }) {
             every email sent on its behalf. */}
         <DocumentSettings />
       </div>
+      {/* The teams staff refer students to, named by this college.
+          Editing the list needs "settings" AND "referrals" on the server — it sits on
+          this screen rather than on the Referrals screens because a wellbeing officer
+          holds that page to work their own queue and has no business retiring the ASK
+          desk. But the whole referrals router is behind "referrals", so an
+          administrator holding only "settings" cannot even READ the list, and the card
+          would render an authorisation error where an editor should be. Hidden instead:
+          a screen that shows a control nobody can use teaches people to ignore errors. */}
+      {canAccessPage(store.currentUser, "referrals") && (
+        <div className="mb-4">
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Student support</p>
+          <SupportDepartmentSettings />
+        </div>
+      )}
       <div className="mb-4">
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
         {/* This institution's OWN Moodle / SharePoint credentials — encrypted at rest,

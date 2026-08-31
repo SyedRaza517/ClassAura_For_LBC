@@ -17,6 +17,18 @@ const sStaff = (s) => ({
   // Parsed to an array of allowed page keys, or null = "never configured" (full
   // access). Bad/corrupt JSON is treated as null rather than throwing.
   adminPages: parseAdminPages(s.adminPages),
+  // Which support-department queues this person reads. An array, always — parsed here
+  // rather than shipped as the raw JSON string, matching adminPages above.
+  //
+  // Unparseable reads as NO membership rather than as full membership. A corrupted
+  // column must not open every queue, and this one decides who reads a student's
+  // disclosures to the wellbeing team.
+  supportDepartments: (() => {
+    try {
+      const parsed = JSON.parse(s.supportDepartments || "[]");
+      return Array.isArray(parsed) ? parsed.filter((k) => typeof k === "string") : [];
+    } catch { return []; }
+  })(),
 });
 
 // NULL → null, which every caller reads as "never configured → full access".
@@ -139,6 +151,49 @@ const sInteraction = (i) => ({
   ...(i.student ? { student: { id: i.student.id, name: `${i.student.firstName} ${i.student.lastName}`, studentRef: i.student.studentRef, initials: i.student.initials, colour: i.student.colour } } : {}),
 });
 
+// A referral, for THE DEPARTMENT IT WAS SENT TO. Everything, case notes included.
+const sReferralForDepartment = (r) => ({
+  id: r.id, studentId: r.studentId, department: r.department,
+  reason: r.reason, urgency: r.urgency, status: r.status,
+  outcome: r.outcome ?? null, outcomeDetail: r.outcomeDetail, notes: r.notes,
+  raisedBy: r.raisedBy ?? null, raisedOn: r.raisedOn,
+  acceptedBy: r.acceptedBy ?? null, acceptedOn: r.acceptedOn ?? null,
+  closedBy: r.closedBy ?? null, closedOn: r.closedOn ?? null,
+  studentNotified: r.studentNotified, interactionId: r.interactionId ?? null,
+  createdAt: r.createdAt,
+  ...(r.student ? { student: { id: r.student.id, name: r.student.firstName + " " + r.student.lastName, studentRef: r.student.studentRef, initials: r.student.initials, colour: r.student.colour } } : {}),
+});
+
+// A referral, for THE TUTOR WHO RAISED IT. Status and an outcome CODE; never the case
+// notes, and never the free text written at closure.
+//
+// THE OMISSION IS THE FEATURE, AND IT IS AN ALLOWLIST FOR THAT REASON. This function
+// names every field it emits, so a column added to Referral tomorrow does not appear
+// here — it has to be added on purpose. Written as a denylist (spread the row, delete
+// two keys) the next column would ship to the referrer by default, which is exactly
+// how sAdmission leaked: it stripped a fixed list of secrets, so everything added
+// afterwards was public the moment it existed.
+//
+// The outcome is a code; outcomeDetail is prose; only the code crosses. A tutor learns
+// their referral was closed as "supported", and what the student disclosed to the
+// wellbeing team is not theirs to read. Same line MitigatingCircumstance draws between
+// what the college decided and why.
+//
+// scripts/smoke-referrals.mjs asserts this key set EXACTLY, rather than asserting that
+// two names are absent — a test checking for the absence of two strings passes just as
+// happily when a third one leaks.
+const sReferralForReferrer = (r) => ({
+  id: r.id, studentId: r.studentId, department: r.department,
+  reason: r.reason, urgency: r.urgency, status: r.status,
+  outcome: r.outcome ?? null,
+  raisedOn: r.raisedOn,
+  acceptedOn: r.acceptedOn ?? null,
+  closedOn: r.closedOn ?? null,
+  studentNotified: r.studentNotified, interactionId: r.interactionId ?? null,
+  createdAt: r.createdAt,
+  ...(r.student ? { student: { id: r.student.id, name: r.student.firstName + " " + r.student.lastName, studentRef: r.student.studentRef, initials: r.student.initials, colour: r.student.colour } } : {}),
+});
+
 const sAssessment = (a) => ({
   id: a.id, unitId: a.unitId, title: a.title, type: a.type, maxMarks: a.maxMarks,
   weight: a.weight, dueDate: a.dueDate, createdAt: a.createdAt,
@@ -195,4 +250,4 @@ const sTermCalendar = (c) => ({
   published: !!c.published,
 });
 
-module.exports = { sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };
+module.exports = { sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sReferralForDepartment, sReferralForReferrer, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };
