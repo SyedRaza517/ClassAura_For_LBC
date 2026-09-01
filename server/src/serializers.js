@@ -194,6 +194,53 @@ const sReferralForReferrer = (r) => ({
   ...(r.student ? { student: { id: r.student.id, name: r.student.firstName + " " + r.student.lastName, studentRef: r.student.studentRef, initials: r.student.initials, colour: r.student.colour } } : {}),
 });
 
+// A referral, for THE STUDENT IT IS ABOUT.
+//
+// THE NARROWEST OF THE THREE, AND THE ONE WITH A PRECONDITION THE OTHERS DO NOT HAVE.
+// routes/student.js only ever hands rows with studentNotified === true to this
+// function, because a student portal that listed every referral would defeat the
+// tickbox that decides whether the student is told at all — a safeguarding concern
+// raised with the box UNTICKED would appear in the student's app that evening.
+// The filter is in the route rather than here so that it is a query the database
+// enforces, not a field this function could be trusted to omit.
+//
+// No reason, no notes, no outcomeDetail, no names. The reason is the tutor's account
+// of the student written for somebody else, and a student reading it is how tutors
+// learn to write nothing. departmentName is resolved by the caller and passed in,
+// because a student must never be shown a slug.
+const sReferralForStudent = (r, departmentName) => ({
+  id: r.id,
+  department: r.department,
+  departmentName: departmentName || r.department,
+  status: r.status,
+  outcome: r.outcome ?? null,
+  raisedOn: r.raisedOn,
+  acceptedOn: r.acceptedOn ?? null,
+  closedOn: r.closedOn ?? null,
+});
+
+// One hand-off. NEVER carries notesAtTransfer: this shape is shown to the receiving
+// team and to the referrer, and the archived notes belong to the department that
+// wrote them. routes/referrals.js adds that field back for a caller who is on the
+// fromDepartment, one entry at a time — an allowlist widened deliberately rather than
+// a payload trimmed afterwards.
+const sReferralTransfer = (t) => ({
+  id: t.id, referralId: t.referralId,
+  fromDepartment: t.fromDepartment, toDepartment: t.toDepartment,
+  reason: t.reason,
+  transferredBy: t.transferredBy ?? null, transferredOn: t.transferredOn,
+  createdAt: t.createdAt,
+});
+
+// One message in the referrer/department thread. Everything here is visible to both
+// parties by construction — the thread IS the shared channel, and the field that is
+// not shared is Referral.notes, which no message ever touches.
+const sReferralMessage = (m) => ({
+  id: m.id, referralId: m.referralId, department: m.department,
+  authorRole: m.authorRole, authorName: m.authorName ?? null,
+  body: m.body, createdAt: m.createdAt,
+});
+
 const sAssessment = (a) => ({
   id: a.id, unitId: a.unitId, title: a.title, type: a.type, maxMarks: a.maxMarks,
   weight: a.weight, dueDate: a.dueDate, createdAt: a.createdAt,
@@ -250,4 +297,4 @@ const sTermCalendar = (c) => ({
   published: !!c.published,
 });
 
-module.exports = { sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sReferralForDepartment, sReferralForReferrer, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };
+module.exports = { sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sReferralForDepartment, sReferralForReferrer, sReferralForStudent, sReferralTransfer, sReferralMessage, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };

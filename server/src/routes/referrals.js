@@ -15,7 +15,7 @@
 // key to the four hand-maintained copies of ADMIN_PAGES.
 const router = require("express").Router();
 const prisma = require("../db");
-const { sReferralForDepartment, sReferralForReferrer } = require("../serializers");
+const { sReferralForDepartment, sReferralForReferrer, sReferralTransfer, sReferralMessage } = require("../serializers");
 const { requireAuth, requirePage, requireAnyPage } = require("../auth");
 const { isRealDate } = require("../validate");
 const { localDate } = require("../clock");
@@ -137,6 +137,40 @@ router.get("/mine", async (req, res) => {
   res.json(rows.map(sReferralForReferrer));
 });
 
+// Tell a department that work has arrived, in the app rather than by email.
+//
+// A queue nobody is told about is a queue nobody works. But a shared mailbox widens the
+// confidentiality surface for nothing, so this names NO STUDENT and carries no reason —
+// it says work has arrived, and the queue itself says what.
+//
+// Hoisted out of the raise handler when transfers arrived, because a case handed to
+// Wellbeing at four in the afternoon has to reach them exactly as a new one does: the
+// second copy of this block is where the two notifications drift apart, and the one
+// that gets forgotten is always the transfer.
+async function notifyDepartment(key, deptName, { urgent = false, verb = "New referral" } = {}) {
+  // Staff has no "active" column — it has pendingActivation, for an account an
+  // administrator created and the person has not yet claimed. Filtering on a column
+  // that does not exist made Prisma throw inside the caller's catch, so this failed
+  // silently and the department was never told anything at all. Someone who has not set
+  // a password cannot read the queue, so there is nothing to tell them about.
+  const members = await prisma.staff.findMany({ where: { pendingActivation: false } });
+  const recipients = members.filter((s) => departments.canReadDepartment(s, key));
+  if (!recipients.length) return;
+  await prisma.notification.createMany({
+    data: recipients.map((s) => ({
+      staffId: s.id,
+      type: urgent ? "error" : "info",
+      message: (urgent ? "Urgent — " : "") + verb + " waiting for " + deptName,
+      // The FRAGMENT of the queue itself, not the bare word. There is no page keyed
+      // "referrals" — the parent is a group and the real screens are
+      // referrals-<deptkey> — so the bare word routed nowhere and the tap fell back to
+      // home. A notification that does not open the thing it is about is most of the
+      // way to no notification.
+      link: "referrals-" + key,
+    })),
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Raising one                                                                */
 /* -------------------------------------------------------------------------- */
@@ -198,34 +232,7 @@ router.post("/", async (req, res) => {
 
   // --- Everything below runs AFTER the response and is never awaited -------------
 
-  // Tell the department, in the app rather than by email.
-  //
-  // A queue nobody is told about is a queue nobody works. But a shared mailbox widens
-  // the confidentiality surface for nothing, so this names no student and carries no
-  // reason — it says work has arrived, and the queue itself says what.
-  (async () => {
-    // Staff has no "active" column — it has pendingActivation, for an account an
-    // administrator created and the person has not yet claimed. Filtering on a column
-    // that does not exist made Prisma throw inside the catch below, so this failed
-    // silently and the department was never told anything at all. Someone who has not
-    // set a password cannot read the queue, so there is nothing to tell them about.
-    const members = await prisma.staff.findMany({ where: { pendingActivation: false } });
-    const recipients = members.filter((s) => departments.canReadDepartment(s, key));
-    if (!recipients.length) return;
-    await prisma.notification.createMany({
-      data: recipients.map((s) => ({
-        staffId: s.id,
-        type: urgency === "urgent" ? "error" : "info",
-        message: (urgency === "urgent" ? "Urgent referral" : "New referral") + " waiting for " + dept.name,
-        // The FRAGMENT of the queue itself, not the bare word. There is no page keyed
-        // "referrals" — the parent is a group and the real screens are
-        // referrals-<deptkey> — so the bare word routed nowhere and the tap fell back
-        // to home. A notification that does not open the thing it is about is most of
-        // the way to no notification.
-        link: "referrals-" + key,
-      })),
-    });
-  })().catch(() => {});
+  notifyDepartment(key, dept.name, { urgent: urgency === "urgent" }).catch(() => {});
 
   // Tell the student, only if asked.
   if (notifyStudent && row.student?.email) {
@@ -349,6 +356,240 @@ router.put("/:id/close", async (req, res) => {
       " by " + (updated.closedBy || "a member of staff"),
   });
   res.json(sReferralForDepartment(updated));
+});
+
+/* -------------------------------------------------------------------------- */
+/* Handing it on                                                              */
+/* -------------------------------------------------------------------------- */
+
+// Load a referral for somebody who is a PARTY to it — a wider set than
+// loadForDepartment allows, and deliberately so.
+//
+// A wellbeing officer who transferred a case to ASK last week is no longer on its
+// current department, so loadForDepartment would 403 them out of the record of their
+// own hand-off. The referrer is in the same position and always was. So: the current
+// department, the referrer, or any department this case has previously sat with.
+//
+// The flags come back with the row rather than being recomputed by each caller,
+// because "may you read this" and "how much of it" are two different questions and the
+// second is answered differently by every handler below.
+async function loadForParticipant(req, res) {
+  const row = await prisma.referral.findUnique({
+    where: { id: req.params.id },
+    include: { student: true, transfers: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!row) { res.status(404).json({ error: "Referral not found" }); return null; }
+
+  const me = req.user?.name || null;
+  const isReferrer = !!me && row.raisedBy === me;
+  const onCurrent = departments.canReadDepartment(req.user, row.department);
+  const onPrevious = row.transfers.some((t) => departments.canReadDepartment(req.user, t.fromDepartment));
+
+  if (!isReferrer && !onCurrent && !onPrevious) {
+    // 403 and no detail, exactly as loadForDepartment: confirming that this id names a
+    // real referral would tell an ASK caseworker that a wellbeing referral exists for
+    // somebody.
+    res.status(403).json({ error: "You are not a party to that referral." });
+    return null;
+  }
+  return { row, isReferrer, onCurrent, onPrevious };
+}
+
+// PUT /api/referrals/:id/transfer — the wrong desk, or the right one for a while.
+//
+// THE CASE NOTES DO NOT TRAVEL, AND THAT IS THE WHOLE DESIGN.
+//
+// Transferring is not re-addressing an envelope. A student disclosed something to
+// Wellbeing; handing the case to Careers must not hand over the disclosure with it —
+// and Referral.notes is read by whoever is on the CURRENT department, so leaving it in
+// place would do exactly that. The notes are archived onto the transfer row under the
+// department that wrote them, and the live field is cleared. Deleting them instead was
+// rejected: an officer who mis-clicked would have destroyed their own record, and the
+// college could no longer answer what its wellbeing team knew and when.
+//
+// The status resets to "open" for the same reason. A case arriving already marked
+// accepted, stamped with a name from another team, is a case the receiving desk has no
+// reason to pick up — which is the failure a queue exists to prevent.
+router.put("/:id/transfer", async (req, res) => {
+  const row = await loadForDepartment(req, res);
+  if (!row) return;
+
+  // A closed case is a finished one. Reopening it by moving it would erase the outcome
+  // the referrer has already been shown, so the answer is a new referral rather than a
+  // resurrection of this one.
+  if (row.status === "closed") {
+    return res.status(409).json({ error: "That referral is closed. Raise a new one instead." });
+  }
+
+  const toKey = str(req.body?.department).toLowerCase();
+  if (toKey === row.department) {
+    return res.status(400).json({ error: "That referral is already with that department." });
+  }
+  // Only an ACTIVE department may receive it, same rule as raising one: a desk the
+  // college has closed is a desk where the case is never seen again.
+  const to = (await departments.active()).find((d) => d.key === toKey);
+  if (!to) return res.status(400).json({ error: "Choose a department that is currently taking referrals." });
+
+  const reason = str(req.body?.reason).slice(0, 5000);
+  if (!reason) return res.status(400).json({ error: "Say why you are handing this on." });
+
+  const on = localDate();
+  if (!isRealDate(on)) return res.status(500).json({ error: "Clock misconfigured" });
+
+  const from = await departments.byKey(row.department);
+
+  // One transaction, because the archive and the clearing are two halves of one fact.
+  // Written separately, a failure between them either loses the notes entirely or
+  // leaves them readable by the department that has just been handed the case — and
+  // the second is the confidentiality incident this whole route exists to avoid.
+  const [, updated] = await prisma.$transaction([
+    prisma.referralTransfer.create({
+      data: {
+        referralId: row.id,
+        fromDepartment: row.department, toDepartment: toKey,
+        reason, notesAtTransfer: row.notes,
+        transferredBy: req.user?.name || null, transferredOn: on,
+      },
+    }),
+    prisma.referral.update({
+      where: { id: row.id },
+      data: {
+        department: toKey,
+        notes: "",
+        status: "open", acceptedBy: null, acceptedOn: null,
+      },
+      include: { student: true },
+    }),
+  ]);
+
+  audit.record(req, {
+    action: "referral.transferred", entity: "Referral", entityId: row.id,
+    // WHERE it went and who moved it, never why: the transfer reason is prose written
+    // about a student, and the audit log is read on Settings by administrators who were
+    // never granted this page.
+    summary: label(row, from) + " handed to " + to.name + " by " + (req.user?.name || "a member of staff"),
+    before: { department: row.department, status: row.status },
+    after: { department: toKey, status: "open" },
+  });
+
+  res.json(sReferralForDepartment(updated));
+
+  // The receiving desk is told exactly as it would be for a new referral. Urgency
+  // carries across because it is a property of the student's situation, not of which
+  // team happens to be holding the case.
+  notifyDepartment(toKey, to.name, { urgent: updated.urgency === "urgent", verb: "Transferred referral" }).catch(() => {});
+});
+
+// GET /api/referrals/:id/history — where this case has been.
+//
+// The archived case notes are added back ONE ENTRY AT A TIME, for a caller who is on
+// that entry's fromDepartment. sReferralTransfer never names the field, so this is an
+// allowlist widened on purpose rather than a payload trimmed afterwards — the
+// sAdmission lesson, where a blocklist meant every column added later shipped by
+// default.
+//
+// Department NAMES are resolved here rather than in the serialiser because the list is
+// configuration and the serialiser is pure. A retired department still resolves, which
+// is why the trail renders as names after the college has closed a desk.
+router.get("/:id/history", async (req, res) => {
+  const loaded = await loadForParticipant(req, res);
+  if (!loaded) return;
+  const { row } = loaded;
+  const all = await departments.all();
+  const nameOf = (k) => all.find((d) => d.key === k)?.name || k;
+  res.json(row.transfers.map((t) => ({
+    ...sReferralTransfer(t),
+    fromName: nameOf(t.fromDepartment),
+    toName: nameOf(t.toDepartment),
+    ...(departments.canReadDepartment(req.user, t.fromDepartment) ? { notesAtTransfer: t.notesAtTransfer } : {}),
+  })));
+});
+
+/* -------------------------------------------------------------------------- */
+/* The conversation                                                           */
+/* -------------------------------------------------------------------------- */
+
+// GET /api/referrals/:id/messages
+//
+// WHICH MESSAGES YOU SEE IS SCOPED BY DEPARTMENT, NOT BY REFERRAL.
+//
+// The referrer reads every message, because every message was written to or by them.
+// A member of staff reads the messages written under a department they are on — so
+// after a transfer the receiving team reads its own thread and not the previous team's,
+// which is the same line the transfer draws through the case notes. Reading it any
+// other way would hand Careers a conversation Wellbeing had about a disclosure.
+router.get("/:id/messages", async (req, res) => {
+  const loaded = await loadForParticipant(req, res);
+  if (!loaded) return;
+  const { row, isReferrer } = loaded;
+  const rows = await prisma.referralMessage.findMany({
+    where: { referralId: row.id }, orderBy: { createdAt: "asc" },
+  });
+  const visible = rows.filter((m) => isReferrer || departments.canReadDepartment(req.user, m.department));
+  res.json(visible.map(sReferralMessage));
+});
+
+// POST /api/referrals/:id/messages — ask the tutor something, or answer them.
+//
+// The gap this fills: `reason` is the referrer talking once, `notes` is the department
+// talking to itself. "Which unit is this about?" had nowhere to go, so it went into the
+// case notes where the person who asked could not read the answer, or out of the system
+// into email, which is worse.
+//
+// WRITING IS NARROWER THAN READING, deliberately. The referrer and the CURRENT
+// department may post; a department that has handed the case on may not. They keep
+// their own thread to read and they no longer hold the case, and a case being answered
+// by two teams at once is how a student gets two different answers.
+router.post("/:id/messages", async (req, res) => {
+  const loaded = await loadForParticipant(req, res);
+  if (!loaded) return;
+  const { row, isReferrer, onCurrent } = loaded;
+  if (!isReferrer && !onCurrent) {
+    return res.status(403).json({ error: "Only the referrer and the department holding this referral can reply." });
+  }
+
+  const body = str(req.body?.body).slice(0, 5000);
+  if (!body) return res.status(400).json({ error: "Write a message." });
+
+  // The department is stamped from the referral's CURRENT department rather than from
+  // the author's membership: the referrer is on no department at all, and their message
+  // still belongs to the thread the department holding the case reads.
+  //
+  // Somebody who is on the current department AND raised the referral counts as the
+  // department, not the referrer — the check is ordered rather than ambiguous, because
+  // the screen labels the two differently and a role that depended on which branch was
+  // written first would flip when this function was next edited.
+  const created = await prisma.referralMessage.create({
+    data: {
+      referralId: row.id,
+      department: row.department,
+      authorRole: onCurrent ? "department" : "referrer",
+      authorName: req.user?.name || null,
+      body,
+    },
+  });
+
+  audit.record(req, {
+    action: "referral.messaged", entity: "Referral", entityId: row.id,
+    // THAT a message was sent, never what it said. Same rule as the case notes above:
+    // this is prose about a student, and the audit log is read by administrators who do
+    // not hold this page.
+    summary: "Message added to " + label(row, await departments.byKey(row.department)) +
+      " by " + (req.user?.name || "a member of staff"),
+  });
+
+  res.status(201).json(sReferralMessage(created));
+
+  // Only a REFERRER's message needs a notification: the department is looking at its
+  // queue, while the tutor is not — they raised this weeks ago and moved on. A
+  // department's reply reaches the tutor through Sent by me, which is where they go to
+  // find out what happened anyway.
+  if (isReferrer) {
+    (async () => {
+      const dept = await departments.byKey(row.department);
+      await notifyDepartment(row.department, dept?.name || row.department, { verb: "Referral reply" });
+    })().catch(() => {});
+  }
 });
 
 module.exports = router;

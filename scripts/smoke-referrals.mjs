@@ -29,6 +29,9 @@ import { dirname, join } from "node:path";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
+// Signing the student in needs a password hash written directly: every seeded student
+// has passwordHash null, which is what the student portal suite already works around.
+const bcrypt = require(`${ROOT}/server/node_modules/bcryptjs`);
 if (!process.env.DATABASE_URL) { console.error("DATABASE_URL is required — point it at a throwaway database."); process.exit(1); }
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
@@ -698,6 +701,353 @@ await check("THE AUDIT TRAIL RECORDS WHO AND WHERE, NEVER WHY", async () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Handing a case to another desk                                              */
+/* -------------------------------------------------------------------------- */
+
+// A transfer is the one operation in this feature that can move a confidentiality
+// boundary, so it gets the heaviest negative weighting in the suite. The failure it
+// exists to prevent is silent: a student discloses something to Wellbeing, the case is
+// handed to ASK for a coursework question, and the disclosure arrives with it. Nothing
+// crashes, nobody is told, and the college finds out when the student does.
+const T_REASON = `TRANSFER-CANARY-${stamp}`;
+const T_NOTES = `TRANSFERNOTES-CANARY-${stamp}`;
+const MSG_WELL = `MSGWELL-CANARY-${stamp}`;
+const MSG_TUTOR = `MSGTUTOR-CANARY-${stamp}`;
+const MSG_ASK = `MSGASK-CANARY-${stamp}`;
+
+// One referral, raised at Wellbeing, worked there, then handed to ASK. Every assertion
+// below reads this same case, because the interesting questions are all about what
+// crossed the hand-off and what did not.
+const moved = await raise({ studentId: alice.id, department: "wellbeing", reason: REASON, urgency: "urgent" });
+const movedId = moved.body?.id;
+await call(`/referrals/${movedId}/accept`, { method: "PUT", token: well.token });
+await call(`/referrals/${movedId}/notes`, { method: "PUT", token: well.token, body: { notes: T_NOTES } });
+
+await check("a tutor who is on no department cannot hand a case on", async () => {
+  const r = await call(`/referrals/${movedId}/transfer`, { method: "PUT", token: referrer.token, body: { department: "ask", reason: "x" } });
+  assert.equal(r.status, 403, `the referrer got ${r.status}`);
+  return "403";
+});
+
+await check("A DEPARTMENT THAT DOES NOT HOLD THE CASE CANNOT HAND IT ON", async () => {
+  // ASK moving a wellbeing referral would be ASK deciding where a wellbeing disclosure
+  // goes next. The 403 comes from the same loader that guards accept, notes and close,
+  // which is why a handler added later cannot forget it.
+  const r = await call(`/referrals/${movedId}/transfer`, { method: "PUT", token: ask.token, body: { department: "student-support", reason: "x" } });
+  assert.equal(r.status, 403, `ASK got ${r.status}`);
+  return "403";
+});
+
+await check("a case cannot be handed to the department already holding it", async () => {
+  const r = await call(`/referrals/${movedId}/transfer`, { method: "PUT", token: well.token, body: { department: "wellbeing", reason: "x" } });
+  assert.equal(r.status, 400, `got ${r.status}`);
+  return r.body.error;
+});
+
+await check("...nor to a department that does not exist", async () => {
+  const r = await call(`/referrals/${movedId}/transfer`, { method: "PUT", token: well.token, body: { department: "careers", reason: "x" } });
+  assert.equal(r.status, 400, `an invented department got ${r.status}`);
+  return r.body.error;
+});
+
+await check("...nor with no reason, because the next team has to know why it arrived", async () => {
+  for (const reason of ["", "   ", undefined]) {
+    const r = await call(`/referrals/${movedId}/transfer`, { method: "PUT", token: well.token, body: { department: "ask", reason } });
+    assert.equal(r.status, 400, `reason ${JSON.stringify(reason)} got ${r.status}`);
+  }
+  return "3 empty reasons, all 400";
+});
+
+await check("...and the case has not moved after any of those refusals", async () => {
+  const q = await call("/referrals?department=wellbeing", { token: well.token });
+  assert.ok(q.body.some((r) => r.id === movedId), "the referral left the wellbeing queue anyway");
+  return "still with Wellbeing";
+});
+
+// The transfer that actually happens.
+const didTransfer = await call(`/referrals/${movedId}/transfer`, {
+  method: "PUT", token: well.token, body: { department: "ask", reason: T_REASON },
+});
+
+await check("a hand-off moves the case, and resets it to WAITING", async () => {
+  assert.equal(didTransfer.status, 200, `transfer answered ${didTransfer.status}: ${JSON.stringify(didTransfer.body).slice(0, 120)}`);
+  assert.equal(didTransfer.body.department, "ask");
+  // The reset is the point. A case arriving already marked accepted, stamped with a
+  // name from another team, is a case the receiving desk has no reason to pick up.
+  assert.equal(didTransfer.body.status, "open", `arrived as ${didTransfer.body.status}`);
+  assert.equal(didTransfer.body.acceptedBy, null, "it arrived still stamped with who accepted it at the last desk");
+  assert.equal(didTransfer.body.acceptedOn, null, "it arrived carrying the last desk's acceptance date");
+  return "with ASK, open, unstamped";
+});
+
+await check("THE SENDING TEAM'S CASE NOTES DO NOT TRAVEL WITH THE CASE", async () => {
+  // The assertion that matters most in this file. Read from ASK's own queue, as a
+  // whole-payload substring search rather than a field check — a notes column renamed
+  // or duplicated would still be caught.
+  const q = await call("/referrals?department=ask", { token: ask.token });
+  const row = q.body.find((r) => r.id === movedId);
+  assert.ok(row, "the case did not arrive in the ASK queue at all");
+  assert.equal(row.notes, "", `ASK received case notes: ${row.notes}`);
+  assert.ok(!JSON.stringify(q.body).includes(T_NOTES), "the wellbeing case notes reached the ASK queue");
+  return "ASK sees an empty notes field and no canary";
+});
+
+await check("...but the referrer's original reason DOES, because both sides always shared it", async () => {
+  const q = await call("/referrals?department=ask", { token: ask.token });
+  const row = q.body.find((r) => r.id === movedId);
+  assert.equal(row.reason, REASON, "the receiving team lost the reason the case was raised for");
+  return "reason intact";
+});
+
+await check("THE SENDING TEAM CAN STILL READ THE NOTES IT WROTE, ARCHIVED AT THE HAND-OFF", async () => {
+  // Deleting them was the rejected option: an officer who mis-clicked would have
+  // destroyed their own record, and the college could no longer answer what its
+  // wellbeing team knew and when.
+  const h = await call(`/referrals/${movedId}/history`, { token: well.token });
+  assert.equal(h.status, 200, `wellbeing got ${h.status} on the history of its own hand-off`);
+  assert.equal(h.body.length, 1, `expected one transfer, got ${h.body.length}`);
+  assert.equal(h.body[0].notesAtTransfer, T_NOTES, "the archived notes are not the ones that were written");
+  assert.equal(h.body[0].fromDepartment, "wellbeing");
+  assert.equal(h.body[0].toDepartment, "ask");
+  return "archived and readable by Wellbeing alone";
+});
+
+await check("...and the RECEIVING team cannot, from the same route", async () => {
+  const h = await call(`/referrals/${movedId}/history`, { token: ask.token });
+  assert.equal(h.status, 200, `ASK got ${h.status} on the history of the case it holds`);
+  assert.equal(h.body.length, 1);
+  // ABSENT, not empty. sReferralTransfer never names the field and the route adds it
+  // back one entry at a time, so a reader who is not on the sending department gets a
+  // payload where the key does not exist — which an empty string would not prove.
+  assert.ok(!("notesAtTransfer" in h.body[0]), "the field is present for ASK, even if blank");
+  assert.ok(!JSON.stringify(h.body).includes(T_NOTES), "the wellbeing notes reached ASK through the history route");
+  return "the key is absent for ASK, not merely empty";
+});
+
+await check("...nor can the TUTOR who raised it, who never reads case notes at all", async () => {
+  const h = await call(`/referrals/${movedId}/history`, { token: referrer.token });
+  assert.equal(h.status, 200, `the referrer got ${h.status} on their own referral's history`);
+  assert.ok(!("notesAtTransfer" in (h.body[0] || {})), "the referrer was handed the case notes");
+  assert.ok(!JSON.stringify(h.body).includes(T_NOTES), "the case notes reached the referrer");
+  // The hand-off REASON is shared, deliberately — the tutor is entitled to know their
+  // referral moved and why. That is the one field crossing this boundary.
+  assert.equal(h.body[0].reason, T_REASON, "the referrer was not told why their referral moved");
+  return "reason yes, notes no";
+});
+
+await check("somebody who is party to nothing gets 403 from the history, not an empty trail", async () => {
+  const h = await call(`/referrals/${movedId}/history`, { token: supp.token });
+  assert.equal(h.status, 403, `Student Support got ${h.status}`);
+  return "403";
+});
+
+await check("the case has genuinely LEFT the sending team's queue", async () => {
+  const q = await call("/referrals?department=wellbeing", { token: well.token });
+  assert.ok(!q.body.some((r) => r.id === movedId), "it is still in the wellbeing queue as well");
+  return "gone from Wellbeing";
+});
+
+await check("the receiving department is told, and the notification names no student", async () => {
+  const rows = await eventually(async () => {
+    const n = await db.notification.findMany({ where: { staffId: ask.id } });
+    return n.length ? n : null;
+  });
+  assert.ok(rows, "ASK was never told the case arrived");
+  const blob = JSON.stringify(rows);
+  assert.ok(!blob.includes(alice.firstName) && !blob.includes(alice.studentRef), "the notification names the student");
+  assert.ok(!blob.includes(REASON) && !blob.includes(T_REASON), "the notification carries a reason");
+  return `${rows.length} notifications, no student named`;
+});
+
+await check("A CLOSED CASE CANNOT BE HANDED ON — the outcome the referrer was shown stands", async () => {
+  const c = await raise({ studentId: alice.id, department: "wellbeing", reason: REASON });
+  await call(`/referrals/${c.body.id}/close`, { method: "PUT", token: well.token, body: { outcome: "supported" } });
+  const r = await call(`/referrals/${c.body.id}/transfer`, { method: "PUT", token: well.token, body: { department: "ask", reason: "x" } });
+  assert.equal(r.status, 409, `a closed referral answered ${r.status}`);
+  return "409";
+});
+
+/* -------------------------------------------------------------------------- */
+/* The conversation                                                            */
+/* -------------------------------------------------------------------------- */
+
+// The thread is a THIRD visibility and the suite treats it as one. It is not a window
+// onto the case notes and it is not the referrer's reason: both sides wrote it knowing
+// the other would read it. What has to be proved is that it is scoped like the notes
+// across a hand-off — otherwise it becomes the route by which a wellbeing conversation
+// reaches the team the case was passed to.
+
+await check("a department that is party to nothing cannot read the thread", async () => {
+  const r = await call(`/referrals/${movedId}/messages`, { token: supp.token });
+  assert.equal(r.status, 403, `Student Support got ${r.status}`);
+  return "403";
+});
+
+await check("an empty message is refused rather than stored", async () => {
+  for (const body of ["", "   ", undefined]) {
+    const r = await call(`/referrals/${movedId}/messages`, { method: "POST", token: referrer.token, body: { body } });
+    assert.equal(r.status, 400, `${JSON.stringify(body)} got ${r.status}`);
+  }
+  return "3 empty bodies, all 400";
+});
+
+await check("the referrer and the department holding the case can both write to it", async () => {
+  const a = await call(`/referrals/${movedId}/messages`, { method: "POST", token: referrer.token, body: { body: MSG_TUTOR } });
+  const b = await call(`/referrals/${movedId}/messages`, { method: "POST", token: ask.token, body: { body: MSG_ASK } });
+  assert.equal(a.status, 201, `the referrer got ${a.status}`);
+  assert.equal(b.status, 201, `ASK got ${b.status}`);
+  // The ROLE is stamped from who is asking, not from a field the client sends.
+  assert.equal(a.body.authorRole, "referrer");
+  assert.equal(b.body.authorRole, "department");
+  return "referrer and department, both stamped by the server";
+});
+
+// A message written under WELLBEING, before the hand-off. Written directly, because the
+// case has already moved and the route would now stamp it with ASK — which is correct
+// behaviour and exactly why the fixture cannot go through it.
+await db.referralMessage.create({
+  data: { referralId: movedId, department: "wellbeing", authorRole: "department", authorName: well.name, body: MSG_WELL },
+});
+
+await check("A TEAM THAT HANDED A CASE ON DOES NOT SEE THE PREVIOUS TEAM'S THREAD", async () => {
+  // The mirror of the case-notes rule, and the one a reader is most likely to widen
+  // later for a screen they are building: the referral is one row, so a thread scoped
+  // to the referral rather than the department reads perfectly sensibly and hands ASK
+  // a conversation Wellbeing had about a disclosure.
+  const r = await call(`/referrals/${movedId}/messages`, { token: ask.token });
+  assert.equal(r.status, 200);
+  const blob = JSON.stringify(r.body);
+  assert.ok(!blob.includes(MSG_WELL), "ASK can read the wellbeing thread");
+  assert.ok(blob.includes(MSG_ASK), "ASK cannot read its own thread");
+  return `${r.body.length} messages, none of them Wellbeing's`;
+});
+
+await check("...while the sending team still reads its own, having been part of it", async () => {
+  const r = await call(`/referrals/${movedId}/messages`, { token: well.token });
+  assert.equal(r.status, 200, `wellbeing got ${r.status}`);
+  const blob = JSON.stringify(r.body);
+  assert.ok(blob.includes(MSG_WELL), "Wellbeing lost the thread it wrote");
+  assert.ok(!blob.includes(MSG_ASK), "Wellbeing can read ASK's thread");
+  return "its own thread, and only its own";
+});
+
+await check("...and a team that has handed a case on can no longer REPLY to it", async () => {
+  // Reading is wider than writing here on purpose. A case being answered by two teams
+  // at once is how a student gets two different answers.
+  const r = await call(`/referrals/${movedId}/messages`, { method: "POST", token: well.token, body: { body: "should not land" } });
+  assert.equal(r.status, 403, `wellbeing got ${r.status} posting to a case it handed on`);
+  return "403";
+});
+
+await check("THE REFERRER READS THE WHOLE THREAD, because every message was written to or by them", async () => {
+  const r = await call(`/referrals/${movedId}/messages`, { token: referrer.token });
+  assert.equal(r.status, 200);
+  const blob = JSON.stringify(r.body);
+  for (const canary of [MSG_TUTOR, MSG_ASK, MSG_WELL]) {
+    assert.ok(blob.includes(canary), "the referrer is missing part of their own thread");
+  }
+  // And the thread is still not a way round the case notes.
+  assert.ok(!blob.includes(T_NOTES), "the case notes reached the referrer through the thread");
+  return `${r.body.length} messages, no case notes`;
+});
+
+/* -------------------------------------------------------------------------- */
+/* What the student is told                                                    */
+/* -------------------------------------------------------------------------- */
+
+// The student portal's view exists because a college that refers somebody to Wellbeing
+// and never tells them has a support service the student cannot find. What it must NOT
+// do is defeat the tickbox that decides whether they are told at all.
+const A_PASSWORD = `RefStudent!${stamp}`;
+await db.student.update({ where: { id: alice.id }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0 } });
+const aliceLogin = await call("/auth/login", { method: "POST", body: { email: alice.email, password: A_PASSWORD } });
+const aliceToken = aliceLogin.body?.token;
+
+// Two referrals for the same student, differing only in the tickbox.
+//
+// WELLBEING, not Student Support: the retirement test above has already closed that
+// desk, and the tidy-up does not reopen it until after this block. A fixture raised
+// against a retired department is refused, and the assertion below then fails for a
+// reason that has nothing to do with what it is testing.
+const told = await raise({ studentId: alice.id, department: "wellbeing", reason: REASON, notifyStudent: true });
+const notTold = await raise({ studentId: alice.id, department: "wellbeing", reason: REASON, notifyStudent: false });
+if (!told.body?.id || !notTold.body?.id) {
+  console.log(`✗ could not raise the student-portal fixtures: ${JSON.stringify(told.body).slice(0, 120)}`);
+}
+
+await check("A STUDENT IS SHOWN ONLY THE REFERRALS THEY WERE TOLD ABOUT", async () => {
+  // The whole point of the tickbox. It defaults OFF so a tutor raising a safeguarding
+  // concern does not have to remember to suppress anything — and a portal listing every
+  // referral would surface that concern to the student the same evening.
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { token: aliceToken });
+  assert.equal(r.status, 200, `the student got ${r.status}`);
+  const ids = r.body.map((x) => x.id);
+  assert.ok(ids.includes(told.body.id), "the student cannot see the referral they were told about");
+  assert.ok(!ids.includes(notTold.body.id), "THE STUDENT CAN SEE A REFERRAL RAISED WITH THE TICKBOX OFF");
+  return `${r.body.length} shown, the unticked one withheld`;
+});
+
+await check("...and the student's view carries EXACTLY these fields and no others", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { token: aliceToken });
+  const row = r.body.find((x) => x.id === told.body.id);
+  const expected = ["id", "department", "departmentName", "status", "outcome", "raisedOn", "acceptedOn", "closedOn"];
+  assert.deepEqual(Object.keys(row).sort(), [...expected].sort(),
+    `the student's payload is ${Object.keys(row).sort().join(", ")}`);
+  return `${expected.length} keys, exactly as declared`;
+});
+
+await check("...so the tutor's REASON never reaches the student it was written about", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { token: aliceToken });
+  const blob = JSON.stringify(r.body);
+  for (const canary of [REASON, NOTES, DETAIL, T_NOTES, MSG_WELL, MSG_ASK]) {
+    assert.ok(!blob.includes(canary), "the student's payload carries text written about them for somebody else");
+  }
+  // And the department is named rather than slugged.
+  assert.ok(r.body.every((x) => x.departmentName && x.departmentName !== x.department), "the student is being shown a slug");
+  return "no reason, no notes, no thread — and a name rather than a key";
+});
+
+await check("A STUDENT TOKEN CANNOT REACH THE STAFF REFERRAL ROUTES AT ALL", async () => {
+  // The router allowlist, not a per-route check. A student reaching /api/referrals would
+  // be reading a queue of other students' disclosures.
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const attempts = [
+    ["/referrals/departments", "GET"],
+    ["/referrals?department=wellbeing", "GET"],
+    ["/referrals/mine", "GET"],
+    [`/referrals/${movedId}/messages`, "GET"],
+    [`/referrals/${movedId}/history`, "GET"],
+  ];
+  for (const [path, method] of attempts) {
+    const r = await call(path, { method, token: aliceToken });
+    assert.equal(r.status, 403, `${method} ${path} answered ${r.status} to a student`);
+  }
+  return `${attempts.length} routes, all 403`;
+});
+
+await check("the transfer and the message are in the audit trail, and neither carries its prose", async () => {
+  const rows = await eventually(async () => {
+    const e = await db.auditLog.findMany({ where: { entity: "Referral" } });
+    const acts = new Set(e.map((x) => x.action));
+    return acts.has("referral.transferred") && acts.has("referral.messaged") ? e : null;
+  });
+  assert.ok(rows, "no audit row records a transfer or a message");
+  const blob = JSON.stringify(rows);
+  // The hand-off reason is shared between the three people involved. It is still prose
+  // written about a student, and the audit log is read on Settings by administrators who
+  // were never granted this page.
+  assert.ok(!blob.includes(T_REASON), "the audit trail carries the hand-off reason");
+  assert.ok(!blob.includes(T_NOTES), "the audit trail carries the archived case notes");
+  for (const canary of [MSG_TUTOR, MSG_ASK, MSG_WELL]) {
+    assert.ok(!blob.includes(canary), "the audit trail carries the text of a message");
+  }
+  return "two more verbs, no prose";
+});
+
+/* -------------------------------------------------------------------------- */
 /* Tidy up                                                                     */
 /* -------------------------------------------------------------------------- */
 
@@ -720,6 +1070,11 @@ await check("the department list is back to the platform defaults for the suites
   assert.ok(r.body.departments.every((d) => d.active), "a department is still retired");
   return r.body.departments.map((d) => d.key).join(", ");
 });
+
+// The student goes back to having no password. Seeded students have passwordHash null
+// and the student-portal suite asserts on that state, so leaving one signed-in-able
+// would be this suite changing another one's world.
+await db.student.update({ where: { id: alice.id }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
 
 // There is no DELETE route for a referral, deliberately — a case record is not
 // something a caseworker may remove. So the fixtures go out the way they came in.

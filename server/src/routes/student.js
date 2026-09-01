@@ -3,13 +3,14 @@
 // branch already blocks student tokens from every other router.
 const router = require("express").Router();
 const prisma = require("../db");
-const { sUnit, sStudent, sStudentQuery } = require("../serializers");
+const { sUnit, sStudent, sStudentQuery, sReferralForStudent } = require("../serializers");
 const { requireAuth, requireStudent } = require("../auth");
 const { summarise } = require("../attendance");
 const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
+const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, SELF_CHECKIN_STAMP } = require("../attendanceTap");
 const { isString } = require("../validate");
@@ -489,6 +490,36 @@ router.get("/me/reviews", async (req, res) => {
     followUpDate: r.followUpDate,
     createdAt: r.createdAt,
   })));
+});
+
+// GET /api/student/me/referrals — the support referrals this student was TOLD about.
+//
+// THE FILTER IS THE FEATURE, AND WITHOUT IT THIS ENDPOINT IS A SAFEGUARDING INCIDENT.
+//
+// Referral.studentNotified records whether the referrer ticked "tell the student", and
+// it defaults OFF precisely so that a tutor raising a safeguarding concern does not
+// have to remember to suppress anything. An endpoint that listed every referral would
+// defeat that tickbox completely: the concern raised this afternoon with the box
+// unticked would appear in the student's app this evening, which is both the thing the
+// default exists to prevent and a great deal worse than the email it prevents.
+//
+// So the filter is in the WHERE clause, not in the serialiser. sReferralForStudent
+// could be trusted to omit a field; only a query can be trusted not to load the row.
+//
+// What is shown is deliberately thin: which team, when, where it got to. Never the
+// reason — that is the tutor's account of the student, written for somebody else, and
+// a student reading it is how tutors learn to write nothing useful. Never the case
+// notes or the closing detail, which even the referrer cannot read.
+router.get("/me/referrals", async (req, res) => {
+  const rows = await prisma.referral.findMany({
+    where: { studentId: req.user.id, studentNotified: true },
+    orderBy: [{ raisedOn: "desc" }, { createdAt: "desc" }],
+  });
+  // Names, never slugs. byKey resolves retired departments too, so a referral to a desk
+  // the college has since closed still renders as "Wellbeing" rather than "wellbeing".
+  const all = await supportDepartments.all();
+  const nameOf = (k) => all.find((d) => d.key === k)?.name || k;
+  res.json(rows.map((r) => sReferralForStudent(r, nameOf(r.department))));
 });
 
 // POST /api/student/me/query — the student sends a query to the college. Admins pick

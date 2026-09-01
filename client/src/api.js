@@ -641,6 +641,22 @@ export const api = {
   // offer a close button that has not collected one.
   closeReferral: (id, body) => request(`/referrals/${id}/close`, { method: "PUT", body }),
 
+  // Handing a case to another desk. The server archives the sending team's case notes
+  // onto the transfer row and CLEARS them from the referral, so the receiving team
+  // starts from the referrer's reason and not from somebody else's record of a
+  // disclosure. Nothing in this client should try to read them back.
+  transferReferral: (id, body) => request(`/referrals/${id}/transfer`, { method: "PUT", body }),
+  // Where the case has been. Each entry carries `notesAtTransfer` ONLY when the caller
+  // is on the department that wrote them — so the field is absent rather than empty for
+  // everybody else, and a screen must not treat absent as "they wrote nothing".
+  referralHistory: (id) => request(`/referrals/${id}/history`),
+  // The referrer/department conversation, which is a THIRD visibility and not a window
+  // onto the case notes: everything in this thread is shared with both parties by
+  // construction. The server scopes what comes back by department, so after a transfer
+  // the receiving team sees its own thread and not the previous team's.
+  referralMessages: (id) => request(`/referrals/${id}/messages`),
+  addReferralMessage: (id, body) => request(`/referrals/${id}/messages`, { method: "POST", body: { body } }),
+
   // assessments (gradebook)
   listAssessments: (unitId) => request(`/assessments${unitId ? `?unitId=${unitId}` : ""}`),
   addAssessment: (data) => request("/assessments", { method: "POST", body: data }),
@@ -692,6 +708,10 @@ export const api = {
   listStudentReviews: (params = {}) => { const q = new URLSearchParams(params).toString(); return request(`/student-reviews${q ? `?${q}` : ""}`); },
   myStudentReviews: () => request("/student-reviews?mine=true"),
   studentReviewsAboutMe: () => request("/student/me/reviews"),
+  // The referrals this student was TOLD about. The server filters on studentNotified,
+  // so a referral raised with the tickbox off is not in this list — which is the whole
+  // point of the tickbox, and the reason this client must never try to widen it.
+  studentReferrals: () => request("/student/me/referrals"),
   addStudentReview: (data) => request("/student-reviews", { method: "POST", body: data }),
   updateStudentReview: (id, data) => request(`/student-reviews/${id}`, { method: "PUT", body: data }),
   removeStudentReview: (id) => request(`/student-reviews/${id}`, { method: "DELETE" }),

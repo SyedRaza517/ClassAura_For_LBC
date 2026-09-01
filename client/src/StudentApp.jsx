@@ -14,6 +14,7 @@ import {
   Loader2, Send, CheckCircle2, Info, ArrowRight, RefreshCw,
   Settings, KeyRound, Lock, Trash2, AlertTriangle, Home as HomeIcon,
   Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin, Nfc,
+  HeartHandshake,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
@@ -193,6 +194,9 @@ export default function StudentApp({ user, logout }) {
   const [reviews, setReviews] = useState(null);
   const [timetable, setTimetable] = useState(null);
   const [tapContext, setTapContext] = useState(null);
+  // null until the first load answers. A student with none gets [], which is a real
+  // answer and renders the empty state; null is "we have not been told yet".
+  const [referrals, setReferrals] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(true);
   // Android back returns to the home screen from any other tab.
@@ -206,6 +210,7 @@ export default function StudentApp({ user, logout }) {
       api.studentAttendance(), api.studentAssessments(), api.studentQueries(), api.studentReviewsAboutMe(), api.studentTimetable(),
       api.studentTapContext(),
     ]);
+    const ref = await api.studentReferrals().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
     if (a.status === "fulfilled") setAttendance(a.value);
     if (r.status === "fulfilled") setResults(r.value);
     if (q.status === "fulfilled") setQueries(q.value);
@@ -217,6 +222,10 @@ export default function StudentApp({ user, logout }) {
     // returns { enabled: false }, and a failure here must not add to the error banner
     // that gates attendance, results and messages.
     if (tap.status === "fulfilled") setTapContext(tap.value);
+    // A bonus screen like the timetable and tap check-in: this endpoint is new, so an
+    // app talking to an older API 404s here, and that must not put an error banner over
+    // attendance and results — which is why it is not counted in `failed` below.
+    if (ref.status === "fulfilled") setReferrals(ref.value);
     // ANY failure is reported, not only a total one. Requiring all of them to fail meant
     // a single broken call showed the student "Not graded yet" or "0 sessions" — an
     // answer, and a wrong one — instead of telling them something didn't load.
@@ -259,7 +268,7 @@ export default function StudentApp({ user, logout }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, reviews]);
 
-  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", more: "More" }[screen];
+  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", more: "More" }[screen];
   const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen };
 
   return (
@@ -273,6 +282,7 @@ export default function StudentApp({ user, logout }) {
           {screen === "reviews" && <ReviewsScreen {...shared} />}
           {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
+          {screen === "support" && <SupportScreen referrals={referrals} busy={busy} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
         <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies} />
@@ -1099,6 +1109,99 @@ function TimetableBlock({ stage, i }) {
   );
 }
 
+/* ============================== support referrals ============================== */
+
+/*
+ * What the student is told about being handed to Wellbeing, ASK or Student Support.
+ *
+ * THIS SCREEN IS DEFINED BY WHAT IT CANNOT SHOW, IN TWO DIFFERENT WAYS.
+ *
+ * First, WHICH referrals: only those the referrer ticked "tell the student" on. That
+ * filter is a WHERE clause on the server, not a decision here — the tickbox defaults
+ * off so a tutor raising a safeguarding concern does not have to remember to suppress
+ * anything, and a screen that listed everything would defeat it completely.
+ *
+ * Second, HOW MUCH of one: the team, the dates, and where it got to. Never the tutor's
+ * reason, which is their account of this student written for somebody else, and never
+ * the department's case notes, which even the tutor cannot read.
+ *
+ * So the empty state must not say "you have never been referred" — it is also what a
+ * student sees when they were referred and not told, and a portal that let them infer
+ * the difference would leak the fact it exists to withhold.
+ */
+
+const REF_STATUS = {
+  open: { label: "Waiting to be picked up", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+  accepted: { label: "Being worked on", cls: "bg-blue-50 text-blue-700 ring-blue-200" },
+  closed: { label: "Closed", cls: "bg-slate-100 text-slate-600 ring-slate-200" },
+};
+
+// The outcome CODE in the student's own terms. Codes, never the server's prose — the
+// free text written at closure is department-only, and a label list here cannot
+// accidentally carry it. An unknown code falls back to "Closed" rather than rendering
+// a slug at somebody about their own wellbeing referral.
+const REF_OUTCOME = {
+  supported: "The team worked with you",
+  referred_on: "Passed on to someone else",
+  no_response: "The team could not reach you",
+  not_appropriate: "Not something this team could help with",
+  other: "Closed",
+};
+
+function SupportScreen({ referrals, busy }) {
+  if (referrals === null) return busy ? <LoadingScreen /> : (
+    <Screen><ErrBox>Could not load your support referrals.</ErrBox></Screen>
+  );
+
+  return (
+    <Screen>
+      {referrals.length === 0 ? (
+        <Card className="!p-0">
+          <Empty
+            icon={HeartHandshake}
+            title="Nothing to show"
+            msg="If a tutor refers you to a support team and asks us to let you know, it will appear here."
+          />
+        </Card>
+      ) : (
+        <>
+          <SectionTitle>Support referrals · {referrals.length}</SectionTitle>
+          {referrals.map((r, i) => {
+            const st = REF_STATUS[r.status] || REF_STATUS.closed;
+            return (
+              <Card key={r.id} i={Math.min(i, 6)}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    {/* The NAME, resolved by the server. A slug is what the database
+                        stores and is not something to show anybody about themselves. */}
+                    <p className="text-sm font-extrabold text-slate-800">{r.departmentName}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">Referred {r.raisedOn}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${st.cls}`}>{st.label}</span>
+                </div>
+                {r.status === "closed" && (
+                  <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-100">
+                    {REF_OUTCOME[r.outcome] || "Closed"}
+                    {r.closedOn ? <span className="ml-1 font-normal text-slate-400">· {r.closedOn}</span> : null}
+                  </p>
+                )}
+              </Card>
+            );
+          })}
+        </>
+      )}
+
+      <Card className="!bg-blue-50/70 !ring-blue-100">
+        <p className="flex items-start gap-2 text-[11px] leading-relaxed text-blue-800">
+          <Info size={13} className="mt-px shrink-0" />
+          This shows which team you were referred to and where it got to. What you talk to that team about
+          stays between you and them — it is not shown here and it is not shown to your tutor.
+        </p>
+      </Card>
+    </Screen>
+  );
+}
+
 /* ============================== ask the college ============================== */
 
 function QueryScreen({ queries = [], reload }) {
@@ -1273,6 +1376,10 @@ function MoreScreen({ user, logout, setScreen, tapContext }) {
       <Card className="!p-0 overflow-hidden">
         <Row Icon={CalendarDays} label="My timetable" sub="Your weekly classes" onClick={() => setScreen("timetable")} />
         <Row Icon={Info} label="My progress reviews" sub="What your lecturers have written" onClick={() => setScreen("reviews")} />
+        {/* Reached from More rather than the tab bar: six tabs is already the most a
+            thumb can find, and this is a screen a student visits when something has
+            happened rather than every day. */}
+        <Row Icon={HeartHandshake} label="Support referrals" sub="Teams you have been referred to" onClick={() => setScreen("support")} />
       </Card>
 
       {pwOk && <div className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200"><CheckCircle2 size={15} /> Password changed.</div>}

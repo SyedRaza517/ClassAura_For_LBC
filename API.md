@@ -741,6 +741,140 @@ Each of these fails *silently* and *for a whole cohort at once*, which is why
 - **A `config` that is missing entirely** would otherwise resolve to "the platform
   defaults" and silently discard the college's own model. Resetting is `DELETE`.
 
+## Referrals to support departments
+
+Handing a student to Wellbeing, ASK or Student Support — and tracking what became of it.
+The department list is **configuration the college edits at runtime**, not a constant, so
+every path below names a department by its stored **key** rather than by an id.
+
+### Departments
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/referrals/departments` | `referrals` **or** `settings` | — `{ departments: [{ key, name, active }], mine: [key] }` |
+| PUT | `/referrals/departments` | `settings` | `{ departments: [{ key, name, active }] }` — replaces the whole list |
+
+Reading takes either page because the sidebar cannot be built without it and the settings
+editor cannot render an editor for a list it may not fetch. Writing takes `settings`
+alone: retiring the ASK desk is an administrative act, and a wellbeing officer holds
+`referrals` to work a queue.
+
+`PUT` is a **replacement, not a patch** — the screen edits the whole list, and removing a
+department has to be expressible. A `key` is a slug (`[a-z0-9-]{1,40}`) and is
+**immutable once used**: it is stored as a plain string on every referral and travels in
+a URL fragment, so editing one would orphan every referral holding the old value.
+Retiring is `active: false`. A retired department **refuses new referrals but still
+resolves for reading**, so last term's queue renders under its name rather than its slug.
+
+With no row saved, the platform defaults apply: `wellbeing`, `ask`, `student-support`. An
+**empty stored list is a real answer** ("this college runs no support desks") and does
+not fall back to the defaults — only the absence of a row does.
+
+### Queues and raising one
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/referrals?department=<key>&status=<open\|accepted\|closed>` | `referrals` + **membership** | — the department's view, case notes included |
+| GET | `/referrals/mine` | `referrals` | — what the caller raised, through the referrer's allowlist |
+| POST | `/referrals` | `referrals` | `{ studentId, department, reason, urgency?, notifyStudent?, interactionId? }` |
+| PUT | `/referrals/:id/accept` | `referrals` + membership | — 409 if already picked up |
+| PUT | `/referrals/:id/notes` | `referrals` + membership | `{ notes }` — the department's own record |
+| PUT | `/referrals/:id/close` | `referrals` + membership | `{ outcome, outcomeDetail? }` — `outcome` required |
+
+Asking for a department you are not on is **403, not an empty list**: an empty queue and
+a queue you may not read are different answers, and the second dressed as the first
+teaches staff that the wellbeing desk has no work. **A Super Admin is not exempted** —
+holding every admin page says something about administrative authority, not about who
+reads a student's disclosures.
+
+`urgency` is `routine` | `urgent`. `notifyStudent` defaults **off** and is compared
+`=== true`, so a truthy non-boolean cannot switch it on — a tutor raising a safeguarding
+concern must not have to remember to suppress an email. `interactionId` is optional and
+must belong to the same student; a referral raised from the student record or by the
+department itself has no meeting behind it.
+
+`outcome` is one of `supported`, `referred_on`, `no_response`, `not_appropriate`,
+`other`, and is **required to close**. Null on that column means "not closed yet", so a
+closure carrying no outcome would collapse two states into one.
+
+Raising one writes an in-app `Notification` to every member of the receiving team. It
+**names no student and carries no reason** — it says work has arrived, and the queue
+says what. Its `link` is the queue's own fragment, `referrals-<key>`.
+
+### Handing a case on
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| PUT | `/referrals/:id/transfer` | `referrals` + membership of the **current** department | `{ department, reason }` |
+| GET | `/referrals/:id/history` | `referrals` + party to the case | — the hand-off trail |
+
+**The sending team's case notes do not travel.** They are archived onto the transfer row
+under the department that wrote them and cleared from the referral, in one transaction —
+`Referral.notes` is read by whoever holds the case, so leaving them would hand the next
+team a disclosure made to the last one. Deleting them was rejected: an officer who
+mis-clicked would have destroyed their own record.
+
+The status resets to `open` and `acceptedBy` / `acceptedOn` clear, because a case
+arriving already marked accepted under another team's name is a case nobody picks up. The
+receiving team is notified exactly as for a new referral, urgency carried across.
+
+Refusals: a **closed** referral (409 — moving it would erase an outcome the referrer has
+already been shown), the department already holding it (400), a retired or unknown target
+(400), an empty `reason` (400).
+
+`/history` is readable by the current department, the referrer, **or any department the
+case previously sat with** — a wellbeing officer who transferred a case last week is no
+longer on its current department and must still reach the record of their own hand-off.
+Each entry carries `notesAtTransfer` **only** for a caller on that entry's
+`fromDepartment`; for everybody else the key is **absent, not empty**.
+
+### The conversation
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/referrals/:id/messages` | `referrals` + party to the case | — scoped by department, see below |
+| POST | `/referrals/:id/messages` | the **referrer** or the **current** department | `{ body }` |
+
+A third visibility, and neither of the first two. The referrer's `reason` is them talking
+once; `notes` is the department talking to itself. "Which unit is this about?" had
+nowhere to go, so it went into the case notes where the person who asked could not read
+the answer, or into email, where the college has no record at all.
+
+Messages are scoped to the department they were written **under**, not to the referral. So
+after a hand-off the receiving team reads its own thread and not the previous team's — the
+same line the transfer draws through the case notes. The **referrer reads every message**,
+because every message was written to or by them.
+
+**Reading is wider than writing.** A department that has handed a case on keeps its thread
+to read and gets 403 posting to it: a case answered by two teams at once is how a student
+gets two different answers.
+
+### What the student is told
+
+| Method | Path | Access | Body |
+|--------|------|--------|------|
+| GET | `/student/me/referrals` | student token | — only referrals where `studentNotified` is true |
+
+Inside the student router allowlist and keyed on `req.user.id`; there is no id parameter.
+The filter is a **WHERE clause, not a serialiser omission**: `notifyStudent` defaults off
+so a tutor raising a safeguarding concern does not have to remember to suppress anything,
+and an endpoint listing every referral would surface that concern to the student the same
+evening. A serialiser could be trusted to omit a field; only a query can be trusted not to
+load the row.
+
+Each row is exactly `{ id, department, departmentName, status, outcome, raisedOn,
+acceptedOn, closedOn }`. Never the reason — that is the tutor's account of the student,
+written for somebody else — and never the case notes or the closing detail, which even the
+referrer cannot read. `departmentName` is resolved server-side, retired departments
+included, because a student must not be shown a slug about themselves.
+
+### What the audit log records
+
+Six verbs — `referral.raised`, `.accepted`, `.noted`, `.closed`, `.transferred`,
+`.messaged` — each naming **who and where, never why**. The reason, the case notes, the
+closing detail, the hand-off reason and every message body stay out, because the audit log
+is read on Settings by administrators who were never granted this page.
+
 ## Data shapes (client-facing)
 ```
 Staff    { id, name, role, dept, email, allowance, initials, colour, accountRole,

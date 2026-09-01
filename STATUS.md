@@ -10,6 +10,12 @@ promoted**: rows describing machinery that no longer exists were removed or move
 the past tense, and nothing was upgraded from code-read to demonstrated. The suite has
 not been run since the change as this was written.*
 
+*§3.10 added and §5 updated 1 Sep 2026, for referrals to support departments. Unlike the
+30 Aug edit this one IS backed by a run: the whole suite passed on the local
+`edtech_dev` (27 passed, 0 failed, 1 skipped, plus 1,239 unit tests), which is also the
+first run to cover the de-tenanted code. The three assertions that carry §3.10 were each
+proved able to fail by reintroducing the bug they guard.*
+
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
 
@@ -611,6 +617,66 @@ tag routes *are* gated, behind `attendance-tags`.
 (reader mode is silent there, so it needs no Apple capability), register a sticker by
 tapping it, and check the log. Only then the two Xcode steps and an iPhone.
 
+### 3.10 Referrals to support departments (30 Aug – 1 Sep 2026)
+
+A PAT meeting surfaces something the tutor cannot act on — a wellbeing concern, a
+coursework question, a student-support need. Before this there was nowhere to send it.
+The only gesture in that direction was `routes/interactions.js` sending the meeting
+email *from* the wellbeing mailbox when the free-text `queryType` matched `/wellbeing/`,
+which routed an email and created no work anybody could pick up.
+
+**The department list is configuration, not a constant.** Platform defaults are
+Wellbeing / ASK / Student Support; the college adds, renames and retires from Settings.
+That is not politeness — "ASK" is one institution's word, and the next college runs
+Wellbeing and Student Support as one team. `supportDepartments.js` is the
+`attendanceBandConfig` shape again: defaults in code, one JSON column merged over them,
+no row until the college edits something, an allowlist out, a 30 s cache invalidated on
+save, and `id @default("singleton")` as the single-row guarantee.
+
+**The whole feature is one confidentiality rule with four visibilities around it.**
+
+| Who | Sees | Built by |
+|---|---|---|
+| **The department holding the case** | Everything: the reason, its own case notes, the closing detail, the hand-off trail, its own thread | `sReferralForDepartment` |
+| **The tutor who raised it** | Status, the outcome **code**, the dates, why it was handed on — never case notes, never the closing prose | `sReferralForReferrer`, an allowlist naming 14 keys |
+| **The student it is about** | Which team, when, where it got to — never the reason written about them | `sReferralForStudent`, 8 keys, and a `studentNotified: true` **WHERE clause** |
+| **A department that handed it on** | Its own archived notes and its own thread; nothing the next team has written since | `notesAtTransfer` on `ReferralTransfer`, added back one entry at a time |
+
+Each serialiser is an **allowlist** rather than a payload trimmed afterwards, which is
+the `sAdmission` lesson: it stripped a fixed list of secrets, so every column added
+after it shipped to the browser by default.
+
+| Piece | Where | What it does |
+|---|---|---|
+| **The department list** | `SupportDepartmentConfig`, `supportDepartments.js`, `GET`/`PUT /referrals/departments` | Reading needs `referrals` **or** `settings` — the nav cannot be built without it and the settings editor cannot render an editor for a list it may not fetch. Writing needs `settings` alone: retiring the ASK desk is an administrative act, and a wellbeing officer holds this feature to work a queue. Keys are slugs and **immutable once used**; retiring is `active: false`, never a deletion |
+| **The referral** | `Referral`, `routes/referrals.js` | `department` is a plain **string, not a foreign key** — a college merging two teams must not cascade a term of case records away, and a referral to a desk that no longer exists still has to render. Same reasoning that keeps `loggedBy` a string on `Interaction` |
+| **Who sees which queue** | `Staff.supportDepartments`, a JSON array like `adminPages` | One grantable page, `referrals`, opens the feature; membership decides the queues. A permission per department is **impossible rather than unchosen**: the list is edited at runtime, and a college adding "Careers" at 4pm cannot add a key to four source files. **A Super Admin is not exempted** — holding every admin page is a claim about administrative authority, not about who reads a student's disclosures |
+| **Handing it on** | `ReferralTransfer`, `PUT /referrals/:id/transfer` | **The case notes do not travel.** They are archived onto the transfer row under the department that wrote them and cleared from the referral, in one transaction, because the receiving team reads `Referral.notes`. Deleting them was rejected: an officer who mis-clicked would destroy their own record. Status resets to `open` — a case arriving already marked accepted, stamped with another team's name, is a case nobody picks up. A **closed** referral cannot be moved (409): that would erase an outcome the referrer has already been shown |
+| **The conversation** | `ReferralMessage`, `GET`/`POST /referrals/:id/messages` | A **third visibility**, and it exists because the first two forced a bad choice: the reason is the tutor talking once, the notes are the department talking to itself, and "which unit is this about?" had nowhere to go — so it went into the case notes where the person who asked could not read the answer, or into email, which is worse. Scoped to the department it was written under, so a hand-off draws the same line through the thread as through the notes. **Reading is wider than writing**: a previous department reads its own thread and cannot reply, because a case answered by two teams at once is how a student gets two different answers |
+| **What the student is told** | `GET /api/student/me/referrals` | Filtered on `studentNotified`, **in the query rather than the serialiser**. The tickbox defaults off so a tutor raising a safeguarding concern does not have to remember to suppress anything; a portal listing every referral would surface that concern to the student the same evening. A serialiser could be trusted to omit a field — only a query can be trusted not to load the row |
+| **Notification** | `Notification` rows, one per member of the receiving team | In-app, not an email to a shared inbox: a queue nobody is told about is a queue nobody works, but a shared mailbox widens the surface for nothing. **It names no student and carries no reason.** The link is the queue's own fragment (`referrals-<key>`), because there is no page keyed `referrals` and the bare word routed to home |
+| **The optional student email** | `mailFrom` categories | Only when the tickbox was ticked. Sent from the department's own mailbox where the college configured one; **an unmapped department sends as the server**, because mapping a Careers desk onto the wellbeing mailbox would land a careers reply with the safeguarding team |
+| **The screens** | `StaffHub.jsx` — a Referrals nav parent, one queue per department the signed-in person is on, plus **Sent by me**; `StudentApp.jsx` — a Support screen under More | The nav parent is the only one **not written down in `allNav`**: the children are generated from the config crossed with membership, so a group whose children all filter out must not render — the invariant `navGroups.test.js` pins |
+
+**Audit records who and where, never why.** Six verbs — `raised`, `accepted`, `noted`,
+`closed`, `transferred`, `messaged`. The reason, the notes, the closing detail, the
+hand-off reason and every message body stay out of it, because the audit log is read on
+Settings by administrators who were never granted this page. Same line the mitigating
+circumstances summary draws between what the college decided and why.
+
+| Checked | Result |
+|---|---|
+| `scripts/smoke-referrals.mjs` | **75 checks, 0 failed**, against local `edtech_dev`. Weighted toward refusals: ASK reading the Wellbeing queue (403, not an empty list), the referrer's payload asserted as an **exact key set**, a referral accepted twice, closed with no outcome, raised against a retired desk, attached to another student's meeting; and for this change, a hand-off by a team that does not hold the case, case notes crossing a hand-off, a previous team reading the next team's thread, and a student seeing a referral the tickbox withheld |
+| Proved able to fail | Yes. Three bugs were reintroduced — notes travelling with a transfer, the thread scoped to the referral instead of the department, and the `studentNotified` filter dropped — and the suite failed on exactly the four assertions that name them |
+| Whole suite after the change | **27 passed, 0 failed, 1 skipped**, plus 1,239 unit tests |
+| Client | **builds.** There is still no client test framework, so that is the whole claim |
+| In use by a college | **No.** Nothing here has been exercised by a real support desk against real students |
+
+**Deliberately not built:** threaded replies *between two departments* (the thread is
+referrer↔department by design), reopening a closed referral, and any student-facing view
+of the conversation. Each widens the confidentiality surface, and none is needed for the
+queue to work.
+
 ### 3.7 Business rules that are actually enforced
 
 - Leave allowance is checked **server-side at approval**, inside a per-staff lock, with
@@ -731,6 +797,7 @@ header:
 | `smoke-prediction` | **Added 25 Aug 2026.** Progression risk — the feature that tells a college which named students are likely to fail. Almost all negative: a configuration that cannot be honoured is refused rather than stored (weights off 100%, a gap or overlap in the ladder, an override naming a band that does not exist, a save with nothing in it); no stored score may disagree with the band beside it; no override may move a student *up*; and a member of staff without the page grant cannot read the register at all. 25 checks; **passed on 25 Aug 2026** |
 | `smoke-mitigations` | **Added 28 Aug 2026.** Mitigating circumstances. Mostly refusals, and two that matter: the audit trail carries no `category` or `detail`, and neither does the prediction payload — health data is collected for student support and must not reach a score. 13 checks; **passed** |
 | `smoke-nfc-tap` | **Added 28 Aug 2026.** What a tap must never be able to do — a tap while the feature is off, an unknown or retired tag, a tag belonging to another college, a tap before the class or after it, a student reaching the tag admin or the lecturer's live view or closing a register, a second tap creating a second mark. The two that would otherwise be missed: a tap cannot overwrite a mark a lecturer already set, and a later register save cannot overwrite `checkedInAt`. 48 checks; **passed on 28 Aug 2026** |
+| `smoke-referrals` | **Added 30 Aug 2026, extended 1 Sep.** Referrals to support departments, and mostly who is refused: ASK reading the Wellbeing queue (403, never an empty list), the referrer's payload asserted as an **exact key set** rather than by the absence of two names, a referral accepted twice or closed with no outcome, a retired desk refusing new work while its queue stays readable. The 1 Sep additions are the ones a later reader is most likely to widen: case notes crossing a hand-off, a team reading the thread of the team it handed a case to, and a student being shown a referral the tickbox withheld. 75 checks; **passed on 1 Sep 2026**, and each of those three was proved able to fail by reintroducing the bug |
 
 **Three suites were deleted on 30 Aug 2026, and the coverage they held is given up
 rather than replaced.**
@@ -762,10 +829,15 @@ execution. That run is what makes this file's claims about the tap HTTP surface
 demonstrations rather than code-reading. The 25 Aug run (24 passed, 1 skipped) did the
 same for the prediction surface.
 
-**Neither run covers the code as it stands.** The removal of multi-tenancy on 30 Aug
-touched the schema, `db.js`, every smoke suite's setup and most of the client, and the
-suite has **not** been run since as this section was written. Nothing in §3 that those
-two runs demonstrated should be read as still demonstrated until it is.
+**The whole suite was run again on 1 Sep 2026 and passed: 27 passed, 0 failed, 1 skipped**,
+plus 1,239 unit tests, against the local `edtech_dev`. That run is *after* the removal of
+multi-tenancy on 30 Aug — which touched the schema, `db.js`, every suite's setup and most
+of the client — so the earlier caveat that no run covered the de-tenanted code no longer
+holds. It also covers the referral transfers, the referrer/department thread and the
+student-facing view added the same day.
+
+**What that run still does not cover** is anything in the table above marked as having no
+automated coverage, and the whole client beyond `npm run build`.
 
 **There IS a local PostgreSQL on this machine, and earlier editions of this file were
 wrong to say otherwise.** Two services are installed and 16.13 answers on

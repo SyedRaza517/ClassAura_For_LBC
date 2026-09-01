@@ -11754,6 +11754,8 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
   const [busyId, setBusyId] = useState("");
   const [notesFor, setNotesFor] = useState(null);   // the referral whose notes are open
   const [closeFor, setCloseFor] = useState(null);   // the referral being closed
+  const [transferFor, setTransferFor] = useState(null); // the referral being handed on
+  const [threadFor, setThreadFor] = useState(null);  // the referral whose thread is open
   const [referring, setReferring] = useState(false);
 
   const load = async () => {
@@ -11859,6 +11861,21 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
                   <button onClick={() => setNotesFor(r)} className="press rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
                     {r.notes ? "Case notes" : "Add notes"}
                   </button>
+                  {/* The thread, which is neither the case notes nor the reason: it is
+                      where this desk and the tutor talk to each other. Offered on a
+                      closed referral too — a tutor asking what happened a week later is
+                      exactly the conversation that otherwise leaves the system. */}
+                  <button onClick={() => setThreadFor(r)} className="press flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+                    <MessageSquare size={13} /> Message
+                  </button>
+                  {/* Handing on is not offered once it is closed: the server refuses,
+                      because moving a closed case would erase an outcome the referrer
+                      has already been shown. A new referral is the answer there. */}
+                  {r.status !== "closed" && (
+                    <button onClick={() => setTransferFor(r)} className="press flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+                      <Forward size={13} /> Hand on
+                    </button>
+                  )}
                   {r.status !== "closed" && (
                     <button onClick={() => setCloseFor(r)} className="press rounded-lg px-2.5 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}>Close</button>
                   )}
@@ -11871,6 +11888,11 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
 
       {notesFor && <ReferralNotesModal referral={notesFor} onClose={() => setNotesFor(null)} onSaved={() => { setNotesFor(null); load(); }} />}
       {closeFor && <ReferralCloseModal referral={closeFor} onClose={() => setCloseFor(null)} onSaved={() => { setCloseFor(null); load(); }} />}
+      {/* A hand-off reloads the queue because the case LEAVES it — the row has to go,
+          and leaving it on screen would have somebody carry on working a case that is
+          now another team's. */}
+      {transferFor && <ReferralTransferModal referral={transferFor} currentName={deptName} onClose={() => setTransferFor(null)} onSaved={() => { setTransferFor(null); load(); }} />}
+      {threadFor && <ReferralThreadModal referral={threadFor} title={`Messages — ${threadFor.student?.name || "referral"}`} showHistory onClose={() => setThreadFor(null)} />}
       {/* The walk-in. A student who turns up at the desk without a tutor sending them
           is still a referral — recording it here is what keeps the queue an honest
           account of the team's work rather than only of what tutors noticed. The
@@ -11973,6 +11995,7 @@ function ReferralsMine({ store }) {
   const [rows, setRows] = useState(null);
   const [deptNames, setDeptNames] = useState({});
   const [err, setErr] = useState("");
+  const [threadFor, setThreadFor] = useState(null);
   const [referring, setReferring] = useState(false);
 
   const load = async () => {
@@ -12044,6 +12067,13 @@ function ReferralsMine({ store }) {
                     {r.status === "closed" && (
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">{referralOutcomeShort(r.outcome) || "Closed"}</span>
                     )}
+                    {/* The thread, and it is NOT a way round the case notes: the server
+                        builds it from messages, which both sides wrote knowing the other
+                        would read them. Adding context after the fact used to mean an
+                        email to the wellbeing lead, which took it off the record. */}
+                    <button onClick={() => setThreadFor(r)} className="press flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+                      <MessageSquare size={13} /> Message
+                    </button>
                   </div>
                 </div>
               </Card>
@@ -12059,8 +12089,199 @@ function ReferralsMine({ store }) {
         with the people they disclosed them to.
       </p>
 
+      {/* No history panel here. The trail of desks a student was passed between is the
+          departments' operational record; a tutor is told which team holds it now, which
+          is the question they came to this screen with. */}
+      {threadFor && <ReferralThreadModal referral={threadFor} title={`Messages — ${threadFor.student?.name || "referral"}`} onClose={() => setThreadFor(null)} />}
+
       <ReferralModal open={referring} onClose={() => setReferring(false)} notify={store?.notify} onSaved={load} />
     </>
+  );
+}
+
+/**
+ * Handing a case to another desk.
+ *
+ * THE WARNING ON THIS SCREEN IS NOT DECORATION. The server archives this department's
+ * case notes onto the transfer row and clears them from the referral, so the receiving
+ * team starts from the referrer's reason and never reads what a student disclosed to
+ * this one. Staff have to know that before they press it — a wellbeing officer who
+ * believes the notes travel will write the hand-off reason as if the next team has
+ * already read them, and the case arrives with half its context missing.
+ *
+ * The reason IS shared, with both the receiving team and the referrer. Said plainly
+ * next to the box, because that is where somebody decides what to type in it.
+ */
+function ReferralTransferModal({ referral, currentName, onClose, onSaved }) {
+  const [depts, setDepts] = useState(null);
+  const [to, setTo] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.referralDepartments()
+      .then(d => { if (!cancelled) setDepts(d.departments || []); })
+      .catch(e => { if (!cancelled) { setDepts([]); setErr(e.message); } });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Active desks only, and never the one holding it. The server refuses both, so
+  // offering either would be offering a button that cannot work.
+  const options = (depts || []).filter(d => d.active && d.key !== referral.department);
+  const valid = !!to && !!reason.trim();
+
+  const save = async () => {
+    if (!valid) return;
+    setBusy(true); setErr("");
+    try { await api.transferReferral(referral.id, { department: to, reason: reason.trim() }); onSaved(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open onClose={() => !busy && onClose()} title={`Hand on — ${referral.student?.name || "referral"}`} width={520}>
+      <div className="space-y-3">
+        <p className="flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900 ring-1 ring-amber-100">
+          <ShieldCheck size={13} className="mt-px shrink-0 text-amber-600" />
+          Your case notes stay with {currentName || "this department"} — they are archived here and the
+          receiving team never sees them. It starts from the tutor's original reason and whatever you write below.
+        </p>
+        <Field label="Hand on to">
+          <select value={to} onChange={e => setTo(e.target.value)} className={inputCls}>
+            <option value="">Choose a department…</option>
+            {options.map(d => <option key={d.key} value={d.key}>{d.name}</option>)}
+          </select>
+          {depts && options.length === 0 && (
+            <p className="mt-1 text-[11px] font-semibold text-amber-600">There is no other department taking referrals.</p>
+          )}
+        </Field>
+        <Field label="Why you are handing it on">
+          <textarea rows={4} value={reason} onChange={e => setReason(e.target.value)} className={`${inputCls} resize-y`} placeholder="What the next team needs to know to pick this up." />
+          <p className="mt-1 text-[11px] text-slate-400">Shared with the receiving team and with the tutor who raised it.</p>
+        </Field>
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+        <PrimaryBtn onClick={save} disabled={busy || !valid} className="w-full">
+          {busy ? <><Loader size={16} /> Handing on…</> : <><Forward size={16} /> Hand this on</>}
+        </PrimaryBtn>
+        <p className="text-[11px] leading-relaxed text-slate-400">
+          It goes back to <span className="font-semibold text-slate-500">waiting</span> so the new team picks it
+          up themselves — a case arriving already marked as accepted by somebody else is a case nobody works.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * The conversation between the tutor who raised a referral and the department holding
+ * it — plus, for the department, where the case has been.
+ *
+ * A THIRD VISIBILITY, AND IT EXISTS BECAUSE THE FIRST TWO FORCED A BAD CHOICE. The
+ * referrer's reason is them talking once; the case notes are the department talking to
+ * itself. "Which unit is this about?" had nowhere to go, so it went into the case notes
+ * where the person who asked could not read the answer — or out of the system into
+ * email, which is worse, because then the college has no record at all.
+ *
+ * Everything in this thread is shared with both parties BY CONSTRUCTION, and the panel
+ * says so above the box rather than in a tooltip. The field that is not shared is the
+ * case notes, which no message here ever touches.
+ *
+ * Who may POST is narrower than who may read — the server allows the referrer and the
+ * department CURRENTLY holding the case, and a previous department can read its own
+ * thread without adding to it. No screen here reaches that state, so the box is
+ * unconditional and a hand-off racing an open modal surfaces as the server's own
+ * message rather than as a branch nobody can see.
+ */
+function ReferralThreadModal({ referral, title, showHistory, onClose }) {
+  const [messages, setMessages] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    try { setMessages(await api.referralMessages(referral.id)); setErr(""); }
+    catch (e) { setErr(e.message); setMessages([]); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [referral.id]);
+  useEffect(() => {
+    if (!showHistory) { setHistory([]); return; }
+    api.referralHistory(referral.id).then(setHistory).catch(() => setHistory([]));
+  }, [referral.id, showHistory]);
+
+  const send = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true); setErr("");
+    try { await api.addReferralMessage(referral.id, body); setDraft(""); await load(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open onClose={() => !busy && onClose()} title={title} width={560}>
+      <div className="space-y-3">
+        {/* Where it has been. Shown to the department only: a tutor's Sent-by-me view
+            already names the current department, and a trail of desks a student was
+            passed between is the department's operational record, not the tutor's. */}
+        {showHistory && (history || []).length > 0 && (
+          <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400"><History size={12} /> Where this case has been</p>
+            <div className="mt-2 space-y-2">
+              {history.map(t => (
+                <div key={t.id} className="text-[12px] leading-relaxed text-slate-600">
+                  <p className="font-semibold text-slate-700">{t.fromName} <ArrowRight size={11} className="inline" /> {t.toName}</p>
+                  <p className="whitespace-pre-wrap">{t.reason}</p>
+                  <p className="text-[11px] text-slate-400">{t.transferredBy || "A member of staff"} · {fmtDate(t.transferredOn)}</p>
+                  {/* Present ONLY when this reader is on the department that wrote them.
+                      Absent is not empty: for everybody else the field never arrives, so
+                      the block is not rendered rather than rendered blank. */}
+                  {typeof t.notesAtTransfer === "string" && t.notesAtTransfer && (
+                    <p className="mt-1 whitespace-pre-wrap rounded-lg bg-white px-2.5 py-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">
+                      <span className="font-bold text-slate-500">Your notes at the hand-off — </span>{t.notesAtTransfer}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages === null && <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-300" /></div>}
+        {messages && messages.length === 0 && (
+          <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-[12px] text-slate-400 ring-1 ring-slate-100">
+            Nothing yet. Use this to ask the other side a question — it is on the record, and an email is not.
+          </p>
+        )}
+
+        {messages && messages.length > 0 && (
+          <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+            {messages.map(m => (
+              <div key={m.id} className={`rounded-xl px-3 py-2 text-[12px] leading-relaxed ring-1 ${m.authorRole === "referrer" ? "bg-blue-50 text-blue-900 ring-blue-100" : "bg-slate-50 text-slate-700 ring-slate-100"}`}>
+                <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
+                  {m.authorName || "A member of staff"} · {m.authorRole === "referrer" ? "who referred" : "the department"}
+                </p>
+                <p className="mt-0.5 whitespace-pre-wrap">{m.body}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
+
+        <Field label="Reply">
+          <textarea rows={3} value={draft} onChange={e => setDraft(e.target.value)} className={`${inputCls} resize-y`} placeholder="Ask a question, or say where this has got to." />
+        </Field>
+        <p className="flex items-start gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700 ring-1 ring-blue-100">
+          <Info size={13} className="mt-px shrink-0" />
+          Both sides read everything here. The department's case notes are separate and stay where they are —
+          this is the part of the conversation that was previously happening by email.
+        </p>
+        <PrimaryBtn onClick={send} disabled={busy || !draft.trim()} className="w-full">
+          {busy ? <><Loader size={16} /> Sending…</> : <><Send size={16} /> Send</>}
+        </PrimaryBtn>
+      </div>
+    </Modal>
   );
 }
 
