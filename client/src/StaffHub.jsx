@@ -2262,10 +2262,15 @@ const NAV_GROUPS = {
   // render, so groupNav stays pure, stays tested, and keeps its one invariant: a
   // parent with no children does not render.
   //
-  // Named "Referrals" and not "Student Support", which is a DEPARTMENT this college
-  // happens to run — a parent sharing a name with one of its own children reads as
-  // the child being the whole thing.
-  "referrals": { label: "Referrals", I: HeartHandshake },
+  // NAMED FOR THE JOB, NOT FOR ONE OF ITS SCREENS. It was "Referrals" while that was
+  // all it held; with PAT inside, the parent covers the whole pastoral thread — the
+  // meeting, the hand-off, and what became of it.
+  //
+  // Still not "Student Support", and that constraint outlived the rename: Student
+  // Support is a DEPARTMENT this college runs, so it appears as a CHILD of this group.
+  // A parent and one of its children sharing a name is how somebody clicks the wrong
+  // one. "Pastoral" is the college's own word for the whole area and names no desk.
+  "pastoral": { label: "Pastoral", I: HeartHandshake },
 };
 
 // One sidebar button, used at both levels — `indent` is the only difference between a
@@ -2838,7 +2843,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // and hiding the queue would strand them with no screen that can reach them.
     return all
       .filter(d => mine.includes(d.key))
-      .map(d => ({ key: `referrals-${d.key}`, label: d.active ? d.name : `${d.name} (retired)`, I: Inbox, group: "referrals" }));
+      .map(d => ({ key: `referrals-${d.key}`, label: d.active ? d.name : `${d.name} (retired)`, I: Inbox, group: "pastoral" }));
   }, [holdsReferrals, referralDepts]);
   // "Sent by me" is a LITERAL in allNav below, not part of the memo above, even though
   // it belongs to the same group. Two reasons. It needs no server answer, so gating it
@@ -2877,15 +2882,22 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // Two screens, ONE permission. See the nav filter below for why this key is
     // deliberately absent from ADMIN_PAGES.
     { key: "assessment-tracker-setup", label: "Tracker Setup", I: SlidersHorizontal, group: "assessments-record" },
-    { key: "pat", label: "PAT", I: MessageSquare },
+    // PASTORAL: the meeting, then what came out of it.
+    //
+    // PAT leads the group because it is where the work starts — a tutor logs a meeting,
+    // the meeting turns up something they cannot act on, and the queues below are where
+    // it goes. They were adjacent in the flat list and still read as unrelated, because
+    // a sidebar this long is scanned rather than read: the queues are named after the
+    // college's own departments ("Wellbeing", "ASK"), so nothing about the labels said
+    // they had anything to do with PAT or with each other.
+    //
+    // groupNav orders a group by its FIRST child, so the parent lands exactly where PAT
+    // sat and nothing else in the sidebar shuffles.
+    { key: "pat", label: "PAT", I: MessageSquare, group: "pastoral" },
+    ...referralQueueNav,
+    { key: "referrals-mine", label: "Sent by me", I: Send, group: "pastoral" },
     { key: "prediction", label: "Predictive Analysis", I: TrendingUp },
     { key: "mitigations", label: "Mitigating Circumstances", I: LifeBuoy },
-    // The Referrals group: one queue per department this person is on, then the
-    // outcomes of what they have sent. Beside PAT and Mitigating Circumstances
-    // because it is the same job — the thing a tutor does when a meeting turns up
-    // something they cannot act on themselves.
-    ...referralQueueNav,
-    { key: "referrals-mine", label: "Sent by me", I: Send, group: "referrals" },
     { key: "staffreviews", label: "Staff Reviews", I: ClipboardList },
     { key: "staff", label: "Staff", I: Users },
     { key: "timesheets", label: "Timesheets", I: Timer },
@@ -2987,7 +2999,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // alone. Deriving it in an effect once the departments land was the alternative and
     // is worse: the seed is deliberately a ONE-OFF, and an effect watching the same
     // data would re-open a group the user had just collapsed.
-    const referralDeepLink = String(tab).startsWith("referrals-") ? { referrals: true } : {};
+    const referralDeepLink = String(tab).startsWith("referrals-") ? { pastoral: true } : {};
     return { ...referralDeepLink, ...(g ? { [g.id]: true } : {}) };
   });
   const toggleGroup = (id) => setOpenGroups(o => ({ ...o, [id]: !o[id] }));
@@ -4761,9 +4773,20 @@ function AdminAccess({ store }) {
         {/* Editor */}
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
           {!sel && <EmptyState Icon={ShieldCheck} title="Pick a person" msg="Choose someone on the left to set which admin pages they can access." />}
+          {/* THE SUPER ADMIN'S PAGES ARE FIXED. THEIR DEPARTMENT MEMBERSHIP IS NOT.
+              This screen used to refuse both together, which left the account that sets
+              a college up holding the Referrals page, seeing the Pastoral parent, and
+              finding nothing under it but "Sent by me" — with nowhere in the product to
+              change that. Reported as "I cannot see the Wellbeing and ASK tabs".
+
+              Being on the wellbeing team is not implied by holding every admin page;
+              canReadDepartment says so on the server, deliberately, because "the most
+              senior account reads every case note by default" is the outcome the whole
+              confidentiality split exists to prevent. So it has to be TICKED — which
+              means there has to be a tickbox. */}
           {sel && sel.isSuperAdmin && (
             <div className="flex items-center gap-3 rounded-xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
-              <ShieldCheck size={18} className="shrink-0" /> {sel.name} is the Super Admin and always has full access.
+              <ShieldCheck size={18} className="shrink-0" /> {sel.name} is the Super Admin and always has full access. Page grants cannot be changed; support department queues below can.
             </div>
           )}
           {sel && !sel.isSuperAdmin && (
@@ -4786,20 +4809,27 @@ function AdminAccess({ store }) {
                   );
                 })}
               </div>
-              {/* Department membership. Shown only when there are departments to show:
-                  a heading over an empty box on a college that runs no support desks
-                  reads as something failing to load. */}
-              {supportDepts.length > 0 && (
+            </>
+          )}
+          {/* Department membership. Shown only when there are departments to show:
+              a heading over an empty box on a college that runs no support desks
+              reads as something failing to load.
+
+              OUTSIDE the !isSuperAdmin fragment above, which is the whole fix: the
+              queues are the one part of this screen a Super Admin genuinely needs to
+              edit, on themselves as often as on anybody. */}
+          {sel && supportDepts.length > 0 && (
                 <div className="mt-5">
                   <div className="mb-2 flex items-center gap-1.5">
                     <HeartHandshake size={14} className="text-slate-400" />
                     <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Support department queues</p>
                   </div>
                   <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-400">
-                    Which referral queues this person works. The <b>Referrals</b> page above opens the feature;
-                    these decide what they see inside it — including the case notes, which the tutor who raised
-                    a referral never sees. Somebody with the page and no departments gets only their own
-                    “Sent by me”.
+                    Which referral queues this person works — these decide what they see inside the
+                    Referrals feature, including the case notes, which the tutor who raised a referral never
+                    sees. Somebody with the page and no departments gets only their own “Sent by me”, and
+                    that is true of the Super Admin as well: holding every page is not the same as being on
+                    the wellbeing team, so this has to be ticked for anybody who works a queue.
                   </p>
                   <div className="grid gap-1.5 sm:grid-cols-2">
                     {supportDepts.map(d => {
@@ -4815,7 +4845,7 @@ function AdminAccess({ store }) {
                       );
                     })}
                   </div>
-                  {!pages.includes("referrals") && membership.length > 0 && (
+                  {!sel.isSuperAdmin && !pages.includes("referrals") && membership.length > 0 && (
                     <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
                       <AlertCircle size={13} className="mt-px shrink-0" />
                       They are on a department but do not hold the Referrals page, so they will not see the queue.
@@ -4824,11 +4854,16 @@ function AdminAccess({ store }) {
                   )}
                 </div>
               )}
-              <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-100">
-                <AlertCircle size={13} className="mt-px shrink-0" /> Granting at least one page makes this person an admin for those pages. Clearing all removes their admin access entirely. Changes take effect the next time they open the app.
-              </p>
-              <PrimaryBtn onClick={save} disabled={busy} className="mt-4 w-full"><Save size={16} /> {busy ? "Saving…" : "Save access"}</PrimaryBtn>
-            </>
+          {sel && !sel.isSuperAdmin && (
+            <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-100">
+              <AlertCircle size={13} className="mt-px shrink-0" /> Granting at least one page makes this person an admin for those pages. Clearing all removes their admin access entirely. Changes take effect the next time they open the app.
+            </p>
+          )}
+          {/* Offered for a Super Admin too, where it saves the membership alone — the
+              server ignores `pages` for that account rather than trusting this screen
+              not to send them. */}
+          {sel && (supportDepts.length > 0 || !sel.isSuperAdmin) && (
+            <PrimaryBtn onClick={save} disabled={busy} className="mt-4 w-full"><Save size={16} /> {busy ? "Saving…" : "Save access"}</PrimaryBtn>
           )}
         </div>
       </div>

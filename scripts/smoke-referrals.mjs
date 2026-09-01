@@ -103,6 +103,11 @@ const people = {
   well:     { name: "Wellbeing Officer", email: `ref.well.${stamp}@edtech.co.uk`, pw: "WellPass123!", pages: ["referrals"], depts: ["wellbeing"] },
   ask:      { name: "ASK Adviser", email: `ref.ask.${stamp}@edtech.co.uk`, pw: "AskPass123!", pages: ["referrals"], depts: ["ask"] },
   supp:     { name: "Support Officer", email: `ref.supp.${stamp}@edtech.co.uk`, pw: "SuppPass123!", pages: ["referrals"], depts: ["student-support"] },
+  // THE SUPER ADMIN, and the reason there is one here at all: PUT /staff/:id/access is
+  // the only route that grants department membership and it is Super-Admin-only, so
+  // until now this suite could not exercise that route and wrote the column directly.
+  // The seeded college has no Super Admin, so one is created and deleted with the rest.
+  boss:     { name: "The Super Admin", email: `ref.boss.${stamp}@edtech.co.uk`, pw: "BossPass123!", pages: [], depts: null, superAdmin: true },
 };
 
 for (const p of Object.values(people)) {
@@ -122,7 +127,10 @@ for (const p of Object.values(people)) {
     where: { id: p.id },
     data: {
       accountRole: "ADMIN",
-      adminPages: JSON.stringify(p.pages),
+      // A Super Admin's grant is null — every page — and the flag is what this suite
+      // needs; the pages list above is empty for them and would demote them if stored.
+      adminPages: p.superAdmin ? null : JSON.stringify(p.pages),
+      ...(p.superAdmin ? { isSuperAdmin: true } : {}),
       supportDepartments: p.depts ? JSON.stringify(p.depts) : null,
       mustChangePassword: false,
     },
@@ -134,7 +142,7 @@ for (const p of Object.values(people)) {
   }
   p.token = login.body.token;
 }
-const { referrer, well, ask, supp } = people;
+const { referrer, well, ask, supp, boss } = people;
 
 const students = (await call("/hnd/students", { token: adminToken })).body || [];
 if (students.length < 2) {
@@ -1045,6 +1053,80 @@ await check("the transfer and the message are in the audit trail, and neither ca
     assert.ok(!blob.includes(canary), "the audit trail carries the text of a message");
   }
   return "two more verbs, no prose";
+});
+
+/* -------------------------------------------------------------------------- */
+/* The Super Admin, who is not exempt and therefore has to be able to join      */
+/* -------------------------------------------------------------------------- */
+
+// HOLDING EVERY PAGE IS NOT THE SAME AS BEING ON THE WELLBEING TEAM.
+//
+// canReadDepartment deliberately does not exempt a Super Admin: one is a claim about
+// administrative authority, the other about who reads a student's disclosures. That
+// decision is only defensible if the Super Admin can PUT THEMSELVES on a team — and
+// PUT /staff/:id/access refused every edit to a Super Admin outright, so they could
+// not. The account that sets a college up held the Referrals page, saw the parent in
+// the sidebar, and found nothing under it. These four checks are that round trip.
+
+await check("A SUPER ADMIN SEES NO QUEUE UNTIL THEY JOIN ONE — every page is not every desk", async () => {
+  const r = await call("/referrals?department=wellbeing", { token: boss.token });
+  assert.equal(r.status, 403, `the Super Admin got ${r.status} on a department they are not on`);
+  return "403, exactly as anybody else";
+});
+
+await check("...and the access route still refuses to touch their PAGES", async () => {
+  // The half that must not change. A request carrying no supportDepartments can only
+  // be an attempt to re-grant, and that is the thing this guard exists for.
+  const r = await call(`/staff/${boss.id}/access`, { method: "PUT", token: boss.token, body: { pages: [] } });
+  assert.equal(r.status, 400, `demoting the Super Admin answered ${r.status}`);
+  return r.body.error;
+});
+
+await check("...but they CAN put themselves on a team, which is the documented way out", async () => {
+  const r = await call(`/staff/${boss.id}/access`, {
+    method: "PUT", token: boss.token,
+    // `pages: []` rides along exactly as the Access screen sends it. The server must
+    // ignore it for this account rather than trusting the client not to send it — so
+    // this asserts the demotion did NOT happen while the membership did.
+    body: { pages: [], supportDepartments: ["wellbeing"] },
+  });
+  assert.equal(r.status, 200, `joining answered ${r.status}: ${JSON.stringify(r.body).slice(0, 120)}`);
+  assert.deepEqual(r.body.supportDepartments, ["wellbeing"], "membership was not stored");
+  assert.equal(r.body.isSuperAdmin, true, "the Super Admin was demoted by a membership change");
+  const row = await db.staff.findUnique({ where: { id: boss.id } });
+  assert.equal(row.accountRole, "ADMIN", `accountRole became ${row.accountRole}`);
+  assert.equal(row.adminPages, null, "the Super Admin's page grant was rewritten");
+  return "on wellbeing, still unrestricted";
+});
+
+await check("...and the queue opens for them the moment they are on it", async () => {
+  const r = await call("/referrals?department=wellbeing", { token: boss.token });
+  assert.equal(r.status, 200, `the Super Admin still got ${r.status} after joining`);
+  return `${r.body.length} in the queue`;
+});
+
+await check("a department key the college does not have is dropped, not stored", async () => {
+  // The filter is against the college's OWN list, so a key naming no department cannot
+  // sit dormant in the column and come to life if somebody later creates that desk.
+  const r = await call(`/staff/${boss.id}/access`, {
+    method: "PUT", token: boss.token, body: { pages: [], supportDepartments: ["wellbeing", "careers"] },
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.supportDepartments, ["wellbeing"], `stored ${JSON.stringify(r.body.supportDepartments)}`);
+  return "unknown key dropped";
+});
+
+await check("AN ORDINARY ADMIN CANNOT HAND OUT DEPARTMENT MEMBERSHIP AT ALL", async () => {
+  // The route is Super-Admin-only, and this is the assertion that keeps it that way:
+  // membership decides who reads a student's disclosures, so it is not something a
+  // colleague with the Staff page can grant themselves.
+  const r = await call(`/staff/${ask.id}/access`, {
+    method: "PUT", token: well.token, body: { pages: ["referrals"], supportDepartments: ["wellbeing"] },
+  });
+  assert.equal(r.status, 403, `a wellbeing officer got ${r.status}`);
+  const row = await db.staff.findUnique({ where: { id: ask.id } });
+  assert.equal(row.supportDepartments, JSON.stringify(["ask"]), "ASK's membership was changed anyway");
+  return "403, membership untouched";
 });
 
 /* -------------------------------------------------------------------------- */

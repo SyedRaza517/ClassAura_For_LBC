@@ -770,6 +770,25 @@ With no row saved, the platform defaults apply: `wellbeing`, `ask`, `student-sup
 **empty stored list is a real answer** ("this college runs no support desks") and does
 not fall back to the defaults — only the absence of a row does.
 
+### How somebody joins a department
+
+`PUT /api/staff/:id/access` (**Super Admin only**), body
+`{ pages: string[] | null, supportDepartments?: string[] | null }`. Membership rides in
+the same request as the page grant because they are one decision — split in two, a save
+could half-succeed and leave somebody on the wellbeing team without the page that shows
+it to them. Keys are filtered against the college's own list, so a key naming no
+department cannot sit dormant in the column and come to life if that desk is created
+later. Omitting the field means "not being changed"; `null` or `[]` clears it.
+
+**The Super Admin is not exempt from membership, and can therefore set their own.** A
+request that names `supportDepartments` updates the membership of a Super Admin and
+leaves their pages alone; one that does not is still refused with
+`The Super Admin always has full access`. Holding every admin page is a claim about
+administrative authority, while being on the wellbeing team is a claim about who reads
+a student's disclosures — `canReadDepartment` refuses to conflate them, which only
+works as a decision if the account that configures the college can put itself on a team
+deliberately, in a column the audit log records.
+
 ### Queues and raising one
 
 | Method | Path | Access | Body |

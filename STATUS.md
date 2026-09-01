@@ -672,6 +672,25 @@ circumstances summary draws between what the college decided and why.
 | Client | **builds.** There is still no client test framework, so that is the whole claim |
 | In use by a college | **No.** Nothing here has been exercised by a real support desk against real students |
 
+**Two things fixed on 1 Sep 2026, after the queues turned out to be unreachable.**
+
+*The Super Admin could not join a department, so they saw no queue at all.*
+`canReadDepartment` deliberately does not exempt them — holding every page is a claim
+about administrative authority, being on the wellbeing team is a claim about who reads a
+student's disclosures — and `supportDepartments.js` documents the way out as "a Super
+Admin who needs the wellbeing queue can put themselves on the team". That escape hatch
+did not exist: `PUT /staff/:id/access` refused **every** edit to a Super Admin, and the
+Access screen rendered a notice instead of an editor. So the account that sets a college
+up held the Referrals page, saw the parent in the sidebar, and found nothing under it but
+Sent by me. Membership is now editable on that account and pages still are not; six smoke
+checks cover the round trip, and three of them fail if the blanket refusal is restored.
+
+*PAT and the queues now sit under one **Pastoral** parent.* They were adjacent in a long
+sidebar and still read as unrelated, because the queues are named after the college's own
+departments — nothing in "Wellbeing" or "ASK" says it has anything to do with PAT. The
+group is named for the job rather than for one of its screens, and still not "Student
+Support", which is a *department* and therefore a child of it.
+
 **Deliberately not built:** threaded replies *between two departments* (the thread is
 referrer↔department by design), reopening a closed referral, and any student-facing view
 of the conversation. Each widens the confidentiality surface, and none is needed for the

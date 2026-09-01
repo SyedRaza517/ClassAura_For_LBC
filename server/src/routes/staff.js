@@ -246,8 +246,45 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
   }
   const target = await prisma.staff.findUnique({ where: { id: req.params.id } });
   if (!target) return res.status(404).json({ error: "Staff not found" });
-  // The Super Admin always has everything and must never be demoted here.
-  if (target.isSuperAdmin) return res.status(400).json({ error: "The Super Admin always has full access" });
+
+  // THE SUPER ADMIN'S PAGES ARE FIXED. THEIR DEPARTMENT MEMBERSHIP IS NOT.
+  //
+  // Those are two different questions and this route used to refuse both, which left
+  // the feature with no way in at all.
+  //
+  // canReadDepartment deliberately does NOT exempt a Super Admin: holding every admin
+  // page is a claim about administrative authority, while being on the wellbeing team
+  // is a claim about who reads a student's disclosures, and "the most senior account
+  // sees every case note by default" is precisely what the confidentiality split
+  // exists to prevent. supportDepartments.js says so, and says the way out is that a
+  // Super Admin who needs the queue "can put themselves on the team — visibly, in a
+  // column somebody can audit".
+  //
+  // That escape hatch did not exist. A blanket 400 here meant the one account that
+  // sets a college up could hold the Referrals page, see the parent in the sidebar,
+  // and find nothing under it but "Sent by me" — with no screen anywhere able to
+  // change that. Reported as "I cannot see the Wellbeing and ASK tabs", which is
+  // exactly what it looks like from the outside.
+  //
+  // So membership is editable and pages are not. A request that does not carry
+  // supportDepartments is still refused, unchanged: it can only be an attempt to
+  // change the pages, and that is the thing that must never happen here.
+  if (target.isSuperAdmin) {
+    if (req.body?.supportDepartments === undefined) {
+      return res.status(400).json({ error: "The Super Admin always has full access" });
+    }
+    const staff = await prisma.staff.update({ where: { id: target.id }, data: departmentsData });
+    audit.record(req, {
+      action: "staff.access.changed", entity: "Staff", entityId: staff.id,
+      // Named for what actually changed. Saying "access set to N pages" about an
+      // account whose pages this route just declined to touch would put a false
+      // statement in the one log read to answer who granted whom what.
+      summary: `Support department membership for ${staff.name} (${staff.email}) — the Super Admin's pages are unchanged`,
+      before: { supportDepartments: target.supportDepartments },
+      after: { supportDepartments: staff.supportDepartments },
+    });
+    return res.json(sStaff(staff));
+  }
   // Keep only recognised page keys, de-duplicated — junk can't grant or block anything.
   const clean = pages == null ? [] : [...new Set(pages.filter((p) => ADMIN_PAGES.includes(p)))];
   let data;
