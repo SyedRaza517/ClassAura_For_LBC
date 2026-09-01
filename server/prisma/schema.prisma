@@ -133,9 +133,12 @@ model TenantBranding {
   id String @id @default("singleton")
 
   // --- names ---
-  /// "London Brookes College" — used in letters, emails and page titles.
+  /// The college's full legal name, e.g. "Riverside College of Further Education" —
+  /// used in letters, emails and page titles. Deliberately an invented example: this
+  /// table exists so no institution's name is written into the product, and an example
+  /// naming a real college is how one ends up read as the default.
   displayName String?
-  /// "LBC" — where the full name will not fit.
+  /// The short form, e.g. "Riverside" — where the full name will not fit.
   shortName   String?
   /// The two lines of the app's own lockup, e.g. "EDTECH" / "HUB".
   wordmarkTop String?

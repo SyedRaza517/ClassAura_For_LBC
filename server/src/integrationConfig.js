@@ -21,10 +21,11 @@
 // SMTP_* and SP_* describe ONE institution's systems, and handing them to a college
 // that had not configured its own is how a student receives an offer letter "from"
 // another institution and has their passport scan filed in that institution's
-// SharePoint library. That was not hypothetical — this platform ran for a period with
-// EdTech emailing as "London Brookes College". So the environment was fenced off to a
-// single tenant, the one named by DEFAULT_TENANT_SLUG, and every other college
-// resolved to "not configured" instead.
+// SharePoint library. That was not hypothetical — this platform ran for a period
+// sending one college's mail under a DIFFERENT college's name, because the process
+// inherited SMTP_* from the host and the host described somebody else. So the
+// environment was fenced off to a single tenant, the one named by DEFAULT_TENANT_SLUG,
+// and every other college resolved to "not configured" instead.
 //
 // One deployment per college removes the ambiguity the fence existed to resolve: the
 // host's environment describes the only institution there is, so inheriting it is

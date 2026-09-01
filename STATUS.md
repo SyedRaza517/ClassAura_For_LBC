@@ -975,9 +975,9 @@ or to write a new migration.
 **Worth checking on production.** The same commits reached the `production` branch, so
 production's `_prisma_migrations` may hold the same unfinished row. It could not be
 checked from this machine — there is no production `DATABASE_URL` here, and the Supabase
-MCP connection available in that session was authenticated to a **different** account
-(LBC and one unrelated project), not EdTech's. Run the `SELECT` above against production
-before assuming it deployed.
+MCP connection available in that session was authenticated to a **different** account,
+holding two unrelated projects and not EdTech's. Run the `SELECT` above against
+production before assuming it deployed.
 
 ### Open defects
 

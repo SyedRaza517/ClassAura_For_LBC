@@ -82,7 +82,7 @@ services:
       # live in server/.env locally, which is gitignored and never reaches Render, so
       # this is a difference that only shows up once deployed.
       - key: MOODLE_URL
-        sync: false              # e.g. https://lbcvle.uk  (no trailing slash, no /login)
+        sync: false              # e.g. https://vle.example.ac.uk  (no trailing slash, no /login)
       - key: MOODLE_TOKEN
         sync: false              # the 32-character web-services token — a secret
       - key: MOODLE_AUTO_SYNC
