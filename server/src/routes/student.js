@@ -194,7 +194,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   // while students were still tapping needs to be able to see that happening, and until
   // TagTap.tagId became nullable none of these three could be recorded at all.
   if (!settings.enabled) {
-    await logTap(req, { studentId: req.user.id, outcome: "disabled" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "disabled" });
     return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
   }
 
@@ -204,7 +204,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   if (chosenId != null && !isString(chosenId)) return res.status(400).json({ error: "sessionId must be text" });
 
   if (!tapAllowed(req.user.id)) {
-    await logTap(req, { studentId: req.user.id, outcome: "rate_limited" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "rate_limited" });
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
@@ -217,7 +217,7 @@ router.post("/me/tap-check-in", async (req, res) => {
     // must not become a list of the codes somebody has been trying. What is worth
     // keeping is that an unrecognised tap happened, when, and from where — which is what
     // makes a run of them visible as a run.
-    await logTap(req, { studentId: req.user.id, outcome: "tag_unknown" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "tag_unknown" });
     return res.status(404).json({ error: "That tag isn't recognised." });
   }
 
@@ -226,7 +226,9 @@ router.post("/me/tap-check-in", async (req, res) => {
   const candidates = await candidateSessions(req.user.id, date);
   const decision = resolveTapSession(candidates, { date, time }, settings);
 
-  const base = { tagId: tag.id, studentId: req.user.id };
+  // method sits in base so every outcome below carries it — a refusal is as much an
+  // NFC event as a mark, and the QR route logs its own method the same way.
+  const base = { tagId: tag.id, studentId: req.user.id, method: "nfc" };
 
   if (decision.kind === "none") {
     await logTap(req, { ...base, outcome: decision.reason });

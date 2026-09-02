@@ -62,6 +62,27 @@ function decrypt(stored) {
   return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
 }
 
+// The QR check-in signing key. Signing with an encryption key is a key-separation
+// failure — one mistaken use compromises the other — so this derives a DISTINCT
+// HMAC key from the same CREDENTIALS_KEY via HKDF under a fixed label.
+//
+// Derived rather than a second QR_SIGNING_KEY env var, deliberately: the key already
+// has to be set per environment, there are two environments that drift, and a second
+// secret is a second thing to forget on exactly one of them. A missing signing key
+// would not fail loudly — it would fail at the first scan of the first lecture.
+// Reusing key() means a missing CREDENTIALS_KEY throws the same SecretsNotConfigured
+// (503) here as it does on the credentials screen, at mint and at verify alike.
+//
+// The label is versioned so a future change of derivation can coexist with codes
+// signed under this one for the length of a rotation window.
+const QR_HKDF_INFO = "edtech:qr-checkin:v1";
+
+function qrSigningKey() {
+  // hkdfSync returns an ArrayBuffer, not a Buffer; crypto.createHmac accepts both,
+  // but the callers compare and slice, so normalise here once.
+  return Buffer.from(crypto.hkdfSync("sha256", key(), Buffer.alloc(0), QR_HKDF_INFO, 32));
+}
+
 /**
  * What a client is allowed to see of a secret: enough to recognise it, never enough
  * to use it. A Moodle token is 32 hex characters, so the last four identify which
@@ -73,4 +94,4 @@ function hint(plaintext) {
   return "•".repeat(Math.min(12, s.length - 4)) + s.slice(-4);
 }
 
-module.exports = { encrypt, decrypt, hint, isConfigured, SecretsNotConfigured };
+module.exports = { encrypt, decrypt, hint, isConfigured, qrSigningKey, SecretsNotConfigured };

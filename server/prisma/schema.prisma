@@ -1090,6 +1090,13 @@ model TagTap {
   studentId String?
   staffId   String?
   sessionId String? // the register a student tap landed on
+  // "nfc" | "qr". NULLABLE, and never backfilled: a row written before this column
+  // existed is not evidence that it was NFC, it is evidence that we were not recording
+  // the method — writing "nfc" onto it would invent a fact. An administrator answering
+  // "I scanned and it did not work" needs to know which capture path refused, because
+  // the two fail differently: a dead sticker and an expired code look identical in a
+  // log that does not say.
+  method    String?
   // marked | checked_in | already_marked | already_checked_in | no_session_now |
   // ambiguous | term_locked | tag_unknown | rate_limited | disabled
   outcome   String

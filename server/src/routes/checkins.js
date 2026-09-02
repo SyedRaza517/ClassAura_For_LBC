@@ -232,7 +232,7 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
   const logTap = async (outcome, extra = {}) => {
     try {
       await prisma.tagTap.create({
-        data: { tagId: tag.id, staffId: req.user.id, outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
+        data: { tagId: tag.id, staffId: req.user.id, method: "nfc", outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
       });
     } catch (e) {
       console.error("[tap] could not log a staff tap:", e.message);

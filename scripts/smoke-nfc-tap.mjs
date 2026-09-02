@@ -397,6 +397,18 @@ try {
     !!markRow && markRow.takenBy === "Self check-in (NFC)",
     `takenBy=${markRow?.takenBy}`);
 
+  // The tap log must say which capture path this was. "nfc" on new rows only — rows
+  // from before the method column existed stay null, because the absence of a record
+  // is not a record of NFC.
+  const tapRow = await db.tagTap.findFirst({
+    where: { studentId: A_ID, sessionId: live.id, outcome: "marked" },
+    orderBy: { at: "desc" },
+  });
+  if (tapRow) made.taps.push(tapRow.id);
+  check("an accepted tap's log row records the method as nfc",
+    !!tapRow && tapRow.method === "nfc",
+    `method=${tapRow?.method}`);
+
   const firstCheckedInAt = markRow?.checkedInAt;
 
   // Tapping again must not create a second mark or move the arrival time.
