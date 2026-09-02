@@ -466,4 +466,50 @@ function buildStats({ rows = [], compareRows = null, config, courseFees = {}, in
   };
 }
 
-module.exports = { buildStats, estimateRevenue, STAGES };
+/* -------------------------------------------------------------------------- */
+/* Which intake is "the previous one"                                          */
+/* -------------------------------------------------------------------------- */
+
+const MONTHS = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+
+// An intake label is a month and a year — "September 2026" — because that is the
+// single combined string the admin adds to AdmissionIntake and the applicant picks on
+// the form. Sortable as year*12+month.
+const intakeOrder = (label) => {
+  const m = /^\s*([A-Za-z]+)\s+(\d{4})\s*$/.exec(String(label || ""));
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[1].toLowerCase());
+  return month < 0 ? null : Number(m[2]) * 12 + month;
+};
+
+/**
+ * The intake immediately before `current`, or null when there is none.
+ *
+ * CHRONOLOGY COMES FROM THE LABEL, NOT FROM AdmissionIntake.sortOrder. sortOrder is
+ * wherever an admin dragged the row, and a list kept newest-first — an entirely
+ * reasonable way to keep it, since the current intake is the one being worked — would
+ * make "previous" mean "next" for every comparison on the dashboard. That is a silent
+ * sign flip on every trend chip: a rise reported as a fall, with nothing on screen to
+ * suggest anything is wrong.
+ *
+ * A label that is not a month and a year cannot be placed in time (a college may type
+ * "Rolling"), so it is ignored rather than ordered arbitrarily. Offering no comparison
+ * is better than comparing against the wrong intake.
+ */
+function previousIntake(labels, current) {
+  const here = intakeOrder(current);
+  if (here == null) return null;
+  let best = null;
+  let bestOrder = -Infinity;
+  for (const label of labels || []) {
+    const o = intakeOrder(label);
+    if (o == null || o >= here) continue;
+    if (o > bestOrder) { bestOrder = o; best = label; }
+  }
+  return best;
+}
+
+module.exports = { buildStats, estimateRevenue, previousIntake, STAGES };

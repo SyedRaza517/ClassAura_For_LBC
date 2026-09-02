@@ -124,6 +124,7 @@ app.use("/api/my-timetable", wrapAsync(require("./routes/myTimetable")));
 app.use("/api/referrals", wrapAsync(require("./routes/referrals")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
+app.use("/api/admission-stats", wrapAsync(require("./routes/admissionStats")));
 app.use("/api/admission-pdf", wrapAsync(require("./routes/admissionPdf")));
 app.use("/api/attendance-emails", wrapAsync(require("./routes/attendanceEmails")));
 app.use("/api/slc", wrapAsync(require("./routes/slc")));

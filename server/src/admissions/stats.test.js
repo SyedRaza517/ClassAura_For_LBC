@@ -9,7 +9,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildStats } = require("./stats");
+const { buildStats, previousIntake } = require("./stats");
 const { merge } = require("./trackerSettings");
 const { DOC_KEYS } = require("../admissionDocs");
 
@@ -459,4 +459,47 @@ test("the output carries no applicant identifier or personal field", () => {
   const json = JSON.stringify(buildStats({ rows, config: CONFIG, courseFees: FEES }));
   assert.equal(json.includes("adm_secret_id"), false);
   assert.equal(json.includes("B1 1AA"), false, "a postcode must be bucketed and dropped");
+});
+
+/* -------------------------------------------------------------------------- */
+/* Which intake is "the previous one"                                          */
+/* -------------------------------------------------------------------------- */
+
+const INTAKES = ["January 2026", "April 2026", "September 2026", "January 2027"];
+
+test("the previous intake is the one chronologically before it", () => {
+  assert.equal(previousIntake(INTAKES, "September 2026"), "April 2026");
+});
+
+test("the previous intake crosses the year boundary", () => {
+  assert.equal(previousIntake(INTAKES, "January 2027"), "September 2026");
+});
+
+test("the earliest intake has no previous intake", () => {
+  // Not the last one in the list wrapped around. A first-ever intake has nothing to
+  // be compared with, and saying so is the honest answer.
+  assert.equal(previousIntake(INTAKES, "January 2026"), null);
+});
+
+test("chronology comes from the label, not the order the admin listed them in", () => {
+  // AdmissionIntake.sortOrder is whatever an admin dragged it to, and a list ordered
+  // newest-first would otherwise make "previous" mean "next" for every comparison on
+  // the dashboard — a silent sign flip on every trend chip.
+  const shuffled = ["January 2027", "January 2026", "September 2026", "April 2026"];
+  assert.equal(previousIntake(shuffled, "September 2026"), "April 2026");
+});
+
+test("an unknown intake has no previous intake", () => {
+  assert.equal(previousIntake(INTAKES, "Michaelmas 2026"), null);
+});
+
+test("unparseable labels are ignored rather than ordered arbitrarily", () => {
+  // A college can type anything into the intake list. A label that is not a month and
+  // a year cannot be placed in time, and guessing puts the wrong intake in the
+  // comparison — worse than offering no comparison.
+  assert.equal(previousIntake(["Rolling", "April 2026", "September 2026"], "September 2026"), "April 2026");
+});
+
+test("no comparison is offered when there is only one intake", () => {
+  assert.equal(previousIntake(["September 2026"], "September 2026"), null);
 });
