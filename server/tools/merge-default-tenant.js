@@ -39,7 +39,23 @@ const APPLY = process.argv.includes("--apply");
 // The tables that actually hold rows for the scaffold tenant. Named explicitly rather
 // than swept from information_schema: this is a one-off against a known database, and a
 // loop that discovers its own targets is one that can discover the wrong ones.
-const MOVE_TABLES = ["Staff", "AuditLog", "Notification", "SentNotification"];
+//
+// MOVED — the rows worth keeping. Staff is the operator's own login; AuditLog is the
+// history of who did what, and history is the one thing that cannot be recreated.
+const MOVE_TABLES = ["Staff", "AuditLog"];
+
+// DELETED — rows that CANNOT move, because a unique key on (tenantId, …) means the
+// destination already has its own. The first attempt tried to move these and Postgres
+// refused with 23505 on SentNotification's (tenantId, key): both institutions had a
+// `bankholiday:2026-08-31` marker. The transaction rolled back and nothing was written,
+// which is why the whole thing is one transaction.
+//
+// Deleting them costs nothing real. SentNotification is a "we already sent this"
+// dedupe marker and the destination holds its own copy of the one that collided;
+// Notification is a bell-icon entry for a scaffold institution with one user; and
+// TenantBranding is one row per institution carrying the SUPPLIER's name, not a
+// college's. None is recoverable information.
+const DELETE_TABLES = ["Notification", "SentNotification", "TenantBranding"];
 
 const die = (msg) => { console.error(`\nREFUSING: ${msg}\n`); process.exit(1); };
 
@@ -76,8 +92,10 @@ const die = (msg) => { console.error(`\nREFUSING: ${msg}\n`); process.exit(1); }
     const n = await db.$queryRawUnsafe(`SELECT count(*)::int c FROM "${t}" WHERE "tenantId" = $1`, DEFAULT_ID);
     plan.push({ table: t, action: "move", rows: n[0].c });
   }
-  const brand = await db.$queryRawUnsafe(`SELECT count(*)::int c FROM "TenantBranding" WHERE "tenantId" = $1`, DEFAULT_ID);
-  plan.push({ table: "TenantBranding", action: "DELETE (one row per institution — cannot move)", rows: brand[0].c });
+  for (const t of DELETE_TABLES) {
+    const n = await db.$queryRawUnsafe(`SELECT count(*)::int c FROM "${t}" WHERE "tenantId" = $1`, DEFAULT_ID);
+    plan.push({ table: t, action: "DELETE (unique per institution — cannot move)", rows: n[0].c });
+  }
   plan.push({ table: "Tenant", action: "DELETE (the scaffold itself)", rows: 1 });
   console.table(plan);
 
@@ -94,13 +112,18 @@ const die = (msg) => { console.error(`\nREFUSING: ${msg}\n`); process.exit(1); }
   }
 
   await db.$transaction(async (tx) => {
-    const b = await tx.$executeRawUnsafe(`DELETE FROM "TenantBranding" WHERE "tenantId" = $1`, DEFAULT_ID);
+    // Deletes first: a move into a row the destination already owns is what failed the
+    // first attempt, and clearing the unmovable rows cannot itself collide.
+    let dropped = 0;
+    for (const t of DELETE_TABLES) {
+      dropped += await tx.$executeRawUnsafe(`DELETE FROM "${t}" WHERE "tenantId" = $1`, DEFAULT_ID);
+    }
     let moved = 0;
     for (const t of MOVE_TABLES) {
       moved += await tx.$executeRawUnsafe(`UPDATE "${t}" SET "tenantId" = $1 WHERE "tenantId" = $2`, keep.id, DEFAULT_ID);
     }
     const gone = await tx.$executeRawUnsafe(`DELETE FROM "Tenant" WHERE id = $1`, DEFAULT_ID);
-    console.log(`\nmoved ${moved} rows, removed ${b} branding row, deleted ${gone} institution`);
+    console.log(`\nmoved ${moved} rows, dropped ${dropped} unmovable rows, deleted ${gone} institution`);
   });
 
   const after = await db.$queryRawUnsafe(`SELECT id, name FROM "Tenant"`);
