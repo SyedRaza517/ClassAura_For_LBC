@@ -19,10 +19,12 @@
 // forgotten phone or a handset with no NFC into a permanent academic record — most often
 // for the students least able to argue about it.
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   Radio, Loader2, AlertTriangle, RefreshCw, CheckCircle2, Clock3, UserX,
-  Nfc, Lock, CalendarX, ChevronRight,
+  Nfc, Lock, CalendarX, ChevronRight, QrCode, X,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { api } from "./api";
 import ConfirmDialog from "./ConfirmDialog";
 import { NAVY } from "./branding";
@@ -99,10 +101,13 @@ export default function AdminLiveAttendance() {
 
       {err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}
 
-      {today && !today.tapEnabled && (
+      {/* Only when BOTH capture methods are off. A QR-only college's registers fill on
+          their own perfectly well, and this warning would call the feature broken. */}
+      {today && !today.tapEnabled && !today.qrEnabled && (
         <Banner tone="amber" Icon={Nfc}>
-          Tap check-in is switched off for this college, so nothing will appear here on its own.
-          Registers can still be taken in the usual way. An administrator can switch it on under <strong>NFC Tags</strong>.
+          Self check-in is switched off for this college, so nothing will appear here on its own.
+          Registers can still be taken in the usual way. An administrator can switch on tap or
+          QR check-in under <strong>NFC Tags</strong>.
         </Banner>
       )}
 
@@ -223,17 +228,20 @@ function LiveSession({ sessionId, onBack }) {
 
       <header className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-bold text-slate-800">{data?.unit?.name || data?.unit?.code || "Register"}</h2>
+        {/* sSession serialises the times as `start` and `end`. This line read
+            startTime/endTime from the day it was written and rendered a bare dash —
+            invisible precisely because nobody tests the client beyond building it. */}
         <p className="mt-0.5 text-[13px] tabular-nums text-slate-500">
-          {data?.session?.date} · {data?.session?.startTime}–{data?.session?.endTime}
+          {data?.session?.date} · {data?.session?.start}–{data?.session?.end}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {data?.acceptingTaps ? (
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Accepting taps · refreshing every {POLL_MS / 1000}s
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Accepting check-ins · refreshing every {POLL_MS / 1000}s
             </span>
           ) : (
             <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[12px] font-bold text-slate-600 ring-1 ring-slate-200">
-              <Clock3 size={12} />Not accepting taps
+              <Clock3 size={12} />Not accepting check-ins
             </span>
           )}
           {data?.termLocked && (
@@ -249,6 +257,15 @@ function LiveSession({ sessionId, onBack }) {
         {err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}
         {note && <Banner tone="slate" Icon={CheckCircle2}>{note}</Banner>}
       </div>
+
+      {data?.qrEnabled && (
+        <QrCard
+          sessionId={sessionId}
+          unitName={data?.unit?.name || data?.unit?.code || "Register"}
+          times={`${data?.session?.start}–${data?.session?.end}`}
+          counts={counts}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <Tally n={counts.P} label="Present" colour="#059669" />
@@ -283,12 +300,21 @@ function LiveSession({ sessionId, onBack }) {
                     and renders neither a tooltip nor an accessible name — so the
                     tapped-vs-marked distinction was invisible to everybody. A real label
                     and a visually-hidden word instead. */}
-                {r.selfMarked && (
-                  <span className="flex shrink-0 items-center" title="Tapped in on their phone">
-                    <Nfc size={13} aria-hidden="true" className="text-slate-500" />
-                    <span className="sr-only">Tapped in on their phone</span>
-                  </span>
-                )}
+                {r.selfMarked && (() => {
+                  // Which way they marked themselves. The server's predicate decides
+                  // selfMarked; takenBy just picks the picture — a sticker and a code on
+                  // screen have different failure modes, and an administrator reading a
+                  // disputed register needs to see which one this was.
+                  const viaQr = r.takenBy === "Self check-in (QR)";
+                  const words = viaQr ? "Scanned the code on screen" : "Tapped in on their phone";
+                  const Icon = viaQr ? QrCode : Nfc;
+                  return (
+                    <span className="flex shrink-0 items-center" title={words}>
+                      <Icon size={13} aria-hidden="true" className="text-slate-500" />
+                      <span className="sr-only">{words}</span>
+                    </span>
+                  );
+                })()}
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${st ? st.cls : "bg-slate-100 text-slate-600 ring-slate-300"}`}>
                   {st ? st.label : "Not tapped"}
                 </span>
@@ -341,6 +367,215 @@ function Tally({ n, label, colour }) {
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
       <p className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: colour }}>{n}</p>
       <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+    </div>
+  );
+}
+
+/* ------------------------------ the rotating code ------------------------------ */
+
+// The lecturer's half of QR check-in: the code itself, and a full-screen mode sized for
+// a projector. Rendered only when the college has switched QR check-in on.
+//
+// One request per rotation, not a poll. The server says how many seconds the current
+// code has left, and the card asks again just after that moment — so the QR on screen
+// is never stale and a broken timer cannot turn one projector into a request loop
+// (the server rate-limits minting as well, belt and braces).
+//
+// Displaying this opens nothing and closing it closes nothing: the code is only valid
+// inside the session's own timetabled window, enforced where it matters — at the scan.
+function QrCard({ sessionId, unitName, times, counts }) {
+  const [mint, setMint] = useState(null);   // the last /qr-code answer
+  const [img, setImg] = useState("");       // the current code, rendered
+  const [left, setLeft] = useState(0);      // seconds until the code turns over
+  const [err, setErr] = useState("");
+  const [presenting, setPresenting] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+
+  const fetchCode = useCallback(async () => {
+    try {
+      const r = await api.sessionQr(sessionId);
+      if (!alive.current) return;
+      setErr("");
+      setMint(r);
+      setLeft(r.secondsLeft ?? 0);
+      if (r.code) {
+        // The deep link is composed HERE, from the screen's own origin: staff and
+        // students use the same deployment, so the code carries whichever host the
+        // lecturer is on and staging can never mint production links or vice versa.
+        // The server never learns a hostname.
+        const url = `${window.location.origin}/?checkin=${sessionId}.${r.code}`;
+        const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#0f172a", light: "#ffffff" } });
+        if (alive.current) setImg(dataUrl);
+      } else {
+        setImg("");
+      }
+    } catch (e) {
+      if (!alive.current) return;
+      // Includes "switched off" (the parent's poll will drop qrEnabled and unmount this
+      // card within a cycle) and the loud missing-key 503, which an administrator can
+      // actually act on — so the message is shown, not swallowed.
+      setErr(e?.message || "Could not fetch the check-in code.");
+      setMint(null); setImg("");
+    }
+  }, [sessionId]);
+
+  useEffect(() => { fetchCode(); }, [fetchCode]);
+
+  // Ask again just after the code turns over. The extra 400ms keeps the request on the
+  // new window's side of the boundary even with a slightly fast local clock.
+  useEffect(() => {
+    if (!mint) return undefined;
+    const t = setTimeout(fetchCode, (mint.secondsLeft ?? 30) * 1000 + 400);
+    return () => clearTimeout(t);
+  }, [mint, fetchCode]);
+
+  // The countdown between fetches is cosmetic and local; the server's clock decides.
+  useEffect(() => {
+    const t = setInterval(() => setLeft((n) => (n > 0 ? n - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Escape leaves full screen, matching every other overlay on the platform.
+  useEffect(() => {
+    if (!presenting) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setPresenting(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [presenting]);
+
+  if (err) return <Banner tone="amber" Icon={QrCode}>{err}</Banner>;
+  if (!mint) return null;
+
+  const rotate = mint.rotateSeconds || 30;
+  const open = mint.acceptingTaps && img;
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      {open ? (
+        <div className="flex flex-col items-center gap-4 sm:flex-row">
+          <img src={img} alt="Check-in code — scan it with a phone camera" className="h-32 w-32 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 text-center sm:text-left">
+            <h3 className="flex items-center justify-center gap-2 text-sm font-bold text-slate-800 sm:justify-start">
+              <QrCode size={16} style={{ color: NAVY }} />Scan to check in
+            </h3>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+              Students point their phone camera at the code and follow the link. It changes
+              every {rotate} seconds, so a photo of it stops working almost immediately.
+            </p>
+            <CountdownBar left={left} rotate={rotate} />
+            <button
+              onClick={() => setPresenting(true)}
+              className="press mt-3 rounded-xl px-4 py-2.5 text-[13px] font-bold text-white"
+              style={{ background: NAVY }}
+            >Present full screen</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <Clock3 size={18} className="shrink-0 text-slate-400" />
+          {mint.phase === "before" ? (
+            <div>
+              <p className="text-sm font-semibold text-slate-700">Check-in opens at {mint.opensAt}</p>
+              <p className="text-[12px] text-slate-500">The code appears here on its own when the class window opens.</p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-sm font-semibold text-slate-700">Check-in has closed for this class</p>
+              <p className="text-[12px] text-slate-500">It ran until {mint.closesAt}. The register can still be corrected by hand.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {presenting && (
+        <Projector
+          unitName={unitName} times={times} img={img} left={left} rotate={rotate}
+          counts={counts} onClose={() => setPresenting(false)}
+        />
+      )}
+    </section>
+  );
+}
+
+function CountdownBar({ left, rotate, thick = false }) {
+  return (
+    <div className="mt-2.5 w-full">
+      <div className={`${thick ? "h-1.5" : "h-1"} overflow-hidden rounded-full bg-slate-100`}>
+        <div
+          className="h-full rounded-full transition-[width] duration-1000 ease-linear"
+          style={{ width: `${Math.max(0, Math.min(100, (left / rotate) * 100))}%`, background: NAVY }}
+        />
+      </div>
+      <p className="mt-1 text-[11px] tabular-nums text-slate-400">New code in {left}s</p>
+    </div>
+  );
+}
+
+// Full screen, for the projector at the front of the room. White on purpose — a lecture
+// theatre's projector at full brightness is the one place the platform's quiet palette
+// would fight legibility, so this is the register reduced to the three things a room
+// needs: the code, one instruction, and how many people are in.
+function Projector({ unitName, times, img, left, rotate, counts, onClose }) {
+  // Portalled to <body>: position:fixed measures against the nearest TRANSFORMED
+  // ancestor, not the viewport, and anything animated above this card would quietly
+  // turn "full screen" into "full page" — the overlay laid out against the scroll
+  // height and the tallies pushed past the projector's bottom edge.
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label="Check-in code, full screen" className="fixed inset-0 z-[95] flex flex-col bg-white">
+      <div className="flex items-start justify-between gap-4 p-5 md:p-8">
+        <div className="min-w-0">
+          <p className="truncate text-2xl font-extrabold text-slate-900 md:text-4xl">{unitName}</p>
+          <p className="mt-1 text-lg tabular-nums text-slate-500 md:text-2xl">{times}</p>
+        </div>
+        <button onClick={onClose} aria-label="Leave full screen" className="press shrink-0 rounded-xl p-3 text-slate-500 hover:bg-slate-100"><X size={28} /></button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6">
+        {img ? (
+          <>
+            {/* The code takes exactly the height the header, bar, instruction and
+                tallies leave over — sized by flexbox, not viewport arithmetic. A code
+                sized only by vmin pushed the instruction and the counts below the fold
+                on ordinary laptop screens, the exact screen a lecturer plugs into the
+                projector; and everything on this screen is pointless if the counts and
+                the instruction are not on it. */}
+            <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+              <img
+                src={img} alt="Check-in code — scan it with a phone camera"
+                className="h-full w-auto"
+                style={{ maxHeight: "540px", maxWidth: "min(90vw, 540px)" }}
+              />
+            </div>
+            <div className="w-full" style={{ maxWidth: 420 }}>
+              <CountdownBar left={left} rotate={rotate} thick />
+            </div>
+            <p className="text-center text-xl font-semibold leading-snug text-slate-800 md:text-3xl">
+              Point your phone camera at the code to check in
+            </p>
+          </>
+        ) : (
+          // The class window closed while this was on the wall. Say so in projector-size
+          // type rather than leaving a dead code up for people to scan at.
+          <p className="text-center text-2xl font-semibold text-slate-600 md:text-4xl">Check-in has closed for this class</p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 p-5 md:gap-4 md:p-8">
+        <BigTally n={counts.P} label="Present" colour="#059669" />
+        <BigTally n={counts.L} label="Late" colour="#d97706" />
+        <BigTally n={counts.notMarked} label="Not yet" colour="#94a3b8" />
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function BigTally({ n, label, colour }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 px-4 py-4 text-center md:py-5">
+      <p className="text-4xl font-extrabold tabular-nums leading-none md:text-6xl" style={{ color: colour }}>{n}</p>
+      <p className="mt-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 md:text-sm">{label}</p>
     </div>
   );
 }

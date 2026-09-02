@@ -1341,6 +1341,9 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
   res.json({
     date,
     tapEnabled: settings.enabled,
+    // Separately, because the list screen's "switched off" warning must only show when
+    // BOTH capture methods are off — a QR-only college's registers do fill on their own.
+    qrEnabled: settings.qrEnabled,
     scope: wantsAll ? "all" : "mine",
     // Whether to OFFER the toggle. The client cannot work this out for itself without
     // duplicating the page check above, and a control that always 403s is worse than no
@@ -1358,13 +1361,15 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
       // not an empty string pretending otherwise.
       tutor: s.unit?.tutorStaff?.name || s.unit?.tutor || null,
       marked: s._count.marks,
-      // Whether taps are being accepted for this class RIGHT NOW. Derived at read time
-      // rather than stored: "is it running" changes every minute, and a column holding
-      // it would be wrong within one and have nothing to correct it.
+      // Whether self check-ins are being accepted for this class RIGHT NOW. Derived at
+      // read time rather than stored: "is it running" changes every minute, and a column
+      // holding it would be wrong within one and have nothing to correct it.
       // The term is part of this, matching what the tap route will actually do. Without
       // it the dashboard advertised "Open now" for a session inside a closed term while
       // every tap on it came back 409, which reads as the app being broken.
-      acceptingTaps: settings.enabled
+      // EITHER capture method counts: a QR-only college's class is open now in every
+      // sense this flag is read for — the badge, and whether the live view keeps polling.
+      acceptingTaps: (settings.enabled || settings.qrEnabled)
         && time >= subMinutes(s.startTime, settings.earlyGraceMins)
         && time <= s.endTime
         && (!s.unit?.term || (date >= s.unit.term.start && date <= s.unit.term.end)),
@@ -1439,7 +1444,9 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
     // because the live view already holds the settings; the card itself fetches its
     // code from /sessions/:id/qr-code, which re-checks this server-side.
     qrEnabled: settings.qrEnabled,
-    acceptingTaps: settings.enabled
+    // Either capture method keeps this true — it gates the badge AND the client's poll,
+    // and a QR-only college's register fills exactly as an NFC one's does.
+    acceptingTaps: (settings.enabled || settings.qrEnabled)
       && session.date === localDate()
       && time >= subMinutes(session.startTime, settings.earlyGraceMins)
       && time <= session.endTime,
@@ -1504,7 +1511,12 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   const accepting = session.date === date && time >= opensAt && time <= session.endTime;
 
   if (!accepting) {
-    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, opensAt, closesAt: session.endTime });
+    // Which side of the window we are on, decided here where the college's clock lives —
+    // the client's own clock may sit in any timezone, and "opens at 09:00" shown for a
+    // class that finished at lunchtime reads as the screen being broken.
+    // A session dated tomorrow is "before" even though today's time is past its start.
+    const phase = session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
+    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, phase, opensAt, closesAt: session.endTime });
   }
 
   let secret;
@@ -1518,7 +1530,7 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   }
 
   const code = deriveCode({ secret, sessionId: session.id, windowIndex: windowIndexFor(nowSeconds, rotateSeconds) });
-  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, opensAt, closesAt: session.endTime });
+  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, phase: "open", opensAt, closesAt: session.endTime });
 });
 
 // POST /api/hnd/sessions/:id/mark-remaining-absent — the lecturer closes the register.
