@@ -1504,6 +1504,55 @@ model AdmissionCourse {
   active    Boolean  @default(true) // hidden from the form when false, without deleting
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+
+  /// The course fee, in PENCE, for the Admission Tracker's estimated-revenue tile.
+  ///
+  /// NULLABLE, AND THAT IS THE POINT. Null means "this college has not told us what
+  /// this course costs" — not "this course is free". The tracker excludes a fee-less
+  /// course's enrolments from the estimate entirely and reports the coverage beside
+  /// the figure ("estimated from 4 of 6 courses"), because an unset fee silently read
+  /// as zero under-reports revenue on an executive screen with nothing to indicate it.
+  /// Null-is-not-zero, the same rule the prediction engine runs on.
+  ///
+  /// INTEGER PENCE, not a decimal and emphatically not free text. `SlcApplication.amount`
+  /// is a String holding things like "£9,250" and is unusable for arithmetic; this
+  /// column exists partly so that mistake is not made twice.
+  ///
+  /// This whole tile is a PLACEHOLDER for real finance data once SLC is developed. The
+  /// arithmetic lives in exactly one function — `estimateRevenue` in
+  /// src/admissions/stats.js — so swapping the source later is one edit, not a hunt.
+  feeAmountPence Int?
+}
+
+/// Single-row config for the Admission Tracker. `data` is a JSON blob merged over the
+/// code defaults in src/admissions/trackerSettings.js, holding:
+///
+///   { targets: { default: {...}, byIntake: { "September 2026": {...} } },
+///     requiredDocTypes: ["photo", "passport", ...] }
+///
+/// `requiredDocTypes` exists because ADMISSION_DOC_TYPES has ten entries and NONE is
+/// marked optional. "Documents complete = all ten" reads artificially low — an
+/// immigration share code does not apply to a UK national — and inventing a required
+/// subset in code would impose one college's admissions rules on every other. So the
+/// set is configurable and defaults to all ten.
+model AdmissionTrackerSettings {
+  /// A CONSTANT PRIMARY KEY, and the save path upserts on this literal.
+  ///
+  /// This is the sixth config table of this shape (see TenantBranding,
+  /// AttendanceBandConfig, PredictionModelSettings, AttendanceTapConfig,
+  /// TimetableSettings) and it takes both halves of the pattern for the documented
+  /// reason: find-then-create is not atomic, so two administrators saving at the same
+  /// moment both find nothing, both insert, and `findFirst` afterwards returns whichever
+  /// row the planner picks. The targets an executive dashboard measures against would
+  /// become a coin toss between two rows. The constant key makes the second writer
+  /// collide with the first instead.
+  ///
+  /// Reads stay on `findFirst`, because a read that must not create a row should not be
+  /// able to, and this key is what guarantees there is at most one row to find.
+  id        String   @id @default("singleton")
+  data      Json     @default("{}")
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }
 
 // Admissions-managed intake list, e.g. "September 2026". A single combined label the
