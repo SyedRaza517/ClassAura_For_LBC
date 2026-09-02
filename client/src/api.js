@@ -280,6 +280,18 @@ export const api = {
   runAttendanceEmails: (opts = {}) => { const o = typeof opts === "boolean" ? { force: opts } : (opts || {}); return request("/attendance-emails/run", { method: "POST", body: { force: o.force !== false, from: o.from || undefined, to: o.to || undefined } }); },
   sendAttendanceEmailToStudent: (studentId, opts = {}) => request("/attendance-emails/send-one", { method: "POST", body: { studentId, from: opts.from || undefined, to: opts.to || undefined } }),
 
+  // Admission Tracker — AGGREGATES ONLY. A separate endpoint from /admissions on
+  // purpose: it is reachable by staff granted "admissions-tracker" who were
+  // deliberately not granted "admissions", and it never returns an applicant row.
+  admissionStats: (scope = {}) => {
+    const q = new URLSearchParams();
+    for (const k of ["intake", "course", "from", "to", "compare"]) if (scope[k]) q.set(k, scope[k]);
+    const s = q.toString();
+    return request(`/admission-stats${s ? `?${s}` : ""}`);
+  },
+  admissionTrackerSettings: () => request("/admission-stats/settings"),
+  saveAdmissionTrackerSettings: (data) => request("/admission-stats/settings", { method: "PUT", body: data }),
+
   // admissions (admin) — HND application entries: create, list, edit, delete
   admissions: () => request("/admissions"),
   addAdmission: (data) => request("/admissions", { method: "POST", body: data }),

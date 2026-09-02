@@ -894,6 +894,72 @@ Six verbs — `referral.raised`, `.accepted`, `.noted`, `.closed`, `.transferred
 closing detail, the hand-off reason and every message body stay out, because the audit log
 is read on Settings by administrators who were never granted this page.
 
+## Admission tracker (funnel analytics)
+
+`GET /api/admission-stats` · `GET|PUT /api/admission-stats/settings`
+
+Gated `requireAnyPage(["admissions-tracker", "admissions"])` — the pattern
+`/assessments/exec-summary` uses for `executive`. The new page ADDS an audience without
+taking one away: an admissions officer keeps access to their own funnel.
+
+**This endpoint emits aggregates only.** No applicant id, name, email, address, date of
+birth or document number is selected or returned, ever. That is the whole reason the
+page grant exists: `admissions` opens the full application record — passport and ID
+numbers, National Insurance numbers, criminal-record and medical declarations — and a
+principal who wants a conversion rate should not be handed those. `postCode` and
+`countryOfCitizenship` **are** read, to bucket an applicant into a region or a
+citizenship group, and are dropped before serialisation. Three guards hold the rule: the
+named `SELECT` allowlist, a contract test that reads the route as text
+(`src/admissions/aggregates-contract.test.js`), and a smoke assertion over the whole
+response body. **If you add a field here, expect all three to object.**
+
+Query: `intake`, `course`, `from`, `to` (both `YYYY-MM-DD`, on `createdAt`), `compare`
+(an intake label, or `none`; omitted means automatic).
+
+### The funnel
+
+| Stage | Rule |
+|---|---|
+| `enquiries` | every `Admission` in scope |
+| `applications` | `applicationSubmittedAt` set, or `source === "apply"` |
+| `documentsComplete` | every type in the configured `requiredDocTypes` present |
+| `interviewed` | a linked `Ism` with `interviewDate` set |
+| `offersSent` | `offerSentAt` set, or `offerStatus` ∈ (`sent`, `accepted`) |
+| `offersAccepted` | `offerStatus === "accepted"` |
+| `enrolled` | `enrollStatus === "Enroll"` |
+
+**Every stage is implied by each later one.** A student enrolled with no recorded ISM and
+no offer letter is ordinary — staff enrol from a decision taken in a room and tidy the
+record later, or never — and counting stages independently makes the funnel *widen* as it
+descends, which reads as a broken chart rather than as missing paperwork.
+
+`admitRate` is `offersSent / applications`; `yieldRate` is `enrolled / offersSent`.
+
+### Null is not zero
+
+Any rate whose denominator is zero comes back `null`, not `0` — "not measurable", not
+"nobody converted" — and renders as an em dash. The same applies to the comparison:
+**no comparable earlier period produces no chip at all**, never a fabricated +100%.
+Changes in a COUNT are percentages (`changePct`); changes in a RATE are percentage
+POINTS (`changePp`), because 20% → 30% is +10pp and not +50%.
+
+`revenue` is `{ pence, coveredEnrolments, totalEnrolments, previousPence, changePct }`.
+`pence` is `0` when nobody has enrolled (measurably nothing) but `null` when people have
+enrolled and no course of theirs has a fee recorded (unmeasurable). It is an **estimate**
+— enrolments × a per-course fee an administrator types — computed in one function,
+`estimateRevenue`, so it can be swapped for real funding data when SLC is developed.
+
+### Settings
+
+One row, primary key the literal `"singleton"`, written by **upsert on that constant**
+(two administrators saving at once must collide, not each insert a row). `GET` returns
+the merged config plus `allDocTypes`, `courses` (with `feeAmountPence`) and `intakes`.
+
+`requiredDocTypes` is configurable because `ADMISSION_DOC_TYPES` has ten entries and
+none is marked optional: "all ten" reads artificially low, since an immigration share
+code does not apply to a UK national. An empty stored list falls back to all ten — a bad
+save writing `[]` would otherwise make every applicant documents-complete.
+
 ## Data shapes (client-facing)
 ```
 Staff    { id, name, role, dept, email, allowance, initials, colour, accountRole,

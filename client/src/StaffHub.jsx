@@ -35,6 +35,7 @@ import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance from "./AdminLiveAttendance";
 import AssessmentTracker from "./AssessmentTracker";
 import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
+import AdmissionTracker from "./AdmissionTracker";
 import MyTimetable from "./MyTimetable";
 import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
@@ -2217,8 +2218,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 /* ============================================================ ADMIN DASHBOARD ============================================================ */
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
-const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "ism", "slc", "referrals", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
+const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings"];
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", "admissions-tracker": "Admission Tracker", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
 
 // COLLAPSIBLE SIDEBAR GROUPS.
 //
@@ -2872,6 +2873,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "studentqueries", label: "Queries", I: Inbox, group: "student-records" },
     { key: "attendance-emails", label: "Attendance Emails", I: Mail },
     { key: "admissions", label: "Applications", I: ClipboardList, group: "admissions-interviews" },
+    { key: "admissions-tracker", label: "Tracker", I: TrendingUp, group: "admissions-interviews" },
     { key: "ism", label: "ISM", I: MessageSquare, group: "admissions-interviews" },
     { key: "slc", label: "SLC", I: Wallet },
     // The three assessment screens collapse under one parent — see NAV_GROUPS. The
@@ -3157,6 +3159,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         )}
         {activeKey === "scheduling" && <AdminTimetablePlanner store={store} />}
         {activeKey === "admissions" && <AdminAdmissions store={store} />}
+        {activeKey === "admissions-tracker" && <AdmissionTracker />}
         {activeKey === "ism" && <AdminIsm store={store} />}
         {activeKey === "slc" && <AdminSlc store={store} />}
         {activeKey === "settings" && <AdminSettings store={store} />}
