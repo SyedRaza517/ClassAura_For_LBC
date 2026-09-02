@@ -37,6 +37,16 @@ const crypto = require("crypto");
 const EMAIL = process.env.ADMIN_EMAIL || "admin@edtech.co.uk";
 const PASSWORD = process.env.ADMIN_PASSWORD;
 const SLUG = process.env.TENANT_SLUG || "default";
+// SUPER_ADMIN=1 makes the account a Super Admin. Opt-in, and deliberately not the
+// default: a Super Admin bypasses every page grant (auth.js hasPage short-circuits on
+// isSuperAdmin), can edit any colleague's access, and is exempt from the rank check that
+// stops admins resetting each other's passwords. It is the account that can hand out
+// every other account, so it should be made on purpose and not by forgetting a flag.
+//
+// It does NOT bypass department membership: canReadDepartment refuses a Super Admin who
+// has not joined a support desk, because "the most senior account reads every student's
+// wellbeing disclosures by default" is the outcome that split exists to prevent.
+const SUPER = process.env.SUPER_ADMIN === "1";
 
 const MIN = 12;
 // Passwords this project has shipped before, plus the usual suspects — refused so a
@@ -55,43 +65,65 @@ const die = (m) => { console.error(`\nREFUSING: ${m}\n`); process.exit(1); };
   const host = (process.env.DATABASE_URL.match(/@([^/:]+)/) || [])[1];
   console.log(`\nDatabase host: ${host}`);
 
-  const t = await db.$queryRawUnsafe(`SELECT id, name, slug FROM "Tenant" WHERE slug = $1`, SLUG);
-  if (!t.length) {
-    const all = await db.$queryRawUnsafe(`SELECT slug, name FROM "Tenant"`);
-    console.table(all);
-    die(`no institution with slug "${SLUG}". Pick one of the above with TENANT_SLUG=...`);
+  // WHICH SCHEMA IS THIS? Production still carries Staff.tenantId; every de-tenanted
+  // database has dropped it. Detecting rather than assuming is what stops this tool
+  // breaking on the very deploy it exists to unblock — and it is one query.
+  const col = await db.$queryRawUnsafe(
+    `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`, "Staff", "tenantId");
+  const TENANTED = col.length > 0;
+
+  let tenant = null;
+  if (TENANTED) {
+    const t = await db.$queryRawUnsafe(`SELECT id, name, slug FROM "Tenant" WHERE slug = $1`, SLUG);
+    if (!t.length) {
+      console.table(await db.$queryRawUnsafe(`SELECT slug, name FROM "Tenant"`));
+      die(`no institution with slug "${SLUG}". Pick one of the above with TENANT_SLUG=...`);
+    }
+    tenant = t[0];
+    console.log(`Schema:        still multi-tenant`);
+    console.log(`Institution:   ${tenant.name} (${tenant.slug})\n`);
+  } else {
+    console.log(`Schema:        de-tenanted — one institution, no slug to choose\n`);
   }
-  const tenant = t[0];
-  console.log(`Institution:   ${tenant.name} (${tenant.slug})\n`);
+  const scope = TENANTED ? `AND "tenantId" = '${tenant.id}'` : "";
 
   const existing = await db.$queryRawUnsafe(
-    `SELECT id, email, "isSuperAdmin" FROM "Staff" WHERE email = $1 AND "tenantId" = $2`, EMAIL, tenant.id);
+    `SELECT id, email, "isSuperAdmin" FROM "Staff" WHERE email = $1 ${scope}`, EMAIL);
   const hash = await bcrypt.hash(PASSWORD, 10);
 
   if (existing.length) {
     // Reset, never duplicate. Two rows sharing an email would survive here and then
     // collide when de-tenanting makes Staff.email unique on its own.
+    //
+    // PROMOTES BUT NEVER DEMOTES. SUPER_ADMIN=1 can raise an existing account, because
+    // that is a deliberate act somebody just asked for; the absence of the flag must not
+    // quietly strip the last Super Admin's powers, which would be an unrecoverable
+    // lockout performed by forgetting an environment variable.
     await db.$executeRawUnsafe(
       `UPDATE "Staff" SET "passwordHash" = $1, "accountRole" = $2, "mustChangePassword" = false,
-       "tokenVersion" = "tokenVersion" + 1 WHERE id = $3`, hash, "ADMIN", existing[0].id);
+       "isSuperAdmin" = ("isSuperAdmin" OR $3), "tokenVersion" = "tokenVersion" + 1 WHERE id = $4`,
+      hash, "ADMIN", SUPER, existing[0].id);
     console.log(`Reset the password on the existing account ${EMAIL}.`);
-    if (existing[0].isSuperAdmin) console.log("NOTE: that account is a SUPER ADMIN. Left as one — this script does not demote.");
+    if (existing[0].isSuperAdmin) console.log("NOTE: it was already a SUPER ADMIN. Left as one — this script never demotes.");
+    else if (SUPER) console.log("Promoted it to SUPER ADMIN.");
   } else {
-    await db.$executeRawUnsafe(
-      `INSERT INTO "Staff" (id, name, "jobTitle", dept, email, "passwordHash", initials, colour, "tenantId", "accountRole", "isSuperAdmin", "mustChangePassword")
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,false)`,
-      "stf_" + crypto.randomBytes(12).toString("hex"), "Administrator", "Administrator", "Administration",
-      EMAIL, hash, "AD", "#2a78d6", tenant.id, "ADMIN");
-    // isSuperAdmin false on purpose: a plain admin. adminPages is left NULL, which the
-    // server reads as "every page except the explicit-only ones" — so this account sees
-    // the whole console, including the Admission Tracker once production has it.
-    console.log(`Created ${EMAIL} as a plain ADMIN (not a super admin).`);
+    const cols = ["id", "name", `"jobTitle"`, "dept", "email", `"passwordHash"`, "initials", "colour", `"accountRole"`, `"isSuperAdmin"`, `"mustChangePassword"`];
+    const vals = ["stf_" + crypto.randomBytes(12).toString("hex"), SUPER ? "Super Admin" : "Administrator",
+      SUPER ? "Super Admin" : "Administrator", "Administration",
+      EMAIL, hash, SUPER ? "SA" : "AD", "#2a78d6", "ADMIN", SUPER, false];
+    if (TENANTED) { cols.push(`"tenantId"`); vals.push(tenant.id); }
+    const ph = vals.map((_, i) => `$${i + 1}`).join(",");
+    await db.$executeRawUnsafe(`INSERT INTO "Staff" (${cols.join(", ")}) VALUES (${ph})`, ...vals);
+    // adminPages is left NULL, which the server reads as "every page except the
+    // explicit-only ones" — so this account sees the whole console, including the
+    // Admission Tracker once production has it.
+    console.log(`Created ${EMAIL} as ${SUPER ? "a SUPER ADMIN" : "a plain ADMIN (not a super admin)"}.`);
   }
 
-  console.log("\nAccounts in this institution:");
+  console.log("\nAdmin accounts now present:");
   console.table(await db.$queryRawUnsafe(
-    `SELECT email, name, "accountRole", "isSuperAdmin", "mustChangePassword" FROM "Staff" WHERE "tenantId" = $1 ORDER BY email`,
-    tenant.id));
+    `SELECT email, name, "accountRole", "isSuperAdmin", "mustChangePassword"
+     FROM "Staff" WHERE "accountRole" = $1 ${scope} ORDER BY email`, "ADMIN"));
   console.log(`\nSign in with:  ${EMAIL}  /  (the ADMIN_PASSWORD you passed)\n`);
   await db.$disconnect();
 })().catch((e) => { console.error("\nFAILED:", e.message, "\n"); process.exit(1); });
