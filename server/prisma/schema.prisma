@@ -1098,7 +1098,8 @@ model TagTap {
   // log that does not say.
   method    String?
   // marked | checked_in | already_marked | already_checked_in | no_session_now |
-  // ambiguous | term_locked | tag_unknown | rate_limited | disabled
+  // ambiguous | term_locked | tag_unknown | rate_limited | disabled |
+  // qr_expired | qr_bad_code | session_unknown | not_enrolled
   outcome   String
   status    String? // "P" | "L" when a mark was actually written
   site      String? // "Onsite" for a staff tap — the tap itself proves that

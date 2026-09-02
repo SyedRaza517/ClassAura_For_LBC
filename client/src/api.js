@@ -214,6 +214,7 @@ export const api = {
   // after an "ambiguous" reply, when two of their classes overlap.
   studentTapContext: () => request("/student/me/tap-context"),
   studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) } }),
+  studentQrCheckIn: (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code } }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
   timetableCourses: () => request("/timetable/courses"),
@@ -549,6 +550,7 @@ export const api = {
   // The lecturer's live view: who is in, who is late, who has not appeared, and the
   // minute each of them tapped. Polled while a class is running.
   sessionLive: (sessionId) => request(`/hnd/sessions/${sessionId}/live`),
+  sessionQr: (sessionId) => request(`/hnd/sessions/${sessionId}/qr-code`),
   // scope "all" asks for every class running today rather than only the caller's own.
   // Refused with 403 unless they hold registers/students/executive, so the screen only
   // offers it when the server says it may.

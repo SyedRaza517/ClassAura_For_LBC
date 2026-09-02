@@ -143,6 +143,8 @@ const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
 const { subMinutes, isSelfCheckIn } = require("../attendanceTap");
+const { windowIndexFor, deriveCode } = require("../attendanceQr");
+const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
 const isTime = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
@@ -1433,6 +1435,10 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
   res.json({
     session: sSession(session),
     unit: session.unit ? { id: session.unit.id, code: session.unit.code, name: session.unit.name } : null,
+    // Whether the rotating-code card belongs on this screen at all. Returned here
+    // because the live view already holds the settings; the card itself fetches its
+    // code from /sessions/:id/qr-code, which re-checks this server-side.
+    qrEnabled: settings.qrEnabled,
     acceptingTaps: settings.enabled
       && session.date === localDate()
       && time >= subMinutes(session.startTime, settings.earlyGraceMins)
@@ -1445,6 +1451,74 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
     counts,
     rows,
   });
+});
+
+// In-process, module-level, and therefore correct for ONE Node process — a clustered
+// deployment needs Redis. The screen asks for a new code once per rotation (30s by
+// default), so thirty a minute is well clear of every legitimate cadence and still
+// stops a broken client timer from turning one projector into a request loop.
+const qrMintHits = new Map(); // staffId -> number[] of timestamps
+const QR_MINT_WINDOW_MS = 60_000;
+const QR_MINT_MAX = 30;
+function qrMintAllowed(staffId) {
+  const now = Date.now();
+  const recent = (qrMintHits.get(staffId) || []).filter((t) => now - t < QR_MINT_WINDOW_MS);
+  if (recent.length >= QR_MINT_MAX) { qrMintHits.set(staffId, recent); return false; }
+  recent.push(now);
+  qrMintHits.set(staffId, recent);
+  return true;
+}
+
+// GET /api/hnd/sessions/:id/qr-code — the rotating code the lecturer puts on screen.
+//
+// The code is derived, never stored (see attendanceQr.js), so this route is a read in
+// every sense: nothing opens, nothing can be left open, and a lecturer who never loads
+// it has simply declined a shortcut. Gated like the live view because the person
+// holding the code IS the person watching the register fill.
+//
+// Outside the session's own window no code is minted at all. Verification would
+// refuse it anyway — the window is enforced where it matters, at the scan — but a QR
+// square that can only refuse is worse than a message saying when check-in opens.
+router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (req, res) => {
+  const settings = await tapConfig.get();
+  // 409 rather than 404: the session may be real and the feature simply off, and the
+  // screen needs to tell a lecturer those apart.
+  if (!settings.qrEnabled) return res.status(409).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_disabled" });
+  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "Too many refreshes — the code only changes once per rotation." });
+
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, date: true, startTime: true, endTime: true },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Epoch seconds for the window arithmetic, local strings for the register decision —
+  // the same split the verify route keeps. The rotation window is timezone-free maths;
+  // "is the class on now" is a question about the college's own clock.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const rotateSeconds = settings.qrRotateSeconds;
+  const secondsLeft = rotateSeconds - (nowSeconds % rotateSeconds);
+  const opensAt = subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0);
+  const date = localDate();
+  const time = localTime();
+  const accepting = session.date === date && time >= opensAt && time <= session.endTime;
+
+  if (!accepting) {
+    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, opensAt, closesAt: session.endTime });
+  }
+
+  let secret;
+  try {
+    secret = qrSigningKey();
+  } catch (e) {
+    // Fail loudly at the person who can act on it. A quietly-degraded screen would
+    // present as "the QR never works" to a room of students, one scan at a time.
+    if (e instanceof SecretsNotConfigured) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+
+  const code = deriveCode({ secret, sessionId: session.id, windowIndex: windowIndexFor(nowSeconds, rotateSeconds) });
+  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, opensAt, closesAt: session.endTime });
 });
 
 // POST /api/hnd/sessions/:id/mark-remaining-absent — the lecturer closes the register.
