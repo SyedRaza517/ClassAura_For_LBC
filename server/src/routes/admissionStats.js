@@ -26,6 +26,7 @@ const { requireAuth, requireAnyPage } = require("../auth");
 const audit = require("../audit");
 const { buildStats, previousIntake } = require("../admissions/stats");
 const { merge } = require("../admissions/trackerSettings");
+const { ADMISSION_DOC_TYPES } = require("../admissionDocs");
 
 // "admissions" is included alongside the new page for the reason
 // /assessments/exec-summary includes "executive": an admissions officer looking at
@@ -205,7 +206,11 @@ router.get("/settings", async (_req, res) => {
     select: { label: true, active: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
-  res.json({ ...config, courses, intakes });
+  // allDocTypes travels WITH the config so the settings form has labels to render
+  // without a third hand-maintained copy of ADMISSION_DOC_TYPES. There are already two
+  // (here and StaffHub.jsx) and CLAUDE.md names that as a cost; a client that is handed
+  // the list cannot drift from it.
+  res.json({ ...config, allDocTypes: ADMISSION_DOC_TYPES, courses, intakes });
 });
 
 router.put("/settings", async (req, res) => {
