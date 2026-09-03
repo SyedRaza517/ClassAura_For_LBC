@@ -1495,7 +1495,7 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   // 409 rather than 404: the session may be real and the feature simply off, and the
   // screen needs to tell a lecturer those apart.
   if (!settings.qrEnabled) return res.status(409).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_disabled" });
-  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "Too many refreshes — the code only changes once per rotation." });
+  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "Too many refreshes. The code only changes once per rotation." });
 
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },

@@ -475,14 +475,13 @@ function QrCard({ sessionId, unitName, times, counts }) {
         <Banner tone="amber" Icon={QrCode}>{err} Trying again automatically.</Banner>
       ) : open ? (
         <div className="flex flex-col items-center gap-4 sm:flex-row">
-          <img src={img} alt="Check-in code — scan it with a phone camera" className="h-32 w-32 shrink-0 rounded-lg" />
+          <img src={img} alt="Check-in code" className="h-32 w-32 shrink-0 rounded-lg" />
           <div className="min-w-0 flex-1 text-center sm:text-left">
             <h3 className="flex items-center justify-center gap-2 text-sm font-bold text-slate-800 sm:justify-start">
               <QrCode size={16} style={{ color: NAVY }} />Scan to check in
             </h3>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-              Students point their phone camera at the code and follow the link. It changes
-              every {rotate} seconds, so a photo of it stops working almost immediately.
+              Students scan it with their phone camera to check in. It refreshes every {rotate} seconds.
             </p>
             <CountdownBar left={left} rotate={rotate} />
             <button
@@ -498,7 +497,7 @@ function QrCard({ sessionId, unitName, times, counts }) {
           {mint.phase === "before" ? (
             <div>
               <p className="text-sm font-semibold text-slate-700">Check-in opens at {mint.opensAt}</p>
-              <p className="text-[12px] text-slate-500">The code appears here on its own when the class window opens.</p>
+              <p className="text-[12px] text-slate-500">The code will appear here automatically.</p>
             </div>
           ) : mint.phase === "closed" ? (
             // The term the unit sits in is shut, so the register itself is locked —
@@ -506,12 +505,12 @@ function QrCard({ sessionId, unitName, times, counts }) {
             // here would promise a code that is never coming.
             <div>
               <p className="text-sm font-semibold text-slate-700">This register is closed</p>
-              <p className="text-[12px] text-slate-500">The class sits outside its teaching term, so no code is issued. Reopen the term to edit its registers.</p>
+              <p className="text-[12px] text-slate-500">The class is outside its teaching term. Reopen the term to take registers.</p>
             </div>
           ) : (
             <div>
               <p className="text-sm font-semibold text-slate-700">Check-in has closed for this class</p>
-              <p className="text-[12px] text-slate-500">It ran until {mint.closesAt}. The register can still be corrected by hand.</p>
+              <p className="text-[12px] text-slate-500">It ran until {mint.closesAt}.</p>
             </div>
           )}
         </div>
@@ -571,7 +570,7 @@ function Projector({ unitName, times, img, reconnecting, counts, onClose }) {
                 the instruction are not on it. */}
             <div className="flex min-h-0 w-full flex-1 items-center justify-center">
               <img
-                src={img} alt="Check-in code — scan it with a phone camera"
+                src={img} alt="Check-in code"
                 className="h-full w-auto"
                 style={{ maxHeight: "540px", maxWidth: "min(90vw, 540px)" }}
               />
@@ -588,7 +587,7 @@ function Projector({ unitName, times, img, reconnecting, counts, onClose }) {
         ) : reconnecting ? (
           // A fetch failed and the retry is running. Saying "closed" here would tell a
           // room mid-class that check-in is over because of one dropped request.
-          <p className="text-center text-2xl font-semibold text-slate-600 md:text-4xl">One moment — fetching a fresh code…</p>
+          <p className="text-center text-2xl font-semibold text-slate-600 md:text-4xl">Getting a fresh code…</p>
         ) : (
           // The class window closed while this was on the wall. Say so in projector-size
           // type rather than leaving a dead code up for people to scan at.

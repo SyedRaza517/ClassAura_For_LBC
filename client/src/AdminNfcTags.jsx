@@ -201,9 +201,8 @@ function TapSettings({ settings, onSaved }) {
         <span>
           <span className="block text-[13px] font-semibold text-slate-800">QR check-in is {draft.qrEnabled ? "ON" : "OFF"}</span>
           <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
-            Puts a rotating code on the Live Attendance screen for each running class. Students
-            scan it with their phone camera to mark themselves present — no sticker and no NFC
-            needed. The code changes every few seconds, so a photo of it stops working.
+            Shows a check-in code on the Live Attendance screen for each running class.
+            Students scan it with their phone camera. No stickers or NFC needed.
           </span>
         </span>
       </label>
@@ -212,7 +211,7 @@ function TapSettings({ settings, onSaved }) {
         {num("lateAfterMins", "Late after (minutes)", "A check-in this long after the start records Late instead of Present.")}
         {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts check-ins are accepted. Zero means not before it starts.")}
         {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.", 600)}
-        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. Ten seconds is the floor — any shorter and a phone can't scan it in time.", 300)}
+        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. Ten seconds is the floor. Any shorter and a phone can't scan it in time.", 300)}
       </div>
 
       <label className="mt-4 flex items-start gap-3">

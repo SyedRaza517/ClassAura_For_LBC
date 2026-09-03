@@ -402,7 +402,7 @@ function checkInSub(tapContext) {
   if (!tapContext.enabled && !tapContext.qrEnabled) return "Not switched on yet";
   const running = (tapContext.now || []).length;
   if (running > 1) return "Choose your class";
-  if (running === 1) return tapContext.enabled ? "Ready — tap a sticker" : "Ready — scan the code on screen";
+  if (running === 1) return tapContext.enabled ? "Ready — tap a sticker" : "Scan the code on screen";
   if (tapContext.next) return `Next at ${tapContext.next.startTime}`;
   return "No classes left today";
 }
@@ -518,30 +518,22 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           </span>
           <p className="mt-3 text-sm font-extrabold text-slate-800">Not switched on yet</p>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            Your college hasn&rsquo;t turned self check-in on. When it does, you&rsquo;ll either tap
-            a sticker in your classroom or scan a code your lecturer puts on screen — and this
-            screen will walk you through it.
-          </p>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-500">
-            Until then your lecturer takes the register as usual — there&rsquo;s nothing you need to do.
+            Your college hasn&rsquo;t turned on self check-in. Your lecturer takes the register as usual.
           </p>
         </div>
       )}
 
-      {/* QR is on and stickers are not: say what TO do, since there is no button here.
-          Hidden while a scan's result card is up — that card already is the answer. */}
+      {/* QR is on and stickers are not: one instruction, the way SEAtS-class products
+          word it. No mechanics, no caveats — the server answers every edge case at scan
+          time with its own message. Hidden while a scan's result card is up. */}
       {tapContext && !enabled && qrEnabled && !pendingQr && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
             <QrCode size={19} style={{ color: ACCENT.checkin }} />
           </span>
-          <p className="mt-3 text-sm font-extrabold text-slate-800">Scan the code on screen</p>
+          <p className="mt-3 text-sm font-extrabold text-slate-800">Scan to check in</p>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            When your class is running, your lecturer can put a check-in code up on the screen.
-            Point your phone camera at it and open the link — you&rsquo;re marked in with the time.
-          </p>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-500">
-            No code on screen? Your lecturer is taking the register the usual way.
+            Scan the code your lecturer shows on screen with your phone camera.
           </p>
         </div>
       )}
@@ -561,38 +553,24 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
         </div>
       )}
 
-      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
-        {/* Steps for each capture method the college has actually switched on; with
-            neither on yet, the sticker steps stand as the preview of what is coming.
-            The QR steps never mention the code changing — from a student's side the
-            code on screen is just "the code", and rotation is not their problem. */}
-        {(enabled || !qrEnabled) && (
-          <>
-            {enabled && qrEnabled && <p className="mt-2.5 text-[12px] font-bold text-slate-500">By sticker</p>}
-            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
-              <li>1. Hold your phone against the sticker in your classroom.</li>
-              <li>2. The button turns blue for about a minute.</li>
-              <li>3. Press it, and you&rsquo;re marked present with the time.</li>
-            </ul>
-          </>
-        )}
-        {qrEnabled && (
-          <>
-            {enabled && <p className="mt-3 text-[12px] font-bold text-slate-500">By code on screen</p>}
-            <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
-              <li>1. Your lecturer puts a check-in code up on the screen.</li>
-              <li>2. Point your phone camera at it and open the link.</li>
-              <li>3. You&rsquo;re marked in with the time — that&rsquo;s it.</li>
-            </ul>
-          </>
-        )}
-        <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
-          {qrEnabled && !enabled
-            ? <>It only works while your class is actually running. If your phone can&rsquo;t scan the code, your lecturer marks you in the usual way.</>
-            : <>It only works while your class is actually running, and only on a phone that can read stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.</>}
-        </p>
-      </div>
+      {/* The sticker flow has real steps (arm, wait for the button, press), so its
+          walkthrough stays. Scanning a code has ONE step, already said in one line
+          above, so when only QR is on there is no card here at all — an instruction,
+          not a manual, which is how the established attendance products word it. */}
+      {enabled && (
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
+          <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
+            <li>1. Hold your phone against the sticker in your classroom.</li>
+            <li>2. The button turns blue for about a minute.</li>
+            <li>3. Press it, and you&rsquo;re marked present with the time.</li>
+          </ul>
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+            It only works while your class is actually running, and only on a phone that can read
+            stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -656,19 +634,14 @@ function QrCheckInCard({ qr, reload, onDone }) {
             <CheckCircle2 size={20} className={tone.text} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className={`text-sm font-extrabold ${tone.text}`}>
-              {r.alreadyMarked ? "You were already marked" : late ? "You're in — marked Late" : "You're in — marked Present"}
+            <p className={`flex items-center gap-2 text-sm font-extrabold ${tone.text}`}>
+              {r.alreadyMarked ? "Already checked in" : r.checkedInAt ? `Checked in at ${r.checkedInAt}` : "Checked in"}
+              {late && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">Late</span>}
             </p>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
               {r.session?.unitName || r.session?.unitCode || "Your class"}
-              {r.checkedInAt && <> &middot; checked in at {r.checkedInAt}</>}
+              {r.alreadyMarked && r.checkedInAt && <> &middot; {r.checkedInAt}</>}
             </p>
-            {late && !r.alreadyMarked && (
-              <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
-                The class started at {r.session?.startTime} — a scan after the college&rsquo;s
-                cut-off records Late instead of Present. If that&rsquo;s not right, speak to your lecturer.
-              </p>
-            )}
           </div>
         </div>
         <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-2.5 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Done</button>
@@ -676,23 +649,22 @@ function QrCheckInCard({ qr, reload, onDone }) {
     );
   }
 
-  // Refused. Each reason the server can give has its own next step — a student told
-  // only "failed" in a lecture theatre has no move to make.
+  // Refused. One heading, at most one line of what to do. The card never explains the
+  // rules behind a refusal; the fix for a student in a lecture theatre is always the
+  // same short move or nothing.
   const e = state.error || {};
   // api.js carries the server's whole response body on err.body — reason rides there.
   const reason = e.body?.reason;
   const heading =
     reason === "qr_expired" ? "That code has expired"
     : reason === "qr_bad_code" ? "That code isn't recognised"
-    : reason === "no_session_now" ? "That class isn't running right now"
-    : reason === "term_locked" ? "That register is closed"
+    : reason === "no_session_now" ? "This class isn't running right now"
+    : reason === "term_locked" ? "This register is closed"
     : "That didn't work";
   const advice =
-    reason === "qr_expired" || reason === "qr_bad_code"
-      ? "Scan the code on the screen again — you're signed in now, so it takes a second."
-      : reason === "no_session_now"
-        ? "Check-in only opens while the class itself is on. Your lecturer can mark you in the usual way."
-        : e.message || "Scan the code on the screen again, and if it keeps happening tell your lecturer.";
+    reason === "qr_expired" || reason === "qr_bad_code" ? "Scan the code on screen again."
+    : reason === "no_session_now" || reason === "term_locked" ? ""
+    : e.message || "Scan the code on screen again.";
   return (
     <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
       <div className="flex items-start gap-3">
@@ -701,7 +673,7 @@ function QrCheckInCard({ qr, reload, onDone }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-extrabold text-slate-800">{heading}</p>
-          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{advice}</p>
+          {advice && <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{advice}</p>}
         </div>
       </div>
       <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-2.5 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>

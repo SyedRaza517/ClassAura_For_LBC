@@ -347,7 +347,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   // attempts a minute across both capture methods, not ten of each.
   if (!tapAllowed(req.user.id)) {
     await logTap(req, { studentId: req.user.id, method: "qr", outcome: "rate_limited" });
-    return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+    return res.status(429).json({ error: "Too many attempts. Wait a moment and try again." });
   }
 
   let secret;
@@ -378,7 +378,7 @@ router.post("/me/qr-check-in", async (req, res) => {
     if (verdict.reason === "expired") {
       // "Expired" and "never ours" are different sentences with different next steps.
       await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "qr_expired" });
-      return res.status(409).json({ error: "That code has expired — scan the one on screen now.", reason: "qr_expired" });
+      return res.status(409).json({ error: "That code has expired. Scan the one on screen again.", reason: "qr_expired" });
     }
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "qr_bad_code" });
     return res.status(404).json({ error: "That code isn't recognised.", reason: "qr_bad_code" });
