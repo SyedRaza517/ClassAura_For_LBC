@@ -163,6 +163,15 @@ try {
 
   const offStaff = await call("/checkins/tap-check-in", { method: "POST", token: adminToken, body: { tagCode: "anything" } });
   check("a staff tap is refused while the feature is off", offStaff.status === 403, `HTTP ${offStaff.status}`);
+  // The refusal row carries its capture method. A NULL method is defined by the schema
+  // as "written before the column existed", so a fresh refusal writing NULL would read
+  // as pre-feature history to the administrator triaging it.
+  const offStaffRow = await db.tagTap.findFirst({
+    where: { staffId: { not: null }, outcome: "disabled" },
+    orderBy: { at: "desc" },
+  });
+  check("and the staff refusal row says how the tap arrived", offStaffRow?.method === "nfc",
+    `method=${offStaffRow?.method ?? "null"}`);
 
   const offCtx = await call("/student/me/tap-context", { token: sToken });
   // The contract changed deliberately, and this assertion changed with it.

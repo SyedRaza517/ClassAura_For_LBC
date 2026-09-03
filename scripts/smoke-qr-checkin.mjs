@@ -132,8 +132,18 @@ async function cleanup() {
 
     // Put the config back exactly as it was — a college left switched ON is the one
     // piece of state here that changes the product for real users.
+    //
+    // UPSERT on the literal "singleton", not updateMany: this suite deletes the row
+    // mid-run before the settings PUT recreates it, and a throw inside that window used
+    // to reach here with the table empty — where updateMany matches zero rows, reports
+    // success, and the institution's real tap settings stay deleted. The constant key is
+    // the same one every config table's save path upserts on.
     if (configExisted) {
-      await db.attendanceTapConfig.updateMany({ data: { settings: priorConfig } }).catch(() => {});
+      await db.attendanceTapConfig.upsert({
+        where: { id: "singleton" },
+        update: { settings: priorConfig },
+        create: { id: "singleton", settings: priorConfig },
+      }).catch(() => {});
     } else {
       await db.attendanceTapConfig.deleteMany({}).catch(() => {});
     }
@@ -417,6 +427,19 @@ try {
       lockedScan.status === 423 && lockedScan.data?.reason === "term_locked", `HTTP ${lockedScan.status} ${lockedScan.data?.reason || ""}`);
     const lockedMark = await db.attendanceMark.findFirst({ where: { sessionId: lockedSession.id, studentId: QB_ID } });
     check("and writes nothing", !lockedMark, lockedMark ? `mark ${lockedMark.id} written` : "");
+
+    // The screen must agree with the scan. Minting a live code for a locked-term session
+    // puts a QR on the projector that every phone in the room is refused against — the
+    // exact "open now but every tap refused" failure the today list's acceptingTaps
+    // comment records, arriving back through a fresh copy of the window test.
+    const lockedMint = await call(`/hnd/sessions/${lockedSession.id}/qr-code`, { token: adminToken });
+    check("the screen is told the register is closed rather than being handed a code every scan refuses",
+      lockedMint.status === 200 && !lockedMint.data?.code && lockedMint.data?.acceptingTaps === false && lockedMint.data?.phase === "closed",
+      `HTTP ${lockedMint.status} code=${lockedMint.data?.code ? "minted" : "none"} phase=${lockedMint.data?.phase || "—"}`);
+    const lockedLive = await call(`/hnd/sessions/${lockedSession.id}/live`, { token: adminToken });
+    check("and the live view's badge agrees a locked term is not accepting",
+      lockedLive.status === 200 && lockedLive.data?.acceptingTaps === false,
+      `HTTP ${lockedLive.status} acceptingTaps=${lockedLive.data?.acceptingTaps}`);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
