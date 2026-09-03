@@ -374,3 +374,37 @@ test("a date outside the term is locked on either side", () => {
   assert.equal(termOpenOn(term, "2026-08-31"), false);
   assert.equal(termOpenOn(term, "2026-12-20"), false);
 });
+
+/* -------------------------------------------------------------------------- */
+/* The lecturer's hand on the window                                           */
+/* -------------------------------------------------------------------------- */
+// A class that finishes early should stop accepting scans when the lecturer says so,
+// not when the timetable does; and a lecturer with late arrivals should be able to hold
+// the door open past the end. Both live on the session row and both flow through the
+// ONE predicate, so every surface — the code, the badge, the scan — agrees.
+
+test("a session the lecturer has closed accepts nothing, even mid-window", () => {
+  assert.equal(withinSessionWindow(session({ checkInClosedAt: new Date("2026-09-01T09:30:00Z") }), at("09:40"), settings()), false);
+});
+
+test("a class held open past its end keeps accepting until the held-open time, inclusive", () => {
+  const held = session({ checkInOpenUntil: "12:20" });
+  assert.equal(withinSessionWindow(held, at("12:10"), settings()), true);
+  assert.equal(withinSessionWindow(held, at("12:20"), settings()), true);
+  assert.equal(withinSessionWindow(held, at("12:21"), settings()), false);
+});
+
+test("holding open never shortens the timetabled window", () => {
+  // An openUntil EARLIER than the end is not a way to close early; that is what
+  // checkInClosedAt is for. The later of the two wins.
+  assert.equal(withinSessionWindow(session({ checkInOpenUntil: "10:00" }), at("11:30"), settings()), true);
+});
+
+test("a malformed held-open time is ignored rather than refusing the whole class", () => {
+  assert.equal(withinSessionWindow(session({ checkInOpenUntil: "later" }), at("11:30"), settings()), true);
+  assert.equal(withinSessionWindow(session({ checkInOpenUntil: "later" }), at("12:01"), settings()), false);
+});
+
+test("reopening clears the close: no closedAt plus a held-open time accepts again", () => {
+  assert.equal(withinSessionWindow(session({ checkInClosedAt: null, checkInOpenUntil: "12:15" }), at("12:10"), settings()), true);
+});

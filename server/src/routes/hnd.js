@@ -146,7 +146,7 @@ router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "asses
 // gate at all, so the page a college could grant "for watching without editing" opened
 // nothing. The bypass fixes that too — the per-route guard was right, the gate above it
 // was not consulted.
-const LECTURER_PATHS = [/^\/my-sessions\/today$/, /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent)$/];
+const LECTURER_PATHS = [/^\/my-sessions\/today$/, /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent|check-in-window)$/];
 const isLecturerPath = (req) => LECTURER_PATHS.some((re) => re.test(req.path));
 const adminGate = requireAnyPage(["registers", "students", "executive"]);
 router.use(requireAuth, (req, res, next) => (isLecturerPath(req) ? next() : adminGate(req, res, next)));
@@ -185,7 +185,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, isSelfCheckIn, withinSessionWindow, termOpenOn } = require("../attendanceTap");
+const { subMinutes, addMinutes, isSelfCheckIn, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
 const { windowIndexFor, deriveCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
@@ -1496,8 +1496,27 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     else counts.notMarked += 1;
   }
 
+  // Where this class sits, in the same words the mint route uses, so the screen can
+  // offer "end now" only while open and "reopen" only once over or ended — and
+  // nothing at all before the class starts or inside a locked term.
+  const today = localDate();
+  const termOpen = termOpenOn(session.unit?.term, today);
+  const accepting = (settings.enabled || settings.qrEnabled)
+    && withinSessionWindow(session, { date: today, time }, settings)
+    && termOpen;
+  const opensAt = subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0);
+  const phase = !termOpen
+    ? "closed"
+    : session.checkInClosedAt
+      ? "ended"
+      : accepting
+        ? "open"
+        : session.date > today || (session.date === today && time < opensAt) ? "before" : "over";
+
   res.json({
     session: sSession(session),
+    today,
+    phase,
     unit: session.unit ? { id: session.unit.id, code: session.unit.code, name: session.unit.name } : null,
     // Whether the rotating-code card belongs on this screen at all. Returned here
     // because the live view already holds the settings; the card itself fetches its
@@ -1509,20 +1528,19 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     // Whether to OFFER the close button. An administrator granted the watching page
     // alone could see this screen and press a button that only ever answered 403.
     canClose: mayClose(req.user, session),
+    // The minute check-in actually shuts (later than the timetable when held open), so
+    // the screen can say "open until 12:20" rather than the end time it already shows.
+    closesAt: checkInClosesAt(session),
     // Either capture method keeps this true — it gates the badge AND the client's poll,
     // and a QR-only college's register fills exactly as an NFC one's does.
     // The term is part of "accepting", matching the today list and what a tap will
     // actually be answered — this copy lacked it, so the badge read "Accepting" on a
     // locked-term register whose every self check-in came back 423. termLocked below
     // stays as the separate display detail saying WHY.
-    acceptingTaps: (settings.enabled || settings.qrEnabled)
-      && withinSessionWindow(session, { date: localDate(), time }, settings)
-      && termOpenOn(session.unit?.term, localDate()),
+    acceptingTaps: accepting,
     // Null when the unit has no term, which is a real state — the register is simply
     // never term-locked — and not the same as "the term is open".
-    termLocked: session.unit?.term
-      ? !(localDate() >= session.unit.term.start && localDate() <= session.unit.term.end)
-      : null,
+    termLocked: session.unit?.term ? !termOpen : null,
     counts,
     rows,
   });
@@ -1567,7 +1585,7 @@ router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance"
     // version of this query left it out, so the route minted a live code for a session
     // inside a closed term — a projector full of "scan to check in" where every scan
     // answered 423, the exact failure the today list's acceptingTaps comment records.
-    select: { id: true, date: true, startTime: true, endTime: true, unit: { select: { term: { select: { start: true, end: true } } } } },
+    select: { id: true, date: true, startTime: true, endTime: true, checkInClosedAt: true, checkInOpenUntil: true, unit: { select: { term: { select: { start: true, end: true } } } } },
   });
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1592,10 +1610,14 @@ router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance"
     // A session dated tomorrow is "before" even though today's time is past its start.
     // A closed term outranks both: "opens at 09:00" for a register the term has locked
     // would promise a code that is never coming.
+    // "ended" is the lecturer's doing, not the clock's, and the screen offers the
+    // reopen button on exactly that word.
     const phase = !termOpen
       ? "closed"
-      : session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
-    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, phase, opensAt, closesAt: session.endTime });
+      : session.checkInClosedAt
+        ? "ended"
+        : session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
+    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, phase, opensAt, closesAt: checkInClosesAt(session) });
   }
 
   let secret;
@@ -1616,7 +1638,83 @@ router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance"
   }
 
   const code = deriveCode({ secret, sessionId: session.id, windowIndex: windowIndexFor(nowSeconds, rotateSeconds) });
-  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, phase: "open", opensAt, closesAt: session.endTime });
+  // closesAt is the minute check-in actually shuts, which is later than the timetable
+  // when the lecturer is holding it open for late arrivals.
+  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, phase: "open", opensAt, closesAt: checkInClosesAt(session) });
+});
+
+// POST /api/hnd/sessions/:id/check-in-window — the lecturer's hand on the window.
+//
+//   { action: "close" }                 end check-in now, before the timetabled end
+//   { action: "reopen", minutes: 10 }   accept scans again (or still) until now + minutes
+//
+// Two overrides for one class on one day, nothing more: no schedule, no default, no
+// college-wide state. Closing sets checkInClosedAt; reopening clears it and holds the
+// window open until the later of the timetabled end and now + minutes. Every surface
+// reads the result through the one window predicate, so the code disappears from the
+// projector, the badge changes and the next scan is refused in the same instant.
+//
+// Gated like the close-off: the registers page, or the tutor of this unit. A watch-only
+// administrator can see the register but must not be able to change what it accepts.
+const REOPEN_MAX_MINS = 120;
+router.post("/sessions/:id/check-in-window", requireAuth, lecturerGate(["registers"]), async (req, res) => {
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    include: { unit: { select: { code: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const action = String(req.body?.action || "");
+  if (action !== "close" && action !== "reopen") {
+    return res.status(400).json({ error: "action must be \"close\" or \"reopen\"" });
+  }
+  const date = localDate();
+  const time = localTime();
+  // Only today's class. Closing tomorrow's register is meaningless, and holding open
+  // last week's would let a scan land on a register nobody is in a room for.
+  if (session.date !== date) {
+    return res.status(400).json({ error: "Only a class running today can have its check-in changed." });
+  }
+  // The same term gate the register save and the close-off enforce: this must not be a
+  // way of letting scans into a locked term.
+  if (!termOpenOn(session.unit?.term, date)) {
+    return res.status(423).json({ error: `${session.unit.term.name} is closed, so this register is locked.`, locked: true });
+  }
+
+  let data;
+  if (action === "close") {
+    data = { checkInClosedAt: new Date() };
+  } else {
+    const minutes = Number(req.body?.minutes ?? 10);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > REOPEN_MAX_MINS) {
+      return res.status(400).json({ error: `minutes must be a whole number from 1 to ${REOPEN_MAX_MINS}` });
+    }
+    // The later of the timetabled end and now + minutes, so "reopen for ten minutes"
+    // pressed mid-class does not shorten the class.
+    const until = addMinutes(time, minutes);
+    data = { checkInClosedAt: null, checkInOpenUntil: until > session.endTime ? until : session.endTime };
+  }
+  const updated = await prisma.hndSession.update({ where: { id: session.id }, data });
+  const settings = await tapConfig.get();
+  const accepting = (settings.enabled || settings.qrEnabled) && withinSessionWindow(updated, { date, time }, settings);
+
+  audit.record(req, {
+    action: action === "close" ? "attendance.checkin.closed" : "attendance.checkin.reopened",
+    entity: "HndSession", entityId: session.id,
+    summary: action === "close"
+      ? `Self check-in ended early at ${time} on the ${session.date} register for ${session.unit?.code || "a unit"} by ${req.user?.name || "an administrator"}`
+      : `Self check-in held open until ${data.checkInOpenUntil} on the ${session.date} register for ${session.unit?.code || "a unit"} by ${req.user?.name || "an administrator"}`,
+    before: { checkInClosedAt: session.checkInClosedAt ?? null, checkInOpenUntil: session.checkInOpenUntil ?? null },
+    after: { checkInClosedAt: updated.checkInClosedAt ?? null, checkInOpenUntil: updated.checkInOpenUntil ?? null },
+  });
+
+  res.json({
+    ok: true,
+    checkInClosedAt: updated.checkInClosedAt ? updated.checkInClosedAt.toISOString() : null,
+    checkInOpenUntil: updated.checkInOpenUntil ?? null,
+    acceptingTaps: accepting,
+    closesAt: checkInClosesAt(updated),
+  });
 });
 
 // POST /api/hnd/sessions/:id/mark-remaining-absent — the lecturer closes the register.

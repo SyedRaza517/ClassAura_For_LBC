@@ -67,9 +67,19 @@ function tapAllowed(studentId) {
  * Never throws into the request. A tap that WAS marked must not report a failure because
  * the log write did — the register is the record, this is the account of it.
  */
+// The device id the app sends, cut to size and reduced to id characters before it is
+// stored: it is a header any client can set to anything, and the log is read by
+// administrators in a browser. Null when absent — never invented.
+function deviceIdFrom(req) {
+  const raw = req.get?.("x-device-id");
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const clean = raw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  return clean || null;
+}
+
 async function logTap(req, fields) {
   try {
-    await prisma.tagTap.create({ data: { ip: req.ip ? String(req.ip).slice(0, 60) : null, ...fields } });
+    await prisma.tagTap.create({ data: { ip: req.ip ? String(req.ip).slice(0, 60) : null, deviceId: deviceIdFrom(req), ...fields } });
   } catch (e) {
     console.error("[tap] could not log a student tap:", e.message);
   }
@@ -92,6 +102,10 @@ async function candidateSessions(studentId, date) {
     date: s.date,
     startTime: s.startTime,
     endTime: s.endTime,
+    // The lecturer's overrides travel with the candidate, or the shared predicate
+    // would judge a closed class open and a held-open one shut.
+    checkInClosedAt: s.checkInClosedAt ?? null,
+    checkInOpenUntil: s.checkInOpenUntil ?? null,
     term: s.unit?.term ? { name: s.unit.term.name, start: s.unit.term.start, end: s.unit.term.end } : null,
   }));
 }

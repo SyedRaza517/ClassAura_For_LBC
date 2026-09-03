@@ -95,12 +95,28 @@ const subMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ?
  */
 function withinSessionWindow(session, now, settings) {
   if (!session || session.date !== now?.date) return false;
+  // The lecturer's hand on the window (3 Sep 2026). A close is absolute: whatever the
+  // timetable says, a class the lecturer has ended accepts nothing until reopened —
+  // and reopening clears the close, so this is one field, not a state machine. A
+  // held-open time only ever EXTENDS the end: the later of the two wins, so a value
+  // earlier than the end (or an unparseable one) changes nothing.
+  if (session.checkInClosedAt) return false;
   const grace = Number(settings?.earlyGraceMins) || 0;
   const from = toMins(subMinutes(session.startTime, grace));
-  const to = toMins(session.endTime);
+  const end = toMins(session.endTime);
+  const held = toMins(session.checkInOpenUntil);
+  const to = end === null ? null : held === null ? end : Math.max(end, held);
   const t = toMins(now.time);
   if (from === null || to === null || t === null) return false;
   return t >= from && t <= to;
+}
+
+/** The minute check-in actually closes for a session: its end, or later if held open. */
+function checkInClosesAt(session) {
+  const end = toMins(session?.endTime);
+  const held = toMins(session?.checkInOpenUntil);
+  if (end === null) return session?.endTime;
+  return toHHMM(held === null ? end : Math.max(end, held));
 }
 
 /**
@@ -171,6 +187,6 @@ function statusFor(session, now, settings) {
 }
 
 module.exports = {
-  addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn,
+  addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
   SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn,
 };

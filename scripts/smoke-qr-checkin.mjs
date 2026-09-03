@@ -100,8 +100,8 @@ const check = (name, ok, detail = "") => {
   ok ? pass++ : fail++;
 };
 
-async function call(path, { method = "GET", body, token } = {}) {
-  const headers = { "Content-Type": "application/json" };
+async function call(path, { method = "GET", body, token, headers: extra } = {}) {
+  const headers = { "Content-Type": "application/json", ...(extra || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
@@ -644,6 +644,87 @@ try {
     settingsAdmin.status === 200 && settingsAdmin.data?.qrEnabled === true && settingsAdmin.data?.tapEnabled === false,
     `HTTP ${settingsAdmin.status} ${JSON.stringify(settingsAdmin.data)}`);
   check("and that read stays behind the admin gate", settingsTutor.status === 403, `HTTP ${settingsTutor.status}`);
+
+
+  /* ====================================================================== */
+  console.log("\n--- the lecturer's hand on the window ---");
+  /* ====================================================================== */
+
+  // The timetable opens and closes check-in on its own; these two buttons are the
+  // lecturer overriding it for one class on one day: end it early, or hold it open for
+  // the stragglers. Both flow through the one window predicate, so the code, the badge
+  // and the scan all agree the moment the button is pressed.
+  const winPath = (id) => `/hnd/sessions/${id}/check-in-window`;
+  const closeByOther = await call(winPath(tutorSess.id), { method: "POST", token: otherToken, body: { action: "close" } });
+  const closeByWatcher = await call(winPath(tutorSess.id), { method: "POST", token: watcherToken, body: { action: "close" } });
+  check("only the tutor or a registers admin can end check-in early",
+    closeByOther.status === 403 && closeByWatcher.status === 403, `other ${closeByOther.status} watcher ${closeByWatcher.status}`);
+
+  const closed = await call(winPath(tutorSess.id), { method: "POST", token: tutorToken, body: { action: "close" } });
+  check("the tutor can end check-in before the timetabled end",
+    closed.status === 200 && Boolean(closed.data?.checkInClosedAt) && closed.data?.acceptingTaps === false,
+    `HTTP ${closed.status} closedAt=${closed.data?.checkInClosedAt} accepting=${closed.data?.acceptingTaps}`);
+  const mintClosed = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: tutorToken });
+  check("the screen then gets no code and is told the lecturer closed it",
+    mintClosed.status === 200 && mintClosed.data?.code === null && mintClosed.data?.phase === "ended",
+    `HTTP ${mintClosed.status} code=${mintClosed.data?.code} phase=${mintClosed.data?.phase}`);
+  const scanClosed = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: tutorSess.id, code: codeFor(tutorSess.id) } });
+  check("a scan against a class the lecturer has closed is refused as not running",
+    scanClosed.status === 409 && scanClosed.data?.reason === "no_session_now", `HTTP ${scanClosed.status} reason=${scanClosed.data?.reason}`);
+  const liveClosed = await call(`/hnd/sessions/${tutorSess.id}/live`, { token: tutorToken });
+  check("the live view names the phase and today's date, so the screen can offer reopen only where it applies",
+    liveClosed.data?.phase === "ended" && liveClosed.data?.today === today,
+    `phase=${liveClosed.data?.phase} today=${liveClosed.data?.today}`);
+  const todayClosed = await call("/hnd/my-sessions/today", { token: tutorToken });
+  check("and the day's list stops calling it open",
+    (todayClosed.data?.sessions || []).find((x) => x.id === tutorSess.id)?.acceptingTaps === false, "");
+
+  const badMinutes = await call(winPath(tutorSess.id), { method: "POST", token: tutorToken, body: { action: "reopen", minutes: 999 } });
+  const badAction = await call(winPath(tutorSess.id), { method: "POST", token: tutorToken, body: { action: "nonsense" } });
+  check("an unusable reopen is refused rather than guessed at", badMinutes.status === 400 && badAction.status === 400, `minutes ${badMinutes.status} action ${badAction.status}`);
+
+  const reopened = await call(winPath(tutorSess.id), { method: "POST", token: tutorToken, body: { action: "reopen", minutes: 10 } });
+  check("the tutor can reopen it, and the close is gone",
+    reopened.status === 200 && reopened.data?.checkInClosedAt === null && /^\d{2}:\d{2}$/.test(reopened.data?.checkInOpenUntil || "") && reopened.data?.acceptingTaps === true,
+    `HTTP ${reopened.status} closedAt=${reopened.data?.checkInClosedAt} until=${reopened.data?.checkInOpenUntil} accepting=${reopened.data?.acceptingTaps}`);
+  const mintAgain = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: tutorToken });
+  check("and the code is back on the screen", mintAgain.status === 200 && typeof mintAgain.data?.code === "string", `HTTP ${mintAgain.status}`);
+
+  // Holding a FINISHED class open for late arrivals: the one that ended an hour ago.
+  const scanPastBefore = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: past.id, code: codeFor(past.id) } });
+  check("a finished class refuses a scan, as before", scanPastBefore.status === 409 && scanPastBefore.data?.reason === "no_session_now", `HTTP ${scanPastBefore.status}`);
+  const held = await call(winPath(past.id), { method: "POST", token: tutorToken, body: { action: "reopen", minutes: 15 } });
+  check("the tutor can hold a finished class open for a quarter of an hour",
+    held.status === 200 && held.data?.acceptingTaps === true && held.data?.checkInOpenUntil > now,
+    `HTTP ${held.status} until=${held.data?.checkInOpenUntil} now=${now}`);
+  const mintHeld = await call(`/hnd/sessions/${past.id}/qr-code`, { token: tutorToken });
+  check("the screen mints for it and says when the held-open window closes",
+    mintHeld.status === 200 && typeof mintHeld.data?.code === "string" && mintHeld.data?.closesAt === held.data?.checkInOpenUntil,
+    `HTTP ${mintHeld.status} closesAt=${mintHeld.data?.closesAt}`);
+  const scanPast = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: past.id, code: codeFor(past.id) } });
+  const pastMark = await db.attendanceMark.findFirst({ where: { sessionId: past.id, studentId: QC_ID } });
+  if (pastMark) made.marks.push(pastMark.id);
+  check("a late arrival scanning inside the held-open window is marked, and marked Late",
+    scanPast.status === 201 && scanPast.data?.status === "L" && pastMark?.status === "L",
+    `HTTP ${scanPast.status} status=${scanPast.data?.status}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the device trail ---");
+  /* ====================================================================== */
+
+  // The app sends an id it made up once. It proves nothing about who is holding the
+  // phone — the account does that — but it is the trail an administrator follows when
+  // one handset appears to have scanned for half a seminar group.
+  const withDevice = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, headers: { "X-Device-Id": "dev-suite-abc" }, body: { sessionId: tutorSess.id, code: codeFor(tutorSess.id) } });
+  const devRow = await db.tagTap.findFirst({ where: { studentId: QC_ID, method: "qr" }, orderBy: { at: "desc" } });
+  check("a scan's log row records the device the app identified itself as",
+    withDevice.status === 200 && devRow?.deviceId === "dev-suite-abc", `HTTP ${withDevice.status} deviceId=${devRow?.deviceId}`);
+  const junkDevice = "x".repeat(200) + "<script>";
+  await call("/student/me/qr-check-in", { method: "POST", token: qcToken, headers: { "X-Device-Id": junkDevice }, body: { sessionId: tutorSess.id, code: codeFor(tutorSess.id) } });
+  const junkRow = await db.tagTap.findFirst({ where: { studentId: QC_ID, method: "qr" }, orderBy: { at: "desc" } });
+  check("a device id is cut to size and stripped of anything but id characters",
+    typeof junkRow?.deviceId === "string" && junkRow.deviceId.length <= 64 && /^[A-Za-z0-9_-]+$/.test(junkRow.deviceId),
+    `stored=${String(junkRow?.deviceId).slice(0, 70)}`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

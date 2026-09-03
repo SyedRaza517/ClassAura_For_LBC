@@ -1001,6 +1001,16 @@ model HndSession {
   // without duplicating anything and (b) removed again in one statement, without
   // touching a single register a member of staff took by hand.
   moodleSessionId Int?
+  // The lecturer's hand on the self check-in window (3 Sep 2026). Both null means
+  // "follow the timetable", which is every session until somebody presses a button.
+  //   checkInClosedAt  — the lecturer ended check-in before the timetabled end. Absolute:
+  //                      no scan or tap lands while it is set. Reopening clears it.
+  //   checkInOpenUntil — HH:MM, local. Holds check-in open PAST the end for late
+  //                      arrivals; it only ever extends (the later of end/openUntil wins).
+  // On the session, not in a settings row, because the answer is per class per day and
+  // an audit reading a disputed register wants it beside the marks it explains.
+  checkInClosedAt  DateTime?
+  checkInOpenUntil String?
   createdAt       DateTime @default(now())
 
   marks AttendanceMark[]
@@ -1105,6 +1115,11 @@ model TagTap {
   site      String? // "Onsite" for a staff tap — the tap itself proves that
   at        DateTime       @default(now())
   ip        String?
+  // An id the student's app made up once and keeps (localStorage), sent as a header on
+  // every self check-in. Not identity — the account is — but the trail that answers
+  // "did one handset scan for six accounts in a minute". Null before the column existed
+  // and for clients that never send one; never used to refuse a scan on its own.
+  deviceId  String?
 
   @@index([tagId, at])
   @@index([studentId])
