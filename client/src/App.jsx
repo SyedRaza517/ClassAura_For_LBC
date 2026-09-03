@@ -20,6 +20,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
 import { StaffApp, AdminDashboard } from "./StaffHub";
+import { capturePendingQr, hasPendingQr, clearPendingQr } from "./pendingQr";
 import { LogOut, CheckCircle2, XCircle, Sparkles, Loader2, GraduationCap, Clock, KeyRound, Lock, ShieldCheck, X, WifiOff } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
@@ -203,12 +204,23 @@ html{scroll-behavior:smooth}
 }
 `;
 
+// "#checkin=<sessionId>.<code>" — a student's camera opening the code on a projector.
+// Captured at module load, before anything renders or the fragment can be lost to a
+// navigation, and stripped from the address bar in the same breath. The stash-and-strip
+// lives in pendingQr.js; the WHY of the fragment shape is documented there.
+capturePendingQr();
+
 export default function App() {
   const { user, loading, logout, refreshUser, applySession, offline, retryRestore, abandonRestore } = useAuth();
   // Which front door the visitor picked: null = still on the landing screen,
   // "app" = the staff mobile app's own sign in / sign up, "admin" = dashboard login.
   // It also decides which view they land in once signed in.
-  const [entry, setEntry] = useState(null);
+  //
+  // A freshly scanned check-in code skips the chooser and opens the app sign-in: the
+  // person holding it is a student standing in a running class, and every extra tap
+  // between the scan and the mark is time the code spends expiring. Staff who somehow
+  // scan one lose nothing — "Staff App" is where they sign in anyway.
+  const [entry, setEntry] = useState(() => (hasPendingQr() ? "app" : null));
   // A "?reset=<token>" link from a password-reset email. Read once on mount so that
   // clearing the query string later doesn't yank the screen away mid-flow.
   const [resetToken, setResetToken] = useState(() => {
@@ -239,6 +251,14 @@ export default function App() {
   // Biometric app lock — only ever active inside the packaged app, and only when
   // the user has switched it on.
   const { locked, unlock } = useAppLock(Boolean(user));
+
+  // A scanned check-in code belongs to a STUDENT session and no other. Left in place
+  // for staff it would sit in the tab until a student signed in on the same machine —
+  // a classroom podium browser is exactly where that happens — and mark whoever that
+  // student is off a scan they never made.
+  useEffect(() => {
+    if (user && user.kind !== "student") clearPendingQr();
+  }, [user]);
 
   const clearTokenFromUrl = () => {
     // Drop the token from the address bar so a refresh (or a shared screenshot of

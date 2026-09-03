@@ -1,0 +1,85 @@
+// The one-shot handoff between a scanned check-in QR and the signed-in student app.
+//
+// The projector QR encodes `#checkin=<sessionId>.<code>`. A FRAGMENT, deliberately: the
+// code is a bearer credential for an attendance mark, and everything after # never
+// leaves the phone — a ?checkin= query string would put every live code in the SPA
+// host's access logs and the student's browser history, the two places the server side
+// is careful never to write one.
+//
+// A fragment also never survives navigation, so the app stashes it here the moment it
+// loads and strips the address bar. sessionStorage rather than localStorage on purpose:
+// the stash should die with the tab, and it must never sync across a student's devices
+// the way localStorage-backed state can.
+//
+// TEN MINUTES of shelf life — not to extend the code's validity (the server refuses an
+// old code within a rotation or two regardless) but to survive the sign-in a student may
+// have to do between scanning and landing in the app. A stale stash is dropped silently;
+// the card's expired state already tells them to scan again, signed in this time.
+const KEY = "edtech.pendingQr";
+const MAX_AGE_MS = 10 * 60 * 1000;
+
+function captureOnce() {
+  // sessionId is a cuid and the code is base64url — neither contains a dot, which is
+  // why a dot is the separator. Anything shaped differently is not ours; leave it.
+  const m = /^#checkin=([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(window.location.hash || "");
+  if (!m) return false;
+  try {
+    sessionStorage.setItem(KEY, JSON.stringify({ sessionId: m[1], code: m[2], at: Date.now() }));
+  } catch (_) {
+    // Storage blocked (some private modes). Nothing to do: the student scans the code
+    // again once signed in, which the check-in screen explains anyway.
+  }
+  window.history.replaceState({}, "", window.location.pathname + window.location.search);
+  return true;
+}
+
+/**
+ * Runs once at app load: capture a `#checkin=` fragment and strip it from the bar —
+ * and keep listening. A camera app usually opens the link in a fresh tab, where the
+ * load-time capture is enough; but a link that lands in an ALREADY-RUNNING app arrives
+ * as a same-document navigation — no reload, no module re-evaluation — and without the
+ * hashchange listener a second scan would sit in the address bar doing nothing. The
+ * event tells a mounted StudentApp to pick the new scan up (see its listener).
+ */
+export function capturePendingQr() {
+  if (typeof window === "undefined") return;
+  captureOnce();
+  window.addEventListener("hashchange", () => {
+    if (captureOnce()) window.dispatchEvent(new CustomEvent("edtech:pending-qr"));
+  });
+}
+
+/** A fresh scan is waiting — used to steer a signed-out visitor to the sign-in. */
+export function hasPendingQr() {
+  return read() !== null;
+}
+
+/**
+ * Read WITHOUT removing. This is what a state initializer may call: React's dev-mode
+ * StrictMode invokes initializers twice to surface impurity, and a read-and-remove in
+ * one meant the first call swallowed the stash and the second — the one whose result
+ * was kept — found nothing. The student signed in off a scan and landed on Home with
+ * no mark. The consumer clears the stash at SUBMIT time instead, where a ref guards
+ * against double-firing.
+ */
+export function peekPendingQr() {
+  return read();
+}
+
+/** A non-student session must not carry a scan around — see App.jsx. */
+export function clearPendingQr() {
+  try { sessionStorage.removeItem(KEY); } catch (_) {}
+}
+
+function read() {
+  try {
+    const raw = sessionStorage.getItem(KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!p?.sessionId || !p?.code) return null;
+    if (Date.now() - (p.at || 0) > MAX_AGE_MS) return null;
+    return { sessionId: String(p.sessionId), code: String(p.code) };
+  } catch (_) {
+    return null;
+  }
+}
