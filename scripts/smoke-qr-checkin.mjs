@@ -15,12 +15,13 @@
 //     check-in OFF, which is itself the proof.
 //
 // Codes are derived locally through the server's own modules (attendanceQr.js,
-// secrets.js) under the same CREDENTIALS_KEY the runner hands the API — that is what
-// lets this suite hold a code from two windows ago or one window in the future without
-// waiting for real time to pass.
+// secrets.js) under the same JWT_SECRET the runner hands the API — that is what lets this
+// suite hold a code from two windows ago or one window in the future without waiting for
+// real time to pass. The signing key derives from the SESSION secret, so this suite and
+// the API must be given the same one or nothing it mints will verify.
 //
 //   node scripts/smoke-qr-checkin.mjs
-//   (needs API_URL + DATABASE_URL + CREDENTIALS_KEY; the runner supplies all three)
+//   (needs API_URL + DATABASE_URL + JWT_SECRET; the runner supplies all three)
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -35,11 +36,11 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 // Exit 2 = "skipped", which the runner reports as SKIP rather than PASS. Without the
-// key this suite cannot derive a single code, and the API it would call cannot sign
-// one either — there is nothing to exercise, and pretending otherwise would count as
-// coverage. The runner always sets it; only a bare standalone run lands here.
-if (!process.env.CREDENTIALS_KEY) {
-  console.log("SKIP — CREDENTIALS_KEY is not set, so no code can be derived or verified in this run");
+// secret this suite cannot derive a single code that the API would agree with — there is
+// nothing to exercise, and pretending otherwise would count as coverage. The runner always
+// sets it; only a bare standalone run lands here.
+if (!process.env.JWT_SECRET) {
+  console.log("SKIP — JWT_SECRET is not set, so no code can be derived or verified in this run");
   process.exit(2);
 }
 

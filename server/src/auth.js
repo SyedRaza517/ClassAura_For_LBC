@@ -5,12 +5,12 @@ const prisma = require("./db");
 const { sStaff, sStudent, sApplicant } = require("./serializers");
 
 // In production a real secret MUST be provided — never silently fall back to a
-// publicly-known string (that would let anyone forge an admin token).
-const SECRET = process.env.JWT_SECRET || (
-  process.env.NODE_ENV === "production"
-    ? (() => { throw new Error("JWT_SECRET environment variable must be set in production"); })()
-    : "dev-only-change-me"
-);
+// publicly-known string (that would let anyone forge an admin token). That rule now lives
+// in sessionSecret.js because the QR check-in signing key derives from the same secret,
+// and the rule must not exist twice. Resolved at import, exactly as before, so a
+// production process still refuses to start without one.
+const { sessionSecret } = require("./sessionSecret");
+const SECRET = sessionSecret();
 
 const hashPassword = (pw) => bcrypt.hashSync(pw, 10);
 const verifyPassword = (pw, hash) => bcrypt.compareSync(pw, hash);

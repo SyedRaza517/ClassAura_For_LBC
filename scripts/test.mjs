@@ -53,6 +53,12 @@ const SEED_PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
 // feature. Passed to BOTH the API and the suites: a suite that checks the key is never
 // echoed back has to know what the key is.
 const CREDENTIALS_KEY = process.env.CREDENTIALS_KEY || "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+// The API and the suites must agree on this one. smoke-qr-checkin derives codes locally
+// through the server's own modules and checks them against the running API, and the QR
+// signing key derives from the SESSION secret — so a suite left to fall back to the
+// dev-only default while the API runs on the value below would fail every code it minted,
+// for a reason that reads like a broken feature rather than a mismatched fixture.
+const JWT_SECRET = process.env.JWT_SECRET || "test-secret-not-for-production";
 const PORT = process.env.TEST_PORT || 4010;
 const apiUrl = process.env.API_URL || `http://localhost:${PORT}/api`;
 
@@ -112,7 +118,7 @@ if (!external) {
       ...process.env,
       PORT: String(PORT),
       NODE_ENV: "test",
-      JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production",
+      JWT_SECRET,
       CREDENTIALS_KEY,
       // TENANT_CACHE_MS: "0" used to be set here. It existed for one suite:
       // smoke-tenant-isolation suspended an institution through the platform tier and
@@ -184,7 +190,7 @@ for (const suite of suites) {
   console.log(`${"─".repeat(64)}\n▶ ${suite}\n${"─".repeat(64)}`);
   const r = spawnSync("node", [join(root, "scripts", suite)], {
     cwd: root, stdio: "inherit", shell: false,
-    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD, CREDENTIALS_KEY },
+    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD, CREDENTIALS_KEY, JWT_SECRET },
   });
   // Exit 2 is a suite reporting itself SKIPPED — it found the feature it covers
   // switched off in this build, so its assertions cannot apply. Distinct from a
