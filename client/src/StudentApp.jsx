@@ -15,11 +15,12 @@ import {
   Loader2, Send, CheckCircle2, Info, ArrowRight, RefreshCw,
   Settings, KeyRound, Lock, Trash2, AlertTriangle, Home as HomeIcon,
   Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin, Nfc,
-  HeartHandshake, QrCode,
+  HeartHandshake, QrCode, Camera,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
-import { peekPendingQr, clearPendingQr } from "./pendingQr";
+import { peekPendingQr, clearPendingQr, stashScan } from "./pendingQr";
+import QrScanner from "./QrScanner";
 // Section accents. Checked as an adjacent colour-blind-safe set (worst pair ΔE 16.4),
 // so the four areas stay tellable apart for every reader — and each still carries its
 // own icon and label, so colour is never the only signal.
@@ -491,6 +492,11 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   const enabled = tapContext?.enabled;
   const qrEnabled = tapContext?.qrEnabled;
   const running = (tapContext?.now || []).length;
+  // The in-app scanner. A decoded code is stashed exactly as a scanned link would be,
+  // and the app's own listener turns it into the card above — one road for both.
+  const [scanning, setScanning] = useState(false);
+  const onScanned = useCallback((p) => { setScanning(false); stashScan(p); }, []);
+  const closeScanner = useCallback(() => setScanning(false), []);
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
@@ -534,10 +540,24 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           </span>
           <p className="mt-3 text-sm font-extrabold text-slate-800">Scan to check in</p>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            Scan the code your lecturer shows on screen with your phone camera.
+            Scan the code your lecturer shows on screen.
           </p>
+          <button onClick={() => setScanning(true)} className="press mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold text-white" style={{ background: ACCENT.checkin }}>
+            <Camera size={16} /> Open the scanner
+          </button>
+          <p className="mt-2 text-center text-[12px] text-slate-400">Your phone's camera app works on it too.</p>
         </div>
       )}
+
+      {/* Stickers AND codes on: the sticker card above carries the walkthrough, so the
+          scanner is one button here rather than a second card. */}
+      {tapContext && enabled && qrEnabled && !pendingQr && (
+        <button onClick={() => setScanning(true)} className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[13px] font-bold text-slate-800 ring-1 ring-slate-200">
+          <Camera size={16} style={{ color: ACCENT.checkin }} /> Scan the code on screen
+        </button>
+      )}
+
+      {scanning && <QrScanner onScan={onScanned} onClose={closeScanner} />}
 
       <TodaysClasses today={tapContext?.today} loading={tapContext == null} />
 

@@ -307,16 +307,20 @@ applied twice. (Single-process; a multi-process deployment needs a database-leve
 | GET    | `/hnd/sessions/:id/register` | auth | — enrolled students + their marks |
 | PUT    | `/hnd/sessions/:id/register` | admin | `{ marks: [{ studentId, status, remark? }] }` |
 | GET    | `/hnd/attendance?semesterId=` | auth | — per-student/per-module + overall percentages |
-| GET    | `/hnd/my-sessions/today` | admin | — the classes this lecturer is teaching today |
-| GET    | `/hnd/sessions/:id/live` | admin | — the register as it stands during the class |
-| POST   | `/hnd/sessions/:id/mark-remaining-absent` | admin (`registers`) | `{ override? }` — marks the unmarked absent |
+| GET    | `/hnd/check-in-settings` | admin | — `{ tapEnabled, qrEnabled }`, for the Registers page's per-session QR action |
+| GET    | `/hnd/my-sessions/today` | admin **or the tutor** | — the classes this lecturer is teaching today |
+| GET    | `/hnd/sessions/:id/live` | admin **or the tutor** | — the register as it stands during the class |
+| GET    | `/hnd/sessions/:id/qr-code` | admin **or the tutor** | — the rotating check-in code (see QR check-in) |
+| POST   | `/hnd/sessions/:id/mark-remaining-absent` | `registers` **or the tutor** | `{ override? }` — marks the unmarked absent |
+| POST   | `/hnd/sessions/:id/check-in-window` | `registers` **or the tutor** | `{ action: "close" }` or `{ action: "reopen", minutes? }` — end check-in early / hold it open |
 
 `email` defaults to `<studentRef>@edtech.co.uk` when omitted.
 A mark with `status: null` clears that student's mark. Partial `marks` arrays are
 allowed, so a half-taken register can be saved and finished later.
 
-The last three rows are the lecturer's live view, which exists to serve NFC tap
-check-in — they are documented under **NFC tap check-in** below.
+The last five rows are the lecturer's live view, documented under **The lecturer's live
+view** below. "Or the tutor" means an ordinary STAFF account that `Unit.tutorStaffId`
+names, for sessions of that unit only — the one exception to the router's admin gate.
 
 ### Attendance statuses & percentage
 `status` is one of `P` (Present), `L` (Late), `E` (Excused), `A` (Absent).
@@ -599,15 +603,37 @@ on any date — is the one that is audited.
 
 | Method | Path | Access | Body |
 |--------|------|--------|------|
-| GET | `/hnd/my-sessions/today` | `registers` \| `students` \| `executive` | — |
-| GET | `/hnd/sessions/:id/live` | `registers` \| `students` \| `executive` | — |
-| POST | `/hnd/sessions/:id/mark-remaining-absent` | `registers` | `{ override? }` |
+| GET | `/hnd/my-sessions/today` | any staff account (`?scope=all` needs `registers` \| `students` \| `executive`) | — |
+| GET | `/hnd/sessions/:id/live` | `live-attendance` \| `registers`, or the session's tutor | — |
+| GET | `/hnd/sessions/:id/qr-code` | `live-attendance` \| `registers`, or the session's tutor | — |
+| POST | `/hnd/sessions/:id/mark-remaining-absent` | `registers`, or the session's tutor | `{ override? }` |
+| POST | `/hnd/sessions/:id/check-in-window` | `registers`, or the session's tutor | `{ action: "close" }` \| `{ action: "reopen", minutes? }` |
 
-All three sit on the HND router, whose blanket guard is
-`requireAnyPage(["registers", "students", "executive"])`; the write additionally requires
-`registers`. The admin dashboard shows this screen under the **`live-attendance`** page
-key, but the server does not check that key anywhere — an admin granted *only*
-`live-attendance` reaches the tab and is refused by every request on it.
+**The lecturer's door (3 Sep 2026).** These five paths are the one exception to the HND
+router's blanket guard `requireAnyPage(["registers", "students", "executive"])`: the gate
+steps aside for exactly them, and each applies its own guard — the pages named above, OR
+the caller being `Unit.tutorStaffId` of the session's unit. An ordinary STAFF account that
+tutors a unit can therefore watch its own registers fill, put the code on screen, close the
+register and change the check-in window, and can reach nothing else on this router (the
+directory, the matrix, the paper register all still answer 403 — `smoke-qr-checkin.mjs`
+asserts it). Before this, an admin granted *only* `live-attendance` never passed the
+blanket guard and the page opened nothing; that is fixed by the same change.
+
+`GET /hnd/my-sessions/today` gains `teaches` (whether the caller tutors any unit at all —
+the staff app's My Classes tile keys on it). `GET /hnd/sessions/:id/live` gains
+`tapEnabled`, `canClose` (may this caller close the register / change its window),
+`closesAt` (the minute check-in actually shuts, later than the end when held open),
+`phase` (`before` \| `open` \| `over` \| `ended` \| `closed`) and `today`.
+
+`POST /hnd/sessions/:id/check-in-window` is the lecturer's hand on the window, for today's
+class only (400 otherwise; 423 inside a locked term). `close` sets
+`HndSession.checkInClosedAt` and every surface stops accepting at once — the code leaves
+the projector, the badge turns, the next scan answers `no_session_now`. `reopen` clears it
+and sets `checkInOpenUntil` to the later of the timetabled end and now + `minutes`
+(default 10, max 120), so a finished class can be held open for late arrivals; a scan then
+lands, marked Present or Late against the original start. Both are audited
+(`attendance.checkin.closed` / `attendance.checkin.reopened`). Sessions serialise both
+fields (`checkInClosedAt`, `checkInOpenUntil`, null until pressed).
 
 `GET /hnd/my-sessions/today` answers `{ date, tapEnabled, sessions: [...] }` — the classes
 this lecturer is teaching today, matched on `Unit.tutorStaffId` so the dashboard opens on

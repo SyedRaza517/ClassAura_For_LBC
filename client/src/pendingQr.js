@@ -49,6 +49,21 @@ export function capturePendingQr() {
   });
 }
 
+/**
+ * A code read by the in-app scanner takes the same road as a scanned link: stashed
+ * here, announced the same way, consumed by the same card. One path from "the app
+ * holds a code" to "the mark is written", however the code arrived.
+ */
+export function stashScan({ sessionId, code }) {
+  try {
+    sessionStorage.setItem(KEY, JSON.stringify({ sessionId: String(sessionId), code: String(code), at: Date.now() }));
+  } catch (_) {
+    return false;
+  }
+  window.dispatchEvent(new CustomEvent("edtech:pending-qr"));
+  return true;
+}
+
 /** A fresh scan is waiting — used to steer a signed-out visitor to the sign-in. */
 export function hasPendingQr() {
   return read() !== null;

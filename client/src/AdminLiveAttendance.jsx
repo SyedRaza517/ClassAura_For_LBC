@@ -194,6 +194,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   const [closing, setClosing] = useState(false);
   const [note, setNote] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [controlling, setControlling] = useState(false);
   const alive = useRef(true);
   // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
   // and a ref only ever set false leaves every guarded setState skipped for the
@@ -225,6 +226,23 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
 
   const counts = data?.counts || { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
   const rows = data?.rows || [];
+
+  // The lecturer's hand on the window. Both go through one call and one reload, so
+  // the badge, the code and the roster all move together. (Its state hook is declared
+  // with the others above the early return; a hook after it changes the hook order
+  // between the loading render and the loaded one, which React rejects as a crash.)
+  const control = async (action, minutes) => {
+    setControlling(true); setErr(""); setNote("");
+    try {
+      const r = await api.sessionCheckInWindow(sessionId, action, minutes);
+      setNote(action === "close"
+        ? "Check-in has ended for this class. Scans and taps are no longer accepted."
+        : `Check-in is open until ${r.closesAt || r.checkInOpenUntil}.`);
+      await load();
+    } catch (e) {
+      setErr(e?.message || "Could not change check-in for this class.");
+    } finally { setControlling(false); }
+  };
 
   const closeOff = async () => {
     setClosing(true); setErr(""); setNote("");
@@ -290,7 +308,41 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
           unitName={data?.unit?.name || data?.unit?.code || "Register"}
           times={`${data?.session?.start}–${data?.session?.end}`}
           counts={counts}
+          phase={data?.phase}
         />
+      )}
+
+      {/* End early, or hold open for late arrivals. Only for today's class, only for
+          somebody the server will let change it, and only in the two phases where
+          the button does something: "open" can be ended, "over"/"ended" can be
+          reopened. Before the class starts there is nothing to press. */}
+      {data?.canClose && data?.today && data?.session?.date === data.today
+        && (data?.qrEnabled || data?.tapEnabled) && (data.phase === "open" || data.phase === "over" || data.phase === "ended") && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+          {data.phase === "open" ? (
+            <>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-800">Check-in is open until {data.closesAt || data.session?.end}</p>
+                <p className="text-[12px] leading-relaxed text-slate-500">Ending it now stops scans and taps for this class. You can reopen it for late arrivals.</p>
+              </div>
+              <button onClick={() => control("close")} disabled={controlling}
+                className="press rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-[13px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                {controlling ? <Loader2 size={15} className="animate-spin" /> : "End check-in now"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-slate-800">Reopen for late arrivals</p>
+                <p className="text-[12px] leading-relaxed text-slate-500">Accepts scans and taps for ten more minutes. Press again to keep it open longer.</p>
+              </div>
+              <button onClick={() => control("reopen", 10)} disabled={controlling}
+                className="press rounded-xl px-4 py-2.5 text-[13px] font-bold text-white disabled:opacity-60" style={{ background: NAVY }}>
+                {controlling ? <Loader2 size={15} className="animate-spin" /> : "Reopen for 10 minutes"}
+              </button>
+            </>
+          )}
+        </section>
       )}
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -412,7 +464,11 @@ function Tally({ n, label, colour }) {
 //
 // Displaying this opens nothing and closing it closes nothing: the code is only valid
 // inside the session's own timetabled window, enforced where it matters — at the scan.
-function QrCard({ sessionId, unitName, times, counts }) {
+// `phase` is the live view's word for where the class sits. The card only re-asks the
+// server when the code turns over, so without this a code stayed on the projector for
+// up to a rotation after the lecturer pressed "End check-in now" — refused at every
+// scan, but on the wall contradicting the button. A phase change refetches at once.
+function QrCard({ sessionId, unitName, times, counts, phase }) {
   const [mint, setMint] = useState(null);   // the last /qr-code answer
   const [img, setImg] = useState("");       // the current code, rendered
   const [err, setErr] = useState("");
@@ -476,7 +532,7 @@ function QrCard({ sessionId, unitName, times, counts }) {
     }
   }, [sessionId]);
 
-  useEffect(() => { fetchCode(); }, [fetchCode]);
+  useEffect(() => { fetchCode(); }, [fetchCode, phase]);
 
   // Ask again just after the code turns over — or, after a failure, in five seconds.
   // The retry matters more than it looks: without it one dropped request or a single
@@ -545,6 +601,11 @@ function QrCard({ sessionId, unitName, times, counts }) {
             <div>
               <p className="text-sm font-semibold text-slate-700">Check-in opens at {mint.opensAt}</p>
               <p className="text-[12px] text-slate-500">The code will appear here automatically.</p>
+            </div>
+          ) : mint.phase === "ended" ? (
+            <div>
+              <p className="text-sm font-semibold text-slate-700">Check-in was ended for this class</p>
+              <p className="text-[12px] text-slate-500">Scans are refused until it is reopened.</p>
             </div>
           ) : mint.phase === "closed" ? (
             // The term the unit sits in is shut, so the register itself is locked —
