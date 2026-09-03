@@ -1495,7 +1495,7 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   // 409 rather than 404: the session may be real and the feature simply off, and the
   // screen needs to tell a lecturer those apart.
   if (!settings.qrEnabled) return res.status(409).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_disabled" });
-  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "Too many refreshes. The code only changes once per rotation." });
+  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "The code is refreshing on its own. Give it a few seconds.", reason: "too_many" });
 
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
@@ -1540,7 +1540,14 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   } catch (e) {
     // Fail loudly at the person who can act on it. A quietly-degraded screen would
     // present as "the QR never works" to a room of students, one scan at a time.
-    if (e instanceof SecretsNotConfigured) return res.status(e.status).json({ error: e.message });
+    if (e instanceof SecretsNotConfigured) {
+      // Loudly, but not verbatim. e.message names the environment variable and carries
+      // the shell command that generates it, and this response lands on a screen that is
+      // frequently being projected to a room. The detail belongs in the server log,
+      // where the person who can act on it is actually looking.
+      console.error("[qr] cannot sign codes for the screen:", e.message);
+      return res.status(e.status).json({ error: "Check-in codes aren't set up on this server yet. Ask whoever runs it.", reason: "qr_unavailable" });
+    }
     throw e;
   }
 

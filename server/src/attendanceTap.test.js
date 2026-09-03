@@ -9,7 +9,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { addMinutes, subMinutes, resolveTapSession } = require("./attendanceTap");
+const { addMinutes, subMinutes, resolveTapSession, statusFor } = require("./attendanceTap");
 
 const TODAY = "2026-09-01";
 
@@ -113,6 +113,42 @@ test("yesterday's session is not a candidate today", () => {
 /* -------------------------------------------------------------------------- */
 /* Present or Late                                                             */
 /* -------------------------------------------------------------------------- */
+
+// statusFor is a SECOND copy of the Present-or-Late expression, and it is the one the
+// QR scan actually runs through (routes/student.js). Every boundary test below it goes
+// through resolveTapSession instead, so until these four existed, changing `<=` to `<`
+// in statusFor marked every punctual scanner Late with a completely green suite.
+//
+// The two must agree, so each of these asserts the value AND that both copies say it.
+const bothSay = (time, opts) => {
+  const s = settings(opts);
+  const viaResolve = resolveTapSession([session()], at(time), s);
+  const viaStatusFor = statusFor(session(), at(time), s);
+  assert.equal(viaStatusFor, viaResolve.status,
+    `the two Present-or-Late copies disagree at ${time}: statusFor said ${viaStatusFor}, resolveTapSession said ${viaResolve.status}`);
+  return viaStatusFor;
+};
+
+test("the scan path calls it Present exactly on the late threshold", () => {
+  assert.equal(bothSay("09:15", { lateAfterMins: 15 }), "P");
+});
+
+test("the scan path calls it Late one minute past the threshold", () => {
+  assert.equal(bothSay("09:16", { lateAfterMins: 15 }), "L");
+});
+
+test("the scan path treats a zero threshold the same way a tap does", () => {
+  assert.equal(bothSay("09:00", { lateAfterMins: 0 }), "P");
+  assert.equal(bothSay("09:01", { lateAfterMins: 0 }), "L");
+});
+
+test("a missing or unusable lateness setting falls back to zero, not to forgiving", () => {
+  // The route may hand it whatever the settings row holds. A NaN here must not read as
+  // "infinitely late-tolerant", which would mark a student two hours in as Present.
+  assert.equal(statusFor(session(), at("09:00"), {}), "P");
+  assert.equal(statusFor(session(), at("09:01"), {}), "L");
+  assert.equal(statusFor(session(), at("09:01"), { lateAfterMins: "not a number" }), "L");
+});
 
 test("exactly on the late threshold is still Present", () => {
   // 09:00 + 15 = 09:15. A student who made it inside the window was not late, and an

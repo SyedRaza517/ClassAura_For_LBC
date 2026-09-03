@@ -85,6 +85,12 @@ const QB_ID = "st-100123"; // the term-lock block only
 const QB_EMAIL = "100123@edtech.co.uk";
 const QC_ID = "st-100129"; // refusals that must not drain QA's budget
 const QC_EMAIL = "100129@edtech.co.uk";
+// The fourth exists to be rate limited on purpose. Spending a budget is destructive to
+// every later assertion by that student, so it is done by somebody with nothing else to do.
+const QD_ID = "st-100135";
+const QD_EMAIL = "100135@edtech.co.uk";
+// Comfortably past TAP_MAX (10 a minute, student.js) without depending on the number.
+const FLOOD = 14;
 const S_PASSWORD = "qr-checkin-suite-2026";
 
 let pass = 0, fail = 0;
@@ -149,7 +155,7 @@ async function cleanup() {
     }
 
     // The seeded students have NO password and tokenVersion 0. Restore both.
-    for (const id of [QA_ID, QB_ID, QC_ID]) {
+    for (const id of [QA_ID, QB_ID, QC_ID, QD_ID]) {
       await db.student.update({ where: { id }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
     }
   } catch (e) {
@@ -166,7 +172,7 @@ try {
   const adminToken = adminLogin.data?.token;
   if (!adminToken) throw new Error(`admin sign-in failed (HTTP ${adminLogin.status}) — cannot run this suite`);
 
-  for (const [id] of [[QA_ID], [QB_ID], [QC_ID]]) {
+  for (const [id] of [[QA_ID], [QB_ID], [QC_ID], [QD_ID]]) {
     await db.student.update({ where: { id }, data: { passwordHash: bcrypt.hashSync(S_PASSWORD, 10), tokenVersion: 0 } });
   }
   const qaToken = (await login(QA_EMAIL, S_PASSWORD)).data?.token;
@@ -204,6 +210,12 @@ try {
 
   const offScan = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: codeFor(live.id) } });
   check("a scan is refused while QR check-in is off", offScan.status === 403, `HTTP ${offScan.status}`);
+  // Every refusal a student can reach carries a machine-readable reason, because the
+  // phone chooses its OWN wording from it. Without one the card falls back to printing
+  // whatever the server said, and server messages are written for whoever operates the
+  // deployment — one of them is a configuration key's setup instructions.
+  check("and names a reason, so the phone never has to quote the server at a student",
+    offScan.data?.reason === "qr_off", `reason=${offScan.data?.reason || "none"}`);
   const offRow = await db.tagTap.findFirst({ where: { studentId: QA_ID, method: "qr" }, orderBy: { at: "desc" } });
   check("the refusal is logged with its method, so 'nothing happened' is visible", offRow?.outcome === "disabled" && offRow?.method === "qr", `outcome=${offRow?.outcome}`);
 
@@ -223,6 +235,24 @@ try {
   check("an administrator can switch QR check-in on with NFC left off",
     turnedOn.status === 200 && turnedOn.data?.qrEnabled === true && turnedOn.data?.enabled === false,
     `HTTP ${turnedOn.status} qrEnabled=${turnedOn.data?.qrEnabled} enabled=${turnedOn.data?.enabled}`);
+
+  // The student's OWN screen on a QR-only college, which is the configuration this whole
+  // suite runs in and the one nothing here was reading.
+  //
+  // tap-context returned early on the STICKER switch and left the running-now list and
+  // the next-class field hardcoded empty. Everything downstream believes those: the
+  // check-in screen concluded no class was on and said "that's you done for today" to a
+  // student sitting in the lecture, with the code on the wall behind them. The handler
+  // already knew this hazard for the qrEnabled FLAG and fixed only the flag.
+  const ctx = await call("/student/me/tap-context", { token: qaToken });
+  check("a QR-only college still tells the student which class is running",
+    ctx.status === 200 && (ctx.data?.now || []).some((x) => x.id === live.id),
+    `HTTP ${ctx.status} now=[${(ctx.data?.now || []).map((x) => x.id).join(", ")}]`);
+  check("and still names the class they have next",
+    !!ctx.data?.next, `next=${ctx.data?.next?.id || "null"}`);
+  check("while still reporting the sticker switch as off",
+    ctx.data?.enabled === false && ctx.data?.qrEnabled === true,
+    `enabled=${ctx.data?.enabled} qrEnabled=${ctx.data?.qrEnabled}`);
 
   // The new key honours both halves of the settings contract, which treat a bad value
   // and a small value differently on purpose. An UNUSABLE value is ignored, not reset —
@@ -312,6 +342,7 @@ try {
   const ghostId = "clghostsession0000000000x";
   const ghost = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: ghostId, code: codeFor(ghostId) } });
   check("a code for a session that no longer exists is refused cleanly", ghost.status === 404, `HTTP ${ghost.status}`);
+  check("and names a reason too", ghost.data?.reason === "no_session", `reason=${ghost.data?.reason || "none"}`);
 
   // Enrolment is still checked: the code proves which screen was scanned, never that
   // the scanner belongs in the room.
@@ -322,6 +353,8 @@ try {
   const notEnrolled = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: otherLive.id, code: codeFor(otherLive.id) } });
   check("a student not enrolled on the unit is refused, current code or not",
     notEnrolled.status === 403, `HTTP ${notEnrolled.status} ${notEnrolled.data?.reason || notEnrolled.data?.error || ""}`);
+  check("a student who is not on the class names a reason too",
+    notEnrolled.data?.reason === "not_enrolled", `reason=${notEnrolled.data?.reason || "none"}`);
   const notEnrolledRow = await db.tagTap.findFirst({ where: { studentId: QC_ID, outcome: "not_enrolled" }, orderBy: { at: "desc" } });
   check("that refusal is in the log with the register it named",
     notEnrolledRow?.sessionId === otherLive.id && notEnrolledRow?.method === "qr", `sessionId=${notEnrolledRow?.sessionId}`);
@@ -367,6 +400,68 @@ try {
     `HTTP ${again.status} ${again.data?.reason || again.data?.error || ""}, ${markCount} mark(s)`);
   check("a second scan does not move the recorded arrival time",
     afterAgain?.checkedInAt === firstCheckedInAt, `${firstCheckedInAt} -> ${afterAgain?.checkedInAt}`);
+
+  /* ====================================================================== */
+  console.log("\n--- one code, a whole class ---");
+  /* ====================================================================== */
+
+  // The projector shows ONE code and a room full of phones reads it. Nothing about a
+  // code names a student — it is derived from the session and the clock alone — so this
+  // is the property the whole feature rests on, and it had no assertion: every accepted
+  // scan above this point is the same student twice.
+  await avoidBoundary();
+  const sharedCode = codeFor(live.id);
+  const qcShared = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: live.id, code: sharedCode } });
+  check("a second student scanning the SAME code is marked in their own right",
+    qcShared.status === 201 && qcShared.data?.status === "P" && !qcShared.data?.alreadyMarked,
+    `HTTP ${qcShared.status} ${qcShared.data?.status || qcShared.data?.error || ""}`);
+
+  const qcMark = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QC_ID } });
+  if (qcMark) made.marks.push(qcMark.id);
+  check("the second student's mark is their own row, not a share of the first's",
+    !!qcMark && qcMark.studentId === QC_ID && qcMark.takenBy === "Self check-in (QR)", `studentId=${qcMark?.studentId}`);
+
+  const bothMarks = await db.attendanceMark.count({ where: { sessionId: live.id } });
+  check("the register holds one mark per student who scanned, not one per code",
+    bothMarks === 2, `${bothMarks} mark(s) on the register`);
+
+  const qaStill = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
+  check("and the first student's arrival time is untouched by the second's scan",
+    qaStill?.checkedInAt === firstCheckedInAt, `${firstCheckedInAt} -> ${qaStill?.checkedInAt}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the attempt budget is one student's, not the room's ---");
+  /* ====================================================================== */
+
+  // A lecture theatre is one network and frequently one address. Keyed on anything but
+  // the student, the fifteenth phone to scan would be refused because of the fourteen
+  // before it, and the feature would fail precisely when a whole class uses it at once.
+  // The limiter IS keyed on the student and there is no address-based limiter anywhere
+  // in the API — but nothing asserted either, so a later "let's add an IP limit" would
+  // land silently.
+  const qdToken = (await login(QD_EMAIL, S_PASSWORD)).data?.token;
+  if (!qdToken) throw new Error("fourth student sign-in failed — cannot run this suite");
+
+  // A garbage code is refused on the signature before any lookup, so this spends the
+  // budget without writing a mark or leaning on any fixture.
+  const junk = "z".repeat(CODE_LENGTH);
+  let qdFirst = null, qdLimited = 0;
+  for (let i = 0; i < FLOOD; i++) {
+    const r = await call("/student/me/qr-check-in", { method: "POST", token: qdToken, body: { sessionId: live.id, code: junk } });
+    if (i === 0) qdFirst = r.status;
+    if (r.status === 429) qdLimited++;
+  }
+  check("a student hammering the endpoint is eventually refused for it",
+    qdFirst !== 429 && qdLimited > 0, `first=${qdFirst}, ${qdLimited} of ${FLOOD} refused as 429`);
+
+  const flooded = await call("/student/me/qr-check-in", { method: "POST", token: qdToken, body: { sessionId: live.id, code: junk } });
+  check("a rate-limited refusal names a reason too",
+    flooded.status === 429 && flooded.data?.reason === "too_many", `HTTP ${flooded.status} reason=${flooded.data?.reason || "none"}`);
+
+  const neighbour = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, body: { sessionId: live.id, code: codeFor(live.id) } });
+  check("and the student sitting next to them is entirely unaffected by it",
+    neighbour.status === 200 && neighbour.data?.alreadyMarked === true,
+    `HTTP ${neighbour.status} ${neighbour.data?.reason || neighbour.data?.error || ""}`);
 
   // Late is derived from the session's own start, exactly as a tap's would be.
   const lateSession = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, -45), endTime: shift(now, 75), description: "qr late" } });

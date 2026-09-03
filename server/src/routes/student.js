@@ -148,13 +148,18 @@ router.get("/me/tap-context", async (req, res) => {
       };
     });
 
-  if (!settings.enabled) {
+  // "There is no check-in here" is a question about BOTH switches.
+  //
+  // This branch used to fire on the sticker switch alone and return an empty running-now
+  // list and no next class. It carried a comment saying a QR-only college must not read
+  // as "not switched on" — and it fixed only the FLAG it hands back, while every field
+  // the screen actually reasons from stayed empty. The result was a student in a lecture,
+  // with the code on the wall behind them, being told "that's you done for today", all
+  // day, on the one configuration this feature was built for.
+  if (!settings.enabled && !settings.qrEnabled) {
     return res.json({
       enabled: false,
-      // NFC off does not mean QR off — the two are separate switches, and a QR-only
-      // college's check-in screen must not read "not switched on" while the code on
-      // the projector works fine.
-      qrEnabled: settings.qrEnabled,
+      qrEnabled: false,
       armSeconds: settings.armSeconds,
       date,
       now: [],
@@ -164,6 +169,9 @@ router.get("/me/tap-context", async (req, res) => {
     });
   }
 
+  // Which class is on, and what a mark for it would be. Deliberately the same decision on
+  // both capture methods: what is running is a fact about the timetable and the clock,
+  // not about how the student is going to tell us they are there.
   const decision = resolveTapSession(candidates, { date, time }, settings);
 
   // The classes still to come today, so the screen can say "your next class is at 13:00"
@@ -173,7 +181,10 @@ router.get("/me/tap-context", async (req, res) => {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   res.json({
-    enabled: true,
+    // The sticker switch, reported honestly. The client uses it to decide whether the
+    // arming walkthrough belongs on screen, so it must stay the sticker's own answer and
+    // not become "some kind of check-in is available".
+    enabled: settings.enabled === true,
     qrEnabled: settings.qrEnabled,
     armSeconds: settings.armSeconds,
     date,
@@ -333,13 +344,13 @@ router.post("/me/qr-check-in", async (req, res) => {
   const settings = await tapConfig.get();
   if (!settings.qrEnabled) {
     await logTap(req, { studentId: req.user.id, method: "qr", outcome: "disabled" });
-    return res.status(403).json({ error: "QR check-in isn't switched on for this college." });
+    return res.status(403).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_off" });
   }
 
   const rawSessionId = req.body?.sessionId;
   const rawCode = req.body?.code;
   if (!isString(rawSessionId) || !rawSessionId.trim() || !isString(rawCode) || !rawCode.trim()) {
-    return res.status(400).json({ error: "A class code is required" });
+    return res.status(400).json({ error: "A class code is required", reason: "qr_missing" });
   }
   const sessionId = rawSessionId.trim();
 
@@ -347,7 +358,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   // attempts a minute across both capture methods, not ten of each.
   if (!tapAllowed(req.user.id)) {
     await logTap(req, { studentId: req.user.id, method: "qr", outcome: "rate_limited" });
-    return res.status(429).json({ error: "Too many attempts. Wait a moment and try again." });
+    return res.status(429).json({ error: "Too many attempts. Wait a moment and try again.", reason: "too_many" });
   }
 
   let secret;
@@ -356,7 +367,13 @@ router.post("/me/qr-check-in", async (req, res) => {
   } catch (e) {
     // Fail loudly. A missing CREDENTIALS_KEY must not present as "the QR never works",
     // one refused scan at a time — 503 names the configuration problem to fix.
-    if (e instanceof SecretsNotConfigured) return res.status(e.status).json({ error: e.message });
+    if (e instanceof SecretsNotConfigured) {
+      // The detail goes to the OPERATOR, never down the wire. e.message names the
+      // environment variable and carries the shell command that generates it, and the
+      // only reader of this response is a student holding a phone in a lecture theatre.
+      console.error("[qr] cannot sign or verify codes:", e.message);
+      return res.status(e.status).json({ error: "Check-in isn't available right now.", reason: "qr_unavailable" });
+    }
     throw e;
   }
 
@@ -391,7 +408,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   if (!session) {
     // A valid signature for a session that no longer exists: deleted mid-lecture.
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "session_unknown" });
-    return res.status(404).json({ error: "That class no longer exists." });
+    return res.status(404).json({ error: "That class no longer exists.", reason: "no_session" });
   }
 
   // Enrolment is what makes a student eligible for a register at all — the NFC path
@@ -402,7 +419,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   });
   if (!enrolled) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "not_enrolled" });
-    return res.status(403).json({ error: "You're not enrolled on that class's unit." });
+    return res.status(403).json({ error: "You're not on the list for that class.", reason: "not_enrolled" });
   }
 
   const date = localDate();
