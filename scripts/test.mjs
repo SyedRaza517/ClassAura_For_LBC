@@ -119,6 +119,14 @@ if (!external) {
       PORT: String(PORT),
       NODE_ENV: "test",
       JWT_SECRET,
+      // No settings cache under test. attendanceTapConfig caches for 30s and invalidates
+      // on save, which is correct in production — but the suites also write the settings
+      // row DIRECTLY, and a direct write is exactly what an invalidate-on-save cache
+      // cannot see. smoke-nfc-tap deletes the row to assert the never-configured college,
+      // and read back a stale "switched on" for up to half a minute. That was invisible
+      // while the seed left no row to cache, and surfaced the moment the seed started
+      // creating one. Zero disables the cache outright; the variable exists for this.
+      ATTENDANCE_TAP_CACHE_MS: "0",
       CREDENTIALS_KEY,
       // TENANT_CACHE_MS: "0" used to be set here. It existed for one suite:
       // smoke-tenant-isolation suspended an institution through the platform tier and
