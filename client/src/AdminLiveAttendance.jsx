@@ -237,7 +237,7 @@ function LiveSession({ sessionId, onBack }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {data?.acceptingTaps ? (
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-[12px] font-bold text-emerald-700 ring-1 ring-emerald-200">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Accepting check-ins · refreshing every {POLL_MS / 1000}s
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Accepting check-ins
             </span>
           ) : (
             <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[12px] font-bold text-slate-600 ring-1 ring-slate-200">
@@ -271,7 +271,7 @@ function LiveSession({ sessionId, onBack }) {
         <Tally n={counts.P} label="Present" colour="#059669" />
         <Tally n={counts.L} label="Late" colour="#d97706" />
         <Tally n={counts.A} label="Absent" colour="#e11d48" />
-        <Tally n={counts.notMarked} label="Not tapped" colour="#94a3b8" />
+        <Tally n={counts.notMarked} label="No mark yet" colour="#94a3b8" />
       </div>
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
@@ -292,7 +292,7 @@ function LiveSession({ sessionId, onBack }) {
                   </p>
                 </div>
                 {r.checkedInAt && (
-                  <span className="shrink-0 text-[12px] tabular-nums text-slate-500" title="When they tapped in">{r.checkedInAt}</span>
+                  <span className="shrink-0 text-[12px] tabular-nums text-slate-500" title="When they checked in">{r.checkedInAt}</span>
                 )}
                 {/* A self-marked row is visibly different from one the lecturer took.
                     takenBy carries that already, so no extra column was needed. */}
@@ -316,7 +316,7 @@ function LiveSession({ sessionId, onBack }) {
                   );
                 })()}
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${st ? st.cls : "bg-slate-100 text-slate-600 ring-slate-300"}`}>
-                  {st ? st.label : "Not tapped"}
+                  {st ? st.label : "No mark yet"}
                 </span>
               </li>
             );
@@ -481,14 +481,14 @@ function QrCard({ sessionId, unitName, times, counts }) {
               <QrCode size={16} style={{ color: NAVY }} />Scan to check in
             </h3>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-              Students scan it with their phone camera to check in. It refreshes every {rotate} seconds.
+              Students scan it with their phone camera to check in.
             </p>
             <CountdownBar left={left} rotate={rotate} />
             <button
               onClick={() => setPresenting(true)}
               className="press mt-3 rounded-xl px-4 py-2.5 text-[13px] font-bold text-white"
               style={{ background: NAVY }}
-            >Present full screen</button>
+            >Show full screen</button>
           </div>
         </div>
       ) : (

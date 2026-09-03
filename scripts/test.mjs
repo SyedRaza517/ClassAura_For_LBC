@@ -165,11 +165,15 @@ if (runUnit) {
   //   navGroups     — the sidebar's collapsible parents, because the one way grouping
   //     can go wrong is a parent surviving after permissions emptied it, which shows an
   //     admin a tab that expands to nothing and advertises screens they were not granted.
+  //   qrResultView  — what a student is shown after scanning. Two rules here failed
+  //     silently in review: an absent mark rendering as a green tick, and an unmapped
+  //     refusal printing the server's own message, one of which is a configuration key's
+  //     setup instructions. Both look exactly like a working card.
   // client/package.json is "type": "module", so node runs them directly.
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }

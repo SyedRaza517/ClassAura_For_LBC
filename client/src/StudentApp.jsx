@@ -4,6 +4,7 @@ import PhoneShell from "./PhoneShell";
 import { BrandMark } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import { useBackHandler } from "./backButton";
+import { qrScanResult, qrScanRefusal } from "./qrResultView";
 import { api, setToken } from "./api";
 // The same Face ID / fingerprint control the staff app uses, so both halves behave
 // identically and there is one implementation to keep correct.
@@ -254,7 +255,7 @@ export default function StudentApp({ user, logout }) {
       const which = [a.status === "rejected" && "attendance", r.status === "rejected" && "results", q.status === "rejected" && "messages", v.status === "rejected" && "reviews"].filter(Boolean);
       setErr(failed.length === 4
         ? (failed[0].reason?.message || "Could not load your information")
-        : `Could not load your ${which.join(" or ")}. Tap the refresh icon at the top to try again — everything else here is up to date.`);
+        : `Could not load your ${which.join(" or ")}. Tap the refresh icon at the top to try again. Everything else here is up to date.`);
     }
     setBusy(false);
   }, []);
@@ -402,7 +403,7 @@ function checkInSub(tapContext) {
   if (!tapContext.enabled && !tapContext.qrEnabled) return "Not switched on yet";
   const running = (tapContext.now || []).length;
   if (running > 1) return "Choose your class";
-  if (running === 1) return tapContext.enabled ? "Ready — tap a sticker" : "Scan the code on screen";
+  if (running === 1) return tapContext.enabled ? "Ready. Tap a sticker" : "Scan the code on screen";
   if (tapContext.next) return `Next at ${tapContext.next.startTime}`;
   return "No classes left today";
 }
@@ -584,6 +585,17 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
 // A sibling of the NFC card, not a change to it: CheckInCard.jsx is deeply coupled to
 // the sticker flow (arming windows, NFC availability, the blue button) and none of that
 // applies to a code that has already been read. The two share nothing but the screen.
+// The four answers a scan can end on, plus the refusal. Absent and refused are rose on
+// purpose: before this, every outcome was emerald or amber, so "you are marked absent"
+// and "you are checked in, late" were the same colour and differed only in wording.
+const QR_TONES = {
+  present: { bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-700", chip: "bg-emerald-100" },
+  late:    { bg: "bg-amber-50",   ring: "ring-amber-200",   text: "text-amber-700",   chip: "bg-amber-100" },
+  excused: { bg: "bg-sky-50",     ring: "ring-sky-200",     text: "text-sky-700",     chip: "bg-sky-100" },
+  absent:  { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
+  refused: { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
+};
+
 function QrCheckInCard({ qr, reload, onDone }) {
   // sending → done | failed. One object rather than separate flags so a render can
   // never see a half-updated pair.
@@ -622,61 +634,44 @@ function QrCheckInCard({ qr, reload, onDone }) {
   }
 
   if (state.phase === "done") {
-    const r = state.result;
-    const late = r.status === "L";
-    const tone = late
-      ? { bg: "bg-amber-50", ring: "ring-amber-200", text: "text-amber-700", chip: "bg-amber-100" }
-      : { bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-700", chip: "bg-emerald-100" };
+    const v = qrScanResult(state.result);
+    const tone = QR_TONES[v.tone] || QR_TONES.present;
+    const Icon = v.good ? CheckCircle2 : AlertTriangle;
     return (
-      <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`}>
+      <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
         <div className="flex items-start gap-3">
           <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
-            <CheckCircle2 size={20} className={tone.text} />
+            <Icon size={20} className={tone.text} />
           </span>
           <div className="min-w-0 flex-1">
             <p className={`flex items-center gap-2 text-sm font-extrabold ${tone.text}`}>
-              {r.alreadyMarked ? "Already checked in" : r.checkedInAt ? `Checked in at ${r.checkedInAt}` : "Checked in"}
-              {late && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">Late</span>}
+              {v.heading}
+              {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">{v.chip}</span>}
             </p>
-            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">
-              {r.session?.unitName || r.session?.unitCode || "Your class"}
-              {r.alreadyMarked && r.checkedInAt && <> &middot; {r.checkedInAt}</>}
-            </p>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.detail}</p>
           </div>
         </div>
-        <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-2.5 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Done</button>
+        <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Done</button>
       </div>
     );
   }
 
-  // Refused. One heading, at most one line of what to do. The card never explains the
-  // rules behind a refusal; the fix for a student in a lecture theatre is always the
-  // same short move or nothing.
-  const e = state.error || {};
-  // api.js carries the server's whole response body on err.body — reason rides there.
-  const reason = e.body?.reason;
-  const heading =
-    reason === "qr_expired" ? "That code has expired"
-    : reason === "qr_bad_code" ? "That code isn't recognised"
-    : reason === "no_session_now" ? "This class isn't running right now"
-    : reason === "term_locked" ? "This register is closed"
-    : "That didn't work";
-  const advice =
-    reason === "qr_expired" || reason === "qr_bad_code" ? "Scan the code on screen again."
-    : reason === "no_session_now" || reason === "term_locked" ? ""
-    : e.message || "Scan the code on screen again.";
+  // Refused. Rose, so a refusal is never mistaken at a glance for the amber of a Late
+  // check-in — the two used to differ only by the words in them.
+  const v = qrScanRefusal(state.error);
+  const tone = QR_TONES.refused;
   return (
-    <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+    <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
       <div className="flex items-start gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-50">
-          <AlertTriangle size={19} className="text-amber-600" />
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
+          <AlertTriangle size={19} className={tone.text} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-extrabold text-slate-800">{heading}</p>
-          {advice && <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{advice}</p>}
+          <p className={`text-sm font-extrabold ${tone.text}`}>{v.heading}</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.advice}</p>
         </div>
       </div>
-      <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-2.5 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
+      <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
     </div>
   );
 }
@@ -1448,16 +1443,26 @@ function QueryScreen({ queries = [], reload }) {
 // straight answer, rather than an absence they have to interpret.
 function CheckInStatusRow({ tapContext, setScreen }) {
   const loading = tapContext == null;
-  const off = !loading && !tapContext.enabled;
+  // BOTH switches, not just the sticker one. A college running codes only had this row
+  // saying check-in was not switched on while the Check In tab, three taps away, said
+  // "Scan to check in" — the same two switches the tab already reads.
+  const stickers = !loading && tapContext.enabled;
+  const codes = !loading && tapContext.qrEnabled;
+  const off = !loading && !stickers && !codes;
   const running = (tapContext?.now || []).length;
   const next = tapContext?.next;
+
+  // Named for what the student can actually do. "with a sticker" is only true where the
+  // sticker is the only way in.
+  const title = stickers && !codes ? "Check in with a sticker" : "Check in";
+  const Glyph = codes ? QrCode : Nfc;
 
   const body = loading
     ? "Checking…"
     : off
-      ? "Your college hasn't switched on tap check-in yet. When it does, a Check in card appears at the top of your home screen."
+      ? "Your college hasn't switched check-in on yet. When it does, a Check in card appears at the top of your home screen."
       : running
-        ? `You can check in now — ${running > 1 ? "choose which class" : (tapContext.now[0].unitName || tapContext.now[0].unitCode)}. The card is at the top of your home screen.`
+        ? `${running > 1 ? "Your classes are running now" : `${tapContext.now[0].unitName || tapContext.now[0].unitCode} is running now`}. The card is at the top of your home screen.`
         : next
           ? `Nothing to check in to yet. Your next class starts at ${next.startTime}.`
           : "No more classes today.";
@@ -1470,10 +1475,10 @@ function CheckInStatusRow({ tapContext, setScreen }) {
       className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default"
     >
       <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: off ? "#f1f5f9" : NAVY + "14" }}>
-        <Nfc size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
+        <Glyph size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold text-slate-800">Check in with a sticker</span>
+        <span className="block text-sm font-bold text-slate-800">{title}</span>
         <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500">{body}</span>
       </span>
     </button>

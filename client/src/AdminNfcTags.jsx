@@ -169,7 +169,7 @@ function TapSettings({ settings, onSaved }) {
     <section className="rounded-2xl border border-slate-200 bg-white p-5">
       <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-800"><ShieldCheck size={16} style={{ color: NAVY }} />How self check-in behaves</h3>
       <p className="mb-4 text-[12px] leading-relaxed text-slate-500">
-        Students can only check in while a lecture of theirs is actually running — not before it starts, not after it ends.
+        Students can only check in while a lecture of theirs is actually running. Not before it starts, and not after it ends.
         That applies to stickers and to the on-screen code alike.
       </p>
 
