@@ -388,6 +388,11 @@ function QrCard({ sessionId, unitName, times, counts }) {
   const [img, setImg] = useState("");       // the current code, rendered
   const [left, setLeft] = useState(0);      // seconds until the code turns over
   const [err, setErr] = useState("");
+  // Counts failures rather than just holding one, because it is the retry TRIGGER: two
+  // identical failures in a row set the same err string, React skips the no-op state
+  // update, and an effect keyed on err would never re-arm the timer — the exact
+  // stuck-banner failure the retry exists to remove, one level down.
+  const [fails, setFails] = useState(0);
   const [presenting, setPresenting] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -404,7 +409,12 @@ function QrCard({ sessionId, unitName, times, counts }) {
         // students use the same deployment, so the code carries whichever host the
         // lecturer is on and staging can never mint production links or vice versa.
         // The server never learns a hostname.
-        const url = `${window.location.origin}/?checkin=${sessionId}.${r.code}`;
+        //
+        // A FRAGMENT, not a query string. The code is a bearer credential for a mark,
+        // and everything after # never leaves the phone — a ?checkin= query would land
+        // every live code in the SPA host's access logs and the student's browser
+        // history, the two places the server side is careful never to write it.
+        const url = `${window.location.origin}/#checkin=${sessionId}.${r.code}`;
         const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#0f172a", light: "#ffffff" } });
         if (alive.current) setImg(dataUrl);
       } else {
@@ -417,18 +427,24 @@ function QrCard({ sessionId, unitName, times, counts }) {
       // actually act on — so the message is shown, not swallowed.
       setErr(e?.message || "Could not fetch the check-in code.");
       setMint(null); setImg("");
+      setFails((n) => n + 1);
     }
   }, [sessionId]);
 
   useEffect(() => { fetchCode(); }, [fetchCode]);
 
-  // Ask again just after the code turns over. The extra 400ms keeps the request on the
-  // new window's side of the boundary even with a slightly fast local clock.
+  // Ask again just after the code turns over — or, after a failure, in five seconds.
+  // The retry matters more than it looks: without it one dropped request or a single
+  // 429 was terminal, because nothing else ever calls fetchCode again, and the
+  // projector sat on an error banner for the rest of a two-hour class. Five seconds is
+  // twelve requests a minute at worst, well inside the mint route's own budget.
+  // The extra 400ms on the rotation path keeps the request on the new window's side of
+  // the boundary even with a slightly fast local clock.
   useEffect(() => {
-    if (!mint) return undefined;
-    const t = setTimeout(fetchCode, (mint.secondsLeft ?? 30) * 1000 + 400);
+    if (!mint && fails === 0) return undefined;
+    const t = setTimeout(fetchCode, mint ? (mint.secondsLeft ?? 30) * 1000 + 400 : 5000);
     return () => clearTimeout(t);
-  }, [mint, fetchCode]);
+  }, [mint, fails, fetchCode]);
 
   // The countdown between fetches is cosmetic and local; the server's clock decides.
   useEffect(() => {
@@ -444,15 +460,20 @@ function QrCard({ sessionId, unitName, times, counts }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [presenting]);
 
-  if (err) return <Banner tone="amber" Icon={QrCode}>{err}</Banner>;
-  if (!mint) return null;
+  // Only before the FIRST answer arrives. After that there is always something truthful
+  // to show — the code, the phase, or the error — and returning null on error would
+  // unmount the projector overlay mid-blip, kicking the lecturer out of full screen for
+  // a failure the retry above repairs on its own.
+  if (!mint && !err) return null;
 
-  const rotate = mint.rotateSeconds || 30;
-  const open = mint.acceptingTaps && img;
+  const rotate = mint?.rotateSeconds || 30;
+  const open = Boolean(mint?.acceptingTaps && img);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5">
-      {open ? (
+      {err ? (
+        <Banner tone="amber" Icon={QrCode}>{err} Trying again automatically.</Banner>
+      ) : open ? (
         <div className="flex flex-col items-center gap-4 sm:flex-row">
           <img src={img} alt="Check-in code — scan it with a phone camera" className="h-32 w-32 shrink-0 rounded-lg" />
           <div className="min-w-0 flex-1 text-center sm:text-left">
@@ -479,6 +500,14 @@ function QrCard({ sessionId, unitName, times, counts }) {
               <p className="text-sm font-semibold text-slate-700">Check-in opens at {mint.opensAt}</p>
               <p className="text-[12px] text-slate-500">The code appears here on its own when the class window opens.</p>
             </div>
+          ) : mint.phase === "closed" ? (
+            // The term the unit sits in is shut, so the register itself is locked —
+            // different from "the class ran earlier today", and saying "opens at 09:00"
+            // here would promise a code that is never coming.
+            <div>
+              <p className="text-sm font-semibold text-slate-700">This register is closed</p>
+              <p className="text-[12px] text-slate-500">The class sits outside its teaching term, so no code is issued. Reopen the term to edit its registers.</p>
+            </div>
           ) : (
             <div>
               <p className="text-sm font-semibold text-slate-700">Check-in has closed for this class</p>
@@ -490,7 +519,7 @@ function QrCard({ sessionId, unitName, times, counts }) {
 
       {presenting && (
         <Projector
-          unitName={unitName} times={times} img={img} left={left} rotate={rotate}
+          unitName={unitName} times={times} img={err ? "" : img} reconnecting={Boolean(err)}
           counts={counts} onClose={() => setPresenting(false)}
         />
       )}
@@ -516,7 +545,7 @@ function CountdownBar({ left, rotate, thick = false }) {
 // theatre's projector at full brightness is the one place the platform's quiet palette
 // would fight legibility, so this is the register reduced to the three things a room
 // needs: the code, one instruction, and how many people are in.
-function Projector({ unitName, times, img, left, rotate, counts, onClose }) {
+function Projector({ unitName, times, img, reconnecting, counts, onClose }) {
   // Portalled to <body>: position:fixed measures against the nearest TRANSFORMED
   // ancestor, not the viewport, and anything animated above this card would quietly
   // turn "full screen" into "full page" — the overlay laid out against the scroll
@@ -547,13 +576,19 @@ function Projector({ unitName, times, img, left, rotate, counts, onClose }) {
                 style={{ maxHeight: "540px", maxWidth: "min(90vw, 540px)" }}
               />
             </div>
-            <div className="w-full" style={{ maxWidth: 420 }}>
-              <CountdownBar left={left} rotate={rotate} thick />
-            </div>
+            {/* No countdown and no "new code" moment on THIS surface, deliberately. The
+                projector is the student-facing face of the feature; the room only needs
+                the code and the instruction, and the code swapping silently underneath
+                is not something anybody scanning it should have to think about. The
+                lecturer's own card keeps its countdown — that one is a staff diagnostic. */}
             <p className="text-center text-xl font-semibold leading-snug text-slate-800 md:text-3xl">
               Point your phone camera at the code to check in
             </p>
           </>
+        ) : reconnecting ? (
+          // A fetch failed and the retry is running. Saying "closed" here would tell a
+          // room mid-class that check-in is over because of one dropped request.
+          <p className="text-center text-2xl font-semibold text-slate-600 md:text-4xl">One moment — fetching a fresh code…</p>
         ) : (
           // The class window closed while this was on the wall. Say so in projector-size
           // type rather than leaving a dead code up for people to scan at.
