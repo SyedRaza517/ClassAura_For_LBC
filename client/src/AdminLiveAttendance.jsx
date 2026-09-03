@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api } from "./api";
+import { scanLinkFor } from "./scanLink";
 import ConfirmDialog from "./ConfirmDialog";
 import { NAVY } from "./branding";
 
@@ -394,6 +395,11 @@ function QrCard({ sessionId, unitName, times, counts }) {
   // stuck-banner failure the retry exists to remove, one level down.
   const [fails, setFails] = useState(0);
   const [presenting, setPresenting] = useState(false);
+  // True when this screen cannot produce a link a student's phone could open — the
+  // packaged app, where the screen's own address is the device. Held separately from
+  // `err` because it is not a failure to retry: retrying changes nothing, and the
+  // lecturer needs one instruction rather than an error that keeps coming back.
+  const [unreachable, setUnreachable] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -414,7 +420,20 @@ function QrCard({ sessionId, unitName, times, counts }) {
         // and everything after # never leaves the phone — a ?checkin= query would land
         // every live code in the SPA host's access logs and the student's browser
         // history, the two places the server side is careful never to write it.
-        const url = `${window.location.origin}/#checkin=${sessionId}.${r.code}`;
+        //
+        // Null when this screen is not somewhere a student's phone can reach, which is
+        // the packaged app: there the screen's own origin IS the device. Drawing it
+        // anyway fills a projector with a code the whole room fails to open. See
+        // scanLink.js — the rule is refuse rather than mislead, the same one the mint
+        // route follows outside a class's hours.
+        const url = scanLinkFor({
+          native: typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true,
+          origin: window.location.origin,
+          sessionId,
+          code: r.code,
+        });
+        if (!url) { if (alive.current) { setImg(""); setUnreachable(true); } return; }
+        if (alive.current) setUnreachable(false);
         const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#0f172a", light: "#ffffff" } });
         if (alive.current) setImg(dataUrl);
       } else {
@@ -471,7 +490,14 @@ function QrCard({ sessionId, unitName, times, counts }) {
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5">
-      {err ? (
+      {unreachable ? (
+        // Not an error and not worth retrying: the app cannot produce a link a phone in
+        // the room could open, and the fix is a different screen, not a fresh request.
+        <Banner tone="amber" Icon={QrCode}>
+          Open this register in a web browser to show the code. A code shown from the
+          installed app points at this device, so nobody else can scan it.
+        </Banner>
+      ) : err ? (
         <Banner tone="amber" Icon={QrCode}>{err} Trying again automatically.</Banner>
       ) : open ? (
         <div className="flex flex-col items-center gap-4 sm:flex-row">

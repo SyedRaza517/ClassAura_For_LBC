@@ -183,11 +183,14 @@ if (runUnit) {
   //     silently in review: an absent mark rendering as a green tick, and an unmapped
   //     refusal printing the server's own message, one of which is a configuration key's
   //     setup instructions. Both look exactly like a working card.
+  //   scanLink      — whether this screen may draw a code at all. Inside the packaged
+  //     app the page's own address is the device, so a lecturer presenting from it
+  //     would fill a projector with a code the whole room fails to open.
   // client/package.json is "type": "module", so node runs them directly.
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }
