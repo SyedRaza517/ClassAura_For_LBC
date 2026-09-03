@@ -120,7 +120,7 @@ const shift = (hhmm, mins) => {
 
 // Everything this run creates, so the finally block puts the database back exactly as
 // the seed left it — the suites share one seeded database.
-const made = { sessions: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [] };
+const made = { sessions: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [], staff: [] };
 let configExisted = false, priorConfig = null;
 
 async function cleanup() {
@@ -136,6 +136,7 @@ async function cleanup() {
     for (const id of made.terms) await db.term.delete({ where: { id } }).catch(() => {});
     for (const id of made.cohorts) await db.cohort.delete({ where: { id } }).catch(() => {});
     for (const id of made.courses) await db.course.delete({ where: { id } }).catch(() => {});
+    for (const id of made.staff) await db.staff.delete({ where: { id } }).catch(() => {});
 
     // Put the config back exactly as it was — a college left switched ON is the one
     // piece of state here that changes the product for real users.
@@ -537,6 +538,112 @@ try {
       lockedLive.status === 200 && lockedLive.data?.acceptingTaps === false,
       `HTTP ${lockedLive.status} acceptingTaps=${lockedLive.data?.acceptingTaps}`);
   }
+
+
+  /* ====================================================================== */
+  console.log("\n--- the lecturer's door ---");
+  /* ====================================================================== */
+
+  // An ordinary teaching account holds no admin page, and until now could not reach any
+  // of this: the code, the live register and the close button all sat behind DEF-01's
+  // router-wide gate. Being recorded as the TUTOR of a unit is the authority a college
+  // already keeps, so it opens exactly four routes for exactly that person's classes —
+  // and the assertions below are as much about what stays shut as what opens.
+  //
+  // Two seeded STAFF accounts: s1 is made the tutor of this suite's unit; s2 teaches
+  // nothing and stands in for every other member of staff.
+  const TUTOR_ID = "s1", TUTOR_NAME = "James Whitfield", OTHER_ID = "s2";
+  await db.unit.update({ where: { id: unit.id }, data: { tutorStaffId: TUTOR_ID } });
+  const tutorToken = (await login("j.whitfield@edtech.co.uk", SEED_PASSWORD)).data?.token;
+  const otherToken = (await login("a.rahman@edtech.co.uk", SEED_PASSWORD)).data?.token;
+  check("the two seeded staff accounts can sign in", Boolean(tutorToken && otherToken), "");
+  // A second live class on the tutor's unit, with nobody marked on it yet, so closing it
+  // below has something to write and the earlier fixtures keep their marks.
+  const tutorSess = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, -13), endTime: shift(now, 107), description: "qr tutor" } });
+  made.sessions.push(tutorSess.id);
+
+  const nonTutorToday = await call("/hnd/my-sessions/today", { token: otherToken });
+  check("a member of staff teaching nothing is told so, and sees none of these classes",
+    nonTutorToday.status === 200 && nonTutorToday.data?.teaches === false
+      && !(nonTutorToday.data?.sessions || []).some((x) => x.id === tutorSess.id || x.id === live.id),
+    `HTTP ${nonTutorToday.status} teaches=${nonTutorToday.data?.teaches} n=${(nonTutorToday.data?.sessions || []).length}`);
+
+  const tutorToday = await call("/hnd/my-sessions/today", { token: tutorToken });
+  check("the tutor of a unit sees today's classes on it without holding any admin page",
+    tutorToday.status === 200 && tutorToday.data?.teaches === true
+      && (tutorToday.data?.sessions || []).some((x) => x.id === tutorSess.id)
+      && (tutorToday.data?.sessions || []).some((x) => x.id === live.id),
+    `HTTP ${tutorToday.status} teaches=${tutorToday.data?.teaches} n=${(tutorToday.data?.sessions || []).length}`);
+  check("and is not offered the whole college", tutorToday.data?.canSeeAll === false, `canSeeAll=${tutorToday.data?.canSeeAll}`);
+  const tutorAll = await call("/hnd/my-sessions/today?scope=all", { token: tutorToken });
+  check("the tutor cannot widen the list to the whole college", tutorAll.status === 403, `HTTP ${tutorAll.status}`);
+
+  const tutorMint = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: tutorToken });
+  check("the tutor can put their own class's code on the screen",
+    tutorMint.status === 200 && typeof tutorMint.data?.code === "string" && tutorMint.data.code.length === CODE_LENGTH,
+    `HTTP ${tutorMint.status}`);
+  const tutorLive = await call(`/hnd/sessions/${tutorSess.id}/live`, { token: tutorToken });
+  check("the tutor can watch their own register fill", tutorLive.status === 200 && Array.isArray(tutorLive.data?.rows), `HTTP ${tutorLive.status}`);
+  check("and is told they may close it", tutorLive.data?.canClose === true, `canClose=${tutorLive.data?.canClose}`);
+  check("the live view says which check-in methods are on, for the banner",
+    tutorLive.data?.qrEnabled === true && tutorLive.data?.tapEnabled === false,
+    `qrEnabled=${tutorLive.data?.qrEnabled} tapEnabled=${tutorLive.data?.tapEnabled}`);
+
+  const nonTutorMint = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: otherToken });
+  const nonTutorLive = await call(`/hnd/sessions/${tutorSess.id}/live`, { token: otherToken });
+  check("a member of staff who does not teach the unit gets neither the code nor the register",
+    nonTutorMint.status === 403 && nonTutorLive.status === 403, `mint ${nonTutorMint.status} live ${nonTutorLive.status}`);
+  const nonTutorClose = await call(`/hnd/sessions/${tutorSess.id}/mark-remaining-absent`, { method: "POST", token: otherToken });
+  check("nor can they close it", nonTutorClose.status === 403, `HTTP ${nonTutorClose.status}`);
+
+  const tutorStudents = await call("/hnd/students", { token: tutorToken });
+  const tutorUnits = await call("/hnd/units", { token: tutorToken });
+  const tutorRegister = await call(`/hnd/sessions/${tutorSess.id}/register`, { token: tutorToken });
+  check("the door is four routes wide: the directory, the units and the paper register stay shut to the tutor",
+    tutorStudents.status === 403 && tutorUnits.status === 403 && tutorRegister.status === 403,
+    `students ${tutorStudents.status} units ${tutorUnits.status} register ${tutorRegister.status}`);
+
+  const tutorClose = await call(`/hnd/sessions/${tutorSess.id}/mark-remaining-absent`, { method: "POST", token: tutorToken });
+  const closedMarks = await db.attendanceMark.findMany({ where: { sessionId: tutorSess.id } });
+  for (const m of closedMarks) made.marks.push(m.id);
+  check("the tutor can close their own register, and the absences carry their name",
+    tutorClose.status === 200 && tutorClose.data?.marked === 2
+      && closedMarks.length === 2 && closedMarks.every((m) => m.status === "A" && m.takenBy === TUTOR_NAME),
+    `HTTP ${tutorClose.status} marked=${tutorClose.data?.marked} rows=${closedMarks.length} takenBy=${closedMarks[0]?.takenBy}`);
+
+  // An administrator granted the WATCHING page alone. The page exists so a college can
+  // grant watching without editing; the screen must therefore not offer a close button
+  // that only ever answers 403.
+  const watcher = await db.staff.create({ data: {
+    name: `Watcher ${RUN}`, jobTitle: "Administrator", dept: "Administration",
+    email: `watcher-${RUN}@smoke.test`, passwordHash: bcrypt.hashSync(S_PASSWORD, 10),
+    accountRole: "ADMIN", adminPages: JSON.stringify(["live-attendance"]), initials: "WA", colour: "#334155",
+  } });
+  made.staff.push(watcher.id);
+  const watcherToken = (await login(watcher.email, S_PASSWORD)).data?.token;
+  const watcherLive = await call(`/hnd/sessions/${live.id}/live`, { token: watcherToken });
+  const watcherClose = await call(`/hnd/sessions/${live.id}/mark-remaining-absent`, { method: "POST", token: watcherToken });
+  check("an administrator granted only the watching page sees the register but is told not to offer the close button",
+    watcherLive.status === 200 && watcherLive.data?.canClose === false && watcherClose.status === 403,
+    `live ${watcherLive.status} canClose=${watcherLive.data?.canClose} close ${watcherClose.status}`);
+
+  // A register the Moodle importer created is an HndSession like any other, so the
+  // screen mints for it without anybody doing anything. Asserted so the claim in the
+  // handoff — "imported classes are covered automatically" — is a test, not a sentence.
+  const imported = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, -17), endTime: shift(now, 103), description: "Imported from Moodle", moodleSessionId: 987654321 } });
+  made.sessions.push(imported.id);
+  const importedMint = await call(`/hnd/sessions/${imported.id}/qr-code`, { token: adminToken });
+  check("a class imported from Moodle mints a code like any other",
+    importedMint.status === 200 && typeof importedMint.data?.code === "string", `HTTP ${importedMint.status}`);
+
+  // The Registers page needs to know whether to offer a "QR code" action on each session
+  // at all — a button that only ever leads to "switched off" is a dead end.
+  const settingsAdmin = await call("/hnd/check-in-settings", { token: adminToken });
+  const settingsTutor = await call("/hnd/check-in-settings", { token: tutorToken });
+  check("the registers page can ask which check-in methods are on",
+    settingsAdmin.status === 200 && settingsAdmin.data?.qrEnabled === true && settingsAdmin.data?.tapEnabled === false,
+    `HTTP ${settingsAdmin.status} ${JSON.stringify(settingsAdmin.data)}`);
+  check("and that read stays behind the admin gate", settingsTutor.status === 403, `HTTP ${settingsTutor.status}`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

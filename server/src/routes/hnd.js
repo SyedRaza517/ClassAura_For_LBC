@@ -20,7 +20,7 @@ const prisma = require("../db");
 // ones that will NOT be protected by anything the ORM does, and they have to be scoped
 // first. The removed helpers are in git history at the commit that removed them.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
-const { requireAuth, requireAnyPage, hasPage } = require("../auth");
+const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
 const predictionRunner = require("../prediction/runner");
 
@@ -78,7 +78,8 @@ const requireHndWrite = requireAnyPage(["registers", "students"]);
 // registers themselves does not have to be granted a second page to watch one being
 // taken — but a college can now grant the watching WITHOUT the editing, which is the
 // point of the key existing at all.
-const requireLiveAttendance = requireAnyPage(["live-attendance", "registers"]);
+// (Since 3 Sep 2026 the four routes that used this take `lecturerGate` instead, which
+// admits the same pages plus the tutor of the session — see THE LECTURER'S DOOR below.)
 const { isStatus, summarise, summariseCounts } = require("../attendance");
 
 // THE ASSESSMENT TRACKER'S SETUP GRID SETS A MODULE LEADER, AND ONLY A MODULE LEADER.
@@ -129,7 +130,49 @@ router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "asses
 // "executive" is included because the Executive Dashboard reads courses, units,
 // sessions and the monthly attendance summary from here; every WRITE route below
 // additionally requires requireHndWrite, so this only ever grants read access.
-router.use(requireAuth, requireAnyPage(["registers", "students", "executive"]));
+//
+// THE LECTURER'S DOOR (3 Sep 2026). Four paths below — the lecturer's live view — are
+// also reachable by an ordinary STAFF account, for the classes it is recorded as
+// teaching. The router-wide gate steps aside for exactly those paths and nothing else;
+// each of the four then applies its own guard (`lecturerGate`), which admits the page
+// holders it always did OR the tutor of that one session. Everything DEF-01 protects —
+// the directory, the matrix, the units, the paper register — stays behind this gate.
+//
+// An allowlist of paths rather than moving the routes above the gate, because the four
+// share helpers with the rest of this file and the point is legible in one place: these
+// are the only doors, and the list is the thing to read.
+//
+// Found on the way: an administrator granted ONLY `live-attendance` never passed this
+// gate at all, so the page a college could grant "for watching without editing" opened
+// nothing. The bypass fixes that too — the per-route guard was right, the gate above it
+// was not consulted.
+const LECTURER_PATHS = [/^\/my-sessions\/today$/, /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent)$/];
+const isLecturerPath = (req) => LECTURER_PATHS.some((re) => re.test(req.path));
+const adminGate = requireAnyPage(["registers", "students", "executive"]);
+router.use(requireAuth, (req, res, next) => (isLecturerPath(req) ? next() : adminGate(req, res, next)));
+
+// Page holders as before, OR the tutor of the session named in the URL. Async because the
+// second answer needs the session's unit. A session that does not exist answers 403 for a
+// non-page-holder rather than 404: whether a register exists is itself something the
+// directory-less caller has no standing to learn.
+function lecturerGate(pages) {
+  return async (req, res, next) => {
+    try {
+      if (hasPage(req.user, pages)) return next();
+      if (isStudent(req.user)) return res.status(403).json({ error: "Student accounts cannot open a register." });
+      const s = await prisma.hndSession.findUnique({ where: { id: String(req.params.id || "") }, select: { unit: { select: { tutorStaffId: true } } } });
+      if (s?.unit?.tutorStaffId && s.unit.tutorStaffId === req.user.id) return next();
+      return res.status(403).json({ error: "You can only open the classes you teach." });
+    } catch (e) { next(e); }
+  };
+}
+// The today list has no session in its URL: any signed-in member of staff may ask, and
+// gets back only the classes on units they tutor (or nothing, plus `teaches: false`).
+const requireStaffAccount = (req, res, next) => (isStudent(req.user) ? res.status(403).json({ error: "Student accounts cannot open a register." }) : next());
+// Whether THIS caller may close THIS session's register: the page that always could, or
+// the tutor of the unit. Computed once here so the guard and the `canClose` flag the live
+// view hands the screen cannot disagree.
+const mayClose = (user, session) => hasPage(user, ["registers"]) || Boolean(session?.unit?.tutorStaffId && session.unit.tutorStaffId === user?.id);
 
 const PALETTE = ["#1a3a8f", "#9e1b32", "#0d7a5f", "#b45309", "#6d28d9", "#0e7490", "#be123c"];
 const colourFor = (seed) => PALETTE[Math.abs(String(seed).split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % PALETTE.length];
@@ -1281,6 +1324,16 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
   res.json({ ok: true, saved: saved.length, marks: saved.map(sMark) });
 });
 
+// GET /api/hnd/check-in-settings — which self check-in methods this college has on.
+//
+// For the Registers page, which offers a "QR code" action on each session only when
+// there is a code to show. Behind the router-wide gate like every other read here; the
+// full settings (thresholds, rotation) stay on /tags/settings behind their own page.
+router.get("/check-in-settings", async (_req, res) => {
+  const settings = await tapConfig.get();
+  res.json({ tapEnabled: settings.enabled === true, qrEnabled: settings.qrEnabled === true });
+});
+
 /* ========================= the lecturer's live view ========================= */
 
 // GET /api/hnd/my-sessions/today — the classes this account is teaching today.
@@ -1297,10 +1350,14 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
 // through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
 // on: a name typed into a box is not an identity, and matching on it would hand one
 // lecturer another's register whenever two people share a surname.
-router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req, res) => {
+router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, res) => {
   const date = localDate();
   const time = localTime();
   const settings = await tapConfig.get();
+  // Whether this account tutors anything at all. The staff app shows its "My classes"
+  // tile on this, not on the day's list being non-empty: a lecturer with no class today
+  // still teaches, and a tile that vanishes on quiet days reads as the feature breaking.
+  const teaches = (await prisma.unit.count({ where: { tutorStaffId: req.user.id } })) > 0;
 
   // ?scope=all — every session running today, not only the caller's own.
   //
@@ -1349,6 +1406,7 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
     // duplicating the page check above, and a control that always 403s is worse than no
     // control at all.
     canSeeAll: maySeeAll,
+    teaches,
     sessions: sessions.map((s) => ({
       id: s.id,
       unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
@@ -1387,10 +1445,10 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
 // "Not tapped" is a DISPLAY state, not a mark. Nothing is written for those students
 // here — the roll simply has no row for them yet. The only route from this feature to an
 // A is POST /mark-remaining-absent below, with a named human on the end of it.
-router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req, res) => {
+router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
-    include: { unit: { select: { id: true, code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+    include: { unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1445,6 +1503,12 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
     // because the live view already holds the settings; the card itself fetches its
     // code from /sessions/:id/qr-code, which re-checks this server-side.
     qrEnabled: settings.qrEnabled,
+    // The sticker switch too, so the screen can say "nothing here will fill on its own"
+    // only when BOTH are off, with a way to the settings.
+    tapEnabled: settings.enabled,
+    // Whether to OFFER the close button. An administrator granted the watching page
+    // alone could see this screen and press a button that only ever answered 403.
+    canClose: mayClose(req.user, session),
     // Either capture method keeps this true — it gates the badge AND the client's poll,
     // and a QR-only college's register fills exactly as an NFC one's does.
     // The term is part of "accepting", matching the today list and what a tap will
@@ -1490,7 +1554,7 @@ function qrMintAllowed(staffId) {
 // Outside the session's own window no code is minted at all. Verification would
 // refuse it anyway — the window is enforced where it matters, at the scan — but a QR
 // square that can only refuse is worse than a message saying when check-in opens.
-router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (req, res) => {
+router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const settings = await tapConfig.get();
   // 409 rather than 404: the session may be real and the feature simply off, and the
   // screen needs to tell a lecturer those apart.
@@ -1561,7 +1625,7 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
 // path from tap check-in to an absence, and it exists precisely so that no automatic
 // process ever takes it: a phone with a flat battery, a forgotten handset or a device
 // with no NFC must not become an academic record without somebody deciding it should.
-router.post("/sessions/:id/mark-remaining-absent", requireAuth, requireRegisters, async (req, res) => {
+router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
     include: { unit: { include: { term: true } } },
