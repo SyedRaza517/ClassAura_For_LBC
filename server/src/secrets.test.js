@@ -15,7 +15,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { qrSigningKey, SecretsNotConfigured } = require("./secrets");
+const { describeCheckInCodes, qrSigningKey, SecretsNotConfigured } = require("./secrets");
 
 // A fixed 32-byte key, as a person would paste it out of the generator command the
 // error message suggests. Written out so the "distinct from the AES key" assertion
@@ -71,4 +71,29 @@ test("qrSigningKey: no CREDENTIALS_KEY throws SecretsNotConfigured, not a quiet 
   withKey(undefined, () => {
     assert.throws(() => qrSigningKey(), SecretsNotConfigured);
   });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The boot banner line                                                        */
+/* -------------------------------------------------------------------------- */
+
+// A missing CREDENTIALS_KEY refuses every code mint and every scan with a 503, and the
+// server used to start up saying nothing about it. The four integrations beside it
+// (email, push, files, SharePoint) each announce whether they are configured, precisely
+// so a stubbed deployment does not look healthy; check-in codes were the one credential
+// consumer with no such line, and the one whose absence is invisible until a lecturer is
+// standing in front of a room.
+test("the boot banner says plainly when check-in codes cannot be signed", () => {
+  const line = withKey(undefined, () => describeCheckInCodes());
+  assert.match(line, /CREDENTIALS_KEY/, "the line must name the setting to add");
+  assert.match(line, /not configured/i, "a reader skimming the banner must see it is not set");
+  assert.match(line, /check-?in|scan|code/i, "and what stops working because of it");
+});
+
+test("and says so when they can", () => {
+  const line = withKey(RAW_B64, () => describeCheckInCodes());
+  assert.doesNotMatch(line, /not configured/i);
+  // The banner is printed to a log that gets pasted into chats and screenshots.
+  assert.doesNotMatch(line, new RegExp(RAW_B64.slice(0, 12).replace(/[+/]/g, "\\$&")),
+    "the banner must never echo any part of the key itself");
 });

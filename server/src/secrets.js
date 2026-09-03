@@ -77,6 +77,25 @@ function decrypt(stored) {
 // signed under this one for the length of a rotation window.
 const QR_HKDF_INFO = "edtech:qr-checkin:v1";
 
+/**
+ * One line for the boot banner, beside email, push, files and SharePoint.
+ *
+ * Those four announce themselves precisely so a stubbed deployment does not look healthy
+ * until somebody waits for an email that never arrives. Check-in codes were the one
+ * credential consumer with no such line, and the worst one to leave silent: a missing key
+ * refuses every mint and every scan with a 503, so the failure surfaces as a lecturer
+ * standing in front of a room with no code on the wall, or a hall of students whose
+ * scans are all rejected. Nothing before start-up said a thing.
+ *
+ * Never echoes the key or any part of it. This banner is printed to a log that gets
+ * pasted into chats and screenshots.
+ */
+function describeCheckInCodes() {
+  return isConfigured()
+    ? "ready to sign"
+    : "not configured (set CREDENTIALS_KEY, or every check-in code and every scan is refused)";
+}
+
 function qrSigningKey() {
   // hkdfSync returns an ArrayBuffer, not a Buffer; crypto.createHmac accepts both,
   // but the callers compare and slice, so normalise here once.
@@ -94,4 +113,4 @@ function hint(plaintext) {
   return "•".repeat(Math.min(12, s.length - 4)) + s.slice(-4);
 }
 
-module.exports = { encrypt, decrypt, hint, isConfigured, qrSigningKey, SecretsNotConfigured };
+module.exports = { encrypt, decrypt, hint, isConfigured, describeCheckInCodes, qrSigningKey, SecretsNotConfigured };
