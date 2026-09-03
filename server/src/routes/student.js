@@ -12,7 +12,7 @@ const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
-const { resolveTapSession, statusFor, subMinutes, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
+const { resolveTapSession, statusFor, subMinutes, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString } = require("../validate");
@@ -408,19 +408,17 @@ router.post("/me/qr-check-in", async (req, res) => {
   const date = localDate();
   const time = localTime();
 
-  // The session's own window, including the early-arrival grace. Both ends inclusive,
-  // mirroring resolveTapSession: a student who scanned as the class ended did arrive.
-  // Zero-padded HH:MM sorts chronologically, so string compares are enough.
-  const withinWindow = session.date === date
-    && time >= subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0)
-    && time <= session.endTime;
-  if (!withinWindow) {
+  // The session's own window, through the SAME predicate the mint route and both
+  // dashboards use — this check existed four times with drifting copies, and the drift
+  // is precisely how a projector ends up advertising a code every scan is refused.
+  // Window before term, mirroring resolveTapSession: a student who scanned at the wrong
+  // time of day must not be told their term is closed.
+  if (!withinSessionWindow(session, { date, time }, settings)) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "no_session_now" });
     return res.status(409).json({ error: "That class isn't running right now.", reason: "no_session_now" });
   }
 
-  const term = session.unit?.term;
-  if (term && !(date >= term.start && date <= term.end)) {
+  if (!termOpenOn(session.unit?.term, date)) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "term_locked" });
     return res.status(423).json({ error: "That class is outside its teaching term, so the register is closed.", reason: "term_locked" });
   }

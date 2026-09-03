@@ -271,3 +271,70 @@ test("a mark taken by a member of staff is not self-marked", () => {
     assert.equal(isSelfCheckIn(takenBy), false, `${JSON.stringify(takenBy)} must not read as self-marked`);
   }
 });
+
+/* -------------------------------------------------------------------------- */
+/* One "open now" predicate for every surface                                  */
+/* -------------------------------------------------------------------------- */
+// The window test used to exist four times across hnd.js and student.js, drifting in how
+// it coerced earlyGraceMins — and the QR mint route's private copy dropped the term
+// entirely, which put a live code on the projector for a session every scan of which was
+// refused 423. These two helpers are the single copy, and these tests pin the semantics
+// the routes must all share.
+
+const { withinSessionWindow, termOpenOn } = require("./attendanceTap");
+
+test("a session running now, on today's date, is within its window", () => {
+  assert.equal(withinSessionWindow(session(), at("09:07"), settings()), true);
+});
+
+test("both ends of the window are inclusive — the closing minute is still attendance", () => {
+  assert.equal(withinSessionWindow(session(), at("09:00"), settings()), true);
+  assert.equal(withinSessionWindow(session(), at("12:00"), settings()), true);
+  assert.equal(withinSessionWindow(session(), at("12:01"), settings()), false);
+});
+
+test("before the start is outside the window when grace is zero", () => {
+  assert.equal(withinSessionWindow(session(), at("08:59"), settings({ earlyGraceMins: 0 })), false);
+});
+
+test("early grace opens the window before the start", () => {
+  assert.equal(withinSessionWindow(session(), at("08:50"), settings({ earlyGraceMins: 10 })), true);
+  assert.equal(withinSessionWindow(session(), at("08:49"), settings({ earlyGraceMins: 10 })), false);
+});
+
+test("another day is outside the window whatever the time says", () => {
+  // A session dated tomorrow at this exact time must not read as running today.
+  assert.equal(withinSessionWindow(session({ date: "2026-09-02" }), at("09:07")), false);
+});
+
+test("an unusable earlyGraceMins reads as zero rather than poisoning the compare", () => {
+  // `{ earlyGraceMins: "ten" }` is reachable from any JSON client. NaN minutes must not
+  // make subMinutes hand back a string that compares false against every time of day.
+  assert.equal(withinSessionWindow(session(), at("09:07"), settings({ earlyGraceMins: "ten" })), true);
+  assert.equal(withinSessionWindow(session(), at("08:59"), settings({ earlyGraceMins: "ten" })), false);
+});
+
+test("a malformed session time refuses that session rather than comparing garbage", () => {
+  // Matching resolveTapSession: refuse the one broken session visibly, do not let
+  // "NaN:NaN" decide anything.
+  assert.equal(withinSessionWindow(session({ startTime: "nonsense" }), at("09:07"), settings()), false);
+  assert.equal(withinSessionWindow(session({ endTime: "" }), at("09:07"), settings()), false);
+});
+
+test("no term at all means never term-locked — a real state, not an open term", () => {
+  assert.equal(termOpenOn(null, TODAY), true);
+  assert.equal(termOpenOn(undefined, TODAY), true);
+});
+
+test("a date inside the term, boundaries included, is open", () => {
+  const term = { start: "2026-09-01", end: "2026-12-19" };
+  assert.equal(termOpenOn(term, "2026-09-01"), true);
+  assert.equal(termOpenOn(term, "2026-10-15"), true);
+  assert.equal(termOpenOn(term, "2026-12-19"), true);
+});
+
+test("a date outside the term is locked on either side", () => {
+  const term = { start: "2026-09-01", end: "2026-12-19" };
+  assert.equal(termOpenOn(term, "2026-08-31"), false);
+  assert.equal(termOpenOn(term, "2026-12-20"), false);
+});

@@ -142,7 +142,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, isSelfCheckIn } = require("../attendanceTap");
+const { subMinutes, isSelfCheckIn, withinSessionWindow, termOpenOn } = require("../attendanceTap");
 const { windowIndexFor, deriveCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
@@ -1369,10 +1369,11 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
       // every tap on it came back 409, which reads as the app being broken.
       // EITHER capture method counts: a QR-only college's class is open now in every
       // sense this flag is read for — the badge, and whether the live view keeps polling.
+      // The shared predicates, not an inline copy — this test existed four times and the
+      // copies had already drifted (one dropped the term; two coerced grace differently).
       acceptingTaps: (settings.enabled || settings.qrEnabled)
-        && time >= subMinutes(s.startTime, settings.earlyGraceMins)
-        && time <= s.endTime
-        && (!s.unit?.term || (date >= s.unit.term.start && date <= s.unit.term.end)),
+        && withinSessionWindow(s, { date, time }, settings)
+        && termOpenOn(s.unit?.term, date),
     })),
   });
 });
@@ -1446,10 +1447,13 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
     qrEnabled: settings.qrEnabled,
     // Either capture method keeps this true — it gates the badge AND the client's poll,
     // and a QR-only college's register fills exactly as an NFC one's does.
+    // The term is part of "accepting", matching the today list and what a tap will
+    // actually be answered — this copy lacked it, so the badge read "Accepting" on a
+    // locked-term register whose every self check-in came back 423. termLocked below
+    // stays as the separate display detail saying WHY.
     acceptingTaps: (settings.enabled || settings.qrEnabled)
-      && session.date === localDate()
-      && time >= subMinutes(session.startTime, settings.earlyGraceMins)
-      && time <= session.endTime,
+      && withinSessionWindow(session, { date: localDate(), time }, settings)
+      && termOpenOn(session.unit?.term, localDate()),
     // Null when the unit has no term, which is a real state — the register is simply
     // never term-locked — and not the same as "the term is open".
     termLocked: session.unit?.term
@@ -1495,7 +1499,11 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
 
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
-    select: { id: true, date: true, startTime: true, endTime: true },
+    // The term travels with the session because "accepting" INCLUDES it. The first
+    // version of this query left it out, so the route minted a live code for a session
+    // inside a closed term — a projector full of "scan to check in" where every scan
+    // answered 423, the exact failure the today list's acceptingTaps comment records.
+    select: { id: true, date: true, startTime: true, endTime: true, unit: { select: { term: { select: { start: true, end: true } } } } },
   });
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1508,14 +1516,21 @@ router.get("/sessions/:id/qr-code", requireAuth, requireLiveAttendance, async (r
   const opensAt = subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0);
   const date = localDate();
   const time = localTime();
-  const accepting = session.date === date && time >= opensAt && time <= session.endTime;
+  // The shared predicates the verify route and both dashboards use — the mint and the
+  // scan MUST agree to the minute, or the screen advertises what the server refuses.
+  const termOpen = termOpenOn(session.unit?.term, date);
+  const accepting = withinSessionWindow(session, { date, time }, settings) && termOpen;
 
   if (!accepting) {
     // Which side of the window we are on, decided here where the college's clock lives —
     // the client's own clock may sit in any timezone, and "opens at 09:00" shown for a
     // class that finished at lunchtime reads as the screen being broken.
     // A session dated tomorrow is "before" even though today's time is past its start.
-    const phase = session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
+    // A closed term outranks both: "opens at 09:00" for a register the term has locked
+    // would promise a code that is never coming.
+    const phase = !termOpen
+      ? "closed"
+      : session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
     return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, phase, opensAt, closesAt: session.endTime });
   }
 
