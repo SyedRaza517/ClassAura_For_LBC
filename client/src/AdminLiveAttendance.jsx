@@ -42,7 +42,10 @@ const STATUS = {
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
-export default function AdminLiveAttendance() {
+// `settingsHref` is where "switch it on" should send an administrator who holds the
+// settings page, or null for everyone else (the staff app, a watch-only admin), who are
+// told to ask instead. The link is a fragment because the console routes on the hash.
+export default function AdminLiveAttendance({ settingsHref = null }) {
   // "mine" is the default because a lecturer opening this wants their own class, and
   // making the whole college the default would bury it. Remembered per browser so an
   // administrator who lives on the college-wide view is not re-choosing it every day.
@@ -65,7 +68,7 @@ export default function AdminLiveAttendance() {
 
   if (busy && !today) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={28} /></div>;
 
-  if (chosen) return <LiveSession sessionId={chosen} onBack={() => { setChosen(null); loadToday(); }} />;
+  if (chosen) return <LiveSession sessionId={chosen} settingsHref={settingsHref} onBack={() => { setChosen(null); loadToday(); }} />;
 
   const sessions = today?.sessions || [];
   const chooseScope = (next) => {
@@ -107,8 +110,8 @@ export default function AdminLiveAttendance() {
       {today && !today.tapEnabled && !today.qrEnabled && (
         <Banner tone="amber" Icon={Nfc}>
           Self check-in is switched off for this college, so nothing will appear here on its own.
-          Registers can still be taken in the usual way. An administrator can switch on tap or
-          QR check-in under <strong>NFC Tags</strong>.
+          Registers can still be taken in the usual way.{" "}
+          <SwitchOnHint href={settingsHref} />
         </Banner>
       )}
 
@@ -160,6 +163,14 @@ export default function AdminLiveAttendance() {
   );
 }
 
+// One sentence, two audiences: the administrator who can act gets the link, everybody
+// else gets the name of the page to ask about.
+function SwitchOnHint({ href }) {
+  return href
+    ? <a href={href} className="font-bold underline underline-offset-2">Switch on QR or tap check-in</a>
+    : <span>An administrator can switch on QR or tap check-in under <strong>Check-in: QR &amp; NFC</strong>.</span>;
+}
+
 function Banner({ tone, Icon, children }) {
   const tones = {
     rose: "bg-rose-50 text-rose-800 ring-rose-200",
@@ -174,7 +185,10 @@ function Banner({ tone, Icon, children }) {
   );
 }
 
-function LiveSession({ sessionId, onBack }) {
+// Exported: the Registers page opens this same view for any session (from a session row
+// or from the paper register), so the code, the projector and the close button exist
+// once. `backLabel` names where "back" goes from there.
+export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", settingsHref = null }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [closing, setClosing] = useState(false);
@@ -225,7 +239,7 @@ function LiveSession({ sessionId, onBack }) {
 
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <button onClick={onBack} className="press -ml-1 rounded-lg px-2 py-2 text-[13px] font-semibold" style={{ color: NAVY }}>← Today's classes</button>
+      <button onClick={onBack} className="press -ml-1 rounded-lg px-2 py-2 text-[13px] font-semibold" style={{ color: NAVY }}>← {backLabel}</button>
 
       <header className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-bold text-slate-800">{data?.unit?.name || data?.unit?.code || "Register"}</h2>
@@ -258,6 +272,17 @@ function LiveSession({ sessionId, onBack }) {
         {err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}
         {note && <Banner tone="slate" Icon={CheckCircle2}>{note}</Banner>}
       </div>
+
+      {/* Reached from the Registers page, this screen can be the first place somebody
+          learns the college has switched nothing on. Only when BOTH are off: a QR-only
+          register fills on its own perfectly well. Older servers do not send tapEnabled,
+          and undefined must not read as "off". */}
+      {data && data.qrEnabled === false && data.tapEnabled === false && (
+        <Banner tone="amber" Icon={Nfc}>
+          Self check-in is switched off, so this register will only fill when you mark it.{" "}
+          <SwitchOnHint href={settingsHref} />
+        </Banner>
+      )}
 
       {data?.qrEnabled && (
         <QrCard
@@ -325,7 +350,10 @@ function LiveSession({ sessionId, onBack }) {
           {!rows.length && <li className="px-5 py-10 text-center text-sm text-slate-400">Nobody is enrolled on this unit yet.</li>}
         </ul>
 
-        {counts.notMarked > 0 && (
+        {/* Offered only to somebody the server will let close it. An administrator
+            granted the watching page alone used to see this button and get a 403.
+            Undefined (an older server) keeps the old behaviour. */}
+        {counts.notMarked > 0 && data?.canClose !== false && (
           <div className="border-t border-slate-100 bg-slate-50 p-4">
             <button
               onClick={() => setConfirming(true)} disabled={closing}
@@ -387,7 +415,6 @@ function Tally({ n, label, colour }) {
 function QrCard({ sessionId, unitName, times, counts }) {
   const [mint, setMint] = useState(null);   // the last /qr-code answer
   const [img, setImg] = useState("");       // the current code, rendered
-  const [left, setLeft] = useState(0);      // seconds until the code turns over
   const [err, setErr] = useState("");
   // Counts failures rather than just holding one, because it is the retry TRIGGER: two
   // identical failures in a row set the same err string, React skips the no-op state
@@ -409,7 +436,6 @@ function QrCard({ sessionId, unitName, times, counts }) {
       if (!alive.current) return;
       setErr("");
       setMint(r);
-      setLeft(r.secondsLeft ?? 0);
       if (r.code) {
         // The deep link is composed HERE, from the screen's own origin: staff and
         // students use the same deployment, so the code carries whichever host the
@@ -465,12 +491,6 @@ function QrCard({ sessionId, unitName, times, counts }) {
     return () => clearTimeout(t);
   }, [mint, fails, fetchCode]);
 
-  // The countdown between fetches is cosmetic and local; the server's clock decides.
-  useEffect(() => {
-    const t = setInterval(() => setLeft((n) => (n > 0 ? n - 1 : 0)), 1000);
-    return () => clearInterval(t);
-  }, []);
-
   // Escape leaves full screen, matching every other overlay on the platform.
   useEffect(() => {
     if (!presenting) return undefined;
@@ -485,7 +505,6 @@ function QrCard({ sessionId, unitName, times, counts }) {
   // a failure the retry above repairs on its own.
   if (!mint && !err) return null;
 
-  const rotate = mint?.rotateSeconds || 30;
   const open = Boolean(mint?.acceptingTaps && img);
 
   return (
@@ -509,7 +528,9 @@ function QrCard({ sessionId, unitName, times, counts }) {
             <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
               Students scan it with their phone camera to check in.
             </p>
-            <CountdownBar left={left} rotate={rotate} />
+            {/* No countdown, no "new code in" line, on the card as well as the projector
+                (owner, 3 Sep 2026): the code turns over on its own and nobody in the
+                room, lecturer included, has to think about when. */}
             <button
               onClick={() => setPresenting(true)}
               className="press mt-3 rounded-xl px-4 py-2.5 text-[13px] font-bold text-white"
@@ -552,19 +573,6 @@ function QrCard({ sessionId, unitName, times, counts }) {
   );
 }
 
-function CountdownBar({ left, rotate, thick = false }) {
-  return (
-    <div className="mt-2.5 w-full">
-      <div className={`${thick ? "h-1.5" : "h-1"} overflow-hidden rounded-full bg-slate-100`}>
-        <div
-          className="h-full rounded-full transition-[width] duration-1000 ease-linear"
-          style={{ width: `${Math.max(0, Math.min(100, (left / rotate) * 100))}%`, background: NAVY }}
-        />
-      </div>
-      <p className="mt-1 text-[11px] tabular-nums text-slate-400">New code in {left}s</p>
-    </div>
-  );
-}
 
 // Full screen, for the projector at the front of the room. White on purpose — a lecture
 // theatre's projector at full brightness is the one place the platform's quiet palette

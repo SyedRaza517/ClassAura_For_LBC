@@ -35,6 +35,9 @@ export function useApiStore(notify, user) {
   const [unassignedSessions, setUnassignedSessions] = useState(0);
   const [attendance, setAttendance] = useState(null);
   const [hndLoaded, setHndLoaded] = useState(false);
+  // Which self check-in methods the college has on. Safe default = neither, so the
+  // Registers page offers no live-view action until the server has said there is one.
+  const [checkIn, setCheckIn] = useState({ tapEnabled: false, qrEnabled: false });
   // PAT (Personal Academic Tutor) interactions. Admin-only; loaded lazily by the PAT page.
   const [interactions, setInteractions] = useState([]);
   const [interactionsLoaded, setInteractionsLoaded] = useState(false);
@@ -92,6 +95,9 @@ export function useApiStore(notify, user) {
       // (Vercel client ahead of the Render server), it must not break the rest.
       try { setCohorts(await api.listCohorts()); } catch (_) { setCohorts([]); }
       try { setTerms(await api.listTerms()); } catch (_) { setTerms([]); }
+      // Tolerant for the same reason: a client deployed ahead of its server must not
+      // lose the registers page over one missing read. The default offers nothing.
+      try { setCheckIn(await api.checkInSettings()); } catch (_) { /* keep the safe default */ }
     } catch (e) {
       // Tolerate a 403 silently, exactly as refreshAssessments does. AdminKPI calls
       // this on mount, and hndLoaded is set even on failure, so the focus/visibility
@@ -394,6 +400,7 @@ export function useApiStore(notify, user) {
     updateAccess: run((id, pages) => api.updateStaffAccess(id, pages), "Access updated"),
     // HND registers
     refreshHnd,
+    checkIn,
     setSemesterId,
     addSemester: runHnd((data) => api.addSemester(data), (d) => `${d.name} added`),
     updateSemester: runHnd((id, data) => api.updateSemester(id, data), "Semester updated"),

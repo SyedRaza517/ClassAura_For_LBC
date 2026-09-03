@@ -1,4 +1,6 @@
-// NFC Tags — register the stickers, tune how tap check-in behaves, read the tap log.
+// Check-in: QR & NFC — switch either method on, tune how they behave, register the
+// stickers, read the tap log. (Named "NFC Tags" until 3 Sep 2026; the page KEY is
+// still `attendance-tags`, because keys are pinned in two places and grants refer to them.)
 //
 // Two ways to register a sticker, because they suit two different rollouts and a college
 // should not have to pick the hard one:
@@ -74,7 +76,7 @@ export default function AdminNfcTags() {
   return (
     <div className="space-y-5 p-4 md:p-6">
       <header>
-        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Nfc size={18} style={{ color: NAVY }} />NFC Tags</h2>
+        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Nfc size={18} style={{ color: NAVY }} />Check-in: QR &amp; NFC</h2>
         <p className="mt-0.5 text-[13px] text-slate-500">The stickers students and staff tap, and how check-in behaves.</p>
       </header>
       <div role="alert" aria-live="assertive">{err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}</div>

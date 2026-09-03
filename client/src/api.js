@@ -555,6 +555,9 @@ export const api = {
   // Refused with 403 unless they hold registers/students/executive, so the screen only
   // offers it when the server says it may.
   mySessionsToday: (scope) => request("/hnd/my-sessions/today" + (scope === "all" ? "?scope=all" : "")),
+  // Which self check-in methods are on, for the Registers page to decide whether a
+  // session row offers a "QR code" action at all.
+  checkInSettings: () => request("/hnd/check-in-settings"),
   // The ONLY route from tap check-in to an absence, and it takes a named human.
   markRemainingAbsent: (sessionId, override) => request(`/hnd/sessions/${sessionId}/mark-remaining-absent`, { method: "POST", body: override ? { override: true } : {} }),
 
