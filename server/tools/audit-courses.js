@@ -4,8 +4,16 @@
 //   node audit-courses.js
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// It is run from a shell by somebody with database access, over the whole institution by
+// definition. Without this declaration the academic scope guard throws on its first query
+// against Student, Course, Enrolment or AttendanceMark -- which is what happened to all
+// seven tools in this directory when the guard went live, because prisma/seed.js was
+// wrapped and these were forgotten.
+withoutAcademicScope("audit-courses: an operator CLI that reports on the whole college", async () => {
   const courses = await prisma.course.findMany({ orderBy: { name: "asc" } });
   const looseUnits = await prisma.unit.findMany({ where: { courseId: null } });
 
@@ -42,4 +50,4 @@ const prisma = require("../src/db");
   console.log(`Marks in total      : ${await prisma.assessmentGrade.count()}`);
   console.log(`${"═".repeat(78)}\nNothing was changed.\n`);
   await prisma.$disconnect();
-})().catch(async (e) => { console.error("\n✗ Audit failed:", e.message, "\n"); await prisma.$disconnect(); process.exitCode = 1; });
+}).catch(async (e) => { console.error("\n✗ Audit failed:", e.message, "\n"); await prisma.$disconnect(); process.exitCode = 1; });

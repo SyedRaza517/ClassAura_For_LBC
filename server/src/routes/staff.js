@@ -27,7 +27,22 @@ const colourFor = (email) => { let h = 0; for (const ch of String(email)) h = (h
 
 // GET /api/staff  — any authenticated user (needed for calendars / who's-off)
 router.get("/", requireAuth, async (req, res) => {
-  const staff = await prisma.staff.findMany({ orderBy: { name: "asc" } });
+  // THE ACADEMIC DEPARTMENT MEMBERSHIPS ARE INCLUDED, and leaving them out was a real
+  // bug rather than a missing nicety. sStaff emits `academicDepartmentIds` only when the
+  // relation is loaded, and ABSENT is deliberately different from EMPTY there -- "nobody
+  // asked" is not "belongs to none". This is the query behind store.staff, which is what
+  // the Access screen reads, so without the include every member of staff rendered with
+  // no departments ticked under a warning saying they could see nothing. An administrator
+  // correcting that by pressing Save sent an empty list, and the handler's
+  // deleteMany-then-create destroyed the real membership. The screen then agreed with
+  // itself for the first time.
+  //
+  // Only the full shape below carries it. The reduced shape is a hand-built literal and
+  // is unaffected.
+  const staff = await prisma.staff.findMany({
+    orderBy: { name: "asc" },
+    include: { academicDepartments: { select: { academicDepartmentId: true } } },
+  });
   // Full shape (email / allowance / account role / access) goes only to those who
   // manage staff: the Super Admin, or an admin with the staff/settings page. Every
   // other admin gets the same reduced public shape as regular staff — so a restricted

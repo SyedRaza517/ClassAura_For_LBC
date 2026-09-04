@@ -9,6 +9,7 @@
 // Run from server/:  node tools/moodle-attendance-map.js
 require("dotenv").config();
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 
 const URL = (process.env.MOODLE_URL || "").replace(/\/$/, "");
 const TOKEN = process.env.MOODLE_TOKEN;
@@ -60,7 +61,14 @@ function similar(a, b) {
 
 const NON_UNIT = /^(tutorial|workshop|seminar|regular class session|induction|revision|english|conflict|it tools|preparing)/i;
 
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// It is run from a shell by somebody with database access, over the whole institution by
+// definition. Without this declaration the academic scope guard throws on its first query
+// against Student, Course, Enrolment or AttendanceMark -- which is what happened to all
+// seven tools in this directory when the guard went live, because prisma/seed.js was
+// wrapped and these were forgotten.
+withoutAcademicScope("moodle attendance map: an operator CLI covering every course", async () => {
   const courses = await call("core_course_get_courses");
   const acts = [];
   for (const c of courses) {
@@ -144,4 +152,4 @@ const NON_UNIT = /^(tutorial|workshop|seminar|regular class session|induction|re
   console.log("\n  legend:   (blank) mapped    ~ multi-unit    . not a unit    ! needs a decision");
   console.log("\nNothing was changed.");
   await prisma.$disconnect();
-})();
+});

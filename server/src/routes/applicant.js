@@ -10,6 +10,7 @@
 const express = require("express");
 const router = express.Router();
 const prisma = require("../db");
+const { withoutAcademicScope } = require("../academicScope");
 const sharepoint = require("../sharepoint");
 const storage = require("../storage");
 const { ADMISSION_DOC_TYPES, DOC_KEYS, docLabel, admissionFolderSegments } = require("../admissionDocs");
@@ -26,7 +27,21 @@ const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|#%]+/g, " ").replace
 async function emailInUse(emailLc, exceptId) {
   const [staff, student, appl] = await Promise.all([
     prisma.staff.findFirst({ where: { email: emailLc } }).catch(() => null),
-    prisma.student.findFirst({ where: { email: emailLc } }).catch(() => null),
+    // WRAPPED, because this runs UNAUTHENTICATED. A person applying has no account, let
+    // alone a department, so there is no scope -- and the duplicate check must see the
+    // WHOLE college anyway: a student already enrolled is a clash whichever department
+    // they are in.
+    //
+    // The `.catch(() => null)` below is what made this dangerous rather than merely
+    // broken. Without the wrapper the guard threw, the catch swallowed it as "no clash",
+    // and the staff and admission halves of the same check still worked -- so nothing
+    // 500ed and nothing looked wrong, while a public applicant could register on an
+    // ENROLLED STUDENT'S email address. Login is shared across the three account kinds,
+    // so that resolves to the wrong account.
+    withoutAcademicScope(
+      "applicant email check: unauthenticated, and a clash is a clash in any department",
+      () => prisma.student.findFirst({ where: { email: emailLc } }),
+    ).catch(() => null),
     prisma.admission.findFirst({
       where: {
         email: { equals: emailLc, mode: "insensitive" },

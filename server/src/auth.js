@@ -43,6 +43,24 @@ const STUDENT_ROUTERS = ["/api/student", "/api/auth"];
 //   /api/auth      — /login and /change-password, which branch on kind before touching a staff table
 const APPLICANT_ROUTERS = ["/api/applicant", "/api/auth"];
 
+/**
+ * Bind `scope` for the rest of the request, and make sure the promise cannot escape.
+ *
+ * requireAuth previously returned undefined; it now returns whatever runWithAcademicScope
+ * returns. index.js states the hazard plainly: "an async middleware that rejects becomes
+ * an unhandled rejection rather than a 500" -- i.e. process death, the outage that
+ * asyncRoutes.js exists to prevent. And wrapAsync only patches `layer.route.stack`, so a
+ * requireAuth mounted with router.use (26 of the 47 routers do) is not covered by it.
+ *
+ * In practice next() returns undefined synchronously and Express's own Layer.handle_request
+ * converts a downstream synchronous throw into next(err) before it could reach here, so
+ * there is nothing to reject today. This is insurance against that stopping being true:
+ * any rejection is handed to Express's error middleware instead of to the process.
+ */
+function bindScope(scope, next) {
+  return runWithAcademicScope(scope, () => next()).catch(next);
+}
+
 // Attaches req.user = { id, accountRole, ...publicStaff } when a valid Bearer token is present.
 async function requireAuth(req, res, next) {
   try {
@@ -103,7 +121,7 @@ async function requireAuth(req, res, next) {
       // a widening: it says the departmental boundary is not what confines this caller,
       // which is true, and it keeps the guard's "no scope bound" error meaning exactly
       // one thing -- a bug -- rather than sometimes meaning "a student".
-      return runWithAcademicScope(CONFINED_BY_ROUTER, () => next());
+      return bindScope(CONFINED_BY_ROUTER, next);
     }
 
     // Applicant session — a prospective student tracking their own admission. Isolated to
@@ -117,7 +135,7 @@ async function requireAuth(req, res, next) {
       if ((payload.ver ?? 0) !== (applicant.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
       req.user = { id: applicant.id, kind: "applicant", isApplicant: true, ...sApplicant(applicant) };
       // Same reasoning as the student branch above, with APPLICANT_ROUTERS as the fence.
-      return runWithAcademicScope(CONFINED_BY_ROUTER, () => next());
+      return bindScope(CONFINED_BY_ROUTER, next);
     }
 
     // THE MEMBERSHIPS ARE LOADED HERE, and here is the only place they can be. 41 of the
@@ -143,7 +161,7 @@ async function requireAuth(req, res, next) {
     // scopeForStaff is a pure function in academicScope.js rather than inline here, so
     // the question it answers -- does this account see everything? -- is assertable in a
     // unit test instead of only by booting the server and reading a list.
-    return runWithAcademicScope(scopeForStaff(staff), () => next());
+    return bindScope(scopeForStaff(staff), next);
   } catch (e) {
     res.status(401).json({ error: "Invalid or expired token" });
   }

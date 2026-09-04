@@ -93,9 +93,37 @@ router.get("/categories", requireAuth, requirePage("settings"), async (_req, res
  * courses and students to "visible only to college-wide accounts".
  */
 router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
+  // SUPER-ADMIN ONLY, and this gate was missing.
+  //
+  // requirePage("settings") is an ordinary ADMIN_PAGES key, and an admin whose adminPages
+  // is null -- the state at every college that has never configured page grants -- holds
+  // it by default. That made this endpoint a self-service escalation: a Business-scoped
+  // admin could read every category through GET /categories (institution-wide by design),
+  // then PUT the Computing category with their OWN department id. Every Computing course
+  // and student is rewritten into Business, and they then read those students through the
+  // FILTERED paths, with the guard working exactly as designed.
+  //
+  // routes/academicDepartments.js claims PUT /staff/:staffId is "the one endpoint that can
+  // hand somebody the entire college in a single request". It was the second, and it was
+  // the one without the gate. This is a bulk write over Course and Student that redraws
+  // the boundary itself, so it takes the same gate the sibling route takes.
+  if (!req.user?.isSuperAdmin) {
+    return res.status(403).json({ error: "Only the Super Admin can map VLE categories to departments" });
+  }
+
   const externalId = str(req.body?.externalId);
-  const academicDepartmentId = str(req.body?.academicDepartmentId) || null;
   if (!externalId) return res.status(400).json({ error: "externalId is required" });
+
+  // PRESENT, AND EITHER A STRING OR AN EXPLICIT NULL. `str(x) || null` returned "" for any
+  // NON-STRING and then fell to null -- so a number, an array, an object, a boolean or a
+  // field-name typo all became the deliberate un-assign. One such request detaches every
+  // course in the category AND every student in their cohorts, returns 200, and writes an
+  // audit line reading "un-assigned" as though somebody meant it.
+  const rawDept = req.body?.academicDepartmentId;
+  if (rawDept !== null && typeof rawDept !== "string") {
+    return res.status(400).json({ error: "academicDepartmentId must be a department id, or null to un-assign" });
+  }
+  const academicDepartmentId = str(rawDept) || null;
 
   const outcome = await withoutAcademicScope(
     "vle mapping: assigns courses and students across every department",

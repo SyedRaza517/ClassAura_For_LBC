@@ -4,6 +4,7 @@
 // Run from server/:  node tools/moodle-attendance-plan.js
 require("dotenv").config();
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 
 const URL = (process.env.MOODLE_URL || "").replace(/\/$/, "");
 const TOKEN = process.env.MOODLE_TOKEN;
@@ -26,7 +27,14 @@ const initials = (name) =>
 
 const NON_UNIT = /^(tutorial|workshop|regular class session|english|conflict|induction|revision|exam)/i;
 
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// It is run from a shell by somebody with database access, over the whole institution by
+// definition. Without this declaration the academic scope guard throws on its first query
+// against Student, Course, Enrolment or AttendanceMark -- which is what happened to all
+// seven tools in this directory when the guard went live, because prisma/seed.js was
+// wrapped and these were forgotten.
+withoutAcademicScope("moodle attendance plan: an operator CLI covering every course", async () => {
   const courses = await call("core_course_get_courses");
   const acts = [];
   for (const c of courses) {
@@ -100,4 +108,4 @@ const NON_UNIT = /^(tutorial|workshop|regular class session|english|conflict|ind
   console.log(`\n  Staff Hub currently holds ${await prisma.attendanceMark.count()} attendance marks across ${await prisma.hndSession.count()} sessions.`);
   console.log("\nNothing was changed.");
   await prisma.$disconnect();
-})();
+});

@@ -4756,9 +4756,13 @@ function AdminAccess({ store }) {
   const academicOf = (p) => (Array.isArray(p?.academicDepartmentIds) ? p.academicDepartmentIds.filter(k => typeof k === "string") : []);
   const pick = (p) => {
     setSelId(p.id); setPages(grantOf(p)); setMembership(membershipOf(p));
-    setAcademicMembership(academicOf(p)); setCollegeWide(p?.collegeWide !== false);
+    setAcademicMembership(academicOf(p)); setCollegeWide(p?.collegeWide !== false); setAcademicDirty(false);
   };
-  const toggleAcademic = (id) => setAcademicMembership(ms => ms.includes(id) ? ms.filter(x => x !== id) : [...ms, id]);
+  const [academicDirty, setAcademicDirty] = useState(false);
+  const toggleAcademic = (id) => {
+    setAcademicMembership(ms => ms.includes(id) ? ms.filter(x => x !== id) : [...ms, id]);
+    setAcademicDirty(true);
+  };
 
   const saveAcademic = async () => {
     if (!sel) return;
@@ -4766,9 +4770,17 @@ function AdminAccess({ store }) {
     // A SEPARATE REQUEST from Save access below, because it is a separate endpoint with a
     // separate permission. Bundling them would make the ordinary page grant inherit the
     // Super-Admin-only gate, and a settings admin could no longer edit page access at all.
+    //
+    // THE MEMBERSHIP IS SENT WHETHER OR NOT college-wide IS ON. It used to send [] in the
+    // college-wide case, which DESTROYED the list: the handler deletes every membership row
+    // and recreates only what it was given. So ticking college-wide on and saving wiped the
+    // record of which departments the person belonged to, and unticking it later left them
+    // able to see nothing, with nothing to restore from. The flag overrides the list on the
+    // server; it must not erase it.
     try {
-      await api.saveStaffAcademicAccess(sel.id, collegeWide ? [] : academicMembership, collegeWide);
+      await api.saveStaffAcademicAccess(sel.id, academicMembership, collegeWide);
       store.notify?.("Academic department access updated");
+      setAcademicDirty(false);
       store.refresh?.().catch?.(() => {});
     } catch (e) { store.notify?.(e.message || "Action failed", "error"); }
     finally { setSavingAcademic(false); }
@@ -4915,30 +4927,43 @@ function AdminAccess({ store }) {
                 student is visible to at all.
               </p>
 
+              {/* NARROWING IS DISABLED, because the server refuses it.
+                  The guard filters top-level queries only — a Prisma extension cannot reach
+                  a nested include — so an account narrowed to a department would still read
+                  other departments' records through related data. Measured 4 Sep 2026: a
+                  scope owning nothing returned 0 students at the top level and 194 attendance
+                  marks through a session include. Offering the toggle would promise a
+                  confinement the product cannot deliver. Memberships are still recordable
+                  below, so a college can prepare its structure now. */}
               <button
+                disabled
+                title="Departmental scoping is not switched on yet"
                 onClick={() => setCollegeWide(v => !v)}
                 className={"flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition " + (collegeWide ? "bg-amber-50 text-amber-900 ring-amber-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}
               >
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={collegeWide ? { background: "#b45309", borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{collegeWide && <Check size={13} className="text-white" />}</span>
                 <span className="min-w-0">College-wide access</span>
               </button>
-              {collegeWide && (
-                <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
-                  <AlertCircle size={13} className="mt-px shrink-0" />
-                  Sees every department&apos;s students, registers, predictions and pastoral records.
-                </p>
-              )}
+              <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700">
+                <AlertCircle size={13} className="mt-px shrink-0" />
+                <span>
+                  Everyone is college-wide for now, and this cannot be switched off yet: related
+                  records are not filtered, so an account limited to one department could still
+                  reach another&apos;s. Record departments below and assign them to your courses —
+                  restricting staff follows once that is closed.
+                </span>
+              </p>
 
               {/* DISABLED, NOT HIDDEN, while college-wide is on. Hiding it leaves an
                   administrator unable to see what this person would fall back to; showing
                   it live beside a flag that already grants everything invites the reader to
                   believe the list still constrains them. */}
               {academicDepts.length > 0 && (
-                <div className={"mt-3 grid gap-1.5 sm:grid-cols-2 " + (collegeWide ? "pointer-events-none opacity-40" : "")}>
+                <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
                   {academicDepts.map(d => {
                     const on = academicMembership.includes(d.id);
                     return (
-                      <button key={d.id} onClick={() => toggleAcademic(d.id)} disabled={collegeWide}
+                      <button key={d.id} onClick={() => toggleAcademic(d.id)}
                         className={"flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition " + (on ? "bg-blue-50 text-slate-800 ring-blue-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}>
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={on ? { background: d.colour || NAVY, borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{on && <Check size={13} className="text-white" />}</span>
                         <span className="min-w-0 truncate">{d.name}</span>
@@ -4953,13 +4978,9 @@ function AdminAccess({ store }) {
               {academicDepts.length === 0 && (
                 <p className="mt-2 text-[11px] text-slate-400">No academic departments yet &mdash; add them in Settings first.</p>
               )}
-              {!collegeWide && academicMembership.length === 0 && (
-                <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
-                  <AlertCircle size={13} className="mt-px shrink-0" />
-                  Not college-wide and on no department &mdash; they will see no students, courses or registers at all.
-                </p>
-              )}
-              <PrimaryBtn onClick={saveAcademic} disabled={savingAcademic} className="mt-3 w-full">
+              {/* Dirty-guarded like both sibling panels. The one button on this screen that
+                  can change who sees a student's records was the one without a guard. */}
+              <PrimaryBtn onClick={saveAcademic} disabled={savingAcademic || !academicDirty} className="mt-3 w-full">
                 <Save size={16} /> {savingAcademic ? "Saving…" : "Save department access"}
               </PrimaryBtn>
             </div>
@@ -12615,6 +12636,16 @@ function VleDepartmentMapping({ departments, onMapped }) {
   };
 
   if (cats === null) return <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-400">Loading VLE categories…</p>;
+  // THE ERROR IS RENDERED BEFORE THE EMPTY EARLY-RETURN, and that ordering was the bug.
+  // The catch sets both err and cats=[], so a 403, a 500 or a half-migrated column made
+  // this whole section vanish with no message — indistinguishable from "this college has
+  // no courses", on a screen whose entire purpose is to stop mapping being silently wrong.
+  if (err) return (
+    <div className="mt-5 border-t border-slate-100 pt-4">
+      <p className="text-xs font-semibold text-rose-600">Could not load your VLE categories — {err}</p>
+      <p className="mt-1 text-[11px] text-slate-400">Courses may still be unmapped. This is a loading failure, not an empty college.</p>
+    </div>
+  );
   if (!cats.length) return null;
 
   return (

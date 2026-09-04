@@ -130,19 +130,40 @@ try {
     return Object.keys(row).length + " keys";
   });
 
-  await check("a bad colour and a bad key are cleaned rather than stored", async () => {
+  // A BAD COLOUR IS CLEANED; A BAD KEY REFUSES THE WHOLE SUBMISSION. The asymmetry is
+  // deliberate. A colour has a safe fallback, so the row survives. A key does not: an
+  // unusable key means that department is ABSENT from the saved list, and absence is how
+  // this endpoint expresses "retire" -- so silently dropping it would retire a department
+  // the administrator was trying to add.
+  await check("a bad colour is cleaned and the save succeeds", async () => {
     const put = await call("/academic-departments", {
       method: "PUT", token: adminToken,
       body: { departments: [
         { key: BIZ, name: "Business", colour: "javascript:alert(1)" },
         { key: CMP, name: "Computing" },
-        { key: "NOT A KEY", name: "Rejected" },
       ] },
     });
     assert.equal(put.status, 200);
     assert.equal(put.body.departments.find((d) => d.key === BIZ).colour, "#1a3a8f");
-    assert.ok(!put.body.departments.some((d) => d.name === "Rejected"), "an invalid key was stored");
-    return "colour reset, bad key dropped";
+    return "colour reset to the platform default";
+  });
+
+  // Breaks if: cleanList's drop-invalid rule reaches the retire sweep. One unusable key
+  // would then silently retire whichever department it was meant to be.
+  await check("one unusable key refuses the whole submission rather than retiring a department", async () => {
+    const put = await call("/academic-departments", {
+      method: "PUT", token: adminToken,
+      body: { departments: [
+        { key: BIZ, name: "Business" },
+        { key: CMP, name: "Computing" },
+        { key: "NOT A KEY", name: "Rejected" },
+      ] },
+    });
+    assert.equal(put.status, 400, `expected 400, got ${put.status}`);
+    const list = await call("/academic-departments", { token: adminToken });
+    assert.ok(list.body.departments.find((d) => d.key === BIZ)?.active, "a department was retired by a refused save");
+    assert.ok(!list.body.departments.some((d) => d.name === "Rejected"), "an invalid key was stored");
+    return "400, nothing changed";
   });
 
   await check("a non-array body is refused", async () => {
@@ -221,22 +242,75 @@ try {
     return "403";
   });
 
-  await check("the Super Admin can scope a member of staff to one department", async () => {
+  // NARROWING IS REFUSED, AND THAT IS THE POINT OF THIS ASSERTION.
+  //
+  // The guard rewrites the TOP-LEVEL query only; a Prisma extension cannot reach a nested
+  // include. Measured on 4 Sep 2026 with a scope owning nothing: student.findMany() gave
+  // 0 while hndSession.findMany({ include: { marks: true } }) gave 194 attendance marks.
+  // So an account narrowed to one department is NOT confined, and an API that accepted the
+  // request would make the product promise something it cannot keep. Spec 2 closes the
+  // nested reads route by route; until then this is a 400.
+  await check("narrowing an account is REFUSED while nested reads are unfiltered", async () => {
     const list = await call("/academic-departments", { token: adminToken });
     const biz = list.body.departments.find((d) => d.key === BIZ);
     const res = await call(`/academic-departments/staff/${plain.id}`, {
       method: "PUT", token: boss.token, body: { academicDepartmentIds: [biz.id], collegeWide: false },
     });
+    assert.equal(res.status, 400, `expected 400, got ${res.status} — ${JSON.stringify(res.body)}`);
+    assert.match(res.body.error || "", /not switched on yet/i);
+    const s = await db.staff.findUnique({ where: { id: plain.id } });
+    assert.equal(s.collegeWide, true, "the account was narrowed anyway");
+    return "400, still college-wide";
+  });
+
+  // The permitted half still works: memberships can be recorded while the account stays
+  // college-wide, so a college can prepare its structure before spec 2 turns filtering on.
+  await check("assigning departments while staying college-wide is allowed", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const res = await call(`/academic-departments/staff/${plain.id}`, {
+      method: "PUT", token: boss.token, body: { academicDepartmentIds: [biz.id], collegeWide: true },
+    });
     assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
     const rows = await db.staffAcademicDepartment.findMany({ where: { staffId: plain.id } });
     assert.deepEqual(rows.map((r) => r.academicDepartmentId), [biz.id]);
-    const s = await db.staff.findUnique({ where: { id: plain.id } });
-    assert.equal(s.collegeWide, false);
-    return "1 department, collegeWide false";
+    return "1 department, still college-wide";
+  });
+
+  // Breaks if: the mapping PUT keeps only requirePage("settings"). An admin whose
+  // adminPages is null holds that page by default, which made this a self-service
+  // escalation -- remap another department's category to your own id, then read those
+  // students through the filtered paths with the guard working as designed.
+  await check("an ordinary settings admin is REFUSED the VLE mapping write", async () => {
+    const res = await call("/vle-department-mapping", {
+      method: "PUT", token: plain.token,
+      body: { externalId: `cat-${stamp}`, academicDepartmentId: null },
+    });
+    assert.equal(res.status, 403, `expected 403, got ${res.status}`);
+    return "403";
   });
 
   // Breaks if: an unknown id is silently dropped. The Access screen would then show a
   // grant that was never made, which is worse than an error somebody can act on.
+  // Breaks if: GET /staff drops the academicDepartments include. sStaff emits the field
+  // only when the relation is loaded, and the Access screen reads it from THAT list -- so
+  // without the include every member of staff renders with no departments ticked, under a
+  // warning saying they can see nothing. An administrator correcting that by pressing Save
+  // sends an empty list and the handler destroys the real membership. The screen then
+  // agrees with itself, which is why nothing would have reported it.
+  await check("the staff LIST carries academicDepartmentIds, not just the auth lookup", async () => {
+    const res = await call("/staff", { token: adminToken });
+    const row = (res.body || []).find((p) => p.id === plain.id);
+    assert.ok(row, "the fixture is missing from the staff list");
+    assert.ok(Array.isArray(row.academicDepartmentIds),
+      "the staff list does not carry academicDepartmentIds — the Access screen will show every account as scoped to nothing");
+    assert.equal(row.academicDepartmentIds.length, 1, "the membership just granted is not reflected in the list");
+    // college-wide, because narrowing is refused while nested reads are unfiltered — the
+    // membership is recorded and the flag stays on.
+    assert.equal(row.collegeWide, true);
+    return "1 department, still college-wide";
+  });
+
   await check("an unknown department id is refused, not silently dropped", async () => {
     const res = await call(`/academic-departments/staff/${plain.id}`, {
       method: "PUT", token: boss.token, body: { academicDepartmentIds: ["not-a-real-id"], collegeWide: false },
@@ -247,19 +321,66 @@ try {
     return "400, membership unchanged";
   });
 
-  await check("collegeWide is set only by an exact true, never by a truthy value", async () => {
+  // A truthy non-boolean is REFUSED rather than coerced in either direction. Reading "yes"
+  // as true would grant the college; reading it as false would revoke access silently.
+  // Neither is a guess worth making about the flag that decides who sees every student.
+  await check("a truthy non-boolean collegeWide is refused, not coerced", async () => {
     const res = await call(`/academic-departments/staff/${plain.id}`, {
       method: "PUT", token: boss.token, body: { academicDepartmentIds: [], collegeWide: "yes" },
     });
-    assert.equal(res.status, 200);
-    const s = await db.staff.findUnique({ where: { id: plain.id } });
-    assert.equal(s.collegeWide, false, '"yes" was read as college-wide access');
-    return "still false";
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    return "400";
+  });
+
+  // Breaks if: collegeWide is read as `=== true` with no presence check. A client that
+  // PATCHes only the department list would then silently strip college-wide access --
+  // and combined with the self-lockout below, that is how a Super Admin blinds
+  // themselves by accident rather than on purpose.
+  await check("an omitted collegeWide is refused rather than read as false", async () => {
+    const res = await call(`/academic-departments/staff/${plain.id}`, {
+      method: "PUT", token: boss.token, body: { academicDepartmentIds: [] },
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    return "400";
+  });
+
+  // Breaks if: nothing stops an account removing its OWN college-wide access. The Super
+  // Admin would match `{ in: [] }` on every scoped model -- every register, student list
+  // and prediction empty -- and the screen that would explain it is the empty one. This
+  // follows the precedent in routes/staff.js, which special-cases the Super Admin's own
+  // row so the equivalent lockout cannot be typed.
+  await check("a Super Admin cannot remove their OWN college-wide access", async () => {
+    const res = await call(`/academic-departments/staff/${boss.id}`, {
+      method: "PUT", token: boss.token, body: { academicDepartmentIds: [], collegeWide: false },
+    });
+    // 400 either way — today from the narrowing gate, and from the self-lockout check once
+    // spec 2 lifts that gate. Both are the right answer; the assertion is that the Super
+    // Admin is still college-wide afterwards.
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    const s2 = await db.staff.findUnique({ where: { id: boss.id } });
+    assert.equal(s2.collegeWide, true, "the Super Admin locked themselves out");
+    return "400, still college-wide";
+  });
+
+  // Breaks if: cleanList's drop-invalid rule composes with retire-by-omission. Every row
+  // being invalid yields an EMPTY kept list, and `notIn: []` matches every row -- so one
+  // malformed submission retires the college's entire organisation chart, with a 200.
+  await check("a submission whose rows are all invalid is refused, not read as retire-everything", async () => {
+    const res = await call("/academic-departments", {
+      method: "PUT", token: adminToken,
+      body: { departments: [{ name: "No key at all" }, { key: "BAD KEY", name: "x" }] },
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    const list = await call("/academic-departments", { token: adminToken });
+    assert.ok(list.body.departments.find((d) => d.key === BIZ)?.active, "the whole chart was retired by a bad submission");
+    return "400, chart intact";
   });
 
   await check("a staff member who does not exist gives 404", async () => {
+    // collegeWide TRUE deliberately: a false value is refused by the narrowing gate before
+    // the staff row is ever looked up, which would make this assert the wrong thing.
     const res = await call("/academic-departments/staff/nobody", {
-      method: "PUT", token: boss.token, body: { academicDepartmentIds: [], collegeWide: false },
+      method: "PUT", token: boss.token, body: { academicDepartmentIds: [], collegeWide: true },
     });
     assert.equal(res.status, 404);
     return "404";
@@ -360,7 +481,7 @@ try {
     mappingStudentId = s.id;
 
     const res = await call("/vle-department-mapping", {
-      method: "PUT", token: adminToken,
+      method: "PUT", token: boss.token,
       body: { externalId: `cat-${stamp}`, academicDepartmentId: biz.id },
     });
     assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
@@ -376,7 +497,7 @@ try {
 
   await check("an unknown department is refused and nothing is written", async () => {
     const res = await call("/vle-department-mapping", {
-      method: "PUT", token: adminToken,
+      method: "PUT", token: boss.token,
       body: { externalId: `cat-${stamp}`, academicDepartmentId: "not-a-real-department" },
     });
     assert.equal(res.status, 400, `expected 400, got ${res.status}`);
@@ -385,15 +506,59 @@ try {
     return "400, nothing changed";
   });
 
-  await check("a category nobody has is a 404, not a silent success", async () => {
+  // Breaks if: academicDepartmentId is coerced with str(), which returns "" for ANY
+  // non-string and then falls to null. A client sending a NUMBER -- Moodle's own numeric
+  // id, or Number(select.value), or a field-name typo -- would detach every course in the
+  // category AND every student in their cohorts, return 200, and write an audit line
+  // reading "un-assigned" as though it were intended. One request, every student in the
+  // college, no error anywhere.
+  await check("a non-string department id is refused, not read as un-assign", async () => {
+    const before = await db.student.findUnique({ where: { id: mappingStudentId } });
+    assert.ok(before.academicDepartmentId, "precondition: the student should be assigned");
+    for (const bad of [42, ["x"], { id: "x" }, true]) {
+      const res = await call("/vle-department-mapping", {
+        method: "PUT", token: boss.token,
+        body: { externalId: `cat-${stamp}`, academicDepartmentId: bad },
+      });
+      assert.equal(res.status, 400, `${JSON.stringify(bad)} gave ${res.status}, not 400`);
+    }
+    const after = await db.student.findUnique({ where: { id: mappingStudentId } });
+    assert.equal(after.academicDepartmentId, before.academicDepartmentId, "a refused request un-assigned the student anyway");
+    return "400 for each, nothing written";
+  });
+
+  // Un-assigning must still be possible, but only by saying so explicitly.
+  await check("an explicit null still un-assigns", async () => {
     const res = await call("/vle-department-mapping", {
-      method: "PUT", token: adminToken, body: { externalId: `nope-${stamp}` },
+      method: "PUT", token: boss.token,
+      body: { externalId: `cat-${stamp}`, academicDepartmentId: null },
+    });
+    assert.equal(res.status, 200, `explicit null gave ${res.status}`);
+    const after = await db.student.findUnique({ where: { id: mappingStudentId } });
+    assert.equal(after.academicDepartmentId, null);
+    return "un-assigned on purpose";
+  });
+
+  await check("a category nobody has is a 404, not a silent success", async () => {
+    // academicDepartmentId is sent EXPLICITLY as null. Omitting it is now a 400 -- an
+    // absent field must not mean the same thing as a deliberate un-assign, because that
+    // is how a field-name typo detached a whole category.
+    const res = await call("/vle-department-mapping", {
+      method: "PUT", token: boss.token, body: { externalId: `nope-${stamp}`, academicDepartmentId: null },
     });
     assert.equal(res.status, 404);
     return "404";
   });
 
   await check("a mapped category reports the department it is mapped to", async () => {
+    // Re-mapped first: the explicit-null assertion above deliberately un-assigned this
+    // category, so without this the assertion would be reading that un-assign back.
+    const list0 = await call("/academic-departments", { token: adminToken });
+    const biz0 = list0.body.departments.find((d) => d.key === BIZ);
+    const remap = await call("/vle-department-mapping", {
+      method: "PUT", token: boss.token, body: { externalId: `cat-${stamp}`, academicDepartmentId: biz0.id },
+    });
+    assert.equal(remap.status, 200, `re-map gave ${remap.status}`);
     const res = await call("/vle-department-mapping/categories", { token: adminToken });
     const cat = res.body.categories.find((c) => c.externalId === `cat-${stamp}`);
     const list = await call("/academic-departments", { token: adminToken });

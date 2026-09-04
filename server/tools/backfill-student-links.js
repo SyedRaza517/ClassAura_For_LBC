@@ -41,6 +41,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 // The rules live in a PURE module with tests beside them, because deciding whether one
 // person is another is the most dangerous arithmetic here and nearly every test of it
 // is a refusal. This script is the plumbing; src/linkRules.js is the judgement.
@@ -109,7 +110,14 @@ async function propose(rows) {
   }
 }
 
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// It is run from a shell by somebody with database access, over the whole institution by
+// definition. Without this declaration the academic scope guard throws on its first query
+// against Student, Course, Enrolment or AttendanceMark -- which is what happened to all
+// seven tools in this directory when the guard went live, because prisma/seed.js was
+// wrapped and these were forgotten.
+withoutAcademicScope("backfill-student-links: an operator CLI that repairs links college-wide", async () => {
   // One deployment, one institution, one database — so there is nothing to iterate
   // over and no tenant column in the CSV. The database named by DATABASE_URL IS the
   // scope, which is exactly why the header comment above refuses to reuse a mapping
@@ -143,4 +151,4 @@ async function propose(rows) {
   // the only thing that does.
 
   await prisma.$disconnect();
-})().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });
+}).catch((e) => { console.error("FAILED:", e.message); process.exit(1); });

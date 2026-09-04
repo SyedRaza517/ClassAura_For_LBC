@@ -3,7 +3,7 @@
 //
 // No database, no Express. Run with: node --test src/academicScope.test.js (from server/)
 //
-// WHY ASYNCLOCALSTORAGE AND NOT A PARAMETER. 41 of the 43 routers apply requireAuth per
+// WHY ASYNCLOCALSTORAGE AND NOT A PARAMETER. 21 of the 47 routers apply requireAuth per
 // HANDLER rather than per router, so there is no single middleware seam to thread a
 // scope argument through, and ~275 handlers would each have to remember to pass it. A
 // handler that forgets fails OPEN and silently. db.js records this exact reasoning for

@@ -37,7 +37,32 @@ const API = {
 // A build is the right place to catch this, because by the time a person notices they
 // are usually holding a phone and blaming the feature.
 const OUR_HOSTS = Object.values(API).map((u) => new URL(u).host);
-const isOurApi = (url) => OUR_HOSTS.some((h) => url.includes(h));
+
+/**
+ * Is this URL one of this project's own APIs?
+ *
+ * COMPARES THE PARSED HOST, and that is the whole point of it. This was
+ * `OUR_HOSTS.some((h) => url.includes(h))` — a substring test, which passes for any URL
+ * that merely CONTAINS one of our hostnames anywhere in it:
+ *
+ *   https://edtech-xr8g.onrender.com.attacker.net/api   ← a different host entirely
+ *   https://attacker.net/?x=edtech-xr8g.onrender.com    ← ours only in the query string
+ *
+ * Both would have built a client, and every packaged mobile app from it, pointing at
+ * somebody else's server. This guard exists BECAUSE a build once shipped aimed at
+ * another product's API for days; a check that can be walked past by appending a domain
+ * suffix is not the guard the comment below claims it is.
+ *
+ * An unparseable URL is not ours either — `new URL` throws on one, and a build with a
+ * malformed API URL is broken whatever was intended by it.
+ */
+function isOurApi(url) {
+  try {
+    return OUR_HOSTS.includes(new URL(url).host);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Where a deployed build should point when nobody has said explicitly.

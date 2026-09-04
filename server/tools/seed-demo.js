@@ -23,6 +23,7 @@ require("../prisma/assertDisposable").assertDisposable(
   "tools/seed-demo.js DELETES this institution's students, courses, registers, attendance, leave and check-ins before reseeding"
 );
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 
 const uid = () => crypto.randomUUID();
 const rnd = (n) => Math.floor(Math.random() * n);
@@ -200,7 +201,14 @@ async function main() {
 
 // One deployment, one institution: there is no slug to look up and nothing to run
 // "inside". The database named by DATABASE_URL is the institution.
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// It is run from a shell by somebody with database access, over the whole institution by
+// definition. Without this declaration the academic scope guard throws on its first query
+// against Student, Course, Enrolment or AttendanceMark -- which is what happened to all
+// seven tools in this directory when the guard went live, because prisma/seed.js was
+// wrapped and these were forgotten.
+withoutAcademicScope("seed-demo: an operator CLI that builds the whole demo college", async () => {
   console.log("Seeding demo data (this DELETES the existing data in this database)");
   await main();
-})().catch((e) => { console.error("Seed failed:", e); process.exit(1); }).finally(() => prisma.$disconnect());
+}).catch((e) => { console.error("Seed failed:", e); process.exit(1); }).finally(() => prisma.$disconnect());

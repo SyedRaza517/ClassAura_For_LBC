@@ -10,6 +10,7 @@
 // Sending is best-effort: email.sendEmail() never throws, and a failed job never stops the
 // others (see runDaily). This module has no timers of its own — the scheduler owns those.
 const prisma = require("./db");
+const { withoutAcademicScope } = require("./academicScope");
 const email = require("./email");
 const bankHolidays = require("./bankHolidays");
 const mailFrom = require("./mailFrom");
@@ -339,7 +340,26 @@ async function runAssessmentReminders() {
 
 // Run all three jobs. Each is wrapped so a failure in one never stops the others; the
 // error is captured into the returned summary for the scheduler to log.
+/**
+ * The nightly jobs -- birthdays, bank-holiday notices, assessment reminders.
+ *
+ * INSTITUTION-WIDE, and this wrapper was missing. All three read Student or Enrolment,
+ * both departmental models, from a scheduler that has no caller and therefore no scope.
+ * The guard threw on each -- and runDaily catches every job into `summary.<job>.error` so
+ * that one failure cannot stop the others, which meant the whole thing failed SILENTLY:
+ * birthday emails, "the college is closed tomorrow" notices and assessment reminders all
+ * stopped from the first night after deploy, with one log line and nothing else.
+ *
+ * Caught by an audit, not by a test: no suite exercises runDaily.
+ */
 async function runDaily() {
+  return withoutAcademicScope(
+    "nightly notifications: birthdays, bank holidays and assessment reminders for the whole college",
+    () => runDailyInner(),
+  );
+}
+
+async function runDailyInner() {
   const summary = {};
 
   try { summary.birthdays = await runBirthdays(); }

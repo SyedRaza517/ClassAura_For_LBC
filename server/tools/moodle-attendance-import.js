@@ -16,6 +16,7 @@
 //     Moodle value is reported as a conflict and skipped.
 require("dotenv").config();
 const prisma = require("../src/db");
+const { withoutAcademicScope } = require("../src/academicScope");
 
 const URL = (process.env.MOODLE_URL || "").replace(/\/$/, "");
 const TOKEN = process.env.MOODLE_TOKEN;
@@ -89,7 +90,13 @@ const addMin = (t, mins) => {
   return `${String(Math.floor(x / 60) % 24).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`;
 };
 
-(async () => {
+// AN OPERATOR CLI HAS NO CALLER AND THEREFORE NO DEPARTMENT.
+//
+// Run from a shell by somebody with database access, over the whole institution by
+// definition. Without this the academic scope guard throws on the first Student query
+// below -- which is what happened to every tool in this directory when the guard went
+// live, because prisma/seed.js was wrapped and these were forgotten.
+withoutAcademicScope("moodle attendance import: an operator CLI covering every course", async () => {
   if (!URL || !TOKEN) { console.log("MOODLE_URL / MOODLE_TOKEN not set"); process.exit(1); }
   console.log(APPLY ? "APPLYING — this writes to the database.\n" : "DRY RUN — nothing will be written. Add --apply to import.\n");
 
@@ -224,5 +231,5 @@ const addMin = (t, mins) => {
   else console.log(`\nTotals now: ${await prisma.hndSession.count()} registers, ${await prisma.attendanceMark.count()} marks.`);
   console.log("\nTo reverse:  node tools/moodle-attendance-import.js --undo --apply");
   await prisma.$disconnect();
-})();
+});
 }

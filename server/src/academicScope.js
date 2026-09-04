@@ -13,7 +13,7 @@
 //   * It has a designed all-access role (Staff.collegeWide). Tenancy deliberately had
 //     none, which is why crossTenant() had to exist as an escape hatch bolted on beside.
 //
-// WHY AsyncLocalStorage RATHER THAN A PARAMETER. 41 of the 43 routers apply requireAuth
+// WHY AsyncLocalStorage RATHER THAN A PARAMETER. 21 of the 47 routers apply requireAuth
 // per HANDLER, not per router, so there is no single seam to thread an argument through.
 // Passing it explicitly means ~275 handlers each remembering, and the one that forgets
 // fails OPEN and silently. db.js states the same conclusion for the same reason:
