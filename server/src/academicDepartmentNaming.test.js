@@ -64,3 +64,18 @@ test("the academic department relations set null on delete, never cascade", () =
     assert.match(ref, /onDelete: SetNull/, `relation must SetNull, got: ${ref.trim()}`);
   }
 });
+
+test("the curriculum models carry their own academicDepartmentId", () => {
+  // WHY A COLUMN AND NOT A `via` PATH. scopePredicateFor emits
+  // { [via]: { academicDepartmentId: { in: [...] } } }, which requires the RELATED model to
+  // carry the column itself. Unit does not, so HndSession declared { via: "unit" } does not
+  // filter — it throws PrismaClientValidationError. Measured 4 Sep 2026. Every spec 2 path
+  // is a single hop only because these four columns exist.
+  for (const model of ["Unit", "Cohort", "TimetableSlot", "TimetableEvent"]) {
+    const block = SCHEMA.split(/^model /m).find((b) => b.startsWith(model + " "));
+    assert.ok(block, `model ${model} not found`);
+    assert.match(block, /academicDepartmentId\s+String\?/, `${model} has no academicDepartmentId`);
+    assert.match(block, /academicDepartment\s+AcademicDepartment\?[^\n]*onDelete: SetNull/,
+      `${model} must SetNull — deleting a department cannot delete curriculum`);
+  }
+});

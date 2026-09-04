@@ -672,8 +672,25 @@ model TimetableSlot {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  /// Which academic department this belongs to — and here NULL MEANS "SHOWN TO EVERYONE",
+  /// which is the opposite of the rule everywhere else in this feature.
+  ///
+  /// It is the one place fail-OPEN is right, and the reason is what the row IS. `courseId`
+  /// is nullable because these deliberately carry sessions that are not units at all —
+  /// "Academic Skills Workshop", "Study Support". Scoping them through the course would
+  /// fail closed on that null and delete most of what this model exists for from every
+  /// departmental tutor's timetable. A workshop is not a student record: hiding it removes
+  /// a service, showing it reveals that the college runs a workshop on Tuesday.
+  ///
+  /// A column rather than a blanket "a null foreign key is public" rule, because a blanket
+  /// rule is indistinguishable from somebody forgetting to set a value. Here the null is a
+  /// decision, and academicScopeModels.js gives it its own `columnOrNull` kind.
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@index([courseId, year, termNumber])
   @@index([unitId])
+  @@index([academicDepartmentId])
 }
 
 // The academic calendar for one (course, year, term): the term's start/end dates and a
@@ -715,8 +732,23 @@ model Cohort {
 
   timetableEvents TimetableEventGroup[]
 
+  /// Which academic department runs this intake. Denormalised from the course, exactly as
+  /// Student.academicDepartmentId is denormalised through the cohort.
+  ///
+  /// A COLUMN RATHER THAN A DERIVED PATH, and this one is not a performance choice. The
+  /// scope guard's `via` resolves a SINGLE hop and needs the related model to carry the
+  /// column itself, so HndSession -> Unit -> Course is unreachable: declared { via: "unit" }
+  /// it throws rather than filters. Measured 4 Sep 2026. This column is what makes every
+  /// spec 2 path a single hop.
+  ///
+  /// Maintained by academicDepartments.assignCourses(), the one implementation of "move a
+  /// course and everything hanging off it".
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@unique([courseId, name]) // no duplicate intake names within one course
   @@index([courseId])
+  @@index([academicDepartmentId])
 }
 
 // One teaching term within a cohort. An HND cohort runs 6: Year 1 Terms 1-3 and
@@ -822,11 +854,26 @@ model Unit {
 
   timetableEvents TimetableEvent[]
 
+  /// Which academic department teaches this unit. Denormalised from the course, exactly as
+  /// Student.academicDepartmentId is denormalised through the cohort.
+  ///
+  /// A COLUMN RATHER THAN A DERIVED PATH, and this one is not a performance choice. The
+  /// scope guard's `via` resolves a SINGLE hop and needs the related model to carry the
+  /// column itself, so HndSession -> Unit -> Course is unreachable: declared { via: "unit" }
+  /// it throws rather than filters. Measured 4 Sep 2026. This column is what makes every
+  /// spec 2 path a single hop.
+  ///
+  /// Maintained by academicDepartments.assignCourses(), the one implementation of "move a
+  /// course and everything hanging off it".
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@unique([courseId, code])
   @@index([courseId])
   @@index([cohortId])
   @@index([termId])
   @@index([leaderStaffId])
+  @@index([academicDepartmentId])
 }
 
 // An assessment belonging to a unit (course) — e.g. "Assignment 1" worth 40%.
@@ -3150,9 +3197,27 @@ model TimetableEvent {
   groups TimetableEventGroup[]
 
   // Every read of this table is a date-window read.
+
+  /// Which academic department this belongs to — and here NULL MEANS "SHOWN TO EVERYONE",
+  /// which is the opposite of the rule everywhere else in this feature.
+  ///
+  /// It is the one place fail-OPEN is right, and the reason is what the row IS. `courseId`
+  /// is nullable because these deliberately carry sessions that are not units at all —
+  /// "Academic Skills Workshop", "Study Support". Scoping them through the course would
+  /// fail closed on that null and delete most of what this model exists for from every
+  /// departmental tutor's timetable. A workshop is not a student record: hiding it removes
+  /// a service, showing it reveals that the college runs a workshop on Tuesday.
+  ///
+  /// A column rather than a blanket "a null foreign key is public" rule, because a blanket
+  /// rule is indistinguishable from somebody forgetting to set a value. Here the null is a
+  /// decision, and academicScopeModels.js gives it its own `columnOrNull` kind.
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@index([date])
   @@index([roomId])
   @@index([unitId])
+  @@index([academicDepartmentId])
 }
 
 // Which staff member teaches an event. Several are allowed -- a lecture with a
@@ -3454,9 +3519,13 @@ model AcademicDepartment {
 
   createdAt DateTime @default(now())
 
-  courses  Course[]
-  students Student[]
-  staff    StaffAcademicDepartment[]
+  courses        Course[]
+  students       Student[]
+  staff          StaffAcademicDepartment[]
+  TimetableSlot  TimetableSlot[]
+  Cohort         Cohort[]
+  Unit           Unit[]
+  TimetableEvent TimetableEvent[]
 
   @@index([active])
 }

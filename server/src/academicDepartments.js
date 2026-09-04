@@ -176,15 +176,30 @@ async function forCohort(cohortId) {
  * @returns {{courseCount:number, studentCount:number}}
  */
 async function assignCourses(prismaOrTx, courseIds, academicDepartmentId) {
-  if (!courseIds.length) return { courseCount: 0, studentCount: 0 };
-  const [courses, students] = await prismaOrTx.$transaction([
+  if (!courseIds.length) return { courseCount: 0, studentCount: 0, unitCount: 0, cohortCount: 0 };
+  // UNITS AND COHORTS MOVE WITH THE COURSE, in the same transaction as the students.
+  //
+  // They carry their own copy of the department since spec 2, and a copy that is only
+  // correct on the day it is written is worse than no copy: a unit left behind is a register
+  // the department that now owns the course cannot open, and a unit that moved without its
+  // cohort is a timetable disagreeing with itself.
+  //
+  // Still the ONE implementation. Both writers of Course.academicDepartmentId -- the course
+  // routes and the VLE category mapping -- call this, so neither can drift from the other,
+  // and breaking it fails both of their assertions.
+  const [courses, students, units, cohorts] = await prismaOrTx.$transaction([
     prismaOrTx.course.updateMany({ where: { id: { in: courseIds } }, data: { academicDepartmentId } }),
     prismaOrTx.student.updateMany({
       where: { cohort: { courseId: { in: courseIds } } },
       data: { academicDepartmentId },
     }),
+    prismaOrTx.unit.updateMany({ where: { courseId: { in: courseIds } }, data: { academicDepartmentId } }),
+    prismaOrTx.cohort.updateMany({ where: { courseId: { in: courseIds } }, data: { academicDepartmentId } }),
   ]);
-  return { courseCount: courses.count, studentCount: students.count };
+  return {
+    courseCount: courses.count, studentCount: students.count,
+    unitCount: units.count, cohortCount: cohorts.count,
+  };
 }
 
 module.exports = {
