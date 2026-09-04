@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api } from "./api";
-import { scanLinkFor } from "./scanLink";
+import { scanLinkFor, isLocalOnlyOrigin } from "./scanLink";
 import ConfirmDialog from "./ConfirmDialog";
 import { NAVY } from "./branding";
 
@@ -483,6 +483,9 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
   // `err` because it is not a failure to retry: retrying changes nothing, and the
   // lecturer needs one instruction rather than an error that keeps coming back.
   const [unreachable, setUnreachable] = useState(false);
+  // The code works, but it points at this computer, so no phone in the room can open it.
+  // Development only (see scanLink.js). A note beside the code, never on the projector.
+  const [localOnly, setLocalOnly] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
@@ -515,7 +518,7 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
           code: r.code,
         });
         if (!url) { if (alive.current) { setImg(""); setUnreachable(true); } return; }
-        if (alive.current) setUnreachable(false);
+        if (alive.current) { setUnreachable(false); setLocalOnly(isLocalOnlyOrigin(window.location.origin)); }
         const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#0f172a", light: "#ffffff" } });
         if (alive.current) setImg(dataUrl);
       } else {
@@ -622,6 +625,17 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
             </div>
           )}
         </div>
+      )}
+
+      {/* BELOW the code and its instruction, spanning the card, rather than in the column
+          beside the image where a phone-width shell squeezes it into a ribbon. Only ever on
+          a developer's machine (see scanLink.js), and never on the projector: the room
+          cannot act on it. */}
+      {open && localOnly && (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800 ring-1 ring-amber-200">
+          This code points at this computer, so a phone cannot open it. Open the app on this
+          machine&rsquo;s network address instead, then show the code again.
+        </p>
       )}
 
       {presenting && (

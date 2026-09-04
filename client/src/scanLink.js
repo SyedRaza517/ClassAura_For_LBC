@@ -35,6 +35,25 @@ export function canPresentCode({ native, origin }) {
 }
 
 /**
+ * Is this code pointing at the machine showing it, rather than somewhere a phone can go?
+ *
+ * `canPresentCode` deliberately ALLOWS `localhost:PORT`, because that is how the feature is
+ * exercised without a handset. The consequence is a code that works perfectly in a second
+ * browser tab and cannot be opened by a single phone in the room, which is indistinguishable
+ * from "the feature is broken" unless somebody says so. This is the saying-so: the
+ * lecturer's own card carries a note, the projector does not (the room cannot act on it).
+ *
+ * Only ever true in development. A deployed college is on its own domain, so this returns
+ * false and no note is drawn. An unusable origin returns false rather than true, because
+ * `canPresentCode` has already refused it outright and two contradictory messages on one
+ * screen is worse than one.
+ */
+export function isLocalOnlyOrigin(origin) {
+  if (!origin || typeof origin !== "string") return false;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+}
+
+/**
  * The link the code encodes, or null when this screen must not draw one.
  *
  * The code rides in the FRAGMENT. Everything after # never leaves the phone, whereas a
