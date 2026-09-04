@@ -4,7 +4,7 @@
 
 **Goal:** Land the `AcademicDepartment` model, a central scope guard that cannot be forgotten, and the screens to configure it — while changing what every existing user sees by exactly nothing.
 
-**Architecture:** A real `AcademicDepartment` table sits above `Course`. Scope for a request is resolved inside `requireAuth` (the only place every authenticated request passes through, because 41 of 43 routers apply auth per-handler rather than per-router) and bound with `AsyncLocalStorage`. A Prisma client extension consults a per-model declaration and injects the predicate; a model absent from the declaration throws, and so does a scoped query with no bound scope. Raw SQL cannot be reached by the extension, so the six existing `$queryRawUnsafe` calls take an explicit predicate from a helper that throws. Nothing is filtered in this spec: the migration marks every existing staff account college-wide, so the injected predicate is empty.
+**Architecture:** A real `AcademicDepartment` table sits above `Course`. Scope for a request is resolved inside `requireAuth` (the only place every authenticated request passes through, because 21 of the 47 routers apply auth per-handler rather than per-router) and bound with `AsyncLocalStorage`. A Prisma client extension consults a per-model declaration and injects the predicate; a model absent from the declaration throws, and so does a scoped query with no bound scope. Raw SQL cannot be reached by the extension, so the six existing `$queryRawUnsafe` calls take an explicit predicate from a helper that throws. Nothing is filtered in this spec: the migration marks every existing staff account college-wide, so the injected predicate is empty.
 
 **Tech Stack:** Node 20 + Express, Prisma 5 + PostgreSQL, `node:test` for unit tests, `scripts/smoke-*.mjs` for HTTP suites, React 18 + Vite for the client.
 
@@ -606,7 +606,7 @@ Create `server/src/academicScope.test.js`:
 //
 // No database, no Express. Run with: node --test src/academicScope.test.js (from server/)
 //
-// WHY ASYNCLOCALSTORAGE AND NOT A PARAMETER. 41 of the 43 routers apply requireAuth per
+// WHY ASYNCLOCALSTORAGE AND NOT A PARAMETER. 21 of the 47 routers apply requireAuth per
 // HANDLER rather than per router, so there is no single middleware seam to thread a
 // scope argument through, and ~275 handlers would each have to remember to pass it. A
 // handler that forgets fails OPEN and silently. db.js records this exact reasoning for
@@ -702,7 +702,7 @@ Create `server/src/academicScope.js`:
 //   * It has a designed all-access role (Staff.collegeWide). Tenancy deliberately had
 //     none, which is why crossTenant() had to exist as an escape hatch.
 //
-// WHY AsyncLocalStorage RATHER THAN A PARAMETER. 41 of the 43 routers apply requireAuth
+// WHY AsyncLocalStorage RATHER THAN A PARAMETER. 21 of the 47 routers apply requireAuth
 // per HANDLER, not per router, so there is no single seam to thread an argument through.
 // Passing it explicitly means ~275 handlers each remembering, and the one that forgets
 // fails OPEN and silently. db.js states the same conclusion for the same reason.
@@ -1212,7 +1212,7 @@ In `server/src/auth.js`, the staff branch loads the staff row. Add the membershi
 
 ```js
 // The membership rows are loaded HERE rather than in each route because this is the
-// only place every authenticated request passes through: 41 of the 43 routers apply
+// only place every authenticated request passes through: 21 of the 47 routers apply
 // requireAuth per HANDLER, not per router, so there is no later seam guaranteed to run.
 const staff = await prisma.staff.findUnique({
   where: { id: payload.sub },
@@ -1340,7 +1340,7 @@ git add scripts/smoke-academic-scope.mjs server/src/auth.js server/src/serialize
 git commit -m "Turn the academic scope guard on, with the proof it works
 
 requireAuth is the only place every authenticated request passes through, since
-41 of 43 routers apply auth per handler. Background work names itself with
+21 of the 47 routers apply auth per handler. Background work names itself with
 withoutAcademicScope(reason) rather than carrying a department id.
 
 The smoke suite was written first and watched failing: assertions 3-7 all 500ed

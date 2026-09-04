@@ -107,9 +107,14 @@ const MODEL_SCOPE = {
   TimetableUserPref: "UNSCOPED",
 
   /* ---- Institution-wide for now: admissions, funding ---------------------- */
-  // Spec 3 scopes these, and cannot until Admission and SlcApplication have a real
-  // relation to Student. They hold the student's name and typed college id as plain
-  // strings today, and matching on those would attach one student's record to another.
+  // Spec 3 scopes these, and it is NOT blocked. An earlier version of this comment said it
+  // was -- that Admission and SlcApplication hold the student's name and typed college id
+  // as plain strings, so matching on them would attach one student's record to another.
+  // That was true when CLAUDE.md was written and is no longer true of the schema:
+  // SlcApplication.student and Admission.linkedStudent are both real relations with
+  // indexes, added by migration 20260828T230000_link_finance_to_student. Both can carry a
+  // { via: … } whenever spec 3 runs. The stale note would have deferred spec 3 for a
+  // reason that had already been fixed.
   Admission: "UNSCOPED",
   AdmissionDocument: "UNSCOPED",
   AdmissionCourse: "UNSCOPED",

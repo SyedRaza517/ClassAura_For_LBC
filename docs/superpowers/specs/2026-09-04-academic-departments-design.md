@@ -462,11 +462,14 @@ and the client must never be the only thing enforcing a boundary.
 
 ### 9.4 Admissions and SLC have no link to scope
 
-`Admission` and `SlcApplication` hold the student's name and typed college ID as plain
-strings with **no relation to `Student`** — CLAUDE.md is explicit that matching on
-them would attach one student's record to another and calls that a data-protection
-incident. Spec 3 therefore has to build the real relation *before* it can scope
-anything, which is why it is sequenced after specs 1–2 rather than bundled with them.
+~~`Admission` and `SlcApplication` hold the student's name and typed college ID as plain
+strings with no relation to `Student`.~~ **CORRECTED 4 Sep 2026: the relation already
+exists.** `SlcApplication.student` and `Admission.linkedStudent` are both real relations
+with indexes, added by migration `20260828T230000_link_finance_to_student` — a week before
+this document was written. The string-matching hazard CLAUDE.md describes is real and still
+forbids matching on `studentName`/`studentRef`, but it is not a blocker: spec 3 can scope
+both models through their existing relations. This paragraph would have deferred spec 3 for
+a reason that had already been fixed.
 
 ### 9.5 Open questions
 
