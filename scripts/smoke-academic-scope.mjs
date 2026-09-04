@@ -238,6 +238,40 @@ try {
     return "404, and the row is untouched";
   });
 
+  /* ------------------------------------------------------------------------ */
+  /* 12-14. The raw SQL aggregates, which no client extension can reach         */
+  /* ------------------------------------------------------------------------ */
+
+  // Breaks if: the hand-written predicate is not wired into the raw queries, or is wired
+  // in with a syntax error. The unit tests prove the HELPER; only this proves the five
+  // call sites actually use it and still produce valid SQL. A malformed join or a
+  // mismatched $n offset is a 500, not a wrong number, so this catches both.
+  await check("the raw attendance aggregate runs for a scoped caller", async () => {
+    const res = await call("/hnd/attendance/monthly", { token: narrowedToken });
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body).slice(0, 300)}`);
+    return `marked=${res.body?.totals?.marked}`;
+  });
+
+  // THE DISCRIMINATING HALF. The seed writes attendance marks for students who have no
+  // department, so a scoped caller must count NONE of them while a college-wide caller
+  // counts them all. Without this pair, a predicate that silently did nothing would pass
+  // the assertion above perfectly.
+  await check("a scoped caller counts none of another department's attendance", async () => {
+    const scoped = await call("/hnd/attendance/monthly", { token: narrowedToken });
+    const wide = await call("/hnd/attendance/monthly", { token: adminToken });
+    assert.equal(scoped.body.totals.marked, 0, "a Business-scoped caller counted unassigned students' marks");
+    assert.ok(wide.body.totals.marked > 0, "the college-wide caller saw no marks either, so this proves nothing");
+    return `scoped=0, college-wide=${wide.body.totals.marked}`;
+  });
+
+  // The second raw shape: sessions, scoped through the unit's course rather than through
+  // a student. Different join, different failure mode, so it needs its own assertion.
+  await check("the second raw aggregate (per student/unit) runs for a scoped caller", async () => {
+    const res = await call("/hnd/attendance", { token: narrowedToken });
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body).slice(0, 300)}`);
+    return "200";
+  });
+
   // The control: the same route, the same account, its OWN course. Without this, a route
   // that 404s on everything passes the assertion above.
   await check("...and can still rename its own department's course", async () => {

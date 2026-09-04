@@ -16,6 +16,7 @@
 // whenever the caller passes a partial config.
 
 const prisma = require("./db");
+const { scopedStudentJoin } = require("./academicScopeSql");
 const { summariseCounts } = require("./attendance");
 const email = require("./email");
 const bands = require("./attendanceBands");
@@ -253,6 +254,11 @@ async function computeCurrentTermAttendance(term, bandList) {
   // The database holds one college now, so the join is the whole filter — but note the
   // shape that made the old bug possible is still here. Any raw SQL added below is
   // filtered by exactly what it says and by nothing else.
+  // Departmental scope, by hand, because raw SQL bypasses the client extension -- the
+  // comment above already records that this is the shape that made the old tenant bug
+  // possible. A college-wide caller (which the monthly scheduler always is) gets an empty
+  // join and an empty predicate, so the query is unchanged for it.
+  const dept = scopedStudentJoin('am."studentId"');
   const perSU = await prisma.$queryRawUnsafe(`
     SELECT am."studentId" sid, se."unitId" mid,
       count(*) FILTER (WHERE am.status='P')::int p,
@@ -261,9 +267,9 @@ async function computeCurrentTermAttendance(term, bandList) {
       count(*) FILTER (WHERE am.status='A')::int a
     FROM "AttendanceMark" am
     JOIN "HndSession" se ON se.id = am."sessionId"
-    JOIN "Enrolment" en ON en."studentId" = am."studentId" AND en."unitId" = se."unitId"
-    WHERE se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}
-    GROUP BY am."studentId", se."unitId"`);
+    JOIN "Enrolment" en ON en."studentId" = am."studentId" AND en."unitId" = se."unitId"${dept.join}
+    WHERE se.date >= ${q(semester.start)} AND se.date <= ${q(semester.end)}${dept.sql}
+    GROUP BY am."studentId", se."unitId"`, ...dept.params);
 
   // studentId -> Map(unitId -> { p, l, e, a }).
   const index = new Map();

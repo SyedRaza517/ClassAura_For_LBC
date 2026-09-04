@@ -12,16 +12,32 @@ const prisma = require("../db");
 //
 // One deployment now serves one institution and its own database, so there is no other
 // college's rows for these aggregates to reach: `SELECT ... FROM "AttendanceMark"` is
-// this college's attendance by construction. The predicates are gone rather than
+// this college's attendance by construction. The tenant predicates are gone rather than
 // defaulted to a resolved id, because a predicate that is always true reads as a
 // working guard to the next person and would be the thing they trusted.
 //
-// If this product is ever served from a shared database again, these queries are the
-// ones that will NOT be protected by anything the ORM does, and they have to be scoped
-// first. The removed helpers are in git history at the commit that removed them.
+// AND THEN A PREDICATE CAME BACK, ON 4 SEP 2026 -- A DEPARTMENTAL ONE.
+//
+// The prediction of the paragraph above turned out to be exactly right, one boundary
+// early. These aggregates are still the queries NOT protected by anything the ORM does:
+// academicScopeGuard.js hooks $allModels, and $queryRawUnsafe is a client-level method
+// that never reaches it. So each of the four raw queries in this file now appends a
+// predicate by hand, from academicScopeSql.js, whose helper THROWS when no scope is bound
+// for precisely the reason stated above.
+//
+// TWO SHAPES, because these queries reach a department two different ways. A mark belongs
+// to a student, and Student carries academicDepartmentId -- scopedStudentJoin. A SESSION
+// has no student at all (a scheduled class whose register may be empty), so it goes
+// Unit -> Course -> academicDepartmentId instead -- scopedCourseJoinFromUnit.
+//
+// THE JOIN IS OMITTED ENTIRELY FOR A COLLEGE-WIDE CALLER, and that is deliberate rather
+// than an optimisation. An INNER JOIN drops rows whose foreign key is null, and
+// Unit.courseId is nullable -- so always joining would quietly change the session counts
+// for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
+const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("../academicScopeSql");
 const predictionRunner = require("../prediction/runner");
 
 /**
@@ -1555,8 +1571,16 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   if (courseId) { params.push(courseId); conds.push(`u."courseId" = $${params.length}`); }
   if (byYear) { params.push(yearNum); conds.push(`u."year" = $${params.length}`); }
   if (byTerm) { params.push(termNum); conds.push(`u."termNumber" = $${params.length}`); }
-  const where = conds.length ? ` WHERE ${conds.join(" AND ")}` : "";
-  const rows = await prisma.$queryRawUnsafe(`${base}${where} GROUP BY 1 ORDER BY 1`, ...params);
+  // Departmental scope, appended by hand because $queryRaw never reaches the client
+  // extension -- see the header of this file. A college-wide caller gets an empty join
+  // and an empty predicate, so the query below is character-for-character what it was.
+  const dept = scopedStudentJoin('am."studentId"', params.length);
+  const where = conds.length ? ` WHERE ${conds.join(" AND ")}${dept.sql}`
+    : (dept.sql ? ` WHERE TRUE${dept.sql}` : "");
+  const rows = await prisma.$queryRawUnsafe(
+    `${base}${dept.join}${where} GROUP BY 1 ORDER BY 1`,
+    ...params, ...dept.params,
+  );
   let P = 0, L = 0, E = 0, A = 0;
   const months = rows.map((r) => {
     P += r.p; L += r.l; E += r.e; A += r.a;
@@ -1572,8 +1596,14 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   if (courseId) { sParams.push(courseId); sConds.push(`u."courseId" = $${sParams.length}`); }
   if (byYear) { sParams.push(yearNum); sConds.push(`u."year" = $${sParams.length}`); }
   if (byTerm) { sParams.push(termNum); sConds.push(`u."termNumber" = $${sParams.length}`); }
-  const sWhere = sConds.length ? ` WHERE ${sConds.join(" AND ")}` : "";
-  const sessRows = await prisma.$queryRawUnsafe(`SELECT count(*)::int n FROM "HndSession" se ${sJoin}${sWhere}`, ...sParams);
+  // A session has no student, so it reaches a department through its unit's course.
+  const sDept = scopedCourseJoinFromUnit('se."unitId"', sParams.length);
+  const sWhere = sConds.length ? ` WHERE ${sConds.join(" AND ")}${sDept.sql}`
+    : (sDept.sql ? ` WHERE TRUE${sDept.sql}` : "");
+  const sessRows = await prisma.$queryRawUnsafe(
+    `SELECT count(*)::int n FROM "HndSession" se ${sJoin}${sDept.join}${sWhere}`,
+    ...sParams, ...sDept.params,
+  );
   res.json({ months, totals: { pct: t.pct, marked: t.marked, present: P, late: L, excused: E, absent: A }, sessions: sessRows[0]?.n || 0 });
 });
 
@@ -1604,6 +1634,12 @@ router.get("/attendance", requireAuth, async (req, res) => {
     return "TRUE";
   };
 
+  // Both raw aggregates below are scoped by hand. perSM hangs off the mark, so it goes
+  // through the student; sessAgg counts SESSIONS, which have no student, so it goes
+  // through the unit's course. Neither takes bound parameters (the dates are inlined from
+  // our own semester rows), so both offsets are 0.
+  const pDept = scopedStudentJoin('am."studentId"');
+  const sessDept = scopedCourseJoinFromUnit('hs."unitId"');
   const [units, students, perSM, sessAgg, enrolAgg] = await Promise.all([
     prisma.unit.findMany({ orderBy: { code: "asc" } }),
     prisma.student.findMany({
@@ -1617,14 +1653,16 @@ router.get("/attendance", requireAuth, async (req, res) => {
         count(*) FILTER (WHERE am.status='L')::int l,
         count(*) FILTER (WHERE am.status='E')::int e,
         count(*) FILTER (WHERE am.status='A')::int a
-      FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId"
-      WHERE ${dateCond("se.date")}
-      GROUP BY am."studentId", se."unitId"`),
+      FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId"${pDept.join}
+      WHERE ${dateCond("se.date")}${pDept.sql}
+      GROUP BY am."studentId", se."unitId"`, ...pDept.params),
     // Session counts per unit: all-time and scoped, in one pass.
     prisma.$queryRawUnsafe(`
-      SELECT "unitId" mid, count(*)::int all_c,
-        count(*) FILTER (WHERE ${dateCond("date")})::int scoped_c
-      FROM "HndSession" GROUP BY "unitId"`),
+      SELECT hs."unitId" mid, count(*)::int all_c,
+        count(*) FILTER (WHERE ${dateCond("hs.date")})::int scoped_c
+      FROM "HndSession" hs${sessDept.join}
+      ${sessDept.sql ? `WHERE TRUE${sessDept.sql}` : ""}
+      GROUP BY hs."unitId"`, ...sessDept.params),
     prisma.enrolment.groupBy({ by: ["unitId"], _count: { _all: true } }),
   ]);
 
