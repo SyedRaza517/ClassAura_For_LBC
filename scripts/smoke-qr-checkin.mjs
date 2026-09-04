@@ -205,10 +205,31 @@ try {
   made.sessions.push(future.id);
 
   /* ====================================================================== */
-  console.log("\n--- the feature ships switched off ---");
+  console.log("\n--- what a college gets before it has touched the settings ---");
   /* ====================================================================== */
 
+  // NO settings row at all, which is every college that has never opened the screen. The
+  // resolver then answers the shipped defaults, and since 4 Sep 2026 those are QR ON and
+  // stickers OFF. Asserted over HTTP rather than against DEFAULTS, because the unit test
+  // already pins the constant and what matters here is what a real request actually gets.
   await db.attendanceTapConfig.deleteMany({});
+
+  const bareCtx = await call("/student/me/tap-context", { token: qcToken });
+  check("a college that has never opened the settings gets QR check-in on",
+    bareCtx.status === 200 && bareCtx.data?.qrEnabled === true, `HTTP ${bareCtx.status} qrEnabled=${bareCtx.data?.qrEnabled}`);
+  check("and does NOT get sticker check-in, which needs hardware nobody has placed",
+    bareCtx.data?.enabled === false, `enabled=${bareCtx.data?.enabled}`);
+  const bareMint = await call(`/hnd/sessions/${live.id}/qr-code`, { token: adminToken });
+  check("so the lecturer's screen has a code without anybody configuring anything",
+    bareMint.status === 200 && typeof bareMint.data?.code === "string", `HTTP ${bareMint.status}`);
+
+  /* ====================================================================== */
+  console.log("\n--- and what it gets once it switches the code off ---");
+  /* ====================================================================== */
+
+  // Explicitly off, which is a college that has opened the screen and said no. Deleting
+  // the row no longer expresses this: with the default on, "no row" means ON.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { qrEnabled: false } });
 
   const offScan = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: codeFor(live.id) } });
   check("a scan is refused while QR check-in is off", offScan.status === 403, `HTTP ${offScan.status}`);
@@ -725,6 +746,117 @@ try {
   check("a device id is cut to size and stripped of anything but id characters",
     typeof junkRow?.deviceId === "string" && junkRow.deviceId.length <= 64 && /^[A-Za-z0-9_-]+$/.test(junkRow.deviceId),
     `stored=${String(junkRow?.deviceId).slice(0, 70)}`);
+
+
+
+  /* ====================================================================== */
+  console.log("\n--- the lecturer still owns the register ---");
+  /* ====================================================================== */
+
+  // The other half of "a scan cannot overwrite a lecturer's mark". That rule protects the
+  // human in the room; it must not have accidentally made a scanned mark UNCORRECTABLE,
+  // which would be worse — a student wrongly marked by a code they scanned in the corridor
+  // with no way for the tutor to put it right. Staff authority wins, and the arrival time
+  // survives the correction because the student did arrive; only the judgement changes.
+  const beforeFix = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
+  check("the scanned mark is on file before the correction",
+    beforeFix?.status === "P" && beforeFix?.takenBy === "Self check-in (QR)",
+    `status=${beforeFix?.status} takenBy=${beforeFix?.takenBy}`);
+
+  const correction = await call(`/hnd/sessions/${live.id}/register`, {
+    method: "PUT", token: adminToken,
+    body: { marks: [{ studentId: QA_ID, status: "E", remark: "left early, agreed with tutor" }] },
+  });
+  const afterFix = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
+  check("a lecturer CAN correct a mark a student scanned",
+    correction.status === 200 && afterFix?.status === "E",
+    `HTTP ${correction.status} status=${afterFix?.status}`);
+  check("and the corrected mark is attributed to the member of staff, not to the code",
+    afterFix?.takenBy && afterFix.takenBy !== "Self check-in (QR)", `takenBy=${afterFix?.takenBy}`);
+  check("while the minute the student actually arrived survives the correction",
+    afterFix?.checkedInAt === beforeFix?.checkedInAt && !!afterFix?.checkedInAt,
+    `before=${beforeFix?.checkedInAt} after=${afterFix?.checkedInAt}`);
+
+  // And the corrected register is not a door back in: the student cannot scan again to
+  // undo the tutor's decision.
+  const rescanAfterFix = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: codeFor(live.id) } });
+  const stillFixed = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
+  check("and the student cannot scan their way back over the tutor's correction",
+    stillFixed?.status === "E", `status=${stillFixed?.status} (scan answered HTTP ${rescanAfterFix.status})`);
+
+  /* ====================================================================== */
+  console.log("\n--- switching the feature on and off while people are using it ---");
+  /* ====================================================================== */
+
+  // The owner's question: does flipping this switch mid-term break anything. The risk is
+  // not the switch itself, it is everything holding a decision made a moment earlier — a
+  // code already on a projector, a screen mid-poll, a settings cache. So the cycle is run
+  // TWICE, and the important assertion is the third one: a code minted while the feature
+  // was on must stop working the instant it is off. If it did not, switching the feature
+  // off would leave a window in which the register could still be written to by anybody
+  // holding a photograph of the screen.
+  const setQr = (on) => call("/tags/settings", { method: "PUT", token: adminToken, body: { qrEnabled: on } });
+  const toggleSession = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, -21), endTime: shift(now, 99), description: "qr toggle" } });
+  made.sessions.push(toggleSession.id);
+  // QB is seeded onto the term-locked unit, not this one. Without this the last scan below
+  // is refused for NOT BEING ENROLLED and the toggle proves nothing — which is exactly how
+  // it failed the first time it ran.
+  const toggleEnrolment = await db.enrolment.create({ data: { studentId: QB_ID, unitId: unit.id } });
+  made.enrolments.push(toggleEnrolment.id);
+
+  for (const cycle of [1, 2]) {
+    const onAgain = await setQr(true);
+    check(`cycle ${cycle}: an administrator can switch QR check-in on`,
+      onAgain.status === 200 && onAgain.data?.qrEnabled === true, `HTTP ${onAgain.status}`);
+
+    const mintOn = await call(`/hnd/sessions/${toggleSession.id}/qr-code`, { token: adminToken });
+    check(`cycle ${cycle}: the screen gets a code while it is on`,
+      mintOn.status === 200 && typeof mintOn.data?.code === "string", `HTTP ${mintOn.status}`);
+    // The code the lecturer is holding at the moment the switch is thrown.
+    const codeInHand = mintOn.data?.code;
+
+    const offNow = await setQr(false);
+    check(`cycle ${cycle}: and can switch it back off`,
+      offNow.status === 200 && offNow.data?.qrEnabled === false, `HTTP ${offNow.status}`);
+
+    const staleScan = await call("/student/me/qr-check-in", { method: "POST", token: qbToken, body: { sessionId: toggleSession.id, code: codeInHand } });
+    check(`cycle ${cycle}: a code minted a moment earlier is refused the instant the feature is off`,
+      staleScan.status === 403 && staleScan.data?.reason === "qr_off",
+      `HTTP ${staleScan.status} reason=${staleScan.data?.reason}`);
+    const noMark = await db.attendanceMark.findFirst({ where: { sessionId: toggleSession.id, studentId: QB_ID } });
+    check(`cycle ${cycle}: and it wrote nothing`, !noMark, noMark ? `mark ${noMark.id} written` : "");
+
+    const mintOff = await call(`/hnd/sessions/${toggleSession.id}/qr-code`, { token: adminToken });
+    check(`cycle ${cycle}: the screen is told the feature is off rather than being handed a dead code`,
+      mintOff.status === 409 && mintOff.data?.reason === "qr_disabled", `HTTP ${mintOff.status}`);
+
+    // Both capture methods are now off, which is the one state the screens warn about.
+    const liveOff = await call(`/hnd/sessions/${toggleSession.id}/live`, { token: adminToken });
+    check(`cycle ${cycle}: the live view reports both methods off and stops claiming to accept`,
+      liveOff.data?.qrEnabled === false && liveOff.data?.tapEnabled === false && liveOff.data?.acceptingTaps === false,
+      `qr=${liveOff.data?.qrEnabled} tap=${liveOff.data?.tapEnabled} accepting=${liveOff.data?.acceptingTaps}`);
+
+    // The regression that made a QR-only college's students see an empty day. With BOTH
+    // switches off the timetable must still be answered — it is a fact about the day, not
+    // about check-in — or the student screen says "that's you done for today" mid-lecture.
+    const ctxOff = await call("/student/me/tap-context", { token: qbToken });
+    check(`cycle ${cycle}: a student still gets their timetable with every method switched off`,
+      ctxOff.status === 200 && ctxOff.data?.qrEnabled === false && (ctxOff.data?.today || []).length > 0,
+      `HTTP ${ctxOff.status} today=${(ctxOff.data?.today || []).length}`);
+  }
+
+  // Left ON, and a FRESH code still marks somebody — the feature is not one-shot, and two
+  // full cycles have not left anything latched.
+  await setQr(true);
+  const afterCycles = await call("/student/me/qr-check-in", { method: "POST", token: qbToken, body: { sessionId: toggleSession.id, code: codeFor(toggleSession.id) } });
+  const cycledMark = await db.attendanceMark.findFirst({ where: { sessionId: toggleSession.id, studentId: QB_ID } });
+  if (cycledMark) made.marks.push(cycledMark.id);
+  // L, not P, and that is the point: this session started 21 minutes ago against a 15
+  // minute threshold, so asserting Late proves the mark is still being decided from the
+  // clock after all that toggling, rather than merely proving a row appeared.
+  check("after two on/off cycles a fresh code still marks the student, still by the clock",
+    afterCycles.status === 201 && afterCycles.data?.status === "L" && cycledMark?.status === "L",
+    `HTTP ${afterCycles.status} status=${afterCycles.data?.status} reason=${afterCycles.data?.reason || "none"}`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;
