@@ -255,9 +255,20 @@ The migration `20260904T120000_academic_departments` — the name is fixed here 
 **never renamed once applied anywhere**:
 
 1. Creates the table, columns and join table.
-2. Creates one department from the existing institution and assigns every existing
-   `Course` and `Student` to it.
+2. Creates **no department, and assigns nothing.** Every `Course` and `Student` starts
+   with a null `academicDepartmentId`.
 3. Sets `collegeWide = true` on **every existing `Staff` row**.
+
+**Why no default department**, which reverses this document's first draft. Seeding a
+"General" department and putting every course in it looks tidier and is a silent
+fail-open: the first time the college narrows somebody off college-wide, that person
+is scoped to a department containing the entire institution, and the screen tells them
+nothing is wrong. Leaving everything unassigned inverts it — a newly scoped account
+sees *nothing* until departments are genuinely set up, which is loud and safe. This is
+the reasoning `parseAdminPages` already gives in `serializers.js`: "An admin who
+suddenly has no pages is a loud, safe failure; an admin who suddenly has all of them is
+a silent, dangerous one." It also avoids minting a department whose `key` is immutable
+and immediately wrong the moment the college renames it to "Business".
 
 **Fail direction 1 — the deploy fails open, loudly.** Every existing account keeps
 seeing everything. The alternative locks the entire college out of every student
@@ -459,12 +470,20 @@ anything, which is why it is sequenced after specs 1–2 rather than bundled wit
 
 ### 9.5 Open questions
 
-1. **§9.1 — is the `AsyncLocalStorage` + extension approach accepted**, given the
-   project's standing instruction against the tenant-era machinery? A per-route
-   explicit helper is the alternative; it fails open when forgotten, which is exactly
-   why `db.js` rejected it for ~200 endpoints.
-2. **Does the Moodle probe run before spec 1 starts?** It costs one read-only call and
-   decides whether §7.2 layer 2 or layer 3 is the primary path.
+1. ~~**§9.1 — is the `AsyncLocalStorage` + extension approach accepted?**~~
+   **DECIDED 4 Sep 2026: accepted.** Enforcement is central. The per-route explicit
+   helper was rejected for the reason `db.js` gives — across ~275 endpoints, a route
+   somebody forgets fails open and silently.
+2. ~~**Does the Moodle probe run before spec 1 starts?**~~ **ATTEMPTED 4 Sep 2026 and
+   BLOCKED.** The probe was written and run against `MOODLE_URL` from `server/.env`;
+   both calls were rejected with `invalidtoken — Invalid token - token not found`. The
+   `.env` token is the stale fallback — `integrationConfig.js` puts college-saved
+   Settings first — and the live token is AES-256-GCM encrypted in `TenantIntegration`,
+   which cannot be decrypted on the development machine because `CREDENTIALS_KEY` is
+   not set there. **It needs a working web-service token from the college.** Until then
+   Task 9's mapping screen is built against bare category ids, which §7.4 establishes
+   works either way; category *names* are an enhancement the probe unlocks, not a
+   dependency.
 3. **Do departments need their own branding**, or only a name and colour? Spec 5
    depends on the answer; spec 1 ships `colour` either way.
 4. **Should `Staff.dept` (free text, unread) be retired** in favour of
