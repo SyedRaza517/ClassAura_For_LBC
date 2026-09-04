@@ -357,7 +357,24 @@ model Staff {
   // anyone who guessed the email address could sign straight in as them.
   pendingActivation Boolean @default(false)
 
+  /// Lifts the departmental boundary entirely — Principal, Registrar, Super Admin.
+  ///
+  /// DELIBERATELY A SEPARATE FLAG FROM isSuperAdmin. Holding every admin page is a
+  /// statement about administrative authority; seeing every department's students,
+  /// registers and pastoral records is a statement about academic reach, and at many
+  /// colleges those are not the same person. This is the same reasoning that keeps
+  /// supportDepartments un-ignored for a Super Admin.
+  ///
+  /// Defaults to false, and the 20260904T120000_academic_departments migration sets it
+  /// true on every account that existed at the moment of the deploy — so nobody is
+  /// locked out mid-term by a change that is otherwise invisible to them.
+  collegeWide Boolean @default(false)
+
   createdAt DateTime @default(now())
+
+  /// Which academic departments this person may see. See StaffAcademicDepartment for
+  /// why this is a join table rather than a JSON array like supportDepartments above.
+  academicDepartments StaffAcademicDepartment[]
 
   checkIns         CheckIn[]
   leaves           Leave[]
@@ -573,6 +590,31 @@ model Course {
   moodleCourseId Int?
   createdAt      DateTime @default(now())
 
+  /// Which academic department owns this course.
+  ///
+  /// NULL means "not assigned", which under departmental scoping is visible only to
+  /// college-wide accounts. Nothing is backfilled into a default department — see the
+  /// 20260904T120000_academic_departments migration for why a seeded "General" bucket
+  /// is a silent fail-open.
+  academicDepartment    AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId  String?
+  /// The VLE's OWN grouping for this course, captured verbatim so the college can map it
+  /// to a department once, by hand. Moodle's categoryid, Canvas's account_id,
+  /// Blackboard's category.
+  ///
+  /// Captured even before any mapping exists, because it is free — the sync already has
+  /// it in a response it was making anyway — and it is the evidence the mapping screen
+  /// is built from. A plain string, not a foreign key: it identifies a row in somebody
+  /// else's database, which may be renumbered or deleted without telling us.
+  vleCategoryExternalId String?
+  /// The grouping's display name, where the token is permitted to read it.
+  ///
+  /// NULL means "we could not see it", NOT "it has no name". A Moodle whose token lacks
+  /// core_course_get_categories still yields ids, and the mapping screen shows those
+  /// with their course counts so an admin can name them by looking at what is inside.
+  /// Null-is-not-zero, applied to a permission we may not have been granted.
+  vleCategoryName       String?
+
   units           Unit[]
   cohorts         Cohort[]
   timetableSlots  TimetableSlot[]
@@ -581,6 +623,8 @@ model Course {
 
   @@unique([name])
   @@unique([moodleCourseId])
+  @@index([academicDepartmentId])
+  @@index([vleCategoryExternalId])
 }
 
 // One row of a weekly timetable, shown to students on their app.
@@ -886,10 +930,25 @@ model Student {
   circumstances     MitigatingCircumstance[]
   vleEngagement     VleEngagement[]
 
+  /// Which academic department this student belongs to.
+  ///
+  /// A STORED COLUMN, NOT DERIVED THROUGH THE COHORT, and that is forced rather than
+  /// chosen. `cohortId` above is itself nullable, so deriving
+  /// Student -> Cohort -> Course -> AcademicDepartment leaves every cohortless student
+  /// belonging to no department and therefore invisible to every scoped account. It is
+  /// also a two-hop join on the most frequent query in the application.
+  ///
+  /// The cost is denormalisation drift, and it is paid where the cohort is written:
+  /// assigning or changing a cohort writes this column in the same transaction, and
+  /// smoke-academic-departments.mjs asserts that it does.
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@unique([moodleUserId])
   @@unique([studentRef])
   @@unique([email])
   @@index([cohortId])
+  @@index([academicDepartmentId])
 }
 
 // A message a student sends to the college from the student app, and the admin's
@@ -3353,4 +3412,65 @@ model ReferralMessage {
   createdAt DateTime @default(now())
 
   @@index([referralId, department])
+}
+
+/// The college's own list of ACADEMIC departments — Business, Computing, Law, Health &
+/// Social Care.
+///
+/// NOT SupportDepartmentConfig, which lists WELLBEING TEAMS. Two access boundaries with
+/// one English word between them: that one decides who reads a student's disclosure,
+/// this one decides which students a member of staff may see at all. See
+/// academicDepartments.js, and academicDepartmentNaming.test.js, which fails if any
+/// model outside the referral family grows a bare `department` field.
+///
+/// A REAL TABLE with real foreign keys, unlike SupportDepartmentConfig's JSON column.
+/// A support department deliberately has nothing pointing at it, so a referral outlives
+/// its team. Course and Student join to THIS on the hottest query path in the
+/// application, and a JSON blob cannot be indexed. Deletion safety is onDelete: SetNull
+/// on the referencing side instead — the choice Unit.courseId already makes so that
+/// registers never vanish with a deleted course.
+model AcademicDepartment {
+  id     String  @id @default(cuid())
+  /// Slug, [a-z0-9-]{1,40}. IMMUTABLE once created: a saved filter, a URL fragment and
+  /// the VLE mapping screen all carry it, and none of them re-resolves it afterwards.
+  key    String  @unique
+  name   String
+  colour String  @default("#1a3a8f")
+  /// A retired department KEEPS its courses and students — it simply stops being offered
+  /// as a destination. Deleting is the destructive option: it sets academicDepartmentId
+  /// to null on every course and student pointing here, which under scoping hides a
+  /// whole department's records from everyone but college-wide accounts. This is the
+  /// reversible one, and the route layer offers it instead.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  courses  Course[]
+  students Student[]
+  staff    StaffAcademicDepartment[]
+
+  @@index([active])
+}
+
+/// Which academic departments a member of staff may see.
+///
+/// A JOIN TABLE, NOT A JSON ARRAY, and this is the one place the design deliberately
+/// diverges from Staff.supportDepartments. That column is a JSON string array because a
+/// support department has no row to point at. This one does, and the membership is a
+/// SECURITY boundary: a JSON array can hold a key that was typo'd (granting nothing,
+/// silently) or renamed (granting something else, silently). A foreign key cannot.
+///
+/// Cascades on both sides. Deleting a staff account or a department removes the
+/// membership rows and nothing else — no course, student or register is reachable from
+/// here, so there is nothing else for a cascade to reach.
+model StaffAcademicDepartment {
+  id                   String             @id @default(cuid())
+  staff                Staff              @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId              String
+  academicDepartment   AcademicDepartment @relation(fields: [academicDepartmentId], references: [id], onDelete: Cascade)
+  academicDepartmentId String
+  createdAt            DateTime           @default(now())
+
+  @@unique([staffId, academicDepartmentId])
+  @@index([academicDepartmentId])
 }
