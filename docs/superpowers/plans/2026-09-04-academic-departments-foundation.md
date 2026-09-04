@@ -89,8 +89,15 @@ test("cleanOne defaults active to true and only false switches it off", () => {
   assert.equal(cleanOne({ key: "law", name: "Law", active: 0 }).active, true);
 });
 
-test("cleanOne rejects a row with no usable key or no name", () => {
-  assert.equal(cleanOne({ key: "Business", name: "Business" }), null);
+test("cleanOne rejects a row whose key cannot be normalised, or which has no name", () => {
+  // Note what is NOT here: a capitalised key. cleanOne lowercases BEFORE validating, so
+  // "Business" is normalised to "business" rather than refused — matching
+  // supportDepartments.cleanOne exactly. KEY_RE rejecting capitals (asserted above) and
+  // cleanOne accepting them are both true, and the order of the two operations is the
+  // whole reason. What cannot be rescued by lowercasing is still refused.
+  assert.equal(cleanOne({ key: "bad key", name: "Business" }), null);
+  assert.equal(cleanOne({ key: "law!", name: "Law" }), null);
+  assert.equal(cleanOne({ key: "a".repeat(41), name: "Long" }), null);
   assert.equal(cleanOne({ key: "business", name: "   " }), null);
   assert.equal(cleanOne(null), null);
 });
