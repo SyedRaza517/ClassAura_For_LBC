@@ -84,24 +84,26 @@ function scopedStudentJoin(studentIdExpr, offset = 0) {
 }
 
 /**
- * Scope a session-shaped raw query through its UNIT'S COURSE.
+ * Scope a session-shaped raw query through its UNIT.
  *
- * A session has no student — it is a scheduled class, and the register may be empty — so
- * it reaches a department the only other way: Unit -> Course -> academicDepartmentId.
- * Unit does not carry the column itself until spec 2, which is why this is two joins
- * rather than one.
+ * A session has no student — it is a scheduled class, and the register may be empty — so it
+ * reaches a department through the unit it belongs to.
+ *
+ * ONE JOIN SINCE SPEC 2, and collapsing the chain does more than save a join. This used to
+ * go Unit -> Course because Unit carried no department column, which meant the mark path
+ * (scopedStudentJoin, via Student) and this path reached a department by two DIFFERENT
+ * definitions. On GET /hnd/attendance that could render a unit with populated marks beside
+ * a session count of zero — the numerator and the denominator disagreeing about which
+ * department they belonged to. One column, one definition, one answer.
  *
  * @param {string} unitIdExpr e.g. `se."unitId"`
  * @param {number} offset     placeholders the query already uses
  */
-function scopedCourseJoinFromUnit(unitIdExpr, offset = 0) {
+function scopedUnitJoin(unitIdExpr, offset = 0) {
   assertIdExpr(unitIdExpr);
-  const { sql, params } = academicSqlPredicate("sc_c", offset);
+  const { sql, params } = academicSqlPredicate("sc_u", offset);
   if (!sql || sql === " AND false") return { join: "", sql, params };
-  return {
-    join: ` JOIN "Unit" sc_u ON sc_u.id = ${unitIdExpr} JOIN "Course" sc_c ON sc_c.id = sc_u."courseId"`,
-    sql, params,
-  };
+  return { join: ` JOIN "Unit" sc_u ON sc_u.id = ${unitIdExpr}`, sql, params };
 }
 
-module.exports = { academicSqlPredicate, scopedStudentJoin, scopedCourseJoinFromUnit, ALIAS_RE, ID_EXPR_RE };
+module.exports = { academicSqlPredicate, scopedStudentJoin, scopedUnitJoin, ALIAS_RE, ID_EXPR_RE };

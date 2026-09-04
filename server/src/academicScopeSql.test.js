@@ -74,7 +74,7 @@ test("a college-wide caller's empty predicate is safe to append at any offset", 
 /* The join builders                                                           */
 /* -------------------------------------------------------------------------- */
 
-const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("./academicScopeSql");
+const { scopedStudentJoin, scopedUnitJoin } = require("./academicScopeSql");
 
 test("a college-wide caller gets NO join at all, so the query is byte-identical", async () => {
   // THE POINT OF RETURNING AN EMPTY JOIN rather than always joining. An INNER JOIN to
@@ -83,7 +83,7 @@ test("a college-wide caller gets NO join at all, so the query is byte-identical"
   // change for anybody. So the join appears only when it is actually filtering.
   await withoutAcademicScope("test", async () => {
     assert.deepEqual(scopedStudentJoin('am."studentId"'), { join: "", sql: "", params: [] });
-    assert.deepEqual(scopedCourseJoinFromUnit('se."unitId"'), { join: "", sql: "", params: [] });
+    assert.deepEqual(scopedUnitJoin('se."unitId"'), { join: "", sql: "", params: [] });
   });
 });
 
@@ -96,13 +96,14 @@ test("a scoped caller gets a Student join and a predicate on it", async () => {
   });
 });
 
-test("a scoped caller gets Unit+Course joins and a predicate on the course", async () => {
-  // A session has no student. It reaches a department through its unit's course, which is
-  // where the column lives — Unit does not carry one until spec 2.
+test("a session is scoped through its unit in ONE join", async () => {
+  // Unit carries the column since spec 2, so the Unit -> Course hop is gone. Fewer joins,
+  // and — the part that matters — the SAME definition of "which department" that the mark
+  // path uses, instead of a second one that could disagree with it on the same screen.
   await runWithAcademicScope({ academicDepartmentIds: ["d1", "d2"], collegeWide: false }, async () => {
-    const r = scopedCourseJoinFromUnit('se."unitId"', 2);
-    assert.equal(r.join, ' JOIN "Unit" sc_u ON sc_u.id = se."unitId" JOIN "Course" sc_c ON sc_c.id = sc_u."courseId"');
-    assert.equal(r.sql, ' AND sc_c."academicDepartmentId" IN ($3,$4)');
+    const r = scopedUnitJoin('se."unitId"', 2);
+    assert.equal(r.join, ' JOIN "Unit" sc_u ON sc_u.id = se."unitId"');
+    assert.equal(r.sql, ' AND sc_u."academicDepartmentId" IN ($3,$4)');
     assert.deepEqual(r.params, ["d1", "d2"]);
   });
 });
@@ -112,13 +113,13 @@ test("a narrowed-to-nothing caller gets `AND false` and STILL no join", async ()
   // change the plan for no reason. The predicate is what does the work.
   await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: false }, async () => {
     assert.deepEqual(scopedStudentJoin('am."studentId"'), { join: "", sql: " AND false", params: [] });
-    assert.deepEqual(scopedCourseJoinFromUnit('se."unitId"'), { join: "", sql: " AND false", params: [] });
+    assert.deepEqual(scopedUnitJoin('se."unitId"'), { join: "", sql: " AND false", params: [] });
   });
 });
 
 test("both join builders refuse with no scope bound", () => {
   assert.throws(() => scopedStudentJoin('am."studentId"'), AcademicScopeError);
-  assert.throws(() => scopedCourseJoinFromUnit('se."unitId"'), AcademicScopeError);
+  assert.throws(() => scopedUnitJoin('se."unitId"'), AcademicScopeError);
 });
 
 test("the id expression is validated, because it is interpolated into the ON clause", async () => {

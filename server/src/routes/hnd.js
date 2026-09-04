@@ -27,8 +27,13 @@ const prisma = require("../db");
 //
 // TWO SHAPES, because these queries reach a department two different ways. A mark belongs
 // to a student, and Student carries academicDepartmentId -- scopedStudentJoin. A SESSION
-// has no student at all (a scheduled class whose register may be empty), so it goes
-// Unit -> Course -> academicDepartmentId instead -- scopedCourseJoinFromUnit.
+// has no student at all (a scheduled class whose register may be empty), so it goes through
+// its unit -- scopedUnitJoin.
+//
+// Both are ONE join since spec 2. The session path used to go Unit -> Course, so the two
+// shapes reached a department by two different definitions and could disagree: a unit could
+// render with populated marks beside a session count of zero on the same screen. Unit
+// carries the column now, so there is one definition.
 //
 // THE JOIN IS OMITTED ENTIRELY FOR A COLLEGE-WIDE CALLER, and that is deliberate rather
 // than an optimisation. An INNER JOIN drops rows whose foreign key is null, and
@@ -37,7 +42,7 @@ const prisma = require("../db");
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
-const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("../academicScopeSql");
+const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
 const academicDepartments = require("../academicDepartments");
 
 /**
@@ -1695,8 +1700,9 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   if (courseId) { sParams.push(courseId); sConds.push(`u."courseId" = $${sParams.length}`); }
   if (byYear) { sParams.push(yearNum); sConds.push(`u."year" = $${sParams.length}`); }
   if (byTerm) { sParams.push(termNum); sConds.push(`u."termNumber" = $${sParams.length}`); }
-  // A session has no student, so it reaches a department through its unit's course.
-  const sDept = scopedCourseJoinFromUnit('se."unitId"', sParams.length);
+  // A session has no student, so it reaches a department through its unit — one join since
+  // spec 2, and the SAME definition of "which department" the mark path above uses.
+  const sDept = scopedUnitJoin('se."unitId"', sParams.length);
   const sWhere = sConds.length ? ` WHERE ${sConds.join(" AND ")}${sDept.sql}`
     : (sDept.sql ? ` WHERE TRUE${sDept.sql}` : "");
   const sessRows = await prisma.$queryRawUnsafe(
@@ -1738,7 +1744,7 @@ router.get("/attendance", requireAuth, async (req, res) => {
   // through the unit's course. Neither takes bound parameters (the dates are inlined from
   // our own semester rows), so both offsets are 0.
   const pDept = scopedStudentJoin('am."studentId"');
-  const sessDept = scopedCourseJoinFromUnit('hs."unitId"');
+  const sessDept = scopedUnitJoin('hs."unitId"');
   const [units, students, perSM, sessAgg, enrolAgg] = await Promise.all([
     prisma.unit.findMany({ orderBy: { code: "asc" } }),
     prisma.student.findMany({
