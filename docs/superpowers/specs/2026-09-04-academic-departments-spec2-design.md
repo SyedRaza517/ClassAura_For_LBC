@@ -206,13 +206,19 @@ person has no account, let alone a department.
 
 ## 9. Open questions
 
-1. **The nullable-FK regression (§5).** Should a course-less timetable slot be visible to
-   everyone, or only to college-wide accounts? "Everyone" fails open on a boundary; "college
-   wide only" removes study-support sessions from a scoped tutor's timetable. My
-   recommendation is to give `TimetableSlot` and `TimetableEvent` their own nullable
-   `academicDepartmentId` so a college can place these rows deliberately, with null meaning
-   "shown to everyone" — the one place fail-open is right, because a workshop is not a
-   student record.
+1. ~~**The nullable-FK regression (§5).**~~ **DECIDED 4 Sep 2026: their own department
+   field.** `TimetableSlot` and `TimetableEvent` gain a nullable `academicDepartmentId` of
+   their own, so a college can place a workshop in a department deliberately, and **null
+   means "shown to everyone"**.
+
+   This is the one place in the whole feature where fail-OPEN is the right default, and the
+   reason is what the row IS: a study-support session or an academic skills workshop is not
+   a student record. Hiding it from a departmental tutor removes most of what
+   `TimetableSlot` exists to carry — its own schema comment says the model deliberately
+   holds sessions that are not units — while showing it reveals that the college runs a
+   workshop on Tuesday. The blanket alternative ("any row with a null FK is visible to
+   everyone") was rejected because it is a rule the next reader cannot tell apart from
+   somebody forgetting to set a value; an explicit column makes the null a decision.
 2. **Multi-hop `via`, or columns everywhere?** §4.1 adds columns to `Unit` and `Cohort`,
    which makes every spec 2 path single-hop. Supporting `via: "unit.course"` instead would
    avoid a migration but leaves the raw SQL still needing the two-table join. Recommendation:
