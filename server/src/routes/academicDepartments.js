@@ -193,32 +193,38 @@ router.put("/staff/:staffId", requireAuth, requirePage("settings"), async (req, 
   }
   const collegeWide = req.body.collegeWide;
 
-  // NARROWING IS REFUSED, AND THIS IS THE HONEST STATE OF THE FEATURE.
+  // NARROWING IS ALLOWED, AND THAT IS WHAT SPEC 2 DELIVERED.
   //
-  // The guard in academicScopeGuard.js rewrites the TOP-LEVEL query only. A Prisma client
-  // extension cannot reach a nested `include`, so a scoped account still reads other
-  // departments' rows through any unscoped parent -- measured on 4 Sep 2026 against a
-  // scope owning nothing: student.findMany() returned 0 while
-  // hndSession.findMany({ include: { marks: true } }) returned 194 attendance marks and
-  // unit.findMany({ include: { enrolments: true } }) returned 34 enrolments. Nine route
-  // families do exactly this today.
+  // This returned 400 for every request that would narrow an account, because the guard
+  // rewrites the TOP-LEVEL query only and a Prisma client extension cannot reach a nested
+  // include: measured 4 Sep 2026, a scope owning nothing returned 0 students at the top
+  // level and 194 attendance marks through a session include. Offering the control would
+  // have promised a confinement the product could not deliver, and the client is not where
+  // a boundary is enforced, so it was refused in the API rather than hidden in the screen.
   //
-  // The design document predicted this in §9.2 and called it "a claim to be tested, not
-  // assumed". It was not tested before the Access control shipped, and the control is what
-  // turns a latent gap into a promise the product cannot keep: an administrator who ticks
-  // a tutor down to one department is told they are confined, and they are not.
+  // Spec 2 closed it by scoping the PARENT models -- the child query is still not rewritten,
+  // it simply has nothing left to hang off. scripts/smoke-academic-nested-reads.mjs holds
+  // all 13 shapes at zero with a control proving the data is really there, and the whole
+  // suite now runs a second time with every account narrowed
+  // (SMOKE_SCOPED_DEPARTMENT=1) -- the branch that had never executed once when spec 1
+  // shipped thirty green suites over a leaking boundary.
+
+  // A SUPER ADMIN CANNOT REMOVE THEIR OWN COLLEGE-WIDE ACCESS.
   //
-  // So the column, the guard, the configuration screens and the VLE mapping all stand --
-  // they are correct and they are what spec 2 builds on -- but nobody can be narrowed
-  // until spec 2 closes the nested reads route by route. Refusing here rather than hiding
-  // the control in the client is deliberate: the client is not where a boundary is
-  // enforced, and an API that accepted this would be enough to break the promise.
-  if (!collegeWide) {
+  // Nothing else stops it, and the result is a locked room: the account matches
+  // { in: [] } on every scoped model, so every student list, register and prediction comes
+  // back empty -- and the screen that would explain what happened is the empty one. It is
+  // recoverable, because this route runs under withoutAcademicScope, but only by somebody
+  // who already knows that.
+  //
+  // Narrowing SOMEBODY ELSE is fine and is the whole point of the feature. This refuses
+  // exactly one thing: doing it to yourself. routes/staff.js sets the same precedent, where
+  // the Super Admin's own row is special-cased so the equivalent lockout cannot be typed.
+  if (!collegeWide && str(req.params.staffId) === req.user.id) {
     return res.status(400).json({
-      error: "Departmental scoping is not switched on yet. Nested reads are not filtered, " +
-        "so an account narrowed to a department could still reach other departments' records " +
-        "through related data. Assign departments to courses and students now; narrowing " +
-        "staff access follows once that is closed.",
+      error: "You cannot remove your own college-wide access — you would not be able to see " +
+        "the college, or this screen, to put it back. Ask another Super Admin, or narrow a " +
+        "different account.",
     });
   }
 

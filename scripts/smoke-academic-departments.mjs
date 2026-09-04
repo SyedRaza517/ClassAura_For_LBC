@@ -80,7 +80,11 @@ for (const p of Object.values(people)) {
       accountRole: "ADMIN",
       // A Super Admin's grant is null — every page. The other gets settings only, which
       // is what these routes require.
-      adminPages: p.superAdmin ? null : JSON.stringify(["settings"]),
+      // `registers` alongside `settings`: the narrowed-account assertions read
+      // /hnd/courses and /hnd/students to prove the boundary confines them, and without
+      // the page they would be refused by the PERMISSION rather than by the scope —
+      // which would pass while discriminating nothing about departments.
+      adminPages: p.superAdmin ? null : JSON.stringify(["settings", "registers", "students"]),
       ...(p.superAdmin ? { isSuperAdmin: true } : {}),
       mustChangePassword: false,
     },
@@ -94,6 +98,7 @@ const { boss, plain } = people;
 let createdCourseId = null, movedStudentId = null, originalCohortId = null;
 let mappingCourseIds = [], mappingCohortId = null, mappingStudentId = null;
 let handMadeCourseId = null, handMadeCohortId = null, handMadeStudentId = null;
+const confineIds = { courses: [], cohorts: [], students: [] };
 
 try {
   /* ------------------------------------------------------------------------ */
@@ -243,25 +248,88 @@ try {
     return "403";
   });
 
-  // NARROWING IS REFUSED, AND THAT IS THE POINT OF THIS ASSERTION.
+  // NARROWING WORKS NOW, AND THAT IS WHAT SPEC 2 WAS FOR.
   //
-  // The guard rewrites the TOP-LEVEL query only; a Prisma extension cannot reach a nested
-  // include. Measured on 4 Sep 2026 with a scope owning nothing: student.findMany() gave
-  // 0 while hndSession.findMany({ include: { marks: true } }) gave 194 attendance marks.
-  // So an account narrowed to one department is NOT confined, and an API that accepted the
-  // request would make the product promise something it cannot keep. Spec 2 closes the
-  // nested reads route by route; until then this is a 400.
-  await check("narrowing an account is REFUSED while nested reads are unfiltered", async () => {
+  // Spec 1 shipped a 400 on every request that would narrow an account, because the guard
+  // rewrites the TOP-LEVEL query only and a Prisma extension cannot reach a nested include:
+  // a scope owning nothing returned 0 students but 194 attendance marks through a session
+  // include. Scoping the PARENT models closed that, and smoke-academic-nested-reads.mjs is
+  // the proof, so the refusal is gone.
+  await check("an account can now be narrowed to a department", async () => {
     const list = await call("/academic-departments", { token: adminToken });
     const biz = list.body.departments.find((d) => d.key === BIZ);
     const res = await call(`/academic-departments/staff/${plain.id}`, {
       method: "PUT", token: boss.token, body: { academicDepartmentIds: [biz.id], collegeWide: false },
     });
-    assert.equal(res.status, 400, `expected 400, got ${res.status} — ${JSON.stringify(res.body)}`);
-    assert.match(res.body.error || "", /not switched on yet/i);
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
     const s = await db.staff.findUnique({ where: { id: plain.id } });
-    assert.equal(s.collegeWide, true, "the account was narrowed anyway");
-    return "400, still college-wide";
+    assert.equal(s.collegeWide, false, "the account was not narrowed");
+    return "narrowed to Business";
+  });
+
+  // AND THE NARROWING ACTUALLY CONFINES THEM.
+  //
+  // The assertion above only proves a flag was written. This proves the flag MEANS
+  // something, which is the entire point of spec 2 — and it is the assertion whose absence
+  // let spec 1 ship an Access control over a boundary that leaked.
+  await check("...and that account is then refused another department's data", async () => {
+    const login = await call("/auth/login", { method: "POST", body: { email: plain.email, password: plain.pw } });
+    const token = login.body.token;
+    assert.ok(token, "the narrowed account could not sign in");
+
+    const list2 = await call("/academic-departments", { token: adminToken });
+    const biz = list2.body.departments.find((d) => d.key === BIZ);
+    const cmp = list2.body.departments.find((d) => d.key === CMP);
+
+    // A REAL COMPUTING STUDENT AND A REAL BUSINESS ONE, created here rather than assumed.
+    //
+    // The first version of this assertion checked that a Business-scoped account saw no
+    // Computing students — at a point in the suite where NO Computing students existed. It
+    // passed with Student declared UNSCOPED, which is to say it discriminated nothing. That
+    // is the exact failure CLAUDE.md records twice, and it is why both halves below are
+    // asserted against rows this block creates.
+    const cmpCourse2 = await db.course.create({ data: { name: `Confine Cmp ${stamp}`, academicDepartmentId: cmp.id } });
+    const bizCourse2 = await db.course.create({ data: { name: `Confine Biz ${stamp}`, academicDepartmentId: biz.id } });
+    const cmpCohort2 = await db.cohort.create({ data: { name: `ConfCmp ${stamp}`, courseId: cmpCourse2.id, academicDepartmentId: cmp.id } });
+    const bizCohort2 = await db.cohort.create({ data: { name: `ConfBiz ${stamp}`, courseId: bizCourse2.id, academicDepartmentId: biz.id } });
+    confineIds.courses.push(cmpCourse2.id, bizCourse2.id);
+    confineIds.cohorts.push(cmpCohort2.id, bizCohort2.id);
+    for (const [tag, cohort, dept] of [["CMP", cmpCohort2, cmp], ["BIZ", bizCohort2, biz]]) {
+      const st = await db.student.create({
+        data: {
+          firstName: "Confine", lastName: tag, studentRef: `CONF${tag}${stamp}`,
+          email: `conf.${tag.toLowerCase()}.${stamp}@edtech.co.uk`, initials: "CF", colour: "#445566",
+          cohortId: cohort.id, academicDepartmentId: dept.id,
+        },
+      });
+      confineIds.students.push(st.id);
+    }
+
+    // THE REFUSAL: the Computing student is invisible.
+    const all = await call("/hnd/students", { token });
+    assert.equal(all.status, 200, `expected 200, got ${all.status}`);
+    const refs = (all.body || []).map((x) => x.studentRef);
+    assert.ok(!refs.includes(`CONFCMP${stamp}`), "a Business-scoped account read a Computing student");
+
+    // THE PERMISSION, without which the refusal proves nothing: the Business one IS visible.
+    assert.ok(refs.includes(`CONFBIZ${stamp}`),
+      "the Business-scoped account could not see its OWN student either, so the refusal above means nothing");
+
+    // And the same through the course list.
+    const own = await call("/hnd/courses", { token });
+    const names = (own.body || []).map((c) => c.name);
+    assert.ok(!names.includes(`Confine Cmp ${stamp}`), "a Business-scoped account listed a Computing course");
+    assert.ok(names.includes(`Confine Biz ${stamp}`), "it could not see its own course either");
+    return "Computing hidden, Business visible";
+  });
+
+  // Put it back, so the assertions after this one run as they were written.
+  await check("the fixture is restored to college-wide for the rest of the suite", async () => {
+    const res = await call(`/academic-departments/staff/${plain.id}`, {
+      method: "PUT", token: boss.token, body: { academicDepartmentIds: [], collegeWide: true },
+    });
+    assert.equal(res.status, 200);
+    return "restored";
   });
 
   // The permitted half still works: memberships can be recorded while the account stays
@@ -720,6 +788,9 @@ try {
   /* -------------------------------------------------------------------------- */
   /* Cleanup — in a finally, so a failed run leaves nothing behind               */
   /* -------------------------------------------------------------------------- */
+  if (confineIds.students.length) await db.student.deleteMany({ where: { id: { in: confineIds.students } } }).catch(() => {});
+  if (confineIds.cohorts.length) await db.cohort.deleteMany({ where: { id: { in: confineIds.cohorts } } }).catch(() => {});
+  if (confineIds.courses.length) await db.course.deleteMany({ where: { id: { in: confineIds.courses } } }).catch(() => {});
   if (handMadeStudentId) await db.student.deleteMany({ where: { id: handMadeStudentId } }).catch(() => {});
   if (handMadeCohortId) await db.cohort.deleteMany({ where: { id: handMadeCohortId } }).catch(() => {});
   if (handMadeCourseId) await db.course.deleteMany({ where: { id: handMadeCourseId } }).catch(() => {});

@@ -4927,32 +4927,31 @@ function AdminAccess({ store }) {
                 student is visible to at all.
               </p>
 
-              {/* NARROWING IS DISABLED, because the server refuses it.
-                  The guard filters top-level queries only — a Prisma extension cannot reach
-                  a nested include — so an account narrowed to a department would still read
-                  other departments' records through related data. Measured 4 Sep 2026: a
-                  scope owning nothing returned 0 students at the top level and 194 attendance
-                  marks through a session include. Offering the toggle would promise a
-                  confinement the product cannot deliver. Memberships are still recordable
-                  below, so a college can prepare its structure now. */}
+              {/* LIVE AGAIN. This was disabled while the server refused to narrow anybody:
+                  the guard filters top-level queries only, so a scoped account still read
+                  other departments' records through nested includes — 194 attendance marks
+                  through a session include, measured. Spec 2 closed that by scoping the
+                  parent models, and both the nested-read suite and a second full test pass
+                  with every account narrowed now hold it shut. */}
               <button
-                disabled
-                title="Departmental scoping is not switched on yet"
                 onClick={() => setCollegeWide(v => !v)}
                 className={"flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition " + (collegeWide ? "bg-amber-50 text-amber-900 ring-amber-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}
               >
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={collegeWide ? { background: "#b45309", borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{collegeWide && <Check size={13} className="text-white" />}</span>
                 <span className="min-w-0">College-wide access</span>
               </button>
-              <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-700">
-                <AlertCircle size={13} className="mt-px shrink-0" />
-                <span>
-                  Everyone is college-wide for now, and this cannot be switched off yet: related
-                  records are not filtered, so an account limited to one department could still
-                  reach another&apos;s. Record departments below and assign them to your courses —
-                  restricting staff follows once that is closed.
-                </span>
-              </p>
+              {collegeWide ? (
+                <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
+                  <AlertCircle size={13} className="mt-px shrink-0" />
+                  Sees every department&apos;s students, registers, predictions and pastoral records.
+                </p>
+              ) : academicMembership.length === 0 ? (
+                <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+                  <AlertCircle size={13} className="mt-px shrink-0" />
+                  Not college-wide and on no department — they will see no students, courses or
+                  registers at all.
+                </p>
+              ) : null}
 
               {/* DISABLED, NOT HIDDEN, while college-wide is on. Hiding it leaves an
                   administrator unable to see what this person would fall back to; showing
