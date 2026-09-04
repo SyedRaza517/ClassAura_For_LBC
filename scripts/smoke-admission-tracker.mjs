@@ -176,7 +176,14 @@ await check("a staff member granted neither page is refused, not shown an empty 
   const r = await call(`/admission-stats${scoped}`, { token: people.outsider.token });
   assert.equal(r.status, 403, `expected 403, got ${r.status}`);
   // The distinction that matters: a refusal must not arrive dressed as a dashboard.
-  assert.equal(r.body.funnel, undefined, "a refused request still returned funnel data");
+  //
+  // Asserted on the RAW TEXT, not on r.body.funnel. Checking a parsed field is absent
+  // from an error body cannot fail — the 403 above already guarantees there is no
+  // funnel in it — so the check read as coverage while discriminating nothing. The
+  // failure actually worth catching is a handler that returns figures alongside an
+  // error status, and only the body text can show that.
+  assert.ok(!r.text.includes("\"funnel\""), "a refused request still returned funnel data");
+  assert.ok(!r.text.includes("\"kpis\""), "a refused request still returned KPI data");
   return "403";
 });
 
@@ -200,13 +207,23 @@ await check("an admissions officer keeps access without the new grant", async ()
 
 await check("no applicant name, email, NI number, ID number or postcode is in the response", async () => {
   const r = await call(`/admission-stats${scoped}`, { token: people.viewer.token });
+  // THE POSITIVE HALF FIRST, and it is not decoration. Without it every "field is
+  // absent" assertion below passes on a 403, a 500, or an empty body — the check would
+  // report six fields safely absent from a response that never contained anything at
+  // all, and would go on passing after the endpoint was deleted. A negatives-only guard
+  // is exactly what aggregates-contract.test.js warns about; that reasoning belongs
+  // here too.
+  assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  assert.ok(Array.isArray(r.body.funnel) && r.body.funnel.length === 7, "no funnel in the response — nothing was actually inspected");
+  assert.ok(r.body.funnel[0].count > 0, "the funnel is empty, so the absence of personal data proves nothing");
+
   const body = JSON.stringify(r.body);
   for (const [field, value] of Object.entries(PII)) {
     assert.ok(!body.includes(value),
       `the response contains the applicant's ${field} ("${value}"). This endpoint is reachable ` +
       `by staff deliberately NOT granted the admissions page.`);
   }
-  return `${Object.keys(PII).length} fields absent from ${body.length} bytes`;
+  return `${Object.keys(PII).length} fields absent from ${body.length} bytes of real figures`;
 });
 
 await check("no applicant id is in the response", async () => {

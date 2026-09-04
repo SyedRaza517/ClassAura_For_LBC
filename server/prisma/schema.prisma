@@ -3258,6 +3258,21 @@ model Referral {
   closedBy   String?
   closedOn   String?
 
+  /// THE STUDENT ASKED FOR THIS THEMSELVES, rather than a tutor sending them.
+  ///
+  /// Stored rather than derived from `raisedBy IS NULL`, because null there already
+  /// means something else — a staff referral whose author has been removed. Two
+  /// different facts sharing one representation is how a self-referral would start
+  /// rendering as "raised by a member of staff" the first time an account is deleted.
+  ///
+  /// It changes three things. The department is told the student came of their own
+  /// accord, which is how you open the conversation. `/referrals/mine` cannot match it,
+  /// so it never appears in some staff member's Sent-by-me. And the student is shown
+  /// their OWN words back, which sReferralForStudent otherwise withholds — the reason on
+  /// a staff referral is somebody else's account of them, the reason on this one is
+  /// theirs.
+  selfReferred Boolean @default(false)
+
   /// Whether the referrer chose to tell the student. Recorded rather than derived,
   /// because "did we tell them" is a question the college will be asked and the
   /// default is off — an unticked box and a box nobody was offered look identical

@@ -3,7 +3,7 @@
 // branch already blocks student tokens from every other router.
 const router = require("express").Router();
 const prisma = require("../db");
-const { sUnit, sStudent, sStudentQuery, sReferralForStudent } = require("../serializers");
+const { sUnit, sStudent, sStudentQuery, sReferralForStudent, sReferralMessage } = require("../serializers");
 const { requireAuth, requireStudent } = require("../auth");
 const { summarise } = require("../attendance");
 const { localDate, localTime } = require("../clock");
@@ -15,7 +15,7 @@ const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, subMinutes, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
-const { isString } = require("../validate");
+const { isString, isRealDate } = require("../validate");
 
 router.use(requireAuth, requireStudent);
 
@@ -723,6 +723,176 @@ router.get("/me/referrals", async (req, res) => {
   const all = await supportDepartments.all();
   const nameOf = (k) => all.find((d) => d.key === k)?.name || k;
   res.json(rows.map((r) => sReferralForStudent(r, nameOf(r.department))));
+});
+
+/* ===================== asking a support team for help yourself ===================== */
+
+// THE GAP THIS FILLS. Until now the ONLY way into the Wellbeing or ASK queue was a
+// member of staff raising a referral. A student who knew they were struggling had no
+// route to either team: "Ask the College" goes to the office as a general query, and a
+// wellbeing concern sitting in a general query inbox is a wellbeing concern nobody on
+// the wellbeing team has seen.
+//
+// A self-referral lands in the SAME queue a tutor's referral lands in, so it is
+// accepted, worked, noted and closed by the same machinery, appears in the same place,
+// and is counted the same way. The alternative — a separate inbox for student requests
+// — is how a college ends up with two queues and works one of them.
+
+// GET /api/student/me/support-departments — what the form can offer.
+//
+// ACTIVE ONLY. A retired desk still resolves for READING, so an old referral renders
+// under its name, but offering it on a form would be offering a button that the POST
+// below refuses. The list is the college's own configuration, so a college that renames
+// ASK or adds Careers gets its own words with no code change.
+router.get("/me/support-departments", async (req, res) => {
+  const active = await supportDepartments.active();
+  // key and name only. `active` is implied by being in this list at all, and anything
+  // else the config grows later is not the student app's business.
+  res.json(active.map((d) => ({ key: d.key, name: d.name })));
+});
+
+// POST /api/student/me/referrals — the Wellbeing / ASK form.
+router.post("/me/referrals", async (req, res) => {
+  const department = str(req.body?.department).toLowerCase();
+  const dept = (await supportDepartments.active()).find((d) => d.key === department);
+  if (!dept) return res.status(400).json({ error: "Choose a team that is currently taking requests." });
+
+  const reason = str(req.body?.reason).slice(0, 5000);
+  if (reason.length < 3) return res.status(400).json({ error: "Tell them a little about what you need." });
+
+  // URGENCY IS THE STUDENT'S OWN ASSESSMENT and is taken at face value. A form that
+  // quietly downgrades what somebody said was urgent is worse than no urgency field:
+  // it teaches them the app does not listen, and the one time it matters is the time it
+  // is wrong. The queue sorts on it; nobody's judgement is overridden by it.
+  const urgency = ["routine", "urgent"].includes(str(req.body?.urgency)) ? str(req.body.urgency) : "routine";
+
+  // ONE OPEN REQUEST PER TEAM, and this is a dedupe rather than a rate limit.
+  //
+  // The failure to prevent is a double-tapped button putting the same student in the
+  // wellbeing queue five times, which buries the other people in it. The failure NOT to
+  // cause is a student in difficulty being told to go away — so this refuses only while
+  // an earlier request to THE SAME team is still open, says so plainly, and returns the
+  // id so the app can point them at it and let them add to it instead. A count-per-hour
+  // limiter would have silenced somebody with a genuinely new thing to say.
+  const open = await prisma.referral.findFirst({
+    where: { studentId: req.user.id, department, selfReferred: true, status: { in: ["open", "accepted"] } },
+    select: { id: true },
+  });
+  if (open) {
+    return res.status(409).json({
+      error: `You already have a request with ${dept.name}. You can add to it rather than sending another.`,
+      referralId: open.id,
+    });
+  }
+
+  const raisedOn = localDate();
+  if (!isRealDate(raisedOn)) return res.status(500).json({ error: "Clock misconfigured" });
+
+  const row = await prisma.referral.create({
+    data: {
+      studentId: req.user.id,
+      department,
+      reason,
+      urgency,
+      raisedOn,
+      // raisedBy stays NULL. Writing the student's name into a column the staff screens
+      // read as "which colleague raised this" is how a self-referral turns up in
+      // somebody's Sent-by-me — /referrals/mine matches that column against the signed-in
+      // member of staff's name.
+      raisedBy: null,
+      selfReferred: true,
+      // They asked; they plainly know. The tickbox this mirrors exists to decide whether
+      // to TELL a student about a referral made without their knowledge, and that
+      // question does not arise here.
+      studentNotified: true,
+    },
+  });
+
+  audit.record(req, {
+    action: "referral.selfRaised", entity: "Referral", entityId: row.id,
+    // WHO and WHERE, never why — the same rule the staff routes follow, and the same
+    // reason: the audit log is read on Settings by administrators who were never granted
+    // the referrals page.
+    summary: `${req.user.name || "A student"} asked ${dept.name} for support`,
+    after: { department, urgency, selfReferred: true },
+  });
+
+  res.status(201).json(sReferralForStudent(row, dept.name));
+
+  // The team is told in the app, exactly as for a staff referral, and the notification
+  // still names no student — the queue says who.
+  (async () => {
+    const members = await prisma.staff.findMany({ where: { pendingActivation: false } });
+    const recipients = members.filter((s) => supportDepartments.canReadDepartment(s, department));
+    if (!recipients.length) return;
+    await prisma.notification.createMany({
+      data: recipients.map((s) => ({
+        staffId: s.id,
+        type: urgency === "urgent" ? "error" : "info",
+        message: (urgency === "urgent" ? "Urgent — " : "") + "A student has asked " + dept.name + " for support",
+        link: "referrals-" + department,
+      })),
+    });
+  })().catch(() => {});
+});
+
+// GET /api/student/me/referrals/:id/messages — the conversation on their OWN request.
+//
+// Scoped to a referral this student both owns AND raised. Owning it is not enough: a
+// tutor's referral carries a thread between that tutor and the department, written by
+// two people who did not know the student would read it.
+router.get("/me/referrals/:id/messages", async (req, res) => {
+  const row = await prisma.referral.findFirst({
+    where: { id: req.params.id, studentId: req.user.id, selfReferred: true },
+    select: { id: true, department: true },
+  });
+  if (!row) return res.status(404).json({ error: "Not found" });
+  const rows = await prisma.referralMessage.findMany({
+    where: { referralId: row.id, department: row.department },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(rows.map(sReferralMessage));
+});
+
+// POST /api/student/me/referrals/:id/messages — add to it rather than starting another.
+//
+// This is what makes the one-open-request rule humane rather than a wall: a student who
+// remembers something, or whose situation changes, has somewhere to put it that the team
+// working the case will actually see.
+router.post("/me/referrals/:id/messages", async (req, res) => {
+  const row = await prisma.referral.findFirst({
+    where: { id: req.params.id, studentId: req.user.id, selfReferred: true },
+    select: { id: true, department: true, status: true },
+  });
+  if (!row) return res.status(404).json({ error: "Not found" });
+  if (row.status === "closed") {
+    // A closed case has an outcome the student has already been shown. Reopening it by
+    // the side door would leave the team with work nothing tells them about, so the
+    // honest answer is a new request.
+    return res.status(409).json({ error: "That request is closed. You can send a new one." });
+  }
+
+  const body = str(req.body?.body).slice(0, 5000);
+  if (!body) return res.status(400).json({ error: "Write a message." });
+
+  const created = await prisma.referralMessage.create({
+    data: {
+      referralId: row.id,
+      department: row.department,
+      // "student", not "referrer": on a self-referral there is no staff referrer, and
+      // the screens label the two differently.
+      authorRole: "student",
+      authorName: req.user.name || null,
+      body,
+    },
+  });
+
+  audit.record(req, {
+    action: "referral.messaged", entity: "Referral", entityId: row.id,
+    summary: `${req.user.name || "A student"} added to their own support request`,
+  });
+
+  res.status(201).json(sReferralMessage(created));
 });
 
 // POST /api/student/me/query — the student sends a query to the college. Admins pick
