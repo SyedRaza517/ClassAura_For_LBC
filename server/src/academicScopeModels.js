@@ -59,10 +59,23 @@ const MODEL_SCOPE = {
   // that this boundary must not weaken or duplicate -- read its header before touching that
   // route.
   MitigatingCircumstance: { via: "student" },
-  // studentId is NULLABLE here: a tap of an unrecognised tag belongs to nobody. Those rows
-  // fail closed and are visible only to college-wide accounts, which is right -- an
-  // unmatched tap is an administrative diagnostic, not a departmental record.
-  TagTap: { via: "student" },
+  // TAGTAP CANNOT BE SCOPED THROUGH A RELATION, because it does not have one.
+  //
+  // `studentId` is a bare column with no Prisma relation, and the model's own comment says
+  // why: a refused tap has no student AND no staff -- "an unknown code matches nothing, a
+  // retired sticker is filtered out, a rate-limited tap never reaches the lookup" -- so a
+  // required foreign key made the three outcomes an administrator is most often asked about
+  // literally unwritable. Declaring { via: "student" } does not filter, it THROWS: Prisma
+  // rejects `student` as an unknown argument. Found by running the whole suite scoped, which
+  // is the branch nothing had ever executed.
+  //
+  // Left UNSCOPED rather than given a relation, because the relation is precisely what was
+  // deliberately removed. The residual exposure is real and small: an admin holding the
+  // attendance-tags page reads a diagnostic log of tap OUTCOMES carrying student ids, with
+  // no name, no email and no mark. Scoping it properly needs either a denormalised column on
+  // TagTap or a nullable relation that does not resurrect the unwritable-refusal bug, and
+  // that is a decision for whoever next touches this model.
+  TagTap: "UNSCOPED",
 
   /* ---- Curriculum: reached through the columns spec 2 added ------------------ */
   // Unit and Cohort carry the column themselves, which is what makes every path here a
@@ -214,7 +227,17 @@ function scopePredicateFor(model, scope) {
     return { OR: [{ [rule.columnOrNull]: match }, { [rule.columnOrNull]: null }] };
   }
   if (rule.column) return { [rule.column]: match };
-  return { [rule.via]: { academicDepartmentId: match } };
+
+  // `is:` RATHER THAN A BARE NESTED OBJECT, and it is not stylistic. Prisma REFUSES
+  // `{ relation: { field: … } }` for an OPTIONAL to-one relation and demands `is` — so
+  // an optional to-one relation, which several models here have.
+  // nobody, threw PrismaClientValidationError on every scoped read rather than filtering.
+  // `is` is also valid for a required relation, so one form covers both and there is no
+  // per-model decision to get wrong.
+  //
+  // A NULL relation does not match `is`, which is the fail-closed answer we want here: an
+  // unmatched tap is an administrative diagnostic, visible to college-wide accounts only.
+  return { [rule.via]: { is: { academicDepartmentId: match } } };
 }
 
 module.exports = { MODEL_SCOPE, scopePredicateFor };

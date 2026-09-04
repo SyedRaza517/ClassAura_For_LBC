@@ -44,6 +44,7 @@ const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
 const academicDepartments = require("../academicDepartments");
+const { currentScope } = require("../academicScope");
 
 /**
  * Turn ?academicDepartmentId= into a `where` fragment.
@@ -82,8 +83,60 @@ function academicDepartmentFilter(raw) {
  *
  * @returns {{id: string|null}|{error: string}}
  */
-async function resolveAcademicDepartment(raw) {
-  if (raw === undefined || raw === null || raw === "") return { id: null };
+/**
+ * The department a child of a course belongs to: the course's own.
+ *
+ * A unit or a cohort created under a Business course IS Business. Leaving it null makes it
+ * visible only to college-wide accounts — so a scoped admin adds a unit to their own course
+ * and it disappears, taking every session, enrolment and mark built on it with it. Found by
+ * running the suite as a scoped account.
+ *
+ * Inherited from the COURSE rather than defaulted from the caller, because the course is the
+ * better answer: it is right even when a college-wide admin creates the unit.
+ */
+/**
+ * The caller's own department, when that is unambiguous — otherwise null.
+ *
+ * Exactly one department and not college-wide. An account on two has not said which it
+ * meant, and a college-wide account creating an unassigned row is doing something
+ * legitimate: that is how a row waiting to be sorted is expressed.
+ */
+function callerDepartmentId() {
+  const scope = currentScope();
+  if (scope && !scope.collegeWide && scope.academicDepartmentIds.length === 1) {
+    return scope.academicDepartmentIds[0];
+  }
+  return null;
+}
+
+async function departmentOfCourse(courseId) {
+  if (!courseId) return null;
+  const c = await prisma.course.findUnique({
+    where: { id: courseId }, select: { academicDepartmentId: true },
+  });
+  return c?.academicDepartmentId ?? null;
+}
+
+async function resolveAcademicDepartment(raw, { defaultForCaller = false } = {}) {
+  if (raw === undefined || raw === null || raw === "") {
+    // A COURSE CREATED BY A SCOPED ADMIN DEFAULTS TO THEIR OWN DEPARTMENT.
+    //
+    // Without this, an admin narrowed to Business who adds a course without picking a
+    // department gets one with academicDepartmentId null -- which is visible ONLY to
+    // college-wide accounts, so the course vanishes the instant they create it, and so does
+    // every cohort, unit and student they then build on it. They cannot even see it to
+    // correct it.
+    //
+    // Only when the answer is UNAMBIGUOUS: exactly one department, and not college-wide. An
+    // account on two departments is not telling us which one they meant, and a college-wide
+    // account creating an unassigned course is doing something legitimate -- that is how a
+    // course waiting to be sorted is expressed.
+    //
+    // Found by running the whole smoke suite as a scoped account (SMOKE_SCOPED_DEPARTMENT=1),
+    // which is the branch nothing had ever executed.
+    if (defaultForCaller) return { id: callerDepartmentId() };
+    return { id: null };
+  }
   if (typeof raw !== "string") return { error: "academicDepartmentId must be a department id, or null" };
   const found = await prisma.academicDepartment.findUnique({ where: { id: raw.trim() } });
   if (!found) return { error: "No such academic department" };
@@ -396,7 +449,7 @@ router.post("/courses", requireAuth, requireRegisters, async (req, res) => {
   // college that does not run Moodle, or that simply adds a course in the app, could never
   // assign it to a department at all. Its students stayed unassigned and invisible to
   // their own tutors.
-  const dept = await resolveAcademicDepartment(req.body?.academicDepartmentId);
+  const dept = await resolveAcademicDepartment(req.body?.academicDepartmentId, { defaultForCaller: true });
   if (dept.error) return res.status(400).json({ error: dept.error });
 
   const p = await prisma.course.create({
@@ -480,7 +533,9 @@ router.post("/cohorts", requireAuth, requireRegisters, async (req, res) => {
   const clash = await prisma.cohort.findFirst({ where: { courseId, name } });
   if (clash) return res.status(409).json({ error: `"${name}" already exists on this course` });
   try {
-    const c = await prisma.cohort.create({ data: { name, courseId, startDate } });
+    const c = await prisma.cohort.create({
+      data: { name, courseId, startDate, academicDepartmentId: await departmentOfCourse(courseId) },
+    });
     res.status(201).json(sCohort(c));
   } catch (_e) { res.status(400).json({ error: "Could not create the cohort" }); }
 });
@@ -654,6 +709,9 @@ router.post("/units", requireAuth, requireRegisters, async (req, res) => {
     const m = await prisma.unit.create({
       data: {
         code, unitNumber: str(req.body?.unitNumber), name, tutor: str(req.body?.tutor), courseId,
+        // Inherited from the course. A unit with a null department is visible only to
+        // college-wide accounts, so a scoped admin's own new unit would vanish on creation.
+        academicDepartmentId: await departmentOfCourse(courseId),
         year: place.year, termNumber: place.termNumber,
         startDate: win.startDate, endDate: win.endDate,
         cohortId: ct.cohortId, termId: ct.termId,
@@ -892,7 +950,15 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
       // Denormalised from the cohort's course. Written HERE, in the same statement as the
       // cohort, because the two must never disagree: a student whose stored department
       // does not match their cohort is a student visible to the wrong department's staff.
-      academicDepartmentId: await academicDepartments.forCohort(cohortId),
+      // From the cohort's course when there is one; otherwise from the creator, when that
+      // is unambiguous.
+      //
+      // THE FALLBACK IS NOT A NICETY. Without it a scoped admin adding a student with no
+      // cohort creates a row with a null department -- visible only to college-wide accounts
+      // -- and the re-read below then returns NULL to its own creator, so the audit line
+      // crashes and the request 500s. They cannot see the student they just made, or even
+      // find it to fix it. Found by running the suite as a scoped account.
+      academicDepartmentId: (await academicDepartments.forCohort(cohortId)) ?? callerDepartmentId(),
       dob: dob || null,
       initials: initialsOf(firstName, lastName),
       colour: colourFor(studentRef + lastName),

@@ -7,6 +7,12 @@
 // pass/fail. That is what makes them usable from CI.
 //
 //   npm test                     # start an API, seed, run everything
+//   SMOKE_SCOPED_DEPARTMENT=1 npm test
+//                                # the same, but with every seeded account narrowed to one
+//                                # academic department that owns every seeded course. Every
+//                                # assertion should still pass; the point is that the
+//                                # guard's FILTERED branch actually executes, which it
+//                                # otherwise never does.
 //   npm test -- smoke-invite     # only suites matching a name
 //   API_URL=https://… npm test   # run against an ALREADY-RUNNING API (skips boot)
 //
@@ -25,9 +31,36 @@ const server = join(root, "server");
 const STANDALONE = new Set(["smoke-push-transport.mjs"]);
 
 const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+// SUITES THAT CANNOT RUN UNDER SMOKE_SCOPED_DEPARTMENT=1, and exactly why.
+//
+// This list is deliberately short and deliberately annotated. "The suite fails under the
+// flag" is not a reason to be on it — every suite that failed for a PRODUCT reason was fixed
+// instead, and that is the whole value of the flag. These three cannot pass by construction:
+//
+//   smoke-academic-departments  Builds Business AND Computing fixtures and asserts the
+//   smoke-academic-scope        boundary between them. Setting that up requires a
+//                               college-wide admin — an admin narrowed to one department
+//                               cannot create the other department's data to be refused
+//                               from. They test scoping; they cannot be run scoped.
+//
+//   smoke-nfc-tap               Creates its units and sessions directly through its own
+//                               unguarded Prisma client rather than through the routes, so
+//                               they land with no department and are invisible to a scoped
+//                               admin. A fixture problem, not a product one: the same
+//                               objects created through POST /hnd/units inherit correctly,
+//                               which smoke-hnd exercises. Fixable by making those fixtures
+//                               department-aware; not fixed here.
+const NOT_SCOPEABLE = new Set([
+  "smoke-academic-departments.mjs",
+  "smoke-academic-scope.mjs",
+  "smoke-nfc-tap.mjs",
+]);
+const scopedRun = process.env.SMOKE_SCOPED_DEPARTMENT === "1";
+
 const suites = readdirSync(join(root, "scripts"))
   .filter((f) => f.startsWith("smoke-") && f.endsWith(".mjs"))
   .filter((f) => !filter.length || filter.some((q) => f.includes(q)))
+  .filter((f) => !(scopedRun && NOT_SCOPEABLE.has(f)))
   .sort();
 
 // Whether the unit-test blocks below will run. Hoisted above the bail deliberately:
@@ -103,6 +136,24 @@ if (!external) {
   // admin@…, password123), so seeding is part of the setup, not optional.
   console.log("→ seeding fixtures");
   if (run("node", ["prisma/seed.js"], { env: { ...process.env, SEED_PASSWORD } }).status !== 0) { console.error("\n✗ seed failed\n"); process.exit(1); }
+
+  // ---- Optionally narrow every seeded account to one academic department -------------
+  //
+  // THE GAP THAT LET SPEC 1 SHIP GREEN. Every suite signs in as an admin who is
+  // college-wide, so scopePredicateFor returns null and the FILTERED path is never executed
+  // once — 30 suites passed while the boundary leaked 194 attendance marks through a nested
+  // include. Passing accounts through the guard's other branch is the only way that gets
+  // caught by the tests rather than by an audit.
+  //
+  // The department is given EVERY seeded course, so every existing assertion should still
+  // hold exactly as written. Any suite that fails under this flag has found a query the
+  // scoping changed — a real finding, and the route is what gets fixed, never the guard.
+  if (process.env.SMOKE_SCOPED_DEPARTMENT === "1") {
+    console.log("→ narrowing every seeded account to one academic department");
+    console.log(`  (skipping ${[...NOT_SCOPEABLE].join(", ")} — see NOT_SCOPEABLE for why)`);
+    const r = run("node", ["prisma/scope-all-staff.js"], { env: { ...process.env } });
+    if (r.status !== 0) { console.error("\n✗ could not narrow the seeded accounts\n"); process.exit(1); }
+  }
 
   console.log(`→ starting API on port ${PORT}`);
   child = spawn("node", ["src/index.js"], {

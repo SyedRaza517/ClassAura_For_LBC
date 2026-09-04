@@ -29,13 +29,21 @@ const FILTERED_OPS = new Set([
   "update", "updateMany", "delete", "deleteMany",
 ]);
 
-// findUnique takes only a unique field, so a predicate cannot be ANDed onto it. Widening
-// to findFirst is what lets the boundary apply to a fetch by id — which is the single
-// most likely way a scoped account reaches another department's row, and the one a suite
-// that only reads lists would never catch.
-const WIDENED = { findUnique: "findFirst", findUniqueOrThrow: "findFirstOrThrow" };
-
-const delegateName = (model) => model[0].toLowerCase() + model.slice(1);
+// Operations whose `where` must keep a unique field at the TOP LEVEL, so the predicate is
+// merged into it rather than wrapped in AND.
+//
+// Prisma 5's extended-where permits a non-unique filter ALONGSIDE a unique one, but the
+// unique one has to stay at the top: `{ id, academicDepartmentId }` is valid,
+// `{ AND: [{ id }, { academicDepartmentId }] }` is not.
+//
+// findUnique WAS WIDENED TO findFirst HERE INSTEAD, and that was a bug with two heads.
+// Re-issuing through the unextended client escaped an enclosing interactive transaction --
+// so a route that created a row and read it back inside $transaction got NULL, because the
+// re-issued read ran outside the uncommitted transaction. routes/timetabling.js does exactly
+// that and returned an event with no id. Widening also broke compound uniques outright:
+// findFirst rejects `{ sessionId_studentId: … }`. Merging fixes both and needs no second
+// client.
+const TOP_LEVEL_MERGE = new Set(["findUnique", "findUniqueOrThrow", "update", "delete"]);
 
 /**
  * Return `client` extended so every departmental query carries the caller's scope.
@@ -88,18 +96,7 @@ function withAcademicScopeGuard(client) {
           const predicate = scopePredicateFor(model, scope);
           if (!predicate) return query(args);
 
-          const widened = WIDENED[operation];
-          if (widened) {
-            // Re-issued through the UNEXTENDED client, or this extension would run again
-            // on the widened call and recurse. The predicate has already been applied
-            // here, so the second pass would add nothing but a stack frame per query.
-            return client[delegateName(model)][widened]({
-              ...args,
-              where: { AND: [args.where, predicate] },
-            });
-          }
-
-          // update AND delete NEED THE UNIQUE FIELD AT THE TOP LEVEL OF `where`.
+          // findUnique, update AND delete ALL NEED THE UNIQUE FIELD AT THE TOP LEVEL.
           //
           // Prisma's extended-where lets a non-unique filter sit ALONGSIDE a unique one,
           // but the unique one has to stay at the top: `{ id, academicDepartmentId }` is
@@ -112,7 +109,10 @@ function withAcademicScopeGuard(client) {
           //
           // Merged rather than AND-ed, and AND-ed only if the keys actually collide, so a
           // caller that already filters on the same field keeps both conditions.
-          if (operation === "update" || operation === "delete") {
+          //
+          // A compound-unique key (`{ sessionId_studentId: {...} }`) is left untouched at the
+          // top level and the predicate sits beside it, which is what extended-where wants.
+          if (TOP_LEVEL_MERGE.has(operation)) {
             const where = { ...args.where };
             for (const [k, v] of Object.entries(predicate)) {
               where[k] = k in where ? { AND: [where[k], v] } : v;

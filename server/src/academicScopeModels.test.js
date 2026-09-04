@@ -71,11 +71,14 @@ test("a column-scoped model filters on its own id list", () => {
 });
 
 test("a relation-scoped model filters through its owner", () => {
+  // `is:` is required by Prisma for an OPTIONAL to-one relation and permitted for a
+  // required one, so every via uses it. Without it TagTap — nullable studentId — threw
+  // rather than filtered.
   assert.deepEqual(scopePredicateFor("AttendanceMark", SCOPED), {
-    student: { academicDepartmentId: { in: ["d1", "d2"] } },
+    student: { is: { academicDepartmentId: { in: ["d1", "d2"] } } },
   });
   assert.deepEqual(scopePredicateFor("Enrolment", SCOPED), {
-    student: { academicDepartmentId: { in: ["d1", "d2"] } },
+    student: { is: { academicDepartmentId: { in: ["d1", "d2"] } } },
   });
 });
 
@@ -95,7 +98,7 @@ test("a scoped model with an EMPTY department list matches nothing, never everyt
   // account the entire college.
   assert.deepEqual(scopePredicateFor("Course", NARROWED_TO_NOTHING), { academicDepartmentId: { in: [] } });
   assert.deepEqual(scopePredicateFor("AttendanceMark", NARROWED_TO_NOTHING), {
-    student: { academicDepartmentId: { in: [] } },
+    student: { is: { academicDepartmentId: { in: [] } } },
   });
 });
 
