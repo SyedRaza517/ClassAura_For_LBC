@@ -86,6 +86,12 @@ const SEED_PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
 // feature. Passed to BOTH the API and the suites: a suite that checks the key is never
 // echoed back has to know what the key is.
 const CREDENTIALS_KEY = process.env.CREDENTIALS_KEY || "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+// The API and the suites must agree on this one. smoke-qr-checkin derives codes locally
+// through the server's own modules and checks them against the running API, and the QR
+// signing key derives from the SESSION secret — so a suite left to fall back to the
+// dev-only default while the API runs on the value below would fail every code it minted,
+// for a reason that reads like a broken feature rather than a mismatched fixture.
+const JWT_SECRET = process.env.JWT_SECRET || "test-secret-not-for-production";
 const PORT = process.env.TEST_PORT || 4010;
 const apiUrl = process.env.API_URL || `http://localhost:${PORT}/api`;
 
@@ -163,7 +169,15 @@ if (!external) {
       ...process.env,
       PORT: String(PORT),
       NODE_ENV: "test",
-      JWT_SECRET: process.env.JWT_SECRET || "test-secret-not-for-production",
+      JWT_SECRET,
+      // No settings cache under test. attendanceTapConfig caches for 30s and invalidates
+      // on save, which is correct in production — but the suites also write the settings
+      // row DIRECTLY, and a direct write is exactly what an invalidate-on-save cache
+      // cannot see. smoke-nfc-tap deletes the row to assert the never-configured college,
+      // and read back a stale "switched on" for up to half a minute. That was invisible
+      // while the seed left no row to cache, and surfaced the moment the seed started
+      // creating one. Zero disables the cache outright; the variable exists for this.
+      ATTENDANCE_TAP_CACHE_MS: "0",
       CREDENTIALS_KEY,
       // TENANT_CACHE_MS: "0" used to be set here. It existed for one suite:
       // smoke-tenant-isolation suspended an institution through the platform tier and
@@ -216,11 +230,20 @@ if (runUnit) {
   //   navGroups     — the sidebar's collapsible parents, because the one way grouping
   //     can go wrong is a parent surviving after permissions emptied it, which shows an
   //     admin a tab that expands to nothing and advertises screens they were not granted.
+  //   qrResultView  — what a student is shown after scanning. Two rules here failed
+  //     silently in review: an absent mark rendering as a green tick, and an unmapped
+  //     refusal printing the server's own message, one of which is a configuration key's
+  //     setup instructions. Both look exactly like a working card.
+  //   checkInAction — which action a session row offers for the live view, if any.
+  //   scanText      — what the in-app scanner accepts as one of our codes.
+  //   scanLink      — whether this screen may draw a code at all. Inside the packaged
+  //     app the page's own address is the device, so a lecturer presenting from it
+  //     would fill a projector with a code the whole room fails to open.
   // client/package.json is "type": "module", so node runs them directly.
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }
@@ -231,7 +254,7 @@ for (const suite of suites) {
   console.log(`${"─".repeat(64)}\n▶ ${suite}\n${"─".repeat(64)}`);
   const r = spawnSync("node", [join(root, "scripts", suite)], {
     cwd: root, stdio: "inherit", shell: false,
-    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD, CREDENTIALS_KEY },
+    env: { ...process.env, API_URL: apiUrl, SEED_PASSWORD, CREDENTIALS_KEY, JWT_SECRET },
   });
   // Exit 2 is a suite reporting itself SKIPPED — it found the feature it covers
   // switched off in this build, so its assertions cannot apply. Distinct from a

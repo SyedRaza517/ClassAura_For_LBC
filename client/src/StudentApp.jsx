@@ -4,6 +4,7 @@ import PhoneShell from "./PhoneShell";
 import { BrandMark } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import { useBackHandler } from "./backButton";
+import { qrScanResult, qrScanRefusal } from "./qrResultView";
 import { api, setToken } from "./api";
 // The same Face ID / fingerprint control the staff app uses, so both halves behave
 // identically and there is one implementation to keep correct.
@@ -14,10 +15,12 @@ import {
   Loader2, Send, CheckCircle2, Info, ArrowRight, RefreshCw,
   Settings, KeyRound, Lock, Trash2, AlertTriangle, Home as HomeIcon,
   Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin, Nfc,
-  HeartHandshake,
+  HeartHandshake, QrCode, Camera,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
+import { peekPendingQr, clearPendingQr, stashScan } from "./pendingQr";
+import QrScanner from "./QrScanner";
 // Section accents. Checked as an adjacent colour-blind-safe set (worst pair ΔE 16.4),
 // so the four areas stay tellable apart for every reader — and each still carries its
 // own icon and label, so colour is never the only signal.
@@ -187,7 +190,14 @@ const TABS = [
 ];
 
 export default function StudentApp({ user, logout }) {
-  const [screen, setScreen] = useState("home");
+  // A scanned check-in code from the one-shot stash the deep link filled — see
+  // pendingQr.js. PEEKED here, not taken: an initializer must be pure (StrictMode runs
+  // it twice, and a read-and-remove made the scan vanish before it was used). The card
+  // clears the stash at submit time, behind its own once-only guard.
+  const [pendingQr, setPendingQr] = useState(() => peekPendingQr());
+  // A student who arrives holding a scan is standing in a running class — land them on
+  // the check-in screen the mark belongs to, not the home screen.
+  const [screen, setScreen] = useState(pendingQr ? "checkin" : "home");
   const [queries, setQueries] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [results, setResults] = useState(null);
@@ -202,6 +212,18 @@ export default function StudentApp({ user, logout }) {
   const [busy, setBusy] = useState(true);
   // Android back returns to the home screen from any other tab.
   useBackHandler(screen !== "home", () => { setScreen("home"); return true; });
+
+  // A scan can arrive while the app is already open — a same-document navigation that
+  // never reloads the page (see pendingQr.js). Pick it up and land on the check-in
+  // screen exactly as a fresh load would.
+  useEffect(() => {
+    const onScan = () => {
+      const p = peekPendingQr();
+      if (p) { setPendingQr(p); setScreen("checkin"); }
+    };
+    window.addEventListener("edtech:pending-qr", onScan);
+    return () => window.removeEventListener("edtech:pending-qr", onScan);
+  }, []);
 
   // Everything the app shows is loaded once, here, so the home screen can summarise
   // attendance and results without each tab refetching the same thing.
@@ -239,7 +261,7 @@ export default function StudentApp({ user, logout }) {
       const which = [a.status === "rejected" && "attendance", r.status === "rejected" && "results", q.status === "rejected" && "messages", v.status === "rejected" && "reviews"].filter(Boolean);
       setErr(failed.length === 4
         ? (failed[0].reason?.message || "Could not load your information")
-        : `Could not load your ${which.join(" or ")}. Tap the refresh icon at the top to try again — everything else here is up to date.`);
+        : `Could not load your ${which.join(" or ")}. Tap the refresh icon at the top to try again. Everything else here is up to date.`);
     }
     setBusy(false);
   }, []);
@@ -281,7 +303,7 @@ export default function StudentApp({ user, logout }) {
       <div className="flex min-h-full flex-col">
         <div className="flex-1" style={{ background: "linear-gradient(180deg,#f6f8fc 0%,#eef2f9 60%,#f6f8fc 100%)" }}>
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
-          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} />}
+          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
@@ -381,10 +403,13 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
 /** One line for the Check In tile, honest in every state. */
 function checkInSub(tapContext) {
   if (tapContext == null) return "Checking…";
-  if (!tapContext.enabled) return "Not switched on yet";
+  // TWO switches now, not one. "Not switched on" is only true when BOTH are off — a
+  // QR-only college's students were being told check-in didn't exist while a live code
+  // sat on the projector in front of them.
+  if (!tapContext.enabled && !tapContext.qrEnabled) return "Not switched on yet";
   const running = (tapContext.now || []).length;
   if (running > 1) return "Choose your class";
-  if (running === 1) return "Ready — tap a sticker";
+  if (running === 1) return tapContext.enabled ? "Ready. Tap a sticker" : "Scan the code on screen";
   if (tapContext.next) return `Next at ${tapContext.next.startTime}`;
   return "No classes left today";
 }
@@ -468,12 +493,24 @@ function TodaysClasses({ today, loading }) {
 // A screen of its own, so Check In is somewhere a student can always GO rather than a
 // card that may or may not be on the home screen. Every state answers plainly here,
 // including the two that previously rendered nothing at all.
-function CheckInScreen({ tapContext, reload }) {
+function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   const enabled = tapContext?.enabled;
+  const qrEnabled = tapContext?.qrEnabled;
   const running = (tapContext?.now || []).length;
+  // The in-app scanner. A decoded code is stashed exactly as a scanned link would be,
+  // and the app's own listener turns it into the card above — one road for both.
+  const [scanning, setScanning] = useState(false);
+  const onScanned = useCallback((p) => { setScanning(false); stashScan(p); }, []);
+  const closeScanner = useCallback(() => setScanning(false), []);
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
+      {/* A scanned code outranks everything else on the screen: the student is holding
+          the result of an action they just took, and it answers first. */}
+      {/* Keyed on the code so a SECOND scan remounts the card — its once-only submit
+          guard is a ref, which must not survive from the previous scan's card. */}
+      {pendingQr && <QrCheckInCard key={pendingQr.code} qr={pendingQr} reload={reload} onDone={onQrDone} />}
+
       {enabled && <StudentCheckIn tapContext={tapContext} reload={reload} />}
 
       {tapContext == null && (
@@ -483,25 +520,53 @@ function CheckInScreen({ tapContext, reload }) {
         </div>
       )}
 
-      {tapContext && !enabled && (
+      {/* "Not switched on" is only true when BOTH capture methods are off. This card
+          used to key on the sticker switch alone, which told a QR-only college's
+          students the feature didn't exist while a live code sat on their projector. */}
+      {tapContext && !enabled && !qrEnabled && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
             <Nfc size={19} style={{ color: ACCENT.checkin }} />
           </span>
           <p className="mt-3 text-sm font-extrabold text-slate-800">Not switched on yet</p>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            Your college hasn&rsquo;t turned on check-in by sticker. When it does, hold your phone
-            to the sticker in your classroom and a button here will let you mark yourself present.
-          </p>
-          <p className="mt-2 text-[13px] leading-relaxed text-slate-500">
-            Until then your lecturer takes the register as usual — there&rsquo;s nothing you need to do.
+            Your college hasn&rsquo;t turned on self check-in. Your lecturer takes the register as usual.
           </p>
         </div>
       )}
 
+      {/* QR is on and stickers are not: one instruction, the way SEAtS-class products
+          word it. No mechanics, no caveats — the server answers every edge case at scan
+          time with its own message. Hidden while a scan's result card is up. */}
+      {tapContext && !enabled && qrEnabled && !pendingQr && (
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
+            <QrCode size={19} style={{ color: ACCENT.checkin }} />
+          </span>
+          <p className="mt-3 text-sm font-extrabold text-slate-800">Scan to check in</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+            Scan the code your lecturer shows on screen.
+          </p>
+          <button onClick={() => setScanning(true)} className="press mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold text-white" style={{ background: ACCENT.checkin }}>
+            <Camera size={16} /> Open the scanner
+          </button>
+          <p className="mt-2 text-center text-[12px] text-slate-400">Your phone's camera app works on it too.</p>
+        </div>
+      )}
+
+      {/* Stickers AND codes on: the sticker card above carries the walkthrough, so the
+          scanner is one button here rather than a second card. */}
+      {tapContext && enabled && qrEnabled && !pendingQr && (
+        <button onClick={() => setScanning(true)} className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[13px] font-bold text-slate-800 ring-1 ring-slate-200">
+          <Camera size={16} style={{ color: ACCENT.checkin }} /> Scan the code on screen
+        </button>
+      )}
+
+      {scanning && <QrScanner onScan={onScanned} onClose={closeScanner} />}
+
       <TodaysClasses today={tapContext?.today} loading={tapContext == null} />
 
-      {enabled && running === 0 && (
+      {(enabled || qrEnabled) && running === 0 && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
           <p className="text-sm font-extrabold text-slate-800">
             {tapContext.next ? "No class on right now" : "That's you done for today"}
@@ -514,18 +579,124 @@ function CheckInScreen({ tapContext, reload }) {
         </div>
       )}
 
-      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
-        <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
-          <li>1. Hold your phone against the sticker in your classroom.</li>
-          <li>2. The button turns blue for about a minute.</li>
-          <li>3. Press it, and you&rsquo;re marked present with the time.</li>
-        </ul>
-        <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
-          It only works while your class is actually running, and only on a phone that can read
-          stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.
-        </p>
+      {/* The sticker flow has real steps (arm, wait for the button, press), so its
+          walkthrough stays. Scanning a code has ONE step, already said in one line
+          above, so when only QR is on there is no card here at all — an instruction,
+          not a manual, which is how the established attendance products word it. */}
+      {enabled && (
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
+          <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
+            <li>1. Hold your phone against the sticker in your classroom.</li>
+            <li>2. The button turns blue for about a minute.</li>
+            <li>3. Press it, and you&rsquo;re marked present with the time.</li>
+          </ul>
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+            It only works while your class is actually running, and only on a phone that can read
+            stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- the scanned-code card --------------------------- */
+
+// What a scan becomes once the app has hold of it. Renders at the very top of the
+// check-in screen, submits the code exactly ONCE on mount, and then shows what the
+// server decided — including every way it can say no, each with its own next step.
+//
+// A sibling of the NFC card, not a change to it: CheckInCard.jsx is deeply coupled to
+// the sticker flow (arming windows, NFC availability, the blue button) and none of that
+// applies to a code that has already been read. The two share nothing but the screen.
+// The four answers a scan can end on, plus the refusal. Absent and refused are rose on
+// purpose: before this, every outcome was emerald or amber, so "you are marked absent"
+// and "you are checked in, late" were the same colour and differed only in wording.
+const QR_TONES = {
+  present: { bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-700", chip: "bg-emerald-100" },
+  late:    { bg: "bg-amber-50",   ring: "ring-amber-200",   text: "text-amber-700",   chip: "bg-amber-100" },
+  excused: { bg: "bg-sky-50",     ring: "ring-sky-200",     text: "text-sky-700",     chip: "bg-sky-100" },
+  absent:  { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
+  refused: { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
+};
+
+function QrCheckInCard({ qr, reload, onDone }) {
+  // sending → done | failed. One object rather than separate flags so a render can
+  // never see a half-updated pair.
+  const [state, setState] = useState({ phase: "sending" });
+  // The submit guard. The qr object is taken from storage exactly once, but React 18's
+  // StrictMode double-runs effects in development, and one scan must never become two
+  // submits — the server would answer alreadyMarked, which reads as a bug to a student
+  // who scanned once.
+  const fired = useRef(false);
+
+  useEffect(() => {
+    if (fired.current || !qr) return;
+    fired.current = true;
+    // The stash dies the moment the submit fires — one scan, one attempt. A reload
+    // that races the request simply resubmits and is answered alreadyMarked.
+    clearPendingQr();
+    (async () => {
+      try {
+        const r = await api.studentQrCheckIn(qr.sessionId, qr.code);
+        setState({ phase: "done", result: r });
+        // Refresh the day's list so the P or L pill appears under the card at once.
+        reload();
+      } catch (e) {
+        setState({ phase: "failed", error: e });
+      }
+    })();
+  }, [qr, reload]);
+
+  if (state.phase === "sending") {
+    return (
+      <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
+        <Loader2 size={20} className="mx-auto animate-spin text-slate-300" />
+        <p className="mt-2 text-[13px] text-slate-500">Checking you in…</p>
       </div>
+    );
+  }
+
+  if (state.phase === "done") {
+    const v = qrScanResult(state.result);
+    const tone = QR_TONES[v.tone] || QR_TONES.present;
+    const Icon = v.good ? CheckCircle2 : AlertTriangle;
+    return (
+      <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
+        <div className="flex items-start gap-3">
+          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
+            <Icon size={20} className={tone.text} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className={`flex items-center gap-2 text-sm font-extrabold ${tone.text}`}>
+              {v.heading}
+              {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">{v.chip}</span>}
+            </p>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.detail}</p>
+          </div>
+        </div>
+        <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Done</button>
+      </div>
+    );
+  }
+
+  // Refused. Rose, so a refusal is never mistaken at a glance for the amber of a Late
+  // check-in — the two used to differ only by the words in them.
+  const v = qrScanRefusal(state.error);
+  const tone = QR_TONES.refused;
+  return (
+    <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
+      <div className="flex items-start gap-3">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
+          <AlertTriangle size={19} className={tone.text} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-extrabold ${tone.text}`}>{v.heading}</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.advice}</p>
+        </div>
+      </div>
+      <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
     </div>
   );
 }
@@ -1557,16 +1728,26 @@ function QueryScreen({ queries = [], reload }) {
 // straight answer, rather than an absence they have to interpret.
 function CheckInStatusRow({ tapContext, setScreen }) {
   const loading = tapContext == null;
-  const off = !loading && !tapContext.enabled;
+  // BOTH switches, not just the sticker one. A college running codes only had this row
+  // saying check-in was not switched on while the Check In tab, three taps away, said
+  // "Scan to check in" — the same two switches the tab already reads.
+  const stickers = !loading && tapContext.enabled;
+  const codes = !loading && tapContext.qrEnabled;
+  const off = !loading && !stickers && !codes;
   const running = (tapContext?.now || []).length;
   const next = tapContext?.next;
+
+  // Named for what the student can actually do. "with a sticker" is only true where the
+  // sticker is the only way in.
+  const title = stickers && !codes ? "Check in with a sticker" : "Check in";
+  const Glyph = codes ? QrCode : Nfc;
 
   const body = loading
     ? "Checking…"
     : off
-      ? "Your college hasn't switched on tap check-in yet. When it does, a Check in card appears at the top of your home screen."
+      ? "Your college hasn't switched check-in on yet. When it does, a Check in card appears at the top of your home screen."
       : running
-        ? `You can check in now — ${running > 1 ? "choose which class" : (tapContext.now[0].unitName || tapContext.now[0].unitCode)}. The card is at the top of your home screen.`
+        ? `${running > 1 ? "Your classes are running now" : `${tapContext.now[0].unitName || tapContext.now[0].unitCode} is running now`}. The card is at the top of your home screen.`
         : next
           ? `Nothing to check in to yet. Your next class starts at ${next.startTime}.`
           : "No more classes today.";
@@ -1579,10 +1760,10 @@ function CheckInStatusRow({ tapContext, setScreen }) {
       className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default"
     >
       <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: off ? "#f1f5f9" : NAVY + "14" }}>
-        <Nfc size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
+        <Glyph size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold text-slate-800">Check in with a sticker</span>
+        <span className="block text-sm font-bold text-slate-800">{title}</span>
         <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500">{body}</span>
       </span>
     </button>

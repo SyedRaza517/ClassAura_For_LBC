@@ -12,7 +12,9 @@ const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
-const { resolveTapSession, statusFor, SELF_CHECKIN_STAMP } = require("../attendanceTap");
+const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
+const { verifyCode } = require("../attendanceQr");
+const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate } = require("../validate");
 
 router.use(requireAuth, requireStudent);
@@ -65,9 +67,19 @@ function tapAllowed(studentId) {
  * Never throws into the request. A tap that WAS marked must not report a failure because
  * the log write did — the register is the record, this is the account of it.
  */
+// The device id the app sends, cut to size and reduced to id characters before it is
+// stored: it is a header any client can set to anything, and the log is read by
+// administrators in a browser. Null when absent — never invented.
+function deviceIdFrom(req) {
+  const raw = req.get?.("x-device-id");
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const clean = raw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+  return clean || null;
+}
+
 async function logTap(req, fields) {
   try {
-    await prisma.tagTap.create({ data: { ip: req.ip ? String(req.ip).slice(0, 60) : null, ...fields } });
+    await prisma.tagTap.create({ data: { ip: req.ip ? String(req.ip).slice(0, 60) : null, deviceId: deviceIdFrom(req), ...fields } });
   } catch (e) {
     console.error("[tap] could not log a student tap:", e.message);
   }
@@ -90,6 +102,10 @@ async function candidateSessions(studentId, date) {
     date: s.date,
     startTime: s.startTime,
     endTime: s.endTime,
+    // The lecturer's overrides travel with the candidate, or the shared predicate
+    // would judge a closed class open and a held-open one shut.
+    checkInClosedAt: s.checkInClosedAt ?? null,
+    checkInOpenUntil: s.checkInOpenUntil ?? null,
     term: s.unit?.term ? { name: s.unit.term.name, start: s.unit.term.start, end: s.unit.term.end } : null,
   }));
 }
@@ -146,9 +162,18 @@ router.get("/me/tap-context", async (req, res) => {
       };
     });
 
-  if (!settings.enabled) {
+  // "There is no check-in here" is a question about BOTH switches.
+  //
+  // This branch used to fire on the sticker switch alone and return an empty running-now
+  // list and no next class. It carried a comment saying a QR-only college must not read
+  // as "not switched on" — and it fixed only the FLAG it hands back, while every field
+  // the screen actually reasons from stayed empty. The result was a student in a lecture,
+  // with the code on the wall behind them, being told "that's you done for today", all
+  // day, on the one configuration this feature was built for.
+  if (!settings.enabled && !settings.qrEnabled) {
     return res.json({
       enabled: false,
+      qrEnabled: false,
       armSeconds: settings.armSeconds,
       date,
       now: [],
@@ -158,6 +183,9 @@ router.get("/me/tap-context", async (req, res) => {
     });
   }
 
+  // Which class is on, and what a mark for it would be. Deliberately the same decision on
+  // both capture methods: what is running is a fact about the timetable and the clock,
+  // not about how the student is going to tell us they are there.
   const decision = resolveTapSession(candidates, { date, time }, settings);
 
   // The classes still to come today, so the screen can say "your next class is at 13:00"
@@ -167,7 +195,11 @@ router.get("/me/tap-context", async (req, res) => {
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 
   res.json({
-    enabled: true,
+    // The sticker switch, reported honestly. The client uses it to decide whether the
+    // arming walkthrough belongs on screen, so it must stay the sticker's own answer and
+    // not become "some kind of check-in is available".
+    enabled: settings.enabled === true,
+    qrEnabled: settings.qrEnabled,
     armSeconds: settings.armSeconds,
     date,
     now: decision.kind === "one" ? [sTapSession(decision.session)]
@@ -194,7 +226,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   // while students were still tapping needs to be able to see that happening, and until
   // TagTap.tagId became nullable none of these three could be recorded at all.
   if (!settings.enabled) {
-    await logTap(req, { studentId: req.user.id, outcome: "disabled" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "disabled" });
     return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
   }
 
@@ -204,7 +236,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   if (chosenId != null && !isString(chosenId)) return res.status(400).json({ error: "sessionId must be text" });
 
   if (!tapAllowed(req.user.id)) {
-    await logTap(req, { studentId: req.user.id, outcome: "rate_limited" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "rate_limited" });
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
@@ -217,7 +249,7 @@ router.post("/me/tap-check-in", async (req, res) => {
     // must not become a list of the codes somebody has been trying. What is worth
     // keeping is that an unrecognised tap happened, when, and from where — which is what
     // makes a run of them visible as a run.
-    await logTap(req, { studentId: req.user.id, outcome: "tag_unknown" });
+    await logTap(req, { studentId: req.user.id, method: "nfc", outcome: "tag_unknown" });
     return res.status(404).json({ error: "That tag isn't recognised." });
   }
 
@@ -226,7 +258,9 @@ router.post("/me/tap-check-in", async (req, res) => {
   const candidates = await candidateSessions(req.user.id, date);
   const decision = resolveTapSession(candidates, { date, time }, settings);
 
-  const base = { tagId: tag.id, studentId: req.user.id };
+  // method sits in base so every outcome below carries it — a refusal is as much an
+  // NFC event as a mark, and the QR route logs its own method the same way.
+  const base = { tagId: tag.id, studentId: req.user.id, method: "nfc" };
 
   if (decision.kind === "none") {
     await logTap(req, { ...base, outcome: decision.reason });
@@ -301,6 +335,175 @@ router.post("/me/tap-check-in", async (req, res) => {
   });
 
   res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(chosen) });
+});
+
+/* ============================== QR check-in ============================== */
+
+// POST /api/student/me/qr-check-in — mark this student present via the rotating code.
+//
+// The second capture path. The code names its own session (see attendanceQr.js for why
+// that is safe), so there is no candidate resolution and no ambiguity branch — but
+// naming the session proves only which screen was scanned, nothing about who scanned
+// it. Everything the NFC route establishes about the PERSON is re-established here:
+// enrolment, the session's own window, the term lock, and the four invariants (never
+// overwrite a lecturer's mark, never write an A, checkedInAt written once, nothing on
+// a schedule).
+//
+// One divergence from the NFC route, on purpose: a locked term answers 423 rather than
+// 409. The NFC path reports term_locked through resolveTapSession's shared "none"
+// branch; this route knows exactly which register was asked for, so it mirrors
+// PUT /sessions/:id/register — the route whose lock it is enforcing. Do not "fix"
+// either route to match the other.
+router.post("/me/qr-check-in", async (req, res) => {
+  const settings = await tapConfig.get();
+  if (!settings.qrEnabled) {
+    await logTap(req, { studentId: req.user.id, method: "qr", outcome: "disabled" });
+    return res.status(403).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_off" });
+  }
+
+  const rawSessionId = req.body?.sessionId;
+  const rawCode = req.body?.code;
+  if (!isString(rawSessionId) || !rawSessionId.trim() || !isString(rawCode) || !rawCode.trim()) {
+    return res.status(400).json({ error: "A class code is required", reason: "qr_missing" });
+  }
+  const sessionId = rawSessionId.trim();
+
+  // The SAME budget as the NFC path, deliberately — one student gets ten check-in
+  // attempts a minute across both capture methods, not ten of each.
+  if (!tapAllowed(req.user.id)) {
+    await logTap(req, { studentId: req.user.id, method: "qr", outcome: "rate_limited" });
+    return res.status(429).json({ error: "Too many attempts. Wait a moment and try again.", reason: "too_many" });
+  }
+
+  let secret;
+  try {
+    secret = qrSigningKey();
+  } catch (e) {
+    // Fail loudly. A missing CREDENTIALS_KEY must not present as "the QR never works",
+    // one refused scan at a time — 503 names the configuration problem to fix.
+    if (e instanceof SecretsNotConfigured) {
+      // The detail goes to the OPERATOR, never down the wire. e.message names the
+      // environment variable and carries the shell command that generates it, and the
+      // only reader of this response is a student holding a phone in a lecture theatre.
+      console.error("[qr] cannot sign or verify codes:", e.message);
+      return res.status(e.status).json({ error: "Check-in isn't available right now.", reason: "qr_unavailable" });
+    }
+    throw e;
+  }
+
+  // Cheap crypto before any database read. The claimed sessionId is logged on every
+  // refusal below even though it is unproven at that point: a scan names a session
+  // even when it is refused, and that is the half of the log worth having — "six
+  // refusals against one register inside a minute" is a pattern, "six refusals" is
+  // noise. The CODE string is never stored, same as the NFC tag code: it is a bearer
+  // credential for a mark, and a log administrators read must not become a list of
+  // recently-valid credentials.
+  const verdict = verifyCode({
+    secret,
+    sessionId,
+    code: rawCode.trim(),
+    nowSeconds: Math.floor(Date.now() / 1000),
+    rotateSeconds: settings.qrRotateSeconds,
+  });
+  if (!verdict.valid) {
+    if (verdict.reason === "expired") {
+      // "Expired" and "never ours" are different sentences with different next steps.
+      await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "qr_expired" });
+      return res.status(409).json({ error: "That code has expired. Scan the one on screen again.", reason: "qr_expired" });
+    }
+    await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "qr_bad_code" });
+    return res.status(404).json({ error: "That code isn't recognised.", reason: "qr_bad_code" });
+  }
+
+  const session = await prisma.hndSession.findUnique({
+    where: { id: sessionId },
+    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  if (!session) {
+    // A valid signature for a session that no longer exists: deleted mid-lecture.
+    await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "session_unknown" });
+    return res.status(404).json({ error: "That class no longer exists.", reason: "no_session" });
+  }
+
+  // Enrolment is what makes a student eligible for a register at all — the NFC path
+  // gets this from building candidates off Enrolment; here it is the explicit check.
+  const enrolled = await prisma.enrolment.findFirst({
+    where: { studentId: req.user.id, unitId: session.unitId },
+    select: { id: true },
+  });
+  if (!enrolled) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "not_enrolled" });
+    return res.status(403).json({ error: "You're not on the list for that class.", reason: "not_enrolled" });
+  }
+
+  const date = localDate();
+  const time = localTime();
+
+  // The session's own window, through the SAME predicate the mint route and both
+  // dashboards use — this check existed four times with drifting copies, and the drift
+  // is precisely how a projector ends up advertising a code every scan is refused.
+  // Window before term, mirroring resolveTapSession: a student who scanned at the wrong
+  // time of day must not be told their term is closed.
+  if (!withinSessionWindow(session, { date, time }, settings)) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "no_session_now" });
+    return res.status(409).json({ error: "That class isn't running right now.", reason: "no_session_now" });
+  }
+
+  if (!termOpenOn(session.unit?.term, date)) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "term_locked" });
+    return res.status(423).json({ error: "That class is outside its teaching term, so the register is closed.", reason: "term_locked" });
+  }
+
+  const shaped = {
+    id: session.id,
+    unitCode: session.unit?.code || "",
+    unitName: session.unit?.name || "",
+    startTime: session.startTime,
+    endTime: session.endTime,
+  };
+  const status = statusFor(session, { date, time }, settings);
+
+  const existing = await prisma.attendanceMark.findUnique({
+    where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
+  });
+  if (existing) {
+    await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: existing.status, checkedInAt: existing.checkedInAt ?? null, session: sTapSession(shaped) });
+  }
+
+  let mark;
+  try {
+    mark = await prisma.attendanceMark.create({
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_QR_STAMP, checkedInAt: time },
+    });
+  } catch (e) {
+    // P2002 on @@unique([sessionId, studentId]): two scans raced past the existence
+    // check, or a lecturer saved the register in between. A mark now stands and this
+    // request must not have written it — report what stands rather than a 500.
+    const standing = await prisma.attendanceMark.findUnique({
+      where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
+    });
+    if (!standing) throw e;
+    await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: standing.status, checkedInAt: standing.checkedInAt ?? null, session: sTapSession(shaped) });
+  }
+
+  await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "marked", status });
+
+  // Flag, never rescore: a check-in must not wait on arithmetic. Never throws into a
+  // request that has already written the mark.
+  try { await predictionRunner.markStale([req.user.id]); }
+  catch (e) { console.error("[prediction] could not flag a score after a QR check-in:", e.message); }
+
+  audit.record(req, {
+    action: "attendance.qr.marked",
+    entity: "AttendanceMark", entityId: mark.id,
+    summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) checked themselves in at ${time} on the ${session.date} register for ${shaped.unitCode || "a unit"} — recorded ${status} via the code on screen`,
+    before: null,
+    after: { sessionId: session.id, status, checkedInAt: time, method: "qr" },
+  });
+
+  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(shaped) });
 });
 
 // GET /api/student/me — the signed-in student's own profile.

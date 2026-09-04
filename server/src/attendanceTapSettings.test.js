@@ -73,18 +73,30 @@ test("merge never mutates DEFAULTS, however often it is called", () => {
 // The rotating QR code
 // ---------------------------------------------------------------------------
 
-test("QR ships OFF, independently of the sticker", () => {
-  // Two capture methods, two switches. A college may want the stickers and not the
-  // projector, or the projector and not the stickers, and inferring one from the other
-  // would switch on a way of writing to the attendance record that nobody asked for.
-  assert.equal(DEFAULTS.qrEnabled, false);
+test("QR ships ON and the stickers ship OFF, which is the whole point of two switches", () => {
+  // Changed deliberately on 4 Sep 2026; attendanceTapSettings.js carries the reasoning.
+  // QR needs nothing bought or installed and is the capability the college is buying, so
+  // it is on. The stickers need hardware somebody has to place, and a capture method
+  // nobody has installed must not appear to be running, so they stay off.
+  assert.equal(DEFAULTS.qrEnabled, true);
   assert.equal(DEFAULTS.enabled, false);
 });
 
-test("switching the stickers on does not switch the QR on", () => {
-  const out = merge({ enabled: true });
-  assert.equal(out.enabled, true);
-  assert.equal(out.qrEnabled, false);
+test("the two switches move independently, in both directions", () => {
+  // Switching the stickers on says nothing about the code, and switching the code off
+  // says nothing about the stickers. Inferring either from the other would change a way
+  // of writing to the attendance record that nobody touched.
+  const stickersOn = merge({ enabled: true });
+  assert.equal(stickersOn.enabled, true);
+  assert.equal(stickersOn.qrEnabled, true, "the QR default must survive a sticker change");
+
+  const qrOff = merge({ qrEnabled: false });
+  assert.equal(qrOff.qrEnabled, false, "a college must be able to switch the code off");
+  assert.equal(qrOff.enabled, false, "and that must not switch the stickers on");
+
+  const qrOffStickersOn = merge({ qrEnabled: false, enabled: true });
+  assert.equal(qrOffStickersOn.qrEnabled, false);
+  assert.equal(qrOffStickersOn.enabled, true);
 });
 
 test("the rotation period defaults to thirty seconds", () => {
@@ -113,9 +125,18 @@ test("an unusable rotation is IGNORED, not reset", () => {
   assert.equal(out.qrEnabled, true);
 });
 
-test("a truthy non-boolean does not switch QR on", () => {
-  assert.equal(merge({ qrEnabled: "false" }).qrEnabled, false);
-  assert.equal(merge({ qrEnabled: 1 }).qrEnabled, false);
+test("a non-boolean is IGNORED, so it can neither switch QR on nor off", () => {
+  // Tested from BOTH starting points on purpose. This assertion used to read
+  // `=== false` against a default of false, so it passed while proving nothing: a rule
+  // that says "ignore junk" and a rule that says "junk means off" were indistinguishable.
+  // `{ qrEnabled: "false" }` and `{ qrEnabled: 1 }` are both reachable from any JSON
+  // client, and neither is an instruction.
+  const on = { ...DEFAULTS, qrEnabled: true };
+  const off = { ...DEFAULTS, qrEnabled: false };
+  for (const junk of ["false", "true", 1, 0, null, {}, []]) {
+    assert.equal(merge({ qrEnabled: junk }, on).qrEnabled, true, `${JSON.stringify(junk)} switched it off`);
+    assert.equal(merge({ qrEnabled: junk }, off).qrEnabled, false, `${JSON.stringify(junk)} switched it on`);
+  }
 });
 
 test("a FALSY non-boolean does not switch QR off", () => {

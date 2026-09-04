@@ -23,6 +23,7 @@
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.3",
     "@capgo/capacitor-nfc": "^8.2.5",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.469.0",
     "pdfjs-dist": "^6.2.108",
     "qrcode": "^1.5.4",

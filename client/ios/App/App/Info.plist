@@ -37,6 +37,8 @@
 	     on every launch afterwards. Apple also shows this text in the prompt. -->
 	<key>NSFaceIDUsageDescription</key>
 	<string>Face ID keeps your staff records private if someone else has your unlocked phone.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Used to scan the check-in code your lecturer shows on screen.</string>
 	<key>NFCReaderUsageDescription</key>
 	<string>Reading the attendance sticker in your classroom is how you check in to a class.</string>
 	<!-- Lets the app receive push notifications while backgrounded. -->

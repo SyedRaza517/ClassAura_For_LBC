@@ -1116,6 +1116,16 @@ model HndSession {
   // without duplicating anything and (b) removed again in one statement, without
   // touching a single register a member of staff took by hand.
   moodleSessionId Int?
+  // The lecturer's hand on the self check-in window (3 Sep 2026). Both null means
+  // "follow the timetable", which is every session until somebody presses a button.
+  //   checkInClosedAt  — the lecturer ended check-in before the timetabled end. Absolute:
+  //                      no scan or tap lands while it is set. Reopening clears it.
+  //   checkInOpenUntil — HH:MM, local. Holds check-in open PAST the end for late
+  //                      arrivals; it only ever extends (the later of end/openUntil wins).
+  // On the session, not in a settings row, because the answer is per class per day and
+  // an audit reading a disputed register wants it beside the marks it explains.
+  checkInClosedAt  DateTime?
+  checkInOpenUntil String?
   createdAt       DateTime @default(now())
 
   marks AttendanceMark[]
@@ -1205,13 +1215,26 @@ model TagTap {
   studentId String?
   staffId   String?
   sessionId String? // the register a student tap landed on
+  // "nfc" | "qr". NULLABLE, and never backfilled: a row written before this column
+  // existed is not evidence that it was NFC, it is evidence that we were not recording
+  // the method — writing "nfc" onto it would invent a fact. An administrator answering
+  // "I scanned and it did not work" needs to know which capture path refused, because
+  // the two fail differently: a dead sticker and an expired code look identical in a
+  // log that does not say.
+  method    String?
   // marked | checked_in | already_marked | already_checked_in | no_session_now |
-  // ambiguous | term_locked | tag_unknown | rate_limited | disabled
+  // ambiguous | term_locked | tag_unknown | rate_limited | disabled |
+  // qr_expired | qr_bad_code | session_unknown | not_enrolled
   outcome   String
   status    String? // "P" | "L" when a mark was actually written
   site      String? // "Onsite" for a staff tap — the tap itself proves that
   at        DateTime       @default(now())
   ip        String?
+  // An id the student's app made up once and keeps (localStorage), sent as a header on
+  // every self check-in. Not identity — the account is — but the trail that answers
+  // "did one handset scan for six accounts in a minute". Null before the column existed
+  // and for clients that never send one; never used to refuse a scan on its own.
+  deviceId  String?
 
   @@index([tagId, at])
   @@index([studentId])

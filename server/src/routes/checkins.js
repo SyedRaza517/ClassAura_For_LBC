@@ -202,7 +202,9 @@ function staffTapAllowed(staffId) {
 router.post("/tap-check-in", requireAuth, async (req, res) => {
   const settings = await tapConfig.get();
   if (!settings.enabled || !settings.staffTapEnabled) {
-    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "disabled", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    // method on refusals too: NULL is defined as "row from before the column existed",
+    // so a fresh refusal writing NULL would read as pre-feature history in the log.
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, method: "nfc", outcome: "disabled", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
     catch (e) { console.error("[tap] could not log a disabled staff tap:", e.message); }
     return res.status(403).json({ error: "Tap check-in isn't switched on for this college." });
   }
@@ -211,7 +213,7 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
   if (!isString(code) || !code.trim()) return res.status(400).json({ error: "A tag is required" });
 
   if (!staffTapAllowed(req.user.id)) {
-    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "rate_limited", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, method: "nfc", outcome: "rate_limited", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
     catch (e) { console.error("[tap] could not log a rate-limited staff tap:", e.message); }
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
@@ -221,7 +223,7 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
   if (!tag) {
     // The code itself is never stored — a log an administrator reads must not become a
     // list of the codes somebody has been trying.
-    try { await prisma.tagTap.create({ data: { staffId: req.user.id, outcome: "tag_unknown", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
+    try { await prisma.tagTap.create({ data: { staffId: req.user.id, method: "nfc", outcome: "tag_unknown", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
     catch (e) { console.error("[tap] could not log an unknown-tag staff tap:", e.message); }
     return res.status(404).json({ error: "That tag isn't recognised." });
   }
@@ -232,7 +234,7 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
   const logTap = async (outcome, extra = {}) => {
     try {
       await prisma.tagTap.create({
-        data: { tagId: tag.id, staffId: req.user.id, outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
+        data: { tagId: tag.id, staffId: req.user.id, method: "nfc", outcome, ip: req.ip ? String(req.ip).slice(0, 60) : null, ...extra },
       });
     } catch (e) {
       console.error("[tap] could not log a staff tap:", e.message);

@@ -109,6 +109,33 @@ async function main() {
   await prisma.student.deleteMany();
   await prisma.unit.deleteMany();
 
+  // Switch QR check-in ON for the demo, and ONLY for the demo.
+  //
+  // The product itself ships this OFF (see DEFAULTS in src/attendanceTapSettings.js, and
+  // the reasoning above it): a live college must not gain a second way of writing to its
+  // attendance record because somebody deployed. That stays true. This file is the one
+  // place the opposite choice is safe, because every route into it passes the
+  // assertDisposable guard at the top, so the only databases it can reach are throwaway
+  // ones — a developer's local copy, CI, and the owner's demo.
+  //
+  // The reason to do it here at all: with the default, anyone opening the demo to look at
+  // this feature finds a live register with no code on it, and nothing on the screen says
+  // a switch exists. The feature reads as broken rather than as off.
+  //
+  // Only qrEnabled is stored. Every other setting is left absent on purpose so it keeps
+  // following the shipped defaults — the merge in attendanceTapSettings.js overrides only
+  // the keys actually present here, so a later change to the default late cut-off or
+  // rotation period reaches the demo too instead of being frozen at today's value.
+  // Sticker check-in is deliberately NOT switched on: there is no hardware behind it in a
+  // demo, so it would only advertise a walkthrough the evaluator cannot follow.
+  // The pairing is pinned by src/seedTapConfig-contract.test.js.
+  console.log("Seeding check-in settings (QR on, demo only)…");
+  await prisma.attendanceTapConfig.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton", settings: { qrEnabled: true }, updatedBy: "Seed" },
+    update: { settings: { qrEnabled: true }, updatedBy: "Seed" },
+  });
+
   console.log("Seeding staff…");
   for (const s of STAFF) {
     await prisma.staff.create({ data: { ...s, passwordHash: hash(DEFAULT_PW) } });

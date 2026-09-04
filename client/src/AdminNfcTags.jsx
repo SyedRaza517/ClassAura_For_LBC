@@ -1,4 +1,6 @@
-// NFC Tags — register the stickers, tune how tap check-in behaves, read the tap log.
+// Check-in: QR & NFC — switch either method on, tune how they behave, register the
+// stickers, read the tap log. (Named "NFC Tags" until 3 Sep 2026; the page KEY is
+// still `attendance-tags`, because keys are pinned in two places and grants refer to them.)
 //
 // Two ways to register a sticker, because they suit two different rollouts and a college
 // should not have to pick the hard one:
@@ -74,7 +76,7 @@ export default function AdminNfcTags() {
   return (
     <div className="space-y-5 p-4 md:p-6">
       <header>
-        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Nfc size={18} style={{ color: NAVY }} />NFC Tags</h2>
+        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Nfc size={18} style={{ color: NAVY }} />Check-in: QR &amp; NFC</h2>
         <p className="mt-0.5 text-[13px] text-slate-500">The stickers students and staff tap, and how check-in behaves.</p>
       </header>
       <div role="alert" aria-live="assertive">{err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}</div>
@@ -167,9 +169,10 @@ function TapSettings({ settings, onSaved }) {
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5">
-      <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-800"><ShieldCheck size={16} style={{ color: NAVY }} />How tap check-in behaves</h3>
+      <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-800"><ShieldCheck size={16} style={{ color: NAVY }} />How self check-in behaves</h3>
       <p className="mb-4 text-[12px] leading-relaxed text-slate-500">
-        Students can only tap while a lecture of theirs is actually running — not before it starts, not after it ends.
+        Students can only check in while a lecture of theirs is actually running. Not before it starts, and not after it ends.
+        That applies to stickers and to the on-screen code alike.
       </p>
 
       {err && <div className="mb-3"><Banner tone="rose" Icon={AlertTriangle}>{err}</Banner></div>}
@@ -189,10 +192,28 @@ function TapSettings({ settings, onSaved }) {
         </span>
       </label>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {num("lateAfterMins", "Late after (minutes)", "A tap this long after the start records Late instead of Present.")}
-        {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts taps are accepted. Zero means not before it starts.")}
+      {/* A separate switch, deliberately: a college may want the stickers and not the
+          projector, or the projector and not the stickers, and neither implies the other. */}
+      <label className="mb-4 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+        <input
+          type="checkbox" checked={draft.qrEnabled} disabled={saving}
+          onChange={(e) => save({ qrEnabled: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="block text-[13px] font-semibold text-slate-800">QR check-in is {draft.qrEnabled ? "ON" : "OFF"}</span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            Shows a check-in code on the Live Attendance screen for each running class.
+            Students scan it with their phone camera. No stickers or NFC needed.
+          </span>
+        </span>
+      </label>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {num("lateAfterMins", "Late after (minutes)", "A check-in this long after the start records Late instead of Present.")}
+        {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts check-ins are accepted. Zero means not before it starts.")}
         {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.", 600)}
+        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. Ten seconds is the floor. Any shorter and a phone can't scan it in time.", 300)}
       </div>
 
       <label className="mt-4 flex items-start gap-3">

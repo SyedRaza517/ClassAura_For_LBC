@@ -166,6 +166,10 @@ const sApplicant = (a) => ({
 const sSession = (x) => ({
   id: x.id, unitId: x.unitId, date: x.date, start: x.startTime, end: x.endTime,
   description: x.description, audience: x.audience, kind: x.kind ?? "",
+  // The lecturer's overrides on self check-in, both null until pressed. Serialised
+  // here so the live view and the registers list read the same names.
+  checkInClosedAt: x.checkInClosedAt ? new Date(x.checkInClosedAt).toISOString() : null,
+  checkInOpenUntil: x.checkInOpenUntil ?? null,
   ...(x._count ? { markedCount: x._count.marks } : {}),
 });
 // checkedInAt is named explicitly because this is an allowlist, not a blocklist: a

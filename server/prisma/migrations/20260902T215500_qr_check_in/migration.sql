@@ -1,0 +1,12 @@
+-- QR check-in: record WHICH capture path a tap row came from.
+--
+-- Purely additive: one nullable column, no default, no backfill, nothing that can
+-- half-apply. Safe on both staging and production.
+--
+-- NULLABLE and never backfilled, deliberately. A row written before this column
+-- existed is not evidence that it was NFC — it is evidence that the method was not
+-- being recorded. Backfilling "nfc" would invent a fact, and this table is the one an
+-- administrator reads when a student says "I scanned and it did not work": a dead
+-- sticker and an expired QR code fail differently, and the log has to say which path
+-- refused.
+ALTER TABLE "TagTap" ADD COLUMN "method" TEXT;

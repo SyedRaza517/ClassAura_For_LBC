@@ -12,7 +12,7 @@ import {
   CalendarCheck, UserCheck, Layers, Activity, Award, ShieldCheck,
   BookOpen, Percent, PlayCircle, RefreshCw, MoreHorizontal, MessageSquare, ChevronDown, Loader2, KeyRound, Send, Wallet,
   Fingerprint, ScanFace, ExternalLink, Copy, PanelLeftClose, PanelLeftOpen, TrendingDown, LifeBuoy,
-  Radio,
+  Radio, QrCode,
   Nfc,
   Gauge,
   // Referrals: HeartHandshake for the sidebar parent (LifeBuoy is already Mitigating
@@ -32,7 +32,8 @@ import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import CheckInCard from "./CheckInCard";
 import AdminNfcTags from "./AdminNfcTags";
-import AdminLiveAttendance from "./AdminLiveAttendance";
+import AdminLiveAttendance, { LiveSession } from "./AdminLiveAttendance";
+import { liveAction } from "./checkInAction";
 import AssessmentTracker from "./AssessmentTracker";
 import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import AdmissionTracker from "./AdmissionTracker";
@@ -468,7 +469,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
   // Tapping a push notification opens the screen it refers to — the `link` the
   // server attached (e.g. "balance" for a leave decision, "approvals" for admins).
   useEffect(() => {
-    const KNOWN = ["home", "checkin", "timetable", "balance", "calendar", "request", "documents", "approval", "summary", "timesheet", "reflection", "studentreview", "more"];
+    const KNOWN = ["home", "checkin", "timetable", "classes", "balance", "calendar", "request", "documents", "approval", "summary", "timesheet", "reflection", "studentreview", "more"];
     const onOpen = (e) => {
       const link = e.detail === "approvals" ? "approval" : e.detail;
       setScreen(KNOWN.includes(link) ? link : "home");
@@ -514,6 +515,10 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
       {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} />}
       {screen === "checkin" && <CheckInScreen store={store} me={me} />}
       {screen === "timetable" && <MyTimetable />}
+      {/* The lecturer's live view, exactly the console's: the server admits the tutor of
+          a unit to their own classes without any admin page. No settings link here;
+          a lecturer is told to ask. */}
+      {screen === "classes" && <AdminLiveAttendance />}
       {screen === "balance" && <BalanceScreen store={store} me={me} />}
       {screen === "calendar" && <CalendarScreen store={store} me={me} />}
       {screen === "request" && <RequestLeaveScreen store={store} me={me} setScreen={setScreen} />}
@@ -548,7 +553,7 @@ function StatusBar() {
 }
 
 function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, showNotes, setShowNotes }) {
-  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
+  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", classes: "My Classes", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
   const unread = store.notes.length;
   const greet = greetingFor();
   const Greet = greet.Icon;
@@ -626,6 +631,9 @@ function NotePanel({ store, onClose }) {
 const TILES = [
   { key: "checkin", label: "Daily Check-In", Icon: Clock, sub: "Clock in & out" },
   { key: "timetable", label: "My Timetable", Icon: CalendarDays, sub: "Where you're teaching" },
+  // Only for staff recorded as the tutor of a unit (HomeGrid asks the server). The
+  // lecturer's own registers: today's classes, the QR code, who has scanned.
+  { key: "classes", label: "My Classes", Icon: Radio, sub: "Today's registers & QR code" },
   { key: "balance", label: "Holiday Balance", Icon: Check, sub: "Days remaining" },
   { key: "calendar", label: "Holiday Calendar", Icon: Calendar, sub: "Who's off & when" },
   { key: "request", label: "Request Leave", Icon: Plus, sub: "Book time off" },
@@ -655,6 +663,15 @@ const canDecideLeaveFor = (user) => ["requests", "approvals", "calendar"].some(p
 function HomeGrid({ setScreen, store, me }) {
   const today = todayISO();
   const canDecideLeave = canDecideLeaveFor(store.currentUser);
+  // Whether this person tutors any unit — the server's answer, not a guess from the
+  // staff list, because unit records are admin-only and the app never loads them.
+  // False until answered, so the tile appears rather than disappears.
+  const [teaches, setTeaches] = useState(false);
+  useEffect(() => {
+    let on = true;
+    api.mySessionsToday().then((r) => { if (on) setTeaches(r?.teaches === true); }).catch(() => { /* not a lecturer, or offline: no tile */ });
+    return () => { on = false; };
+  }, []);
   const myToday = store.checkins.find(c => c.staffId === me.id && c.date === today && c.in);
   const pending = store.leave.filter(l => l.staffId === me.id && l.status === "pending").length;
   const left = store.remaining(me.id);
@@ -683,7 +700,7 @@ function HomeGrid({ setScreen, store, me }) {
             Gated on store.isAdmin, a page-scoped admin (e.g. finance, timesheets-only)
             saw the tile, opened an empty/misleading queue, and every Approve/Decline
             tap 403'd — a dead-end button. canDecideLeave mirrors the server guard. */}
-        {TILES.filter(t => t.key !== "approval" || canDecideLeave).map((t, i) => {
+        {TILES.filter(t => (t.key !== "approval" || canDecideLeave) && (t.key !== "classes" || teaches)).map((t, i) => {
           const badge = t.key === "approval" ? store.leave.filter(l => l.status === "pending").length : t.key === "request" ? pending : 0;
           return (
             <button key={t.key} onClick={() => setScreen(t.key)} className="shine hover-lift group relative flex flex-col items-center justify-center gap-2.5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:shadow-xl hover:ring-blue-200 active:scale-95 pop" style={{ animationDelay: `${i * 60}ms` }}>
@@ -2219,7 +2236,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
 const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-tags", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "NFC Tags", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", "admissions-tracker": "Admission Tracker", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-tags": "Check-in: QR & NFC", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", "admissions-tracker": "Admission Tracker", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
 
 // COLLAPSIBLE SIDEBAR GROUPS.
 //
@@ -2867,7 +2884,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "summaries", label: "Daily Summaries", I: UserPlus },
     { key: "registers", label: "Registers — HND", I: ClipboardList },
     { key: "live-attendance", label: "Live Attendance", I: Radio },
-    { key: "attendance-tags", label: "NFC Tags", I: Nfc },
+    { key: "attendance-tags", label: "Check-in: QR & NFC", I: Nfc },
     { key: "students", label: "All Students", I: GraduationCap, group: "student-records" },
     { key: "studentreviews", label: "Reviews", I: MessageSquare, group: "student-records" },
     { key: "studentqueries", label: "Queries", I: Inbox, group: "student-records" },
@@ -2977,6 +2994,16 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     if (window.location.hash === `#/${activeKey}`) return;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/${activeKey}`);
   }, [activeKey]);
+  // The address bar is also an INPUT. An in-app link to `#/attendance-tags` (the live
+  // view's "switch it on" link) or the browser's back button changes the fragment, and
+  // until now nothing listened: the tab was read from the hash once, at mount, and a
+  // link to another page of the console did nothing at all.
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onHash = () => { const p = pageFromHash(); if (p) setTab(p); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   // Every page arrives at the top. Without this, switching pages keeps the offset of
   // the one before it, so a long screen opens halfway down; on a refresh the browser
   // does the same thing against completely different content, with no click to explain
@@ -3119,7 +3146,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "signups" && <AdminSignups store={store} />}
         {activeKey === "summaries" && <AdminSummaries store={store} />}
         {activeKey === "registers" && <AdminHndRegisters store={store} />}
-        {activeKey === "live-attendance" && <AdminLiveAttendance store={store} />}
+        {activeKey === "live-attendance" && <AdminLiveAttendance store={store} settingsHref={canAccessPage(me, "attendance-tags") ? "#/attendance-tags" : null} />}
         {activeKey === "attendance-tags" && <AdminNfcTags />}
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
@@ -6275,6 +6302,12 @@ function AdminHndRegisters({ store }) {
   // Which course the Courses gallery is filtered to ("" = all courses).
   const [courseCourse, setCourseCourse] = useState("");
   const [openRegister, setOpenRegister] = useState(null); // session id being marked
+  // The live view for one session: the rotating QR code, the register filling as
+  // students scan, the projector, the close button. Opened from a session row or from
+  // the paper register, and it is the SAME component Live Attendance renders, so the
+  // code exists once. Back from here returns to wherever it was opened from.
+  const [liveSession, setLiveSession] = useState(null);
+  const settingsHref = canAccessPage(store.currentUser, "attendance-tags") ? "#/attendance-tags" : null;
 
   // Loads on first open, and again whenever the semester picker changes
   // (refreshHnd depends on semesterId).
@@ -6304,9 +6337,20 @@ function AdminHndRegisters({ store }) {
     );
   }
 
+  if (liveSession) {
+    return (
+      <LiveSession
+        sessionId={liveSession}
+        backLabel={openRegister ? "Back to the register" : "Back to sessions"}
+        settingsHref={settingsHref}
+        onBack={() => { setLiveSession(null); refreshHnd(); }}
+      />
+    );
+  }
+
   // Taking a register replaces the page body — it's a focused, full-width task.
   if (openRegister) {
-    return <HndRegister store={store} sessionId={openRegister} onBack={() => setOpenRegister(null)} />;
+    return <HndRegister store={store} sessionId={openRegister} onBack={() => setOpenRegister(null)} onLive={() => setLiveSession(openRegister)} checkIn={store.checkIn} />;
   }
 
   const tabs = [
@@ -6354,7 +6398,7 @@ function AdminHndRegisters({ store }) {
       </>}
       {view === "sessions" && <>
         <BackTo label="units" onClick={() => setView("units")} />
-        <HndSessions store={store} unitId={unitId} setUnitId={setUnitId} selected={selected} onTake={setOpenRegister} scoped={scoped} />
+        <HndSessions store={store} unitId={unitId} setUnitId={setUnitId} selected={selected} onTake={setOpenRegister} onLive={setLiveSession} checkIn={store.checkIn} scoped={scoped} />
       </>}
       {view === "percentages" && <HndPercentages store={store} />}
       {view === "students" && <HndStudents store={store} />}
@@ -6419,8 +6463,11 @@ function HndOverviewStats({ store, attendance, units, students, sessions }) {
 // 24h "HH:MM" → compact 12h, e.g. "10:00" → "10AM", "13:30" → "1:30PM".
 const fmt12 = (t) => { if (!t) return ""; const [h, m] = String(t).split(":").map(Number); const ap = h >= 12 ? "PM" : "AM"; const hh = h % 12 || 12; return m ? `${hh}:${String(m).padStart(2, "0")}${ap}` : `${hh}${ap}`; };
 
-function HndSessions({ store, unitId, setUnitId, selected, onTake, scoped }) {
+function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, checkIn, scoped }) {
   const [filter, setFilter] = useState("all"); // all | past | upcoming
+  // The live-view action every row offers, or null when the college has switched no
+  // self check-in method on (see checkInAction.js: no dead-end buttons).
+  const action = liveAction(checkIn);
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState(null);
   const [form, setForm] = useState({ date: todayISO(), start: "10:00", end: "13:00", description: "", audience: "All students", kind: "Teaching" });
@@ -6567,6 +6614,14 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, scoped }) {
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        {/* The code for THIS session, on any date: the live view says
+                            "opens at 09:00" or "closed" itself, so a row does not have
+                            to be today's to offer it. */}
+                        {action && (
+                          <button onClick={() => onLive(s.id)} title={action.kind === "qr" ? "Show the check-in code and watch the register fill" : "Watch the register fill as students tap in"} className="press flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:opacity-90" style={{ background: "#0f172a" }}>
+                            {action.kind === "qr" ? <QrCode size={13} /> : <Radio size={13} />} {action.label}
+                          </button>
+                        )}
                         <button onClick={() => onTake(s.id)} title={done ? "Edit register" : "Take register"} className="press flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:opacity-90" style={{ background: done ? "#0d7a5f" : NAVY }}>
                           <PlayCircle size={13} /> {done ? "Edit" : "Take"}
                         </button>
@@ -6621,7 +6676,8 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, scoped }) {
 }
 
 /* ----- Taking the register for one session ----- */
-function HndRegister({ store, sessionId, onBack }) {
+function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
+  const action = liveAction(checkIn);
   const [data, setData] = useState(null);
   const [draft, setDraft] = useState({});   // studentId -> { status, remark }
   const [saved, setSaved] = useState({});   // last-saved snapshot, for the dirty check
@@ -6738,6 +6794,14 @@ function HndRegister({ store, sessionId, onBack }) {
         Icon={ClipboardList}
         action={
           <div className="flex flex-wrap items-center gap-2">
+            {/* The same session, live: the code on screen and the roster filling as
+                students scan. Here because this paper register is where a lecturer
+                lands, and it does not refresh while they hold a draft. */}
+            {action && onLive && (
+              <button onClick={onLive} className="press flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-95" style={{ background: "#0f172a" }}>
+                {action.kind === "qr" ? <QrCode size={14} /> : <Radio size={14} />} {action.kind === "qr" ? "Show QR code" : "Live register"}
+              </button>
+            )}
             <ExportBtn onClick={exportRegister} label="Export" />
             <PrimaryBtn onClick={save} disabled={!dirty || saving || readOnly} colour={dirty && !readOnly ? NAVY : "#94a3b8"}>{saving ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> Save register</>}</PrimaryBtn>
           </div>
