@@ -92,6 +92,7 @@ for (const p of Object.values(people)) {
 const { boss, plain } = people;
 
 let createdCourseId = null, movedStudentId = null, originalCohortId = null;
+let mappingCourseIds = [], mappingCohortId = null, mappingStudentId = null;
 
 try {
   /* ------------------------------------------------------------------------ */
@@ -302,10 +303,125 @@ try {
       `the stored department did not follow the cohort (still ${after.academicDepartmentId})`);
     return "department followed the cohort";
   });
+  /* ------------------------------------------------------------------------ */
+  /* The VLE category mapping                                                  */
+  /* ------------------------------------------------------------------------ */
+
+  await check("courses with no captured category are listed, not silently omitted", async () => {
+    // A college whose Moodle predates the capture has EVERY course in this bucket, and a
+    // screen that dropped them would report the mapping as finished before it had begun.
+    const res = await call("/vle-department-mapping/categories", { token: adminToken });
+    assert.equal(res.status, 200);
+    const uncaptured = res.body.categories.find((c) => c.externalId === null);
+    assert.ok(uncaptured, "the no-category bucket is missing entirely");
+    assert.ok(uncaptured.courseCount > 0);
+    // The department list rides along so the screen can render its pickers in one call.
+    assert.ok(Array.isArray(res.body.departments), "the department list is missing");
+    return `${uncaptured.courseCount} uncaptured course(s)`;
+  });
+
+  await check("a captured category is grouped with its course count and samples", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    mappingCourseIds = [];
+    for (const n of [1, 2]) {
+      const c = await db.course.create({
+        data: { name: `VLE Cat ${n} ${stamp}`, vleCategoryExternalId: `cat-${stamp}` },
+      });
+      mappingCourseIds.push(c.id);
+    }
+    const res = await call("/vle-department-mapping/categories", { token: adminToken });
+    const cat = res.body.categories.find((c) => c.externalId === `cat-${stamp}`);
+    assert.ok(cat, "the captured category is missing");
+    assert.equal(cat.courseCount, 2);
+    assert.equal(cat.academicDepartmentId, null, "an unmapped category should report no department");
+    assert.equal(cat.name, null, "a category whose name was never captured must report null, not a guess");
+    assert.equal(cat.sampleCourses.length, 2);
+    void biz;
+    return "2 courses, unmapped";
+  });
+
+  // Breaks if: the student update is dropped from the transaction. Mapping the courses and
+  // leaving the students behind hides a department's students from the very staff just
+  // given that department — and the screen would report the mapping as done.
+  await check("mapping a category moves its courses AND their students", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+
+    const cohort = await db.cohort.create({ data: { name: `VLECo ${stamp}`, courseId: mappingCourseIds[0] } });
+    mappingCohortId = cohort.id;
+    const s = await db.student.create({
+      data: {
+        firstName: "Vle", lastName: "Mapped", studentRef: `VLE${stamp}`,
+        email: `vle.${stamp}@edtech.co.uk`, initials: "VM", colour: "#654321",
+        cohortId: cohort.id,
+      },
+    });
+    mappingStudentId = s.id;
+
+    const res = await call("/vle-department-mapping", {
+      method: "PUT", token: adminToken,
+      body: { externalId: `cat-${stamp}`, academicDepartmentId: biz.id },
+    });
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.courseCount, 2);
+    assert.equal(res.body.studentCount, 1, "the student was not moved with the course");
+
+    const after = await db.student.findUnique({ where: { id: s.id } });
+    assert.equal(after.academicDepartmentId, biz.id, "the student's stored department did not move");
+    const c0 = await db.course.findUnique({ where: { id: mappingCourseIds[0] } });
+    assert.equal(c0.academicDepartmentId, biz.id);
+    return "2 courses, 1 student";
+  });
+
+  await check("an unknown department is refused and nothing is written", async () => {
+    const res = await call("/vle-department-mapping", {
+      method: "PUT", token: adminToken,
+      body: { externalId: `cat-${stamp}`, academicDepartmentId: "not-a-real-department" },
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    const s = await db.student.findUnique({ where: { id: mappingStudentId } });
+    assert.ok(s.academicDepartmentId, "the failed request un-assigned the student anyway");
+    return "400, nothing changed";
+  });
+
+  await check("a category nobody has is a 404, not a silent success", async () => {
+    const res = await call("/vle-department-mapping", {
+      method: "PUT", token: adminToken, body: { externalId: `nope-${stamp}` },
+    });
+    assert.equal(res.status, 404);
+    return "404";
+  });
+
+  await check("a mapped category reports the department it is mapped to", async () => {
+    const res = await call("/vle-department-mapping/categories", { token: adminToken });
+    const cat = res.body.categories.find((c) => c.externalId === `cat-${stamp}`);
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    assert.equal(cat.academicDepartmentId, biz.id);
+    assert.equal(cat.splitAcross, null);
+    return "mapped, not split";
+  });
+
+  // SPLIT IS A REAL STATE. It means somebody assigned courses by hand, and flattening it
+  // to "unmapped" would invite an administrator to overwrite deliberate work with a click.
+  await check("a category split across two departments reports it rather than hiding it", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const cmp = list.body.departments.find((d) => d.key === CMP);
+    await db.course.update({ where: { id: mappingCourseIds[1] }, data: { academicDepartmentId: cmp.id } });
+    const res = await call("/vle-department-mapping/categories", { token: adminToken });
+    const cat = res.body.categories.find((c) => c.externalId === `cat-${stamp}`);
+    assert.equal(cat.academicDepartmentId, null, "a split category must not claim one department");
+    assert.equal(cat.splitAcross?.length, 2, "the split was not reported");
+    return "split across 2";
+  });
 } finally {
   /* -------------------------------------------------------------------------- */
   /* Cleanup — in a finally, so a failed run leaves nothing behind               */
   /* -------------------------------------------------------------------------- */
+  if (mappingStudentId) await db.student.deleteMany({ where: { id: mappingStudentId } }).catch(() => {});
+  if (mappingCohortId) await db.cohort.deleteMany({ where: { id: mappingCohortId } }).catch(() => {});
+  if (mappingCourseIds.length) await db.course.deleteMany({ where: { id: { in: mappingCourseIds } } }).catch(() => {});
   if (movedStudentId) await db.student.deleteMany({ where: { id: movedStudentId } }).catch(() => {});
   await db.cohort.deleteMany({ where: { name: { in: [`DriftB ${stamp}`, `DriftC ${stamp}`] } } }).catch(() => {});
   await db.course.deleteMany({ where: { name: { in: [`Retire Test ${stamp}`, `Drift Biz ${stamp}`, `Drift Cmp ${stamp}`] } } }).catch(() => {});

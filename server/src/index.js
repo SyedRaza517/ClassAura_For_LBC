@@ -142,6 +142,9 @@ app.use("/api/branding", wrapAsync(require("./routes/branding")));
 // The college's academic departments -- Business, Computing, Law -- and who may see
 // them. Gated on the existing "settings" page rather than a new ADMIN_PAGES key.
 app.use("/api/academic-departments", wrapAsync(require("./routes/academicDepartments")));
+// Mapping the VLE's own course grouping (Moodle category, Canvas sub-account) onto an
+// academic department -- captured by the sync, mapped once by hand, never guessed.
+app.use("/api/vle-department-mapping", wrapAsync(require("./routes/vleDepartmentMapping")));
 // A college's own offer-letter / application-form PDFs. Their document is used AS the
 // page and the applicant's details written on it — never redrawn. See docTemplate.js.
 app.use("/api/doc-templates", wrapAsync(require("./routes/docTemplates")));

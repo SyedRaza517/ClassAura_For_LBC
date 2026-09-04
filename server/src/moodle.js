@@ -263,7 +263,22 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
         if (!dryRun) {
           try {
             dbCourse = await prisma.course.create({
-              data: { name: courseName, colour: colourFor(courseName), moodleCourseId: course.id },
+              data: {
+                name: courseName, colour: colourFor(courseName), moodleCourseId: course.id,
+                // THE VLE'S OWN GROUPING, CAPTURED ON CREATE. categoryid is already in the
+                // core_course_get_courses response readMoodle() makes, so this costs zero
+                // extra calls -- the same shape as the engagement work, where
+                // lastcourseaccess was already in a response the sync was making anyway.
+                //
+                // Captured even though nothing maps it yet: it is free, and it is the
+                // evidence the mapping screen is built from. A college that syncs tonight
+                // and configures departments next week has a populated screen waiting.
+                //
+                // Stored as a STRING because it identifies a row in somebody else's
+                // database. Canvas's account_id and Blackboard's category id go in the
+                // same column and are not integers.
+                vleCategoryExternalId: course.categoryid != null ? String(course.categoryid) : null,
+              },
             });
           } catch (e) { note(`${label}: could not create the course — ${e.message}`); continue; }
         }
@@ -275,6 +290,16 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
       // — no marks, no attendance, for the whole night.
       summary.coursesUpdated++;
       if (!dryRun) {
+        // THE CATEGORY IS NEVER REWRITTEN BY A LATER SYNC, and that is a security decision
+        // rather than an oversight. Once departments are mapped, a course's category
+        // decides which staff can see its students. Somebody reorganising Moodle's
+        // categories at eleven at night would otherwise migrate whole cohorts across an
+        // access boundary overnight, with nobody watching and no record of it -- a Law
+        // tutor waking up able to read Health & Social Care pastoral notes.
+        //
+        // A changed category is surfaced as a PROPOSED change for an administrator to
+        // approve, on the mapping screen, never applied. This sync already has dryRun and
+        // a preview culture; this fits it rather than fighting it.
         try { await prisma.course.update({ where: { id: dbCourse.id }, data: { name: courseName } }); }
         catch (e) { note(`${label}: could not rename to "${courseName}" — ${e.code === "P2002" ? "another course already has that name" : e.message}`); }
       }
