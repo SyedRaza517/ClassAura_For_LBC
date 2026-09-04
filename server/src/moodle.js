@@ -16,6 +16,7 @@
 // are the Moodle "attendance" grade item (Staff Hub records attendance itself) and
 // the course-total item.
 const prisma = require("./db");
+const { withoutAcademicScope } = require("./academicScope");
 const { importAttendance } = require("./moodleAttendance");
 // A student's progression score is cached and recomputed by a background runner, never
 // in the request path. This sync rewrites the very things it is computed from — marks,
@@ -172,7 +173,26 @@ async function readMoodle() {
 // nothing — so an admin can see the effect before committing to it. In a preview a
 // row that would be created has no id yet, so everything hanging off it is likewise
 // counted as new; that keeps a first-run preview's numbers honest rather than empty.
-async function syncFromMoodle({ dryRun = false, onProgress = null } = {}) {
+/**
+ * Import everything the VLE offers.
+ *
+ * INSTITUTION-WIDE BY NATURE, not by permission. The sync reads every course the Moodle
+ * site exposes, and it runs BEFORE anybody has decided which academic department those
+ * courses belong to -- capturing the category that will later answer that question is
+ * part of what it does. There is no department it could be scoped to.
+ *
+ * Declared here rather than at each call site because it is true of every call site: the
+ * nightly scheduler has no caller at all, and an administrator triggering a sync by hand
+ * is still asking for the whole site to be imported, not their own department's slice.
+ */
+async function syncFromMoodle(opts = {}) {
+  return withoutAcademicScope(
+    "moodle sync: imports every course the VLE offers, before any of them has a department",
+    () => syncFromMoodleInner(opts),
+  );
+}
+
+async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
   const summary = {
     coursesCreated: 0, coursesUpdated: 0,
     unitsCreated: 0, unitsUpdated: 0,

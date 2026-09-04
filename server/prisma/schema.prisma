@@ -365,10 +365,19 @@ model Staff {
   /// colleges those are not the same person. This is the same reasoning that keeps
   /// supportDepartments un-ignored for a Super Admin.
   ///
-  /// Defaults to false, and the 20260904T120000_academic_departments migration sets it
-  /// true on every account that existed at the moment of the deploy — so nobody is
-  /// locked out mid-term by a change that is otherwise invisible to them.
-  collegeWide Boolean @default(false)
+  /// DEFAULTS TO TRUE, and narrowing is the deliberate act.
+  ///
+  /// This is the same shape as `adminPages` above, where NULL means "never configured →
+  /// full access (so existing admins are not locked out)". The first migration set the
+  /// flag on every account that existed WHEN IT RAN, which says nothing about accounts
+  /// created afterwards — and a college that has not yet configured any departments would
+  /// hand a newly created tutor no students, no courses and no registers, with no screen
+  /// explaining why.
+  ///
+  /// Fail-open here is therefore the safe direction, and it is not silent: the
+  /// Departments screen carries a permanent "N of M staff have college-wide access" line,
+  /// which is the college's to-do list for narrowing people deliberately.
+  collegeWide Boolean @default(true)
 
   createdAt DateTime @default(now())
 

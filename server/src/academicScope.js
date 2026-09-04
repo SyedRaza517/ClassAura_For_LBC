@@ -61,7 +61,30 @@ function assertScopeShape(scope) {
  */
 function runWithAcademicScope(scope, fn) {
   assertScopeShape(scope);
-  return storage.run(scope, fn);
+  // AWAITED INSIDE THE CONTEXT, not handed back as a promise. See runInside().
+  return storage.run(scope, () => runInside(fn));
+}
+
+/**
+ * Call `fn` and, if it returns a thenable, await it — all inside the caller's
+ * AsyncLocalStorage context.
+ *
+ * PRISMA'S PROMISES ARE LAZY: `prisma.course.findMany()` does not run when it is called,
+ * it runs when something awaits it. So `storage.run(scope, () => prisma.course.findMany())`
+ * returns an unexecuted promise OUT of the scope, and the query then runs after the
+ * context has exited — with no scope bound, throwing, in exactly the code path the guard
+ * exists to protect.
+ *
+ * That is the most natural way to write the call. It reads correctly and it silently does
+ * the wrong thing, which is the worst combination available. Awaiting here makes the
+ * obvious spelling the correct one; academicScope.test.js has two tests holding this in
+ * place with a deliberately lazy thenable.
+ *
+ * A synchronous `fn` still runs synchronously — it is invoked before the first await —
+ * so a caller like requireAuth's `() => next()` is unaffected.
+ */
+async function runInside(fn) {
+  return await fn();
 }
 
 /**
@@ -88,7 +111,11 @@ function withoutAcademicScope(reason, fn) {
       "withoutAcademicScope requires a reason saying why this work is institution-wide",
     ));
   }
-  return storage.run({ academicDepartmentIds: [], collegeWide: true, reason: why }, fn);
+  // Awaited inside the context for the lazy-promise reason runInside() explains. This is
+  // the entry point background work uses, and background work is precisely where the
+  // natural spelling — withoutAcademicScope("why", () => prisma.x.findMany()) — is
+  // written, so it is the one that most needs to be safe.
+  return storage.run({ academicDepartmentIds: [], collegeWide: true, reason: why }, () => runInside(fn));
 }
 
 /**

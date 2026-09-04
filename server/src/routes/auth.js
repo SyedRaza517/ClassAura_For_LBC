@@ -2,6 +2,7 @@ const router = require("express").Router();
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const prisma = require("../db");
+const { withoutAcademicScope } = require("../academicScope");
 const { sStaff, sStudent, sApplicant } = require("../serializers");
 const { verifyPassword, hashPassword, signToken, signStudentToken, signApplicantToken, requireAuth, SECRET } = require("../auth");
 // A fixed hash to compare against on the login miss path, so a non-existent account
@@ -240,7 +241,19 @@ router.post("/login", async (req, res) => {
   // Not a valid staff login — try a student account. This isolated branch is the
   // only place a student session is issued; a student with no passwordHash (never
   // approved) or a deactivated one cannot sign in.
-  const student = await prisma.student.findFirst({ where: { email: emailLc } });
+  // AUTHENTICATION PRECEDES SCOPING, so this lookup declares itself institution-wide.
+  //
+  // Student is a departmental model, but "which student is this?" cannot be answered
+  // within a department: resolving the account is what PRODUCES the scope, so requiring
+  // one here would be circular. Exactly the reason Staff is declared UNSCOPED in
+  // academicScopeModels.js, arriving at the same problem from the other side.
+  //
+  // Narrow on purpose -- one lookup by email, not the whole handler -- so nothing else
+  // in this route inherits an institution-wide scope by accident.
+  const student = await withoutAcademicScope(
+    "login: resolving a student account, which is what produces the scope",
+    () => prisma.student.findFirst({ where: { email: emailLc } }),
+  );
   if (student && student.passwordHash && student.active !== false && verifyPassword(password, student.passwordHash)) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
     audit.record(req, {

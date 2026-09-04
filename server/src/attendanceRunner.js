@@ -7,6 +7,7 @@
 // which is de-duplicated on a YYYY-MM period so a restart on the last day of the month
 // can never double-send.
 const prisma = require("./db");
+const { withoutAcademicScope } = require("./academicScope");
 const bands = require("./attendanceBands");
 const bandConfig = require("./attendanceBandConfig");
 const service = require("./attendanceEmailService");
@@ -105,7 +106,22 @@ const ymPeriod = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 //
 // A run that reached an unconfigured mailer comes back ok:false / reason:"email-off" — see
 // the comment at the send below.
-async function runMonthly({ force = false, from = null, to = null } = {}) {
+/**
+ * The monthly attendance letters.
+ *
+ * INSTITUTION-WIDE: one run over the whole college's registers, fired by a scheduler that
+ * has no caller and therefore no department. Declared here rather than in
+ * attendanceScheduler.js so that a hand-triggered run is covered by the same statement --
+ * a monthly letter run is a college-wide job whoever starts it.
+ */
+async function runMonthly(opts = {}) {
+  return withoutAcademicScope(
+    "attendance letters: one monthly run across the whole college's registers",
+    () => runMonthlyInner(opts),
+  );
+}
+
+async function runMonthlyInner({ force = false, from = null, to = null } = {}) {
   const now = new Date();
   const period = ymPeriod(now);
   const config = await loadConfig();

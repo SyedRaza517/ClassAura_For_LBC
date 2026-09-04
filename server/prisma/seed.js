@@ -15,6 +15,15 @@ const bcrypt = require("bcryptjs");
 // rewriting row by row when tenancy landed. With no tenantId to stamp there is
 // nothing left to extend — see the header of src/db.js.
 const prisma = require("../src/db");
+// THE SEED IS BACKGROUND WORK AND MUST DECLARE ITSELF INSTITUTION-WIDE.
+//
+// It deletes and recreates attendance marks, enrolments, courses and students across
+// every department -- it is building the college, so there is no department it could
+// belong to. Without this the academic scope guard refuses the first scoped write
+// (AttendanceMark.deleteMany, in practice) and the seed dies, which is the guard doing
+// exactly its job: a query that never said who it was for is a bug until somebody says
+// otherwise, and this is where that is said.
+const { withoutAcademicScope } = require("../src/academicScope");
 
 // The institution this deployment serves. One row, and the only thing that still
 // reads it is branding.js, as the fallback display name for a college that has not
@@ -216,5 +225,5 @@ async function main() {
     update: {},
   });
   console.log("Seeding institution: " + institution.name + " (" + institution.slug + ")");
-  await main();
+  await withoutAcademicScope("prisma/seed.js: builds the whole college, every department", () => main());
 })().catch((e) => { console.error(e); process.exit(1); }).finally(() => prisma.$disconnect());

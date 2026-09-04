@@ -101,6 +101,38 @@ test("withoutAcademicScope does not run the body when the reason is missing", as
 });
 
 /* -------------------------------------------------------------------------- */
+/* The lazy-promise trap                                                       */
+/* -------------------------------------------------------------------------- */
+
+// PRISMA'S PROMISES ARE LAZY. `prisma.course.findMany()` does not run when it is called;
+// it runs when something awaits it. So a callback shaped
+//
+//     withoutAcademicScope("why", () => prisma.course.findMany())
+//
+// returns an unexecuted promise OUT of the scope, and the query then runs after the
+// context has exited — with no scope bound, throwing, in the one code path the widening
+// exists to protect. It is the most natural way to write the call, it type-checks, it
+// reads correctly, and it silently does the wrong thing.
+//
+// Both entry points therefore await inside the context rather than handing the promise
+// back. These two tests are what stop that being quietly removed as redundant.
+const lazyScopeReader = () => ({
+  then(resolve) { resolve(currentScope()); },
+});
+
+test("withoutAcademicScope awaits inside the scope, so a lazy promise still sees it", async () => {
+  const seen = await withoutAcademicScope("lazy promise", lazyScopeReader);
+  assert.ok(seen, "the scope had already exited by the time the promise ran");
+  assert.equal(seen.collegeWide, true);
+});
+
+test("runWithAcademicScope awaits inside the scope, so a lazy promise still sees it", async () => {
+  const seen = await runWithAcademicScope({ academicDepartmentIds: ["d1"], collegeWide: false }, lazyScopeReader);
+  assert.ok(seen, "the scope had already exited by the time the promise ran");
+  assert.deepEqual(seen.academicDepartmentIds, ["d1"]);
+});
+
+/* -------------------------------------------------------------------------- */
 /* scopeForStaff — the security decision, isolated                             */
 /* -------------------------------------------------------------------------- */
 

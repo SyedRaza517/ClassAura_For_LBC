@@ -7,6 +7,7 @@
 // enrolment is currently switched off — see the commented-out branches in auth.js.)
 const router = require("express").Router();
 const prisma = require("../db");
+const { withoutAcademicScope } = require("../academicScope");
 const { sSignup, sStaff, sStudent } = require("../serializers");
 const { requireAuth, requirePage, hashPassword } = require("../auth");
 const { notifyStaff, notifyAdmins } = require("../notify");
@@ -81,12 +82,19 @@ router.post("/", async (req, res) => {
     const collegeId = str(req.body?.collegeId);
     if (!collegeId) return res.status(400).json({ error: "Your college ID is required" });
 
-    const [staffClash, byRef, byEmail, existingRequest] = await Promise.all([
-      prisma.staff.findFirst({ where: { email } }),
-      prisma.student.findFirst({ where: { studentRef: collegeId } }),
-      prisma.student.findFirst({ where: { email } }),
-      prisma.signupRequest.findFirst({ where: { email } }),
-    ]);
+    // UNAUTHENTICATED, so there is no scope and cannot be one -- a person signing up has
+    // no account yet, let alone a department. The duplicate checks must also see the
+    // WHOLE college: a student already enrolled in another department is still a clash,
+    // and a scoped check would let them create a second account.
+    const [staffClash, byRef, byEmail, existingRequest] = await withoutAcademicScope(
+      "signup: an unauthenticated duplicate check across the whole college",
+      () => Promise.all([
+        prisma.staff.findFirst({ where: { email } }),
+        prisma.student.findFirst({ where: { studentRef: collegeId } }),
+        prisma.student.findFirst({ where: { email } }),
+        prisma.signupRequest.findFirst({ where: { email } }),
+      ]),
+    );
     // Link the request to an existing student record ONLY when the college ID and the
     // email point at the SAME person. Trusting the college ID alone meant a mistyped
     // ID silently attached the request to somebody else's record — and approving it

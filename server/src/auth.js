@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const prisma = require("./db");
 const { sStaff, sStudent, sApplicant } = require("./serializers");
+const { runWithAcademicScope, withoutAcademicScope, scopeForStaff, CONFINED_BY_ROUTER } = require("./academicScope");
 
 // In production a real secret MUST be provided — never silently fall back to a
 // publicly-known string (that would let anyone forge an admin token).
@@ -80,11 +81,29 @@ async function requireAuth(req, res, next) {
       if (!STUDENT_ROUTERS.includes(req.baseUrl)) {
         return res.status(403).json({ error: "Not available for student accounts" });
       }
-      const student = await prisma.student.findUnique({ where: { id: payload.sub } });
+      // RESOLVING THE ACCOUNT IS WHAT PRODUCES THE SCOPE, so it cannot require one.
+      //
+      // Student is a departmental model, and this read runs before any scope is bound --
+      // requiring one would be circular, the guard would throw, and the catch below would
+      // turn it into a 401 that signed out every student in the college. Staff avoids
+      // this only by being declared UNSCOPED; the student path arrives at the same
+      // problem from the other side and says so explicitly instead.
+      //
+      // Deliberately narrow: the lookup alone, not the branch, so nothing downstream
+      // inherits an institution-wide scope. The real scope is bound three lines below.
+      const student = await withoutAcademicScope(
+        "auth: resolving the student account, which is what produces the scope",
+        () => prisma.student.findUnique({ where: { id: payload.sub } }),
+      );
       if (!student || !student.passwordHash || student.active === false) return res.status(401).json({ error: "Invalid token" });
       if ((payload.ver ?? 0) !== (student.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
       req.user = { id: student.id, kind: "student", isStudent: true, ...sStudent(student) };
-      return next();
+      // A student's token reaches ONLY STUDENT_ROUTERS, and every query in those routers
+      // is already narrowed to their own id. Binding CONFINED_BY_ROUTER is therefore not
+      // a widening: it says the departmental boundary is not what confines this caller,
+      // which is true, and it keeps the guard's "no scope bound" error meaning exactly
+      // one thing -- a bug -- rather than sometimes meaning "a student".
+      return runWithAcademicScope(CONFINED_BY_ROUTER, () => next());
     }
 
     // Applicant session — a prospective student tracking their own admission. Isolated to
@@ -97,17 +116,34 @@ async function requireAuth(req, res, next) {
       if (!applicant || !applicant.passwordHash || applicant.active === false) return res.status(401).json({ error: "Invalid token" });
       if ((payload.ver ?? 0) !== (applicant.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
       req.user = { id: applicant.id, kind: "applicant", isApplicant: true, ...sApplicant(applicant) };
-      return next();
+      // Same reasoning as the student branch above, with APPLICANT_ROUTERS as the fence.
+      return runWithAcademicScope(CONFINED_BY_ROUTER, () => next());
     }
 
-    const staff = await prisma.staff.findUnique({ where: { id: payload.sub } });
+    // THE MEMBERSHIPS ARE LOADED HERE, and here is the only place they can be. 41 of the
+    // 43 routers apply requireAuth per HANDLER rather than per router, so there is no
+    // later middleware seam guaranteed to run on every authenticated request.
+    //
+    // This read itself runs before any scope exists, which is why Staff is declared
+    // UNSCOPED in academicScopeModels.js and must stay so through spec 1 -- a filtered
+    // Staff query would need the scope this very query is being made to compute.
+    const staff = await prisma.staff.findUnique({
+      where: { id: payload.sub },
+      include: { academicDepartments: { select: { academicDepartmentId: true } } },
+    });
     if (!staff) return res.status(401).json({ error: "Invalid token" });
     // Tokens issued before the last password reset/change are dead. Tokens minted
     // before this field existed carry no `ver`, which reads as 0 and still matches
     // an account that has never bumped it.
     if ((payload.ver ?? 0) !== (staff.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
     req.user = { id: staff.id, kind: "staff", accountRole: staff.accountRole, ...sStaff(staff) };
-    next();
+    // Bind the scope for the REST OF THE REQUEST. Everything downstream of next() runs
+    // inside this context, including async handlers and the Prisma calls they await.
+    //
+    // scopeForStaff is a pure function in academicScope.js rather than inline here, so
+    // the question it answers -- does this account see everything? -- is assertable in a
+    // unit test instead of only by booting the server and reading a list.
+    return runWithAcademicScope(scopeForStaff(staff), () => next());
   } catch (e) {
     res.status(401).json({ error: "Invalid or expired token" });
   }

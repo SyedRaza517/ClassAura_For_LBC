@@ -29,6 +29,21 @@ const sStaff = (s) => ({
       return Array.isArray(parsed) ? parsed.filter((k) => typeof k === "string") : [];
     } catch { return []; }
   })(),
+  // --- Academic departments ---
+  // Which TEACHING departments this person may see -- Business, Computing, Law. NOT
+  // supportDepartments above, which is who reads a student's wellbeing disclosure. Two
+  // access boundaries with one English word between them; see academicDepartments.js.
+  //
+  // Present only when the query included the join rows, and ABSENT otherwise rather than
+  // defaulted to []. "Nobody asked for them" and "belongs to none" are different facts,
+  // and the second is a real answer the Access screen has to be able to show.
+  ...(s.academicDepartments
+    ? { academicDepartmentIds: s.academicDepartments.map((m) => m.academicDepartmentId) }
+    : {}),
+  // Lifts the departmental boundary entirely. `=== true` on read, for the same reason
+  // parseAdminPages below fails closed: an account that suddenly sees everything is a
+  // silent, dangerous failure.
+  collegeWide: s.collegeWide === true,
 });
 
 // NULL → null, which every caller reads as "never configured → full access".

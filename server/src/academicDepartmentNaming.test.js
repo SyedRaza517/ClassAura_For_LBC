@@ -26,7 +26,12 @@ test("the academic department model and its join table exist", () => {
 
 test("Course, Student and Staff carry the new columns, spelled exactly", () => {
   assert.match(SCHEMA, /academicDepartmentId\s+String\?/);
-  assert.match(SCHEMA, /collegeWide\s+Boolean\s+@default\(false\)/);
+  // @default(TRUE), and that is load-bearing rather than incidental. The first migration
+  // set the flag on accounts existing at the time; the DEFAULT is what governs every
+  // account created afterwards, and a false one would hand a new tutor at a college with
+  // no departments configured an empty screen and no explanation. Same shape as
+  // adminPages: NULL means "never configured → full access". Narrowing is deliberate.
+  assert.match(SCHEMA, /collegeWide\s+Boolean\s+@default\(true\)/);
   assert.match(SCHEMA, /vleCategoryExternalId\s+String\?/);
   assert.match(SCHEMA, /vleCategoryName\s+String\?/);
 });

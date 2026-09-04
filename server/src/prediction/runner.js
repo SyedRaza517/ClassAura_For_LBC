@@ -17,6 +17,7 @@
 // appended on every run, though — a nightly recalculation that found nothing changed
 // would otherwise write a row per student per night forever. See shouldAppend().
 const prisma = require("../db");
+const { withoutAcademicScope } = require("../academicScope");
 const { localDate } = require("../clock");
 const settings = require("./settings");
 const { gather } = require("./metrics");
@@ -106,7 +107,25 @@ function shouldAppend(result, current, latestHistoryDate, today) {
  *   opts.limit       stop after this many, so a manual run cannot hang a request
  * @returns {Promise<object>} a summary: how many were scored, skipped and why
  */
+/**
+ * Rescore progression risk.
+ *
+ * INSTITUTION-WIDE, AND THIS ONE IS NOT NEGOTIABLE. Cohort standing, the register-
+ * coverage timetable probe and the five "does this college record this at all" probes are
+ * questions about the INSTITUTION, not about a department and not about a chunk.
+ * CLAUDE.md records that computing them from a subset is the most repeated bug in this
+ * area -- got wrong three times -- and a departmental scope leaking in here would be the
+ * fourth, silently turning "this college does not record lateness" into "this department
+ * does not" and suppressing the codes for exactly the students they exist to find.
+ */
 async function recalculate(opts = {}) {
+  return withoutAcademicScope(
+    "prediction: institution-wide probes and cohort standing, which a subset cannot answer",
+    () => recalculateInner(opts),
+  );
+}
+
+async function recalculateInner(opts = {}) {
   const config = await settings.get();
   const today = localDate();
 
