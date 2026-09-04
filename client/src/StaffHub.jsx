@@ -11861,7 +11861,14 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
                   </p>
                   <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
                   <p className="mt-1 text-[11px] text-slate-400">
-                    Raised by {r.raisedBy || "a member of staff"} on {fmtDate(r.raisedOn)}
+                    {/* WHO ASKED changes how you open the conversation, so it leads the
+                        line rather than sitting at the end of it. A self-referral has no
+                        raisedBy at all — the student is not a colleague — so the old
+                        fallback would have read "raised by a member of staff", which is
+                        the one thing it certainly was not. */}
+                    {r.selfReferred
+                      ? <span className="font-bold text-blue-600">The student asked for this themselves</span>
+                      : <>Raised by {r.raisedBy || "a member of staff"}</>} on {fmtDate(r.raisedOn)}
                     {r.acceptedBy ? ` · picked up by ${r.acceptedBy} on ${fmtDate(r.acceptedOn)}` : ""}
                     {r.closedBy ? ` · closed by ${r.closedBy} on ${fmtDate(r.closedOn)}` : ""}
                     {/* "Did we tell them" is a question the college will be asked, so
@@ -12034,6 +12041,9 @@ function ReferralsMine({ store }) {
   const [deptNames, setDeptNames] = useState({});
   const [err, setErr] = useState("");
   const [threadFor, setThreadFor] = useState(null);
+  // Nothing to filter here — /referrals/mine matches on raisedBy, and a self-referral
+  // stores null there deliberately, so one can never reach this screen. Noted because
+  // the obvious "why is there no selfReferred check?" has an answer.
   const [referring, setReferring] = useState(false);
 
   const load = async () => {
@@ -12297,7 +12307,13 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
             {messages.map(m => (
               <div key={m.id} className={`rounded-xl px-3 py-2 text-[12px] leading-relaxed ring-1 ${m.authorRole === "referrer" ? "bg-blue-50 text-blue-900 ring-blue-100" : "bg-slate-50 text-slate-700 ring-slate-100"}`}>
                 <p className="text-[10px] font-bold uppercase tracking-wide opacity-60">
-                  {m.authorName || "A member of staff"} · {m.authorRole === "referrer" ? "who referred" : "the department"}
+                  {/* THREE roles, not two. "student" arrived with self-referral, and a
+                      two-branch check would have labelled the student "the department" —
+                      on the one screen where knowing who is speaking decides how you
+                      reply. */}
+                  {m.authorName || (m.authorRole === "student" ? "The student" : "A member of staff")}
+                  {" · "}
+                  {m.authorRole === "student" ? "the student" : m.authorRole === "referrer" ? "who referred" : "the department"}
                 </p>
                 <p className="mt-0.5 whitespace-pre-wrap">{m.body}</p>
               </div>

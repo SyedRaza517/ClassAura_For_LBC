@@ -724,6 +724,16 @@ export const api = {
   // so a referral raised with the tickbox off is not in this list — which is the whole
   // point of the tickbox, and the reason this client must never try to widen it.
   studentReferrals: () => request("/student/me/referrals"),
+  // The teams a student may ask for help. ACTIVE ones only — a retired desk still
+  // resolves for reading an old request, but offering it on the form would offer a
+  // button the POST refuses.
+  studentSupportDepartments: () => request("/student/me/support-departments"),
+  // A self-referral. 409 means an earlier request to the same team is still open; the
+  // server's message names the team and the body carries `referralId`, so the app can
+  // point at the existing one rather than inventing an explanation.
+  sendStudentReferral: (body) => request("/student/me/referrals", { method: "POST", body }),
+  studentReferralMessages: (id) => request(`/student/me/referrals/${id}/messages`),
+  addStudentReferralMessage: (id, body) => request(`/student/me/referrals/${id}/messages`, { method: "POST", body: { body } }),
   addStudentReview: (data) => request("/student-reviews", { method: "POST", body: data }),
   updateStudentReview: (id, data) => request(`/student-reviews/${id}`, { method: "PUT", body: data }),
   removeStudentReview: (id) => request(`/student-reviews/${id}`, { method: "DELETE" }),

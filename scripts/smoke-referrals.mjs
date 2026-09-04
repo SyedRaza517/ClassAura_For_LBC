@@ -1000,7 +1000,11 @@ await check("...and the student's view carries EXACTLY these fields and no other
   if (!aliceToken) return "skipped — could not sign the student in";
   const r = await call("/student/me/referrals", { token: aliceToken });
   const row = r.body.find((x) => x.id === told.body.id);
-  const expected = ["id", "department", "departmentName", "status", "outcome", "raisedOn", "acceptedOn", "closedOn"];
+  // selfReferred joined the set when the student forms landed. `reason` is deliberately
+  // NOT here: this row was raised by a tutor, and on those the reason is that tutor's
+  // account of the student and never crosses. The self-referral tests above assert the
+  // other half — that a student DOES get their own words back.
+  const expected = ["id", "department", "departmentName", "status", "outcome", "raisedOn", "acceptedOn", "closedOn", "selfReferred"];
   assert.deepEqual(Object.keys(row).sort(), [...expected].sort(),
     `the student's payload is ${Object.keys(row).sort().join(", ")}`);
   return `${expected.length} keys, exactly as declared`;
@@ -1053,6 +1057,187 @@ await check("the transfer and the message are in the audit trail, and neither ca
     assert.ok(!blob.includes(canary), "the audit trail carries the text of a message");
   }
   return "two more verbs, no prose";
+});
+
+/* -------------------------------------------------------------------------- */
+/* A student asking a support team for help themselves                         */
+/* -------------------------------------------------------------------------- */
+
+// Until now the only way into the Wellbeing or ASK queue was a member of staff raising a
+// referral, so a student who knew they were struggling had no route to either team. The
+// form fills that. What has to be proved is that it did not open a hole on the way in:
+// a self-referral must not become readable as somebody else's case, must not let a
+// student write into a tutor's thread, and must not let one person flood a queue.
+
+const SELF_REASON = `SELFREF-CANARY-${stamp}`;
+const SELF_MSG = `SELFMSG-CANARY-${stamp}`;
+
+await check("the form offers only departments the college is actually running", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/support-departments", { token: aliceToken });
+  assert.equal(r.status, 200, `got ${r.status}`);
+  const keys = r.body.map((d) => d.key);
+  assert.ok(keys.includes("wellbeing") && keys.includes("ask"), `offered ${keys.join(", ")}`);
+  // Names, never slugs — a student picking a team should not be shown a database key.
+  assert.ok(r.body.every((d) => d.name && d.name !== d.key), "a department came back as a bare key");
+  return keys.join(", ");
+});
+
+let selfId = null;
+await check("A STUDENT CAN ASK A TEAM FOR HELP, and it lands in that team's queue", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", {
+    method: "POST", token: aliceToken,
+    body: { department: "wellbeing", reason: SELF_REASON, urgency: "urgent" },
+  });
+  assert.equal(r.status, 201, `got ${r.status}: ${JSON.stringify(r.body).slice(0, 140)}`);
+  selfId = r.body.id;
+  assert.equal(r.body.selfReferred, true, "it was not marked as self-referred");
+  // The wellbeing officer must see it in the ordinary queue, not in a second inbox.
+  const q = await call("/referrals?department=wellbeing", { token: well.token });
+  const row = q.body.find((x) => x.id === selfId);
+  assert.ok(row, "the request never reached the wellbeing queue");
+  assert.equal(row.reason, SELF_REASON, "the student's own words did not arrive");
+  assert.equal(row.raisedBy, null, "a self-referral was stamped with a staff name");
+  return `in the queue, urgency ${row.urgency}`;
+});
+
+await check("...and it never appears in a colleague's Sent by me", async () => {
+  // /referrals/mine matches on raisedBy, which a self-referral deliberately leaves null.
+  for (const [who, token] of [["the referrer", referrer.token], ["the wellbeing officer", well.token]]) {
+    const r = await call("/referrals/mine", { token });
+    assert.ok(!r.body.some((x) => x.id === selfId), `it showed up in ${who}'s Sent by me`);
+  }
+  return "absent from both";
+});
+
+await check("...and the student is shown THEIR OWN words back", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { token: aliceToken });
+  const row = r.body.find((x) => x.id === selfId);
+  assert.ok(row, "the student cannot see the request they just made");
+  assert.equal(row.reason, SELF_REASON, "the student cannot read what they themselves wrote");
+  assert.equal(row.selfReferred, true);
+  return "their own reason, returned";
+});
+
+await check("A TUTOR'S REFERRAL STILL WITHHOLDS ITS REASON FROM THE STUDENT", async () => {
+  // The whole point of making `reason` conditional. A staff referral's reason is
+  // somebody else's account of this student, written for a third party, and self-referral
+  // must not have opened it up.
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { token: aliceToken });
+  const staffRaised = r.body.filter((x) => x.selfReferred === false);
+  assert.ok(staffRaised.length, "no staff-raised referral to check against");
+  for (const row of staffRaised) {
+    assert.ok(!("reason" in row), `a staff referral carried a reason: ${JSON.stringify(Object.keys(row))}`);
+  }
+  assert.ok(!JSON.stringify(staffRaised).includes(REASON), "the tutor's reason reached the student");
+  return `${staffRaised.length} staff referrals, none carrying a reason`;
+});
+
+await check("an empty or absent reason is refused", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  for (const reason of ["", "  ", "x", undefined]) {
+    const r = await call("/student/me/referrals", { method: "POST", token: aliceToken, body: { department: "ask", reason } });
+    assert.equal(r.status, 400, `${JSON.stringify(reason)} got ${r.status}`);
+  }
+  return "4 empty reasons, all 400";
+});
+
+await check("a team the college does not run is refused", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  for (const department of ["careers", "", "WELLBEING; DROP TABLE", undefined]) {
+    const r = await call("/student/me/referrals", { method: "POST", token: aliceToken, body: { department, reason: "help please" } });
+    assert.equal(r.status, 400, `${JSON.stringify(department)} got ${r.status}`);
+  }
+  return "4 unknown departments, all 400";
+});
+
+await check("ONE OPEN REQUEST PER TEAM — a double tap does not make two cases", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", {
+    method: "POST", token: aliceToken, body: { department: "wellbeing", reason: "again" },
+  });
+  assert.equal(r.status, 409, `a second open request got ${r.status}`);
+  // It names the existing one, so the app can point at it rather than inventing a reason.
+  assert.equal(r.body.referralId, selfId, "the refusal did not name the request already open");
+  const q = await call("/referrals?department=wellbeing", { token: well.token });
+  assert.equal(q.body.filter((x) => x.selfReferred && x.studentId === alice.id).length, 1, "a duplicate reached the queue anyway");
+  return "409, one case in the queue";
+});
+
+await check("...but a DIFFERENT team is not blocked by it", async () => {
+  // The dedupe must not become a gag. Someone already talking to Wellbeing may still
+  // have a coursework question for ASK.
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call("/student/me/referrals", { method: "POST", token: aliceToken, body: { department: "ask", reason: "coursework" } });
+  assert.equal(r.status, 201, `asking a second team got ${r.status}`);
+  return "ASK accepted it";
+});
+
+await check("a student can add to their own request rather than starting another", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const r = await call(`/student/me/referrals/${selfId}/messages`, { method: "POST", token: aliceToken, body: { body: SELF_MSG } });
+  assert.equal(r.status, 201, `got ${r.status}`);
+  assert.equal(r.body.authorRole, "student", `stamped as ${r.body.authorRole}`);
+  const back = await call(`/student/me/referrals/${selfId}/messages`, { token: aliceToken });
+  assert.ok(JSON.stringify(back.body).includes(SELF_MSG), "the message did not come back");
+  // And the department working the case sees it.
+  const dept = await call(`/referrals/${selfId}/messages`, { token: well.token });
+  assert.ok(JSON.stringify(dept.body).includes(SELF_MSG), "the team cannot see what the student added");
+  return "written, and visible to Wellbeing";
+});
+
+await check("A STUDENT CANNOT READ OR WRITE THE THREAD ON A TUTOR'S REFERRAL", async () => {
+  // The sharpest one. That thread is between a tutor and a department, written by two
+  // people who did not know the student would read it — so the student routes are scoped
+  // to selfReferred, not merely to "a referral about me".
+  if (!aliceToken) return "skipped — could not sign the student in";
+  const staffRaised = told.body?.id;
+  assert.ok(staffRaised, "no staff-raised referral to test against");
+  const r = await call(`/student/me/referrals/${staffRaised}/messages`, { token: aliceToken });
+  assert.equal(r.status, 404, `reading a tutor's thread got ${r.status}`);
+  const w = await call(`/student/me/referrals/${staffRaised}/messages`, { method: "POST", token: aliceToken, body: { body: "let me in" } });
+  assert.equal(w.status, 404, `writing to a tutor's thread got ${w.status}`);
+  return "404 on both, not merely empty";
+});
+
+await check("...nor another student's request at all", async () => {
+  if (!aliceToken) return "skipped — could not sign the student in";
+  // Bob's, reached with Alice's token. Scoped on studentId, so this is a 404 rather than
+  // a leak — and a 404 rather than a 403, because confirming the id names a real request
+  // would itself say something about Bob.
+  const bobs = await raise({ studentId: bob.id, department: "wellbeing", reason: REASON, notifyStudent: true });
+  const r = await call(`/student/me/referrals/${bobs.body.id}/messages`, { token: aliceToken });
+  assert.equal(r.status, 404, `got ${r.status}`);
+  const list = await call("/student/me/referrals", { token: aliceToken });
+  assert.ok(!list.body.some((x) => x.id === bobs.body.id), "another student's referral appeared in this student's list");
+  return "404, and absent from their list";
+});
+
+await check("the receiving team is told, and the notification still names no student", async () => {
+  const rows = await eventually(async () => {
+    const n = await db.notification.findMany({ where: { staffId: well.id, message: { contains: "asked" } } });
+    return n.length ? n : null;
+  });
+  assert.ok(rows, "Wellbeing was never told a student had asked for support");
+  const blob = JSON.stringify(rows);
+  assert.ok(!blob.includes(alice.firstName) && !blob.includes(alice.studentRef), "the notification names the student");
+  assert.ok(!blob.includes(SELF_REASON), "the notification carries what they wrote");
+  return `${rows.length} notifications, no student named`;
+});
+
+await check("the audit trail records the request and never what it said", async () => {
+  const rows = await eventually(async () => {
+    const e = await db.auditLog.findMany({ where: { action: "referral.selfRaised" } });
+    return e.length ? e : null;
+  });
+  assert.ok(rows, "nothing recorded referral.selfRaised");
+  const blob = JSON.stringify(rows);
+  assert.ok(!blob.includes(SELF_REASON), "the audit trail carries what the student wrote");
+  assert.ok(!blob.includes(SELF_MSG), "the audit trail carries the text of a message");
+  return `${rows.length} rows, no prose`;
 });
 
 /* -------------------------------------------------------------------------- */

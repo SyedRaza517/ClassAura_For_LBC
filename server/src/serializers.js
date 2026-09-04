@@ -160,6 +160,11 @@ const sReferralForDepartment = (r) => ({
   acceptedBy: r.acceptedBy ?? null, acceptedOn: r.acceptedOn ?? null,
   closedBy: r.closedBy ?? null, closedOn: r.closedOn ?? null,
   studentNotified: r.studentNotified, interactionId: r.interactionId ?? null,
+  // WHO ASKED. The queue card leads with it, because a student who came of their own
+  // accord is opened differently from one a tutor sent — and a self-referral has no
+  // raisedBy at all, so without this the card would fall back to "raised by a member of
+  // staff", which is the one thing it certainly was not.
+  selfReferred: r.selfReferred === true,
   createdAt: r.createdAt,
   ...(r.student ? { student: { id: r.student.id, name: r.student.firstName + " " + r.student.lastName, studentRef: r.student.studentRef, initials: r.student.initials, colour: r.student.colour } } : {}),
 });
@@ -217,6 +222,20 @@ const sReferralForStudent = (r, departmentName) => ({
   raisedOn: r.raisedOn,
   acceptedOn: r.acceptedOn ?? null,
   closedOn: r.closedOn ?? null,
+  // Who started it. The screen says "you asked for this" or "your tutor referred you",
+  // which are different enough that a student should not have to guess.
+  selfReferred: r.selfReferred === true,
+  // THE ONE FIELD THAT DEPENDS ON WHO WROTE IT.
+  //
+  // On a staff referral the reason is somebody else's account of this student, written
+  // for a third party, and showing it is how tutors learn to write nothing useful. On a
+  // self-referral it is the student's own words, typed into a form by them — withholding
+  // those would be absurd, and worse, it would leave them unable to check what they
+  // actually said before a wellbeing officer replies to it.
+  //
+  // Conditional on the stored boolean, not on the caller: a route cannot opt a staff
+  // referral into this by passing a flag.
+  ...(r.selfReferred === true ? { reason: r.reason } : {}),
 });
 
 // One hand-off. NEVER carries notesAtTransfer: this shape is shown to the receiving
@@ -235,6 +254,10 @@ const sReferralTransfer = (t) => ({
 // One message in the referrer/department thread. Everything here is visible to both
 // parties by construction — the thread IS the shared channel, and the field that is
 // not shared is Referral.notes, which no message ever touches.
+// authorRole is one of "student" | "referrer" | "department". "student" arrived with
+// self-referral: on those there is no staff referrer at all, so a message from the
+// person the case is about would otherwise have had to masquerade as one — and the
+// screens label the two differently.
 const sReferralMessage = (m) => ({
   id: m.id, referralId: m.referralId, department: m.department,
   authorRole: m.authorRole, authorName: m.authorName ?? null,
