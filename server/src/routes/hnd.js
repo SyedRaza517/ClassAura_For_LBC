@@ -39,6 +39,24 @@ const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("../academicScopeSql");
 const academicDepartments = require("../academicDepartments");
+
+/**
+ * Validate a submitted academicDepartmentId.
+ *
+ * An unknown id is REJECTED rather than dropped: silently ignoring it leaves the screen
+ * showing an assignment that was never made, which is worse than an error somebody can
+ * act on. A non-string that is not null is refused rather than coerced -- coercion is what
+ * turned a numeric id into a silent un-assign on the VLE mapping route.
+ *
+ * @returns {{id: string|null}|{error: string}}
+ */
+async function resolveAcademicDepartment(raw) {
+  if (raw === undefined || raw === null || raw === "") return { id: null };
+  if (typeof raw !== "string") return { error: "academicDepartmentId must be a department id, or null" };
+  const found = await prisma.academicDepartment.findUnique({ where: { id: raw.trim() } });
+  if (!found) return { error: "No such academic department" };
+  return { id: found.id };
+}
 const predictionRunner = require("../prediction/runner");
 
 /**
@@ -338,7 +356,20 @@ router.post("/courses", requireAuth, requireRegisters, async (req, res) => {
   const clash = await prisma.course.findFirst({ where: { name: { equals: name } } });
   if (clash) return res.status(409).json({ error: `A course called "${name}" already exists` });
   const colour = str(req.body?.colour) || colourFor(name);
-  const p = await prisma.course.create({ data: { name, colour }, include: { _count: { select: { units: true, cohorts: true } } } });
+
+  // THE DEPARTMENT IS SETTABLE HERE, and until it was, the VLE category mapping was the
+  // ONLY writer of Course.academicDepartmentId in the application. That mapping selects
+  // courses by vleCategoryExternalId, which a hand-created course does not have -- so a
+  // college that does not run Moodle, or that simply adds a course in the app, could never
+  // assign it to a department at all. Its students stayed unassigned and invisible to
+  // their own tutors.
+  const dept = await resolveAcademicDepartment(req.body?.academicDepartmentId);
+  if (dept.error) return res.status(400).json({ error: dept.error });
+
+  const p = await prisma.course.create({
+    data: { name, colour, academicDepartmentId: dept.id },
+    include: { _count: { select: { units: true, cohorts: true } } },
+  });
   res.status(201).json(sCourse(p));
 });
 
@@ -354,8 +385,37 @@ router.put("/courses/:id", requireAuth, requireRegisters, async (req, res) => {
     data.name = name;
   }
   if (req.body?.colour !== undefined) data.colour = str(req.body.colour) || existing.colour;
+
+  // UNDEFINED MEANS "not being changed", so a rename cannot un-assign a department. An
+  // explicit null is the deliberate un-assign. Same convention routes/staff.js uses for
+  // supportDepartments, and the same distinction the VLE mapping now enforces.
+  let deptChange = null;
+  if (req.body?.academicDepartmentId !== undefined) {
+    const dept = await resolveAcademicDepartment(req.body.academicDepartmentId);
+    if (dept.error) return res.status(400).json({ error: dept.error });
+    if (dept.id !== existing.academicDepartmentId) deptChange = dept.id;
+    else deptChange = undefined; // no move needed
+  }
+
   const p = await prisma.course.update({ where: { id: existing.id }, data, include: { _count: { select: { units: true, cohorts: true } } } });
-  res.json(sCourse(p));
+
+  // THE STUDENTS FOLLOW THE COURSE, through the shared helper rather than a second copy of
+  // the transaction. Moving a course and leaving its students behind leaves them visible
+  // to the department the course has just left and hidden from the one it joined.
+  let moved = null;
+  if (deptChange !== undefined && req.body?.academicDepartmentId !== undefined) {
+    moved = await academicDepartments.assignCourses(prisma, [existing.id], deptChange);
+  }
+
+  audit.record(req, {
+    action: "course.updated", entity: "Course", entityId: existing.id,
+    summary: `Course ${p.name} updated` +
+      (moved ? ` — moved to another academic department, with ${moved.studentCount} student(s)` : ""),
+    before: { name: existing.name, academicDepartmentId: existing.academicDepartmentId },
+    after: { name: p.name, academicDepartmentId: deptChange === undefined ? existing.academicDepartmentId : deptChange },
+  });
+
+  res.json(sCourse({ ...p, academicDepartmentId: deptChange === undefined ? existing.academicDepartmentId : deptChange }));
 });
 
 // Units are un-assigned (not deleted) when their course goes.

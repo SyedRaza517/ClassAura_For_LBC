@@ -252,8 +252,24 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
       if (byName && byName.moodleCourseId == null) {
         summary.coursesUpdated++;
         try {
+          // THE CATEGORY IS CAPTURED HERE TOO, and omitting it was a real hole rather than
+          // the deliberate refusal the rename branch makes. A course adopted by name kept
+          // vleCategoryExternalId null forever, so it landed in the mapping screen's
+          // "not from a VLE" bucket and could never be mapped as part of its category --
+          // it had to be assigned one course at a time, if at all.
+          //
+          // Only ever FILLED IN, never overwritten: `?? undefined` leaves an existing value
+          // alone, so this cannot become a back door around the never-move rule below.
           dbCourse = dryRun ? byName
-            : await prisma.course.update({ where: { id: byName.id }, data: { moodleCourseId: course.id } });
+            : await prisma.course.update({
+                where: { id: byName.id },
+                data: {
+                  moodleCourseId: course.id,
+                  ...(byName.vleCategoryExternalId == null && course.categoryid != null
+                    ? { vleCategoryExternalId: String(course.categoryid) }
+                    : {}),
+                },
+              });
         } catch (e) { note(`${label}: could not link to the existing course "${courseName}" — ${e.message}`); continue; }
       } else if (byName) {
         note(`${label}: a Staff Hub course called "${courseName}" is already linked to a different Moodle course, so this one was skipped. Rename one of them in Moodle.`);
@@ -261,6 +277,28 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
       } else {
         summary.coursesCreated++;
         if (!dryRun) {
+          // A NEW COURSE JOINS THE DEPARTMENT ITS CATEGORY IS ALREADY MAPPED TO.
+          //
+          // Without this the mapping was a one-shot sweep, not a rule: an admin maps
+          // category 12 to Business, Moodle gains a fourth course in category 12 next
+          // month, and tonight's sync creates it unassigned. The mapping screen still
+          // reads "Business" for that category -- it derives the answer from the non-null
+          // departments among its courses -- so nothing anywhere says the new course was
+          // left out, and its students are invisible to Business staff indefinitely.
+          //
+          // Inherited only when the category maps UNAMBIGUOUSLY to one department. A
+          // category deliberately split across two is left alone rather than guessed at,
+          // which is the same rule the mapping screen applies when it refuses to flatten
+          // `splitAcross` into a single selection.
+          let inherited = null;
+          if (course.categoryid != null) {
+            const siblings = await prisma.course.findMany({
+              where: { vleCategoryExternalId: String(course.categoryid), academicDepartmentId: { not: null } },
+              select: { academicDepartmentId: true },
+            });
+            const distinct = [...new Set(siblings.map((c) => c.academicDepartmentId))];
+            if (distinct.length === 1) inherited = distinct[0];
+          }
           try {
             dbCourse = await prisma.course.create({
               data: {
@@ -278,6 +316,7 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
                 // database. Canvas's account_id and Blackboard's category id go in the
                 // same column and are not integers.
                 vleCategoryExternalId: course.categoryid != null ? String(course.categoryid) : null,
+                academicDepartmentId: inherited,
               },
             });
           } catch (e) { note(`${label}: could not create the course — ${e.message}`); continue; }

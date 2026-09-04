@@ -9729,14 +9729,21 @@ function HndCourses({ store, onOpen }) {
   const [edit, setEdit] = useState(null);
   const nowYear = new Date().getFullYear();
   // cohortMonth/cohortYear seed the course's FIRST intake when adding.
-  const [form, setForm] = useState({ name: "", colour: PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear });
+  const [form, setForm] = useState({ name: "", colour: PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear, academicDepartmentId: "" });
+  // The college's academic departments, for the picker in the modal. Fails quietly to an
+  // empty list: a college that has not set any up must still be able to add a course, and
+  // the picker simply does not render.
+  const [academicDepts, setAcademicDepts] = useState([]);
+  useEffect(() => {
+    api.academicDepartments().then(d => setAcademicDepts(d.departments || [])).catch(() => setAcademicDepts([]));
+  }, []);
   const [cohortProg, setCohortProg] = useState(null); // the course whose cohorts are being managed
   const YEARS = Array.from({ length: 7 }, (_, i) => nowYear - 2 + i);
 
   const [cohortBusy, setCohortBusy] = useState(false);
 
-  const openAdd = () => { setEdit(null); setForm({ name: "", colour: PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear }); setModal(true); };
-  const openEdit = (p) => { setEdit(p); setForm({ name: p.name, colour: p.colour || PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear }); setModal(true); };
+  const openAdd = () => { setEdit(null); setForm({ name: "", colour: PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear, academicDepartmentId: "" }); setModal(true); };
+  const openEdit = (p) => { setEdit(p); setForm({ name: p.name, colour: p.colour || PROGRAMME_COLOURS[0], cohortMonth: 9, cohortYear: nowYear, academicDepartmentId: p.academicDepartmentId || "" }); setModal(true); };
 
   // Intakes belonging to the course being edited. Read from the store rather than
   // held in state, so one added here shows up the moment the store refreshes.
@@ -9759,10 +9766,14 @@ function HndCourses({ store, onOpen }) {
   };
   const save = async () => {
     try {
+      // The department is sent as an explicit null when cleared, never omitted: on the PUT
+      // an omitted field means "not being changed", so omitting it would make clearing the
+      // picker do nothing at all.
+      const academicDepartmentId = form.academicDepartmentId || null;
       if (edit) {
-        await store.updateCourse(edit.id, { name: form.name, colour: form.colour });
+        await store.updateCourse(edit.id, { name: form.name, colour: form.colour, academicDepartmentId });
       } else {
-        const prog = await store.addCourse({ name: form.name, colour: form.colour });
+        const prog = await store.addCourse({ name: form.name, colour: form.colour, academicDepartmentId });
         // Seed the first cohort (intake) from the chosen month + year, e.g. "Sep 2025".
         if (prog?.id) {
           await store.addCohort({ courseId: prog.id, name: `${MONTHS[form.cohortMonth - 1]} ${form.cohortYear}`, startDate: `${form.cohortYear}-${String(form.cohortMonth).padStart(2, "0")}-01` });
@@ -9838,6 +9849,24 @@ function HndCourses({ store, onOpen }) {
       <Modal open={modal} onClose={() => setModal(false)} title={edit ? "Edit course" : "Add course"}>
         <div className="space-y-3">
           <Field label="Course name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. HND Business" className={inputCls} /></Field>
+          {/* THE DEPARTMENT PICKER, and until it existed the VLE category mapping was the
+              only way to assign one — which meant a college not running Moodle could never
+              assign a course to a department at all, and its students stayed invisible to
+              their own tutors. Changing it here moves the course AND the students on it.
+
+              Rendered only when the college has departments: a lone empty picker on a
+              college that runs none reads as something failing to load. */}
+          {academicDepts.filter(d => d.active).length > 0 && (
+            <Field label="Academic department">
+              <select value={form.academicDepartmentId} onChange={e => setForm(f => ({ ...f, academicDepartmentId: e.target.value }))} className={inputCls}>
+                <option value="">Not assigned</option>
+                {academicDepts.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Moving a course to another department moves its students with it.
+              </p>
+            </Field>
+          )}
           <Field label="Colour">
             <div className="flex flex-wrap gap-2">
               {PROGRAMME_COLOURS.map(c => (
@@ -12669,6 +12698,15 @@ function VleDepartmentMapping({ departments, onMapped }) {
               <p className="text-[11px] text-slate-400">
                 {c.courseCount} course{c.courseCount === 1 ? "" : "s"} — {c.sampleCourses.join(", ")}{c.courseCount > c.sampleCourses.length ? " …" : ""}
               </p>
+              {/* A category can be PARTLY assigned — most often because a sync added a
+                  course to it after it was mapped. The row would otherwise derive its
+                  department from the assigned courses alone and read as finished. */}
+              {c.academicDepartmentId && c.unassignedCourseCount > 0 && (
+                <p className="mt-0.5 text-[11px] font-semibold text-amber-700">
+                  {c.unassignedCourseCount} of these {c.courseCount} {c.unassignedCourseCount === 1 ? "is" : "are"} not
+                  assigned yet — re-select the department below to bring {c.unassignedCourseCount === 1 ? "it" : "them"} in.
+                </p>
+              )}
               {/* SPLIT is a real state, called out rather than flattened to "unmapped": it
                   means somebody assigned these courses by hand, and a picker reading blank
                   would invite an administrator to overwrite that with one click. */}
@@ -12693,7 +12731,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
               // nothing to map them by. Shown anyway, because a college whose Moodle
               // predates the capture has EVERY course here, and a screen that omitted them
               // would report the mapping as finished before it had begun.
-              <span className="text-[11px] text-slate-400">Assign these on the course itself</span>
+              <span className="text-[11px] text-slate-400">Assign each on the course itself, under Registers</span>
             )}
           </div>
         ))}

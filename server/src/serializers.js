@@ -99,6 +99,10 @@ const sAdj = (a) => ({ id: a.id, staffId: a.staffId, days: a.days, note: a.note,
 const sSemester = (s) => ({ id: s.id, name: s.name, start: s.start, end: s.end });
 const sCourse = (p) => ({
   id: p.id, name: p.name, colour: p.colour,
+  // Which academic department owns this course. Null means "not assigned", which under
+  // scoping is visible only to college-wide accounts -- so the screen has to be able to
+  // show it, not merely omit it.
+  academicDepartmentId: p.academicDepartmentId ?? null,
   // Present only when the query asked Prisma to count relations.
   ...(p._count ? { unitCount: p._count.units, cohortCount: p._count.cohorts } : {}),
 });

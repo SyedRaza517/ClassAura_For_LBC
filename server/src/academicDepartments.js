@@ -144,9 +144,11 @@ async function byKey(key) {
  * on the most frequent query in the application.
  *
  * The price of a stored copy is drift, and drift is only avoidable if every writer uses
- * the same rule. Three call sites do: creating a student, changing a student's cohort, and
- * mapping a VLE category onto a department. A fourth that computed it by hand would be the
- * bug this function exists to prevent.
+ * the same rule. TWO call sites use this one -- creating a student, and changing a
+ * student's cohort. The other direction, moving a COURSE between departments, cannot use
+ * it (it is set-based, not per-student) and goes through assignCourses() below instead.
+ * Those two functions are the complete set of writers; a third computing it by hand is the
+ * bug they exist to prevent.
  */
 async function forCohort(cohortId) {
   if (!cohortId) return null;
@@ -157,8 +159,36 @@ async function forCohort(cohortId) {
   return cohort?.course?.academicDepartmentId ?? null;
 }
 
+/**
+ * Move a set of courses into a department -- AND THE STUDENTS ON THEM, in one transaction.
+ *
+ * THE ONE IMPLEMENTATION, and it is shared on purpose. Two writers of
+ * Course.academicDepartmentId exist -- the course routes and the VLE category mapping --
+ * and Student.academicDepartmentId is a denormalised copy that must move with the course
+ * or the students end up visible to the department their course just left and hidden from
+ * the one it joined. A second hand-rolled version of this transaction is exactly the drift
+ * forCohort() above was written to prevent, and for a while there was one.
+ *
+ * Students are reached through their cohort, which is how they reach a course at all.
+ * A cohortless student is deliberately NOT touched: they have no course, so no course move
+ * can say anything about them.
+ *
+ * @returns {{courseCount:number, studentCount:number}}
+ */
+async function assignCourses(prismaOrTx, courseIds, academicDepartmentId) {
+  if (!courseIds.length) return { courseCount: 0, studentCount: 0 };
+  const [courses, students] = await prismaOrTx.$transaction([
+    prismaOrTx.course.updateMany({ where: { id: { in: courseIds } }, data: { academicDepartmentId } }),
+    prismaOrTx.student.updateMany({
+      where: { cohort: { courseId: { in: courseIds } } },
+      data: { academicDepartmentId },
+    }),
+  ]);
+  return { courseCount: courses.count, studentCount: students.count };
+}
+
 module.exports = {
   KEY_RE, COLOUR_RE, DEFAULT_COLOUR,
   cleanOne, cleanList, invalidate,
-  all, active, byKey, forCohort,
+  all, active, byKey, forCohort, assignCourses,
 };

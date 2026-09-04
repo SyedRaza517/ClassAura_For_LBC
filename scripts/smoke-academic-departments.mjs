@@ -93,6 +93,7 @@ const { boss, plain } = people;
 
 let createdCourseId = null, movedStudentId = null, originalCohortId = null;
 let mappingCourseIds = [], mappingCohortId = null, mappingStudentId = null;
+let handMadeCourseId = null, handMadeCohortId = null, handMadeStudentId = null;
 
 try {
   /* ------------------------------------------------------------------------ */
@@ -425,6 +426,81 @@ try {
     return "department followed the cohort";
   });
   /* ------------------------------------------------------------------------ */
+  /* Assigning a department to a course directly                               */
+  /* ------------------------------------------------------------------------ */
+
+  // Breaks if: the course routes do not accept academicDepartmentId. Until they did, the
+  // VLE mapping was the ONLY writer of Course.academicDepartmentId -- and it selects by
+  // vleCategoryExternalId, which a hand-created course does not have. So a college that
+  // does not run Moodle, or that adds a course in the app, could never assign it to a
+  // department at all: its students stayed unassigned and invisible to their own tutors,
+  // with the mapping screen telling the admin to "assign these on the course itself"
+  // beside a control that did not exist.
+  await check("a course created in the app can be given a department", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const made = await call("/hnd/courses", {
+      method: "POST", token: adminToken,
+      body: { name: `Hand Made ${stamp}`, academicDepartmentId: biz.id },
+    });
+    assert.equal(made.status, 201, `expected 201, got ${made.status} — ${JSON.stringify(made.body)}`);
+    handMadeCourseId = made.body.id;
+    assert.equal(made.body.academicDepartmentId, biz.id, "the serialiser does not report the department");
+    const row = await db.course.findUnique({ where: { id: handMadeCourseId } });
+    assert.equal(row.academicDepartmentId, biz.id);
+    return "created in Business";
+  });
+
+  // Breaks if: changing a course's department leaves its students behind. They would stay
+  // visible to the department the course just left and hidden from the one it joined --
+  // the same failure the VLE mapping does in one transaction, arriving through the other
+  // door.
+  await check("moving a course to another department moves its students too", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const cmp = list.body.departments.find((d) => d.key === CMP);
+
+    const cohort = await db.cohort.create({ data: { name: `HandCo ${stamp}`, courseId: handMadeCourseId } });
+    handMadeCohortId = cohort.id;
+    const st = await db.student.create({
+      data: {
+        firstName: "Hand", lastName: "Made", studentRef: `HAND${stamp}`,
+        email: `hand.${stamp}@edtech.co.uk`, initials: "HM", colour: "#222222",
+        cohortId: cohort.id, academicDepartmentId: biz.id,
+      },
+    });
+    handMadeStudentId = st.id;
+
+    const res = await call(`/hnd/courses/${handMadeCourseId}`, {
+      method: "PUT", token: adminToken, body: { academicDepartmentId: cmp.id },
+    });
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
+    const after = await db.student.findUnique({ where: { id: st.id } });
+    assert.equal(after.academicDepartmentId, cmp.id, "the student did not follow the course");
+    return "course and student both moved";
+  });
+
+  await check("an unknown department on a course is refused", async () => {
+    const res = await call(`/hnd/courses/${handMadeCourseId}`, {
+      method: "PUT", token: adminToken, body: { academicDepartmentId: "not-a-real-department" },
+    });
+    assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+    return "400";
+  });
+
+  // Omitting the field must leave the department alone -- a rename must not un-assign.
+  await check("a course rename that omits the department leaves it untouched", async () => {
+    const before = await db.course.findUnique({ where: { id: handMadeCourseId } });
+    const res = await call(`/hnd/courses/${handMadeCourseId}`, {
+      method: "PUT", token: adminToken, body: { name: `Hand Made Renamed ${stamp}` },
+    });
+    assert.equal(res.status, 200);
+    const after = await db.course.findUnique({ where: { id: handMadeCourseId } });
+    assert.equal(after.academicDepartmentId, before.academicDepartmentId, "a rename un-assigned the department");
+    return "department untouched";
+  });
+
+  /* ------------------------------------------------------------------------ */
   /* The VLE category mapping                                                  */
   /* ------------------------------------------------------------------------ */
 
@@ -584,6 +660,9 @@ try {
   /* -------------------------------------------------------------------------- */
   /* Cleanup — in a finally, so a failed run leaves nothing behind               */
   /* -------------------------------------------------------------------------- */
+  if (handMadeStudentId) await db.student.deleteMany({ where: { id: handMadeStudentId } }).catch(() => {});
+  if (handMadeCohortId) await db.cohort.deleteMany({ where: { id: handMadeCohortId } }).catch(() => {});
+  if (handMadeCourseId) await db.course.deleteMany({ where: { id: handMadeCourseId } }).catch(() => {});
   if (mappingStudentId) await db.student.deleteMany({ where: { id: mappingStudentId } }).catch(() => {});
   if (mappingCohortId) await db.cohort.deleteMany({ where: { id: mappingCohortId } }).catch(() => {});
   if (mappingCourseIds.length) await db.course.deleteMany({ where: { id: { in: mappingCourseIds } } }).catch(() => {});

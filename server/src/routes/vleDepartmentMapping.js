@@ -17,6 +17,7 @@ const prisma = require("../db");
 const { requireAuth, requirePage } = require("../auth");
 const { withoutAcademicScope } = require("../academicScope");
 const audit = require("../audit");
+const academicDepartments = require("../academicDepartments");
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 
@@ -67,6 +68,11 @@ router.get("/categories", requireAuth, requirePage("settings"), async (_req, res
       // by what is inside. Null-is-not-zero, applied to a permission we may not have.
       name: cat.name,
       courseCount: cat.courses.length,
+      // HOW MANY OF THEM ARE STILL UNASSIGNED. Without this the row derived its department
+      // from the non-null values alone, so a category with three mapped courses and one
+      // unmapped read as fully "Business" -- exactly the state a sync creates when it adds
+      // a course to an already-mapped category. The count is what makes that visible.
+      unassignedCourseCount: cat.courses.filter((c) => !c.academicDepartmentId).length,
       sampleCourses: cat.courses.slice(0, 5).map((c) => c.name),
       // One id when the whole category maps to one department; null when none of it does.
       academicDepartmentId: assigned.length === 1 ? assigned[0] : null,
@@ -142,18 +148,13 @@ router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
       });
       if (!courses.length) return { error: 404, message: "No courses carry that VLE category" };
 
+      // THE SHARED HELPER, not a second copy of the transaction. This route and the course
+      // routes are the only two writers of Course.academicDepartmentId, and they used to
+      // carry the students-follow-the-course logic separately -- which is precisely the
+      // drift academicDepartments.js warns about.
       const courseIds = courses.map((c) => c.id);
-      const [, students] = await prisma.$transaction([
-        prisma.course.updateMany({ where: { id: { in: courseIds } }, data: { academicDepartmentId } }),
-        // Students reach their course through a cohort. Written here rather than derived
-        // on read for the reason the schema comment gives: Student.cohortId is nullable,
-        // and it would be a two-hop join on the hottest query in the application.
-        prisma.student.updateMany({
-          where: { cohort: { courseId: { in: courseIds } } },
-          data: { academicDepartmentId },
-        }),
-      ]);
-      return { courses, studentCount: students.count, dept };
+      const moved = await academicDepartments.assignCourses(prisma, courseIds, academicDepartmentId);
+      return { courses, studentCount: moved.studentCount, dept };
     },
   );
 
