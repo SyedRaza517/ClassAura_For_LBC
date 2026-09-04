@@ -28,13 +28,29 @@ const DEFAULTS = Object.freeze({
   staffTapEnabled: true,
   // Whether a lecturer can put a rotating QR code on screen and have students scan it.
   //
-    // Ships OFF, and SEPARATELY from `enabled` rather than implied by it. These are two
-  // different capture methods with different physical properties — a sticker needs
-  // proximity, a screen can be photographed — and a college may reasonably want one and
-  // not the other. Inferring this switch from the sticker switch would silently give an
-  // institution a second way of writing to its attendance record on the next deploy,
-  // which is the exact thing `enabled` defaulting to false exists to prevent.
-  qrEnabled: false,
+  // SHIPS ON, and this is a deliberate product decision taken on 4 Sep 2026, reversing the
+  // default this shipped with for two days. It is recorded here because the reasoning is
+  // not obvious and the obvious "tidy-up" is to put it back.
+  //
+  // The original default was OFF, on the reasoning that a college must not gain a second
+  // way of writing to its attendance record merely because somebody deployed. That
+  // reasoning was written when this platform served every college from one deployment,
+  // where "somebody deployed" meant every institution at once. It now serves ONE
+  // institution per deployment, so the blast radius of this default is exactly the one
+  // college whose server it is, and QR check-in is the headline capability that college
+  // is buying. Shipping it off meant the feature was invisible until an administrator
+  // found a settings screen, which is how a capability gets reported as missing.
+  //
+  // What it can still never do is unchanged and is what makes the default safe: a scan
+  // cannot overwrite a mark a member of staff set, cannot record an absence, cannot land
+  // outside the class's own timetabled window, and cannot reach a register whose term is
+  // closed. Switching this on adds a way for an enrolled student to mark THEMSELVES
+  // present in the room, and nothing else.
+  //
+  // SEPARATE from `enabled` rather than implied by it, which has not changed. The sticker
+  // switch stays OFF by default: it needs hardware the college has to buy and place, and a
+  // capture method nobody has installed must not appear to be running.
+  qrEnabled: true,
   // How often the on-screen code changes.
   //
   // This is the single number the feature's honesty rests on. A photographed screen works

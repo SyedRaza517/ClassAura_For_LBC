@@ -40,7 +40,7 @@ const prisma = require("../db");
 // Unit.courseId is nullable -- so always joining would quietly change the session counts
 // for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
-const { requireAuth, requireAnyPage, hasPage } = require("../auth");
+const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
 const academicDepartments = require("../academicDepartments");
@@ -198,7 +198,8 @@ const requireHndWrite = requireAnyPage(["registers", "students"]);
 // registers themselves does not have to be granted a second page to watch one being
 // taken — but a college can now grant the watching WITHOUT the editing, which is the
 // point of the key existing at all.
-const requireLiveAttendance = requireAnyPage(["live-attendance", "registers"]);
+// (Since 3 Sep 2026 the four routes that used this take `lecturerGate` instead, which
+// admits the same pages plus the tutor of the session — see THE LECTURER'S DOOR below.)
 const { isStatus, summarise, summariseCounts } = require("../attendance");
 
 // THE ASSESSMENT TRACKER'S SETUP GRID SETS A MODULE LEADER, AND ONLY A MODULE LEADER.
@@ -249,7 +250,49 @@ router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "asses
 // "executive" is included because the Executive Dashboard reads courses, units,
 // sessions and the monthly attendance summary from here; every WRITE route below
 // additionally requires requireHndWrite, so this only ever grants read access.
-router.use(requireAuth, requireAnyPage(["registers", "students", "executive"]));
+//
+// THE LECTURER'S DOOR (3 Sep 2026). Four paths below — the lecturer's live view — are
+// also reachable by an ordinary STAFF account, for the classes it is recorded as
+// teaching. The router-wide gate steps aside for exactly those paths and nothing else;
+// each of the four then applies its own guard (`lecturerGate`), which admits the page
+// holders it always did OR the tutor of that one session. Everything DEF-01 protects —
+// the directory, the matrix, the units, the paper register — stays behind this gate.
+//
+// An allowlist of paths rather than moving the routes above the gate, because the four
+// share helpers with the rest of this file and the point is legible in one place: these
+// are the only doors, and the list is the thing to read.
+//
+// Found on the way: an administrator granted ONLY `live-attendance` never passed this
+// gate at all, so the page a college could grant "for watching without editing" opened
+// nothing. The bypass fixes that too — the per-route guard was right, the gate above it
+// was not consulted.
+const LECTURER_PATHS = [/^\/my-sessions\/today$/, /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent|check-in-window)$/];
+const isLecturerPath = (req) => LECTURER_PATHS.some((re) => re.test(req.path));
+const adminGate = requireAnyPage(["registers", "students", "executive"]);
+router.use(requireAuth, (req, res, next) => (isLecturerPath(req) ? next() : adminGate(req, res, next)));
+
+// Page holders as before, OR the tutor of the session named in the URL. Async because the
+// second answer needs the session's unit. A session that does not exist answers 403 for a
+// non-page-holder rather than 404: whether a register exists is itself something the
+// directory-less caller has no standing to learn.
+function lecturerGate(pages) {
+  return async (req, res, next) => {
+    try {
+      if (hasPage(req.user, pages)) return next();
+      if (isStudent(req.user)) return res.status(403).json({ error: "Student accounts cannot open a register." });
+      const s = await prisma.hndSession.findUnique({ where: { id: String(req.params.id || "") }, select: { unit: { select: { tutorStaffId: true } } } });
+      if (s?.unit?.tutorStaffId && s.unit.tutorStaffId === req.user.id) return next();
+      return res.status(403).json({ error: "You can only open the classes you teach." });
+    } catch (e) { next(e); }
+  };
+}
+// The today list has no session in its URL: any signed-in member of staff may ask, and
+// gets back only the classes on units they tutor (or nothing, plus `teaches: false`).
+const requireStaffAccount = (req, res, next) => (isStudent(req.user) ? res.status(403).json({ error: "Student accounts cannot open a register." }) : next());
+// Whether THIS caller may close THIS session's register: the page that always could, or
+// the tutor of the unit. Computed once here so the guard and the `canClose` flag the live
+// view hands the screen cannot disagree.
+const mayClose = (user, session) => hasPage(user, ["registers"]) || Boolean(session?.unit?.tutorStaffId && session.unit.tutorStaffId === user?.id);
 
 const PALETTE = ["#1a3a8f", "#9e1b32", "#0d7a5f", "#b45309", "#6d28d9", "#0e7490", "#be123c"];
 const colourFor = (seed) => PALETTE[Math.abs(String(seed).split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % PALETTE.length];
@@ -262,7 +305,9 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, isSelfCheckIn } = require("../attendanceTap");
+const { subMinutes, addMinutes, isSelfCheckIn, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
+const { windowIndexFor, deriveCode } = require("../attendanceQr");
+const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
 const isTime = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
@@ -1465,6 +1510,16 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
   res.json({ ok: true, saved: saved.length, marks: saved.map(sMark) });
 });
 
+// GET /api/hnd/check-in-settings — which self check-in methods this college has on.
+//
+// For the Registers page, which offers a "QR code" action on each session only when
+// there is a code to show. Behind the router-wide gate like every other read here; the
+// full settings (thresholds, rotation) stay on /tags/settings behind their own page.
+router.get("/check-in-settings", async (_req, res) => {
+  const settings = await tapConfig.get();
+  res.json({ tapEnabled: settings.enabled === true, qrEnabled: settings.qrEnabled === true });
+});
+
 /* ========================= the lecturer's live view ========================= */
 
 // GET /api/hnd/my-sessions/today — the classes this account is teaching today.
@@ -1481,10 +1536,14 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
 // through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
 // on: a name typed into a box is not an identity, and matching on it would hand one
 // lecturer another's register whenever two people share a surname.
-router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req, res) => {
+router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, res) => {
   const date = localDate();
   const time = localTime();
   const settings = await tapConfig.get();
+  // Whether this account tutors anything at all. The staff app shows its "My classes"
+  // tile on this, not on the day's list being non-empty: a lecturer with no class today
+  // still teaches, and a tile that vanishes on quiet days reads as the feature breaking.
+  const teaches = (await prisma.unit.count({ where: { tutorStaffId: req.user.id } })) > 0;
 
   // ?scope=all — every session running today, not only the caller's own.
   //
@@ -1525,11 +1584,15 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
   res.json({
     date,
     tapEnabled: settings.enabled,
+    // Separately, because the list screen's "switched off" warning must only show when
+    // BOTH capture methods are off — a QR-only college's registers do fill on their own.
+    qrEnabled: settings.qrEnabled,
     scope: wantsAll ? "all" : "mine",
     // Whether to OFFER the toggle. The client cannot work this out for itself without
     // duplicating the page check above, and a control that always 403s is worse than no
     // control at all.
     canSeeAll: maySeeAll,
+    teaches,
     sessions: sessions.map((s) => ({
       id: s.id,
       unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
@@ -1542,16 +1605,19 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
       // not an empty string pretending otherwise.
       tutor: s.unit?.tutorStaff?.name || s.unit?.tutor || null,
       marked: s._count.marks,
-      // Whether taps are being accepted for this class RIGHT NOW. Derived at read time
-      // rather than stored: "is it running" changes every minute, and a column holding
-      // it would be wrong within one and have nothing to correct it.
+      // Whether self check-ins are being accepted for this class RIGHT NOW. Derived at
+      // read time rather than stored: "is it running" changes every minute, and a column
+      // holding it would be wrong within one and have nothing to correct it.
       // The term is part of this, matching what the tap route will actually do. Without
       // it the dashboard advertised "Open now" for a session inside a closed term while
       // every tap on it came back 409, which reads as the app being broken.
-      acceptingTaps: settings.enabled
-        && time >= subMinutes(s.startTime, settings.earlyGraceMins)
-        && time <= s.endTime
-        && (!s.unit?.term || (date >= s.unit.term.start && date <= s.unit.term.end)),
+      // EITHER capture method counts: a QR-only college's class is open now in every
+      // sense this flag is read for — the badge, and whether the live view keeps polling.
+      // The shared predicates, not an inline copy — this test existed four times and the
+      // copies had already drifted (one dropped the term; two coerced grace differently).
+      acceptingTaps: (settings.enabled || settings.qrEnabled)
+        && withinSessionWindow(s, { date, time }, settings)
+        && termOpenOn(s.unit?.term, date),
     })),
   });
 });
@@ -1565,10 +1631,10 @@ router.get("/my-sessions/today", requireAuth, requireLiveAttendance, async (req,
 // "Not tapped" is a DISPLAY state, not a mark. Nothing is written for those students
 // here — the roll simply has no row for them yet. The only route from this feature to an
 // A is POST /mark-remaining-absent below, with a named human on the end of it.
-router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req, res) => {
+router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
-    include: { unit: { select: { id: true, code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+    include: { unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1616,20 +1682,224 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
     else counts.notMarked += 1;
   }
 
+  // Where this class sits, in the same words the mint route uses, so the screen can
+  // offer "end now" only while open and "reopen" only once over or ended — and
+  // nothing at all before the class starts or inside a locked term.
+  const today = localDate();
+  const termOpen = termOpenOn(session.unit?.term, today);
+  const accepting = (settings.enabled || settings.qrEnabled)
+    && withinSessionWindow(session, { date: today, time }, settings)
+    && termOpen;
+  const opensAt = subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0);
+  const phase = !termOpen
+    ? "closed"
+    : session.checkInClosedAt
+      ? "ended"
+      : accepting
+        ? "open"
+        : session.date > today || (session.date === today && time < opensAt) ? "before" : "over";
+
   res.json({
     session: sSession(session),
+    today,
+    phase,
     unit: session.unit ? { id: session.unit.id, code: session.unit.code, name: session.unit.name } : null,
-    acceptingTaps: settings.enabled
-      && session.date === localDate()
-      && time >= subMinutes(session.startTime, settings.earlyGraceMins)
-      && time <= session.endTime,
+    // Whether the rotating-code card belongs on this screen at all. Returned here
+    // because the live view already holds the settings; the card itself fetches its
+    // code from /sessions/:id/qr-code, which re-checks this server-side.
+    qrEnabled: settings.qrEnabled,
+    // The sticker switch too, so the screen can say "nothing here will fill on its own"
+    // only when BOTH are off, with a way to the settings.
+    tapEnabled: settings.enabled,
+    // Whether to OFFER the close button. An administrator granted the watching page
+    // alone could see this screen and press a button that only ever answered 403.
+    canClose: mayClose(req.user, session),
+    // The minute check-in actually shuts (later than the timetable when held open), so
+    // the screen can say "open until 12:20" rather than the end time it already shows.
+    closesAt: checkInClosesAt(session),
+    // Either capture method keeps this true — it gates the badge AND the client's poll,
+    // and a QR-only college's register fills exactly as an NFC one's does.
+    // The term is part of "accepting", matching the today list and what a tap will
+    // actually be answered — this copy lacked it, so the badge read "Accepting" on a
+    // locked-term register whose every self check-in came back 423. termLocked below
+    // stays as the separate display detail saying WHY.
+    acceptingTaps: accepting,
     // Null when the unit has no term, which is a real state — the register is simply
     // never term-locked — and not the same as "the term is open".
-    termLocked: session.unit?.term
-      ? !(localDate() >= session.unit.term.start && localDate() <= session.unit.term.end)
-      : null,
+    termLocked: session.unit?.term ? !termOpen : null,
     counts,
     rows,
+  });
+});
+
+// In-process, module-level, and therefore correct for ONE Node process — a clustered
+// deployment needs Redis. The screen asks for a new code once per rotation (30s by
+// default), so thirty a minute is well clear of every legitimate cadence and still
+// stops a broken client timer from turning one projector into a request loop.
+const qrMintHits = new Map(); // staffId -> number[] of timestamps
+const QR_MINT_WINDOW_MS = 60_000;
+const QR_MINT_MAX = 30;
+function qrMintAllowed(staffId) {
+  const now = Date.now();
+  const recent = (qrMintHits.get(staffId) || []).filter((t) => now - t < QR_MINT_WINDOW_MS);
+  if (recent.length >= QR_MINT_MAX) { qrMintHits.set(staffId, recent); return false; }
+  recent.push(now);
+  qrMintHits.set(staffId, recent);
+  return true;
+}
+
+// GET /api/hnd/sessions/:id/qr-code — the rotating code the lecturer puts on screen.
+//
+// The code is derived, never stored (see attendanceQr.js), so this route is a read in
+// every sense: nothing opens, nothing can be left open, and a lecturer who never loads
+// it has simply declined a shortcut. Gated like the live view because the person
+// holding the code IS the person watching the register fill.
+//
+// Outside the session's own window no code is minted at all. Verification would
+// refuse it anyway — the window is enforced where it matters, at the scan — but a QR
+// square that can only refuse is worse than a message saying when check-in opens.
+router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
+  const settings = await tapConfig.get();
+  // 409 rather than 404: the session may be real and the feature simply off, and the
+  // screen needs to tell a lecturer those apart.
+  if (!settings.qrEnabled) return res.status(409).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_disabled" });
+  if (!qrMintAllowed(req.user.id)) return res.status(429).json({ error: "The code is refreshing on its own. Give it a few seconds.", reason: "too_many" });
+
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    // The term travels with the session because "accepting" INCLUDES it. The first
+    // version of this query left it out, so the route minted a live code for a session
+    // inside a closed term — a projector full of "scan to check in" where every scan
+    // answered 423, the exact failure the today list's acceptingTaps comment records.
+    select: { id: true, date: true, startTime: true, endTime: true, checkInClosedAt: true, checkInOpenUntil: true, unit: { select: { term: { select: { start: true, end: true } } } } },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Epoch seconds for the window arithmetic, local strings for the register decision —
+  // the same split the verify route keeps. The rotation window is timezone-free maths;
+  // "is the class on now" is a question about the college's own clock.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const rotateSeconds = settings.qrRotateSeconds;
+  const secondsLeft = rotateSeconds - (nowSeconds % rotateSeconds);
+  const opensAt = subMinutes(session.startTime, Number(settings.earlyGraceMins) || 0);
+  const date = localDate();
+  const time = localTime();
+  // The shared predicates the verify route and both dashboards use — the mint and the
+  // scan MUST agree to the minute, or the screen advertises what the server refuses.
+  const termOpen = termOpenOn(session.unit?.term, date);
+  const accepting = withinSessionWindow(session, { date, time }, settings) && termOpen;
+
+  if (!accepting) {
+    // Which side of the window we are on, decided here where the college's clock lives —
+    // the client's own clock may sit in any timezone, and "opens at 09:00" shown for a
+    // class that finished at lunchtime reads as the screen being broken.
+    // A session dated tomorrow is "before" even though today's time is past its start.
+    // A closed term outranks both: "opens at 09:00" for a register the term has locked
+    // would promise a code that is never coming.
+    // "ended" is the lecturer's doing, not the clock's, and the screen offers the
+    // reopen button on exactly that word.
+    const phase = !termOpen
+      ? "closed"
+      : session.checkInClosedAt
+        ? "ended"
+        : session.date > date || (session.date === date && time < opensAt) ? "before" : "over";
+    return res.json({ code: null, secondsLeft, rotateSeconds, acceptingTaps: false, phase, opensAt, closesAt: checkInClosesAt(session) });
+  }
+
+  let secret;
+  try {
+    secret = qrSigningKey();
+  } catch (e) {
+    // Fail loudly at the person who can act on it. A quietly-degraded screen would
+    // present as "the QR never works" to a room of students, one scan at a time.
+    if (e instanceof SecretsNotConfigured) {
+      // Loudly, but not verbatim. e.message names the environment variable and carries
+      // the shell command that generates it, and this response lands on a screen that is
+      // frequently being projected to a room. The detail belongs in the server log,
+      // where the person who can act on it is actually looking.
+      console.error("[qr] cannot sign codes for the screen:", e.message);
+      return res.status(e.status).json({ error: "Check-in codes aren't set up on this server yet. Ask whoever runs it.", reason: "qr_unavailable" });
+    }
+    throw e;
+  }
+
+  const code = deriveCode({ secret, sessionId: session.id, windowIndex: windowIndexFor(nowSeconds, rotateSeconds) });
+  // closesAt is the minute check-in actually shuts, which is later than the timetable
+  // when the lecturer is holding it open for late arrivals.
+  res.json({ code, secondsLeft, rotateSeconds, acceptingTaps: true, phase: "open", opensAt, closesAt: checkInClosesAt(session) });
+});
+
+// POST /api/hnd/sessions/:id/check-in-window — the lecturer's hand on the window.
+//
+//   { action: "close" }                 end check-in now, before the timetabled end
+//   { action: "reopen", minutes: 10 }   accept scans again (or still) until now + minutes
+//
+// Two overrides for one class on one day, nothing more: no schedule, no default, no
+// college-wide state. Closing sets checkInClosedAt; reopening clears it and holds the
+// window open until the later of the timetabled end and now + minutes. Every surface
+// reads the result through the one window predicate, so the code disappears from the
+// projector, the badge changes and the next scan is refused in the same instant.
+//
+// Gated like the close-off: the registers page, or the tutor of this unit. A watch-only
+// administrator can see the register but must not be able to change what it accepts.
+const REOPEN_MAX_MINS = 120;
+router.post("/sessions/:id/check-in-window", requireAuth, lecturerGate(["registers"]), async (req, res) => {
+  const session = await prisma.hndSession.findUnique({
+    where: { id: req.params.id },
+    include: { unit: { select: { code: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const action = String(req.body?.action || "");
+  if (action !== "close" && action !== "reopen") {
+    return res.status(400).json({ error: "action must be \"close\" or \"reopen\"" });
+  }
+  const date = localDate();
+  const time = localTime();
+  // Only today's class. Closing tomorrow's register is meaningless, and holding open
+  // last week's would let a scan land on a register nobody is in a room for.
+  if (session.date !== date) {
+    return res.status(400).json({ error: "Only a class running today can have its check-in changed." });
+  }
+  // The same term gate the register save and the close-off enforce: this must not be a
+  // way of letting scans into a locked term.
+  if (!termOpenOn(session.unit?.term, date)) {
+    return res.status(423).json({ error: `${session.unit.term.name} is closed, so this register is locked.`, locked: true });
+  }
+
+  let data;
+  if (action === "close") {
+    data = { checkInClosedAt: new Date() };
+  } else {
+    const minutes = Number(req.body?.minutes ?? 10);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > REOPEN_MAX_MINS) {
+      return res.status(400).json({ error: `minutes must be a whole number from 1 to ${REOPEN_MAX_MINS}` });
+    }
+    // The later of the timetabled end and now + minutes, so "reopen for ten minutes"
+    // pressed mid-class does not shorten the class.
+    const until = addMinutes(time, minutes);
+    data = { checkInClosedAt: null, checkInOpenUntil: until > session.endTime ? until : session.endTime };
+  }
+  const updated = await prisma.hndSession.update({ where: { id: session.id }, data });
+  const settings = await tapConfig.get();
+  const accepting = (settings.enabled || settings.qrEnabled) && withinSessionWindow(updated, { date, time }, settings);
+
+  audit.record(req, {
+    action: action === "close" ? "attendance.checkin.closed" : "attendance.checkin.reopened",
+    entity: "HndSession", entityId: session.id,
+    summary: action === "close"
+      ? `Self check-in ended early at ${time} on the ${session.date} register for ${session.unit?.code || "a unit"} by ${req.user?.name || "an administrator"}`
+      : `Self check-in held open until ${data.checkInOpenUntil} on the ${session.date} register for ${session.unit?.code || "a unit"} by ${req.user?.name || "an administrator"}`,
+    before: { checkInClosedAt: session.checkInClosedAt ?? null, checkInOpenUntil: session.checkInOpenUntil ?? null },
+    after: { checkInClosedAt: updated.checkInClosedAt ?? null, checkInOpenUntil: updated.checkInOpenUntil ?? null },
+  });
+
+  res.json({
+    ok: true,
+    checkInClosedAt: updated.checkInClosedAt ? updated.checkInClosedAt.toISOString() : null,
+    checkInOpenUntil: updated.checkInOpenUntil ?? null,
+    acceptingTaps: accepting,
+    closesAt: checkInClosesAt(updated),
   });
 });
 
@@ -1639,7 +1909,7 @@ router.get("/sessions/:id/live", requireAuth, requireLiveAttendance, async (req,
 // path from tap check-in to an absence, and it exists precisely so that no automatic
 // process ever takes it: a phone with a flat battery, a forgotten handset or a device
 // with no NFC must not become an academic record without somebody deciding it should.
-router.post("/sessions/:id/mark-remaining-absent", requireAuth, requireRegisters, async (req, res) => {
+router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
     include: { unit: { include: { term: true } } },

@@ -1,3 +1,4 @@
+import { deviceHeaders } from "./deviceId";
 // Thin REST client.
 //
 // Where the API lives:
@@ -60,8 +61,8 @@ export const setToken = (t) => {
 // a normal call; the Moodle endpoints, which read a whole VLE, pass their own.
 const DEFAULT_TIMEOUT_MS = 30000;
 
-async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const headers = { "Content-Type": "application/json" };
+async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT_MS, headers: extra } = {}) {
+  const headers = { "Content-Type": "application/json", ...(extra || {}) };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -213,7 +214,9 @@ export const api = {
   // student's classes are running; tapCheckIn writes the mark. sessionId is sent only
   // after an "ambiguous" reply, when two of their classes overlap.
   studentTapContext: () => request("/student/me/tap-context"),
-  studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) } }),
+  studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) }, headers: deviceHeaders() }),
+  // Both self check-ins carry the device trail header (deviceId.js).
+  studentQrCheckIn: (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code }, headers: deviceHeaders() }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
   timetableCourses: () => request("/timetable/courses"),
@@ -549,10 +552,16 @@ export const api = {
   // The lecturer's live view: who is in, who is late, who has not appeared, and the
   // minute each of them tapped. Polled while a class is running.
   sessionLive: (sessionId) => request(`/hnd/sessions/${sessionId}/live`),
+  sessionQr: (sessionId) => request(`/hnd/sessions/${sessionId}/qr-code`),
   // scope "all" asks for every class running today rather than only the caller's own.
   // Refused with 403 unless they hold registers/students/executive, so the screen only
   // offers it when the server says it may.
   mySessionsToday: (scope) => request("/hnd/my-sessions/today" + (scope === "all" ? "?scope=all" : "")),
+  // Which self check-in methods are on, for the Registers page to decide whether a
+  // session row offers a "QR code" action at all.
+  checkInSettings: () => request("/hnd/check-in-settings"),
+  // The lecturer's hand on the window: end check-in early, or hold it open for late arrivals.
+  sessionCheckInWindow: (sessionId, action, minutes) => request(`/hnd/sessions/${sessionId}/check-in-window`, { method: "POST", body: { action, ...(minutes ? { minutes } : {}) } }),
   // The ONLY route from tap check-in to an absence, and it takes a named human.
   markRemainingAbsent: (sessionId, override) => request(`/hnd/sessions/${sessionId}/mark-remaining-absent`, { method: "POST", body: override ? { override: true } : {} }),
 

@@ -72,6 +72,10 @@
     <!-- Reading the attendance stickers. Not a runtime permission: Android grants NFC
          at install time, so there is no prompt to handle. -->
     <uses-permission android:name="android.permission.NFC" />
+    <!-- The in-app scanner for the check-in code (QrScanner.jsx). Not required: a phone
+         with no camera still signs in and uses the lecturer's register as usual. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- android:required="false" IS LOAD-BEARING AND MUST NOT BE REMOVED.
          Declaring the NFC permission above makes Google Play infer a hardware

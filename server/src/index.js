@@ -182,6 +182,7 @@ app.listen(PORT, () => {
   console.log(`Push:  ${require("./push").describePush()}`);
   console.log(`Files: ${require("./storage").describeStorage()}`);
   console.log(`SharePoint: ${require("./sharepoint").describe()}`);
+  console.log(`Check-in codes: ${require("./secrets").describeCheckInCodes()}`);
   startKeepAlive();
   require("./scheduler").startScheduler();
   require("./attendanceScheduler").start();

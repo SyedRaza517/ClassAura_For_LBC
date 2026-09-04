@@ -12,6 +12,7 @@
 // Stored as  v1.<iv>.<authTag>.<ciphertext>  , all base64url. The version prefix is
 // there so the format can change later without guessing at what old rows contain.
 const crypto = require("node:crypto");
+const { sessionSecret, usingDevSecret } = require("./sessionSecret");
 
 const ALGO = "aes-256-gcm";
 const VERSION = "v1";
@@ -62,6 +63,61 @@ function decrypt(stored) {
   return Buffer.concat([decipher.update(Buffer.from(dataB64, "base64url")), decipher.final()]).toString("utf8");
 }
 
+// The QR check-in signing key, derived from the SESSION secret under a fixed label.
+//
+// Signing with a secret used for something else is a key-separation failure, so this is a
+// DISTINCT HMAC key via HKDF and never the session secret itself. A code on a projector is
+// public; the label is what stops a wall full of codes being material related to the key
+// that signs logins.
+//
+// WHY THE SESSION SECRET AND NOT THE CREDENTIALS KEY. This derived from CREDENTIALS_KEY
+// first, on reasoning that was right in shape and wrong in target: deriving beats adding
+// "a second thing to forget on exactly one environment". But CREDENTIALS_KEY is OPTIONAL.
+// It encrypts stored integration credentials, and a deployment with no integrations never
+// sets it — which is the actual state of this product's live server, where the start-up
+// log reports email, files and SharePoint all unconfigured. So the one feature that has to
+// work in front of a room was hung off the one secret nobody had a reason to set, and it
+// failed as a 503 at the first scan of the first lecture.
+//
+// JWT_SECRET is mandatory: the process refuses to start without it in production. A
+// deployment that can sign a check-in code is now exactly a deployment that can log
+// somebody in, so there is nothing to add before a deploy and nothing left to forget.
+// CREDENTIALS_KEY keeps its own job, encrypting credentials at rest, and is unaffected.
+//
+// The label is versioned so a future change of derivation can coexist with codes signed
+// under the previous one for the length of a rotation window. v2 is this reparenting;
+// codes signed under v1 stop verifying, which matters for at most one rotation window and
+// this has never been deployed.
+const QR_HKDF_INFO = "edtech:qr-checkin:v2";
+
+/**
+ * One line for the boot banner, beside email, push, files and SharePoint.
+ *
+ * Those four announce themselves precisely so a stubbed deployment does not look healthy
+ * until somebody waits for an email that never arrives. Check-in codes were the one
+ * credential consumer with no such line, and the worst one to leave silent: a missing key
+ * refuses every mint and every scan with a 503, so the failure surfaces as a lecturer
+ * standing in front of a room with no code on the wall, or a hall of students whose
+ * scans are all rejected. Nothing before start-up said a thing.
+ *
+ * Never echoes the key or any part of it. This banner is printed to a log that gets
+ * pasted into chats and screenshots.
+ */
+function describeCheckInCodes() {
+  // No "not configured" case in production: the process would not have started. The one
+  // thing worth announcing is a deployment running on the public development secret,
+  // where every code on every wall is forgeable by anyone who has read the source.
+  return usingDevSecret()
+    ? "ready to sign, using the built-in development secret (fine locally; set JWT_SECRET for a real deployment)"
+    : "ready to sign";
+}
+
+function qrSigningKey() {
+  // hkdfSync returns an ArrayBuffer, not a Buffer; crypto.createHmac accepts both,
+  // but the callers compare and slice, so normalise here once.
+  return Buffer.from(crypto.hkdfSync("sha256", Buffer.from(sessionSecret(), "utf8"), Buffer.alloc(0), QR_HKDF_INFO, 32));
+}
+
 /**
  * What a client is allowed to see of a secret: enough to recognise it, never enough
  * to use it. A Moodle token is 32 hex characters, so the last four identify which
@@ -73,4 +129,4 @@ function hint(plaintext) {
   return "•".repeat(Math.min(12, s.length - 4)) + s.slice(-4);
 }
 
-module.exports = { encrypt, decrypt, hint, isConfigured, SecretsNotConfigured };
+module.exports = { encrypt, decrypt, hint, isConfigured, describeCheckInCodes, qrSigningKey, SecretsNotConfigured };

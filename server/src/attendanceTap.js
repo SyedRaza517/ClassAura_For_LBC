@@ -79,6 +79,57 @@ const addMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ?
 const subMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ? hhmm : toHHMM(b - mins); };
 
 /**
+ * Is this session inside its own check-in window right now?
+ *
+ * THE single copy of a test that used to exist four times — the today list, the live
+ * view, the QR mint route and the QR verify route each carried their own, and they had
+ * already drifted: two coerced a garbage earlyGraceMins to zero and two passed it raw,
+ * and the mint route's copy is the one that forgot the term entirely (see termOpenOn).
+ * Four hand-synced copies of "is the class on" is how a projector ends up advertising a
+ * code that every scan is refused — the mint and verify routes MUST agree to the minute.
+ *
+ * Both ends inclusive: a student who scanned as the class ended did arrive. Unparseable
+ * times refuse that one session visibly rather than letting "NaN:NaN" compare false
+ * against everything. Zero-padded HH:MM sorts chronologically, so string compares after
+ * the null checks are enough.
+ */
+function withinSessionWindow(session, now, settings) {
+  if (!session || session.date !== now?.date) return false;
+  // The lecturer's hand on the window (3 Sep 2026). A close is absolute: whatever the
+  // timetable says, a class the lecturer has ended accepts nothing until reopened —
+  // and reopening clears the close, so this is one field, not a state machine. A
+  // held-open time only ever EXTENDS the end: the later of the two wins, so a value
+  // earlier than the end (or an unparseable one) changes nothing.
+  if (session.checkInClosedAt) return false;
+  const grace = Number(settings?.earlyGraceMins) || 0;
+  const from = toMins(subMinutes(session.startTime, grace));
+  const end = toMins(session.endTime);
+  const held = toMins(session.checkInOpenUntil);
+  const to = end === null ? null : held === null ? end : Math.max(end, held);
+  const t = toMins(now.time);
+  if (from === null || to === null || t === null) return false;
+  return t >= from && t <= to;
+}
+
+/** The minute check-in actually closes for a session: its end, or later if held open. */
+function checkInClosesAt(session) {
+  const end = toMins(session?.endTime);
+  const held = toMins(session?.checkInOpenUntil);
+  if (end === null) return session?.endTime;
+  return toHHMM(held === null ? end : Math.max(end, held));
+}
+
+/**
+ * Is this term open on this date? No term at all means never term-locked — a real state
+ * (the unit simply has no term) and not the same as "the term is open". Both boundary
+ * days inclusive, matching PUT /sessions/:id/register: a term running "to 2026-09-01"
+ * includes that day's teaching.
+ */
+function termOpenOn(term, date) {
+  return !term || (date >= term.start && date <= term.end);
+}
+
+/**
  * Decide which of a student's sessions a tap lands on.
  *
  * @param candidates today's sessions on units this student is enrolled on. Enrolment is
@@ -92,22 +143,14 @@ const subMinutes = (hhmm, mins) => { const b = toMins(hhmm); return b === null ?
  */
 function resolveTapSession(candidates, now, settings) {
   const list = Array.isArray(candidates) ? candidates : [];
-  const grace = Number(settings?.earlyGraceMins) || 0;
   // Not `|| 0`: a lateAfterMins of 0 is a real setting — a college that treats any
   // lateness as late — and `||` would quietly replace it with 0 anyway, but the
   // intent matters if the default ever changes.
   const late = Number.isFinite(Number(settings?.lateAfterMins)) ? Number(settings.lateAfterMins) : 0;
 
-  // Running right now. Both ends inclusive: a student who tapped as the class ended did
-  // arrive, and excluding the closing minute would refuse a real attendance.
-  const running = list.filter((s) => {
-    if (s.date !== now.date) return false;
-    const from = toMins(subMinutes(s.startTime, grace));
-    const to = toMins(s.endTime);
-    const t = toMins(now.time);
-    if (from === null || to === null || t === null) return false;
-    return t >= from && t <= to;
-  });
+  // Running right now — the shared predicate, so a tap and the screens advertising
+  // "open now" cannot disagree about what "now" means.
+  const running = list.filter((s) => withinSessionWindow(s, now, settings));
 
   // Nothing running is "no class on", whatever the terms say. Reported BEFORE the term
   // check so a student who tapped at the wrong time of day is not told their term is
@@ -115,9 +158,8 @@ function resolveTapSession(candidates, now, settings) {
   if (running.length === 0) return { kind: "none", reason: "no_session_now" };
 
   // The term gate, matching PUT /sessions/:id/register, which returns 423 outside the
-  // window. A tap must not become a back door around a locked term. Both boundary days
-  // are inclusive: a term running "to 2026-09-01" includes that day's teaching.
-  const open = running.filter((s) => !s.term || (now.date >= s.term.start && now.date <= s.term.end));
+  // window. A tap must not become a back door around a locked term.
+  const open = running.filter((s) => termOpenOn(s.term, now.date));
   if (open.length === 0) return { kind: "none", reason: "term_locked" };
 
   // Two lectures genuinely running at once is a question only the student can answer.
@@ -145,6 +187,6 @@ function statusFor(session, now, settings) {
 }
 
 module.exports = {
-  addMinutes, subMinutes, resolveTapSession, statusFor,
+  addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
   SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn,
 };
