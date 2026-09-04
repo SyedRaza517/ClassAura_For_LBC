@@ -50,10 +50,20 @@ const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 //                               objects created through POST /hnd/units inherit correctly,
 //                               which smoke-hnd exercises. Fixable by making those fixtures
 //                               department-aware; not fixed here.
+//
+//   smoke-qr-checkin            The same fixture problem as smoke-nfc-tap, arriving with the
+//                               QR check-in merge: its units and sessions are built with the
+//                               suite's own bare Prisma client, so they carry no department
+//                               and GET /hnd/sessions/:id/qr-code answers 404 for a scoped
+//                               admin. The product is right — the mint reads hndSession
+//                               through the guarded client, which is what a scoped account
+//                               is supposed to get. Fixable the same way, and worth doing
+//                               together with smoke-nfc-tap rather than twice.
 const NOT_SCOPEABLE = new Set([
   "smoke-academic-departments.mjs",
   "smoke-academic-scope.mjs",
   "smoke-nfc-tap.mjs",
+  "smoke-qr-checkin.mjs",
 ]);
 const scopedRun = process.env.SMOKE_SCOPED_DEPARTMENT === "1";
 
