@@ -147,6 +147,10 @@ const sStudent = (s) => ({
   studentRef: s.studentRef, email: s.email, initials: s.initials, colour: s.colour, active: s.active,
   dob: s.dob ?? null,
   cohortId: s.cohortId ?? null,
+  // Which academic department this student belongs to, so a screen can group or filter by
+  // it. NULL means "not assigned to one" and is a real answer the Settings screen counts —
+  // not an absence to be hidden.
+  academicDepartmentId: s.academicDepartmentId ?? null,
   ...(s.enrolments ? { unitIds: s.enrolments.map((e) => e.unitId) } : {}),
 });
 // The applicant (prospective-student portal) identity attached to req.user by requireAuth.

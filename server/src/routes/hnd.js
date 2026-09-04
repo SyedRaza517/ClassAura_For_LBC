@@ -41,6 +41,33 @@ const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("../academicScop
 const academicDepartments = require("../academicDepartments");
 
 /**
+ * Turn ?academicDepartmentId= into a `where` fragment.
+ *
+ * A FILTER, NOT A BOUNDARY, and the distinction is the whole reason this is separate from
+ * the scope guard. Scoping is enforced by the server and confines an account; this is a
+ * view the caller chooses and it grants nothing — a college-wide admin filtering to
+ * Business sees Business, and clearing the filter shows everything again.
+ *
+ * Three cases, and the third is the one an administrator actually needs. The Settings
+ * screen reports "N students are not assigned to a department"; without `none` there is no
+ * way to see WHICH, and the count is a number nobody can act on.
+ *
+ *   omitted        -> {}                              everything
+ *   "none"         -> { academicDepartmentId: null }   not yet assigned
+ *   an id          -> { academicDepartmentId: id }     that department
+ *
+ * An UNRECOGNISED id is passed through as itself and simply matches nothing. It is not
+ * ignored: a filter that silently dropped a value it did not recognise would show the whole
+ * college under a department heading, which is the failure worth avoiding here.
+ */
+function academicDepartmentFilter(raw) {
+  const v = str(raw);
+  if (!v) return {};
+  if (v === "none") return { academicDepartmentId: null };
+  return { academicDepartmentId: v };
+}
+
+/**
  * Validate a submitted academicDepartmentId.
  *
  * An unknown id is REJECTED rather than dropped: silently ignoring it leaves the screen
@@ -342,8 +369,9 @@ function windowFromBody(body) {
   return { startDate, endDate };
 }
 
-router.get("/courses", requireAuth, async (_req, res) => {
+router.get("/courses", requireAuth, async (req, res) => {
   const rows = await prisma.course.findMany({
+    where: academicDepartmentFilter(req.query?.academicDepartmentId),
     orderBy: { name: "asc" },
     include: { _count: { select: { units: true, cohorts: true } } },
   });
@@ -792,8 +820,9 @@ router.put("/units/:id/enrolments", requireAuth, requireHndWrite, async (req, re
 
 /* ============================== students ============================== */
 
-router.get("/students", requireAuth, async (_req, res) => {
+router.get("/students", requireAuth, async (req, res) => {
   const rows = await prisma.student.findMany({
+    where: academicDepartmentFilter(req.query?.academicDepartmentId),
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     include: { enrolments: { select: { unitId: true } } },
   });

@@ -7094,6 +7094,20 @@ function HndStudents({ store }) {
   // unambiguous for almost all of them; the dropdown lets an admin set or change it.
   const [courseId, setCourseId] = useState("");
   const [query, setQuery] = useState("");
+  // Which academic department the list is narrowed to. "" = every department,
+  // "none" = the students nobody has assigned yet.
+  //
+  // A FILTER, NOT A BOUNDARY. It is a view this admin chose and it grants nothing —
+  // clearing it shows everything again. Departmental ACCESS control is a separate thing
+  // the server enforces, and it is deliberately still switched off.
+  const [deptFilter, setDeptFilter] = useState("");
+  const [academicDepts, setAcademicDepts] = useState([]);
+  useEffect(() => {
+    // Quiet failure to an empty list: the picker simply does not render, and searching by
+    // name still works. A college with no departments configured must not lose its
+    // student list to a settings call.
+    api.academicDepartments().then(d => setAcademicDepts(d.departments || [])).catch(() => setAcademicDepts([]));
+  }, []);
 
   // The course a student belongs to: their cohort if one is set, else the course
   // their existing units all belong to. Returns "" when it genuinely cannot be told.
@@ -7150,8 +7164,14 @@ function HndStudents({ store }) {
   };
 
   const ql = query.trim().toLowerCase();
-  const filtered = store.students.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql));
-  const paged = usePaged(filtered, 12, ql);
+  // `none` matches a null department, which is the question the Settings screen's
+  // "N students are not assigned" count raises and could not previously answer.
+  const inDept = (s) => !deptFilter
+    || (deptFilter === "none" ? !s.academicDepartmentId : s.academicDepartmentId === deptFilter);
+  const filtered = store.students.filter(s => inDept(s) && (!ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql)));
+  // The page resets when EITHER control changes; keying on `ql` alone left an admin on
+  // page 4 of a list that had just become one page long.
+  const paged = usePaged(filtered, 12, ql + "|" + deptFilter);
   // The email defaults to the student number, matching the college convention.
   const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@edtech.co.uk` : "");
 
@@ -7161,6 +7181,20 @@ function HndStudents({ store }) {
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, number or email…" className="w-full bg-transparent text-sm outline-none" />
+          {/* Rendered only when the college HAS departments: a lone "All departments"
+              dropdown on a college that runs none is a control that cannot do anything. */}
+          {academicDepts.filter(d => d.active).length > 0 && (
+            <select
+              value={deptFilter}
+              onChange={e => setDeptFilter(e.target.value)}
+              className="shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200"
+              title="Narrow the list to one academic department"
+            >
+              <option value="">All departments</option>
+              {academicDepts.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              <option value="none">— Not assigned —</option>
+            </select>
+          )}
         </div>
         <PrimaryBtn className="ml-auto" onClick={openAdd}><UserPlus size={16} /> Add student</PrimaryBtn>
       </div>

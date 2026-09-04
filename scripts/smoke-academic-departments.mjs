@@ -501,6 +501,66 @@ try {
   });
 
   /* ------------------------------------------------------------------------ */
+  /* Searching department-wise                                                 */
+  /* ------------------------------------------------------------------------ */
+
+  // A FILTER IS NOT A BOUNDARY, and keeping the two apart is the point of these
+  // assertions. Scoping is enforced by the server and confines an account; this is a view
+  // the user chooses, available to everybody, and it needs none of the nested-read work
+  // that scoping is blocked on. A college can slice its own data by department today.
+  await check("students can be searched by department", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const cmp = list.body.departments.find((d) => d.key === CMP);
+    const res = await call(`/hnd/students?academicDepartmentId=${cmp.id}`, { token: adminToken });
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    const ids = (res.body || []).map((x) => x.id);
+    assert.ok(ids.includes(movedStudentId), "the Computing student is missing from the Computing filter");
+    assert.ok((res.body || []).every((x) => x.academicDepartmentId === cmp.id),
+      "the filter returned a student from another department");
+    return `${ids.length} student(s)`;
+  });
+
+  // THE QUESTION AN ADMINISTRATOR ACTUALLY HAS. The Settings screen reports "N students are
+  // not assigned to a department" -- without this there is no way to see WHICH, so the
+  // count is a number you cannot act on.
+  await check("students not yet assigned can be listed with ?academicDepartmentId=none", async () => {
+    const res = await call("/hnd/students?academicDepartmentId=none", { token: adminToken });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.length > 0, "the seeded students should be unassigned");
+    assert.ok(res.body.every((x) => x.academicDepartmentId === null),
+      "the unassigned filter returned an assigned student");
+    return `${res.body.length} unassigned`;
+  });
+
+  await check("courses can be searched by department, and by not-assigned", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const inBiz = await call(`/hnd/courses?academicDepartmentId=${biz.id}`, { token: adminToken });
+    assert.equal(inBiz.status, 200);
+    assert.ok(inBiz.body.every((c) => c.academicDepartmentId === biz.id), "a course from another department leaked into the filter");
+    const none = await call("/hnd/courses?academicDepartmentId=none", { token: adminToken });
+    assert.ok(none.body.every((c) => c.academicDepartmentId === null), "an assigned course appeared under not-assigned");
+    return `${inBiz.body.length} in Business, ${none.body.length} unassigned`;
+  });
+
+  // An unknown id returns an EMPTY list, not everything. A filter that silently ignores a
+  // value it does not recognise shows the whole college under a department heading.
+  await check("an unknown department id returns nothing, never everything", async () => {
+    const res = await call("/hnd/students?academicDepartmentId=not-a-real-department", { token: adminToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.length, 0, "an unrecognised filter returned rows");
+    return "0 students";
+  });
+
+  await check("the student serialiser reports the department", async () => {
+    const res = await call("/hnd/students", { token: adminToken });
+    const row = res.body.find((x) => x.id === movedStudentId);
+    assert.ok(row, "the fixture student is missing");
+    assert.ok("academicDepartmentId" in row, "sStudent does not report the department, so no screen can group by it");
+    return "present";
+  });
+
+  /* ------------------------------------------------------------------------ */
   /* The VLE category mapping                                                  */
   /* ------------------------------------------------------------------------ */
 
