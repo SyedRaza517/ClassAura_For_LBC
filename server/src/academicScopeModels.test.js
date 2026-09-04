@@ -39,14 +39,19 @@ test("every model in schema.prisma is declared exactly once, and nothing extra i
   assert.deepEqual(extra, [], `declared but no longer in the schema: ${extra.join(", ")}`);
 });
 
-test("every declaration is one of the three legal shapes", () => {
+test("every declaration is one of the four legal shapes", () => {
   // A typo like { colum: "…" } would otherwise fall through scopePredicateFor's
   // `rule.column` check into the `via` branch and produce a nonsense predicate that
   // Prisma would reject at runtime, in production, on somebody's student list.
   for (const [model, rule] of Object.entries(MODEL_SCOPE)) {
     const ok = rule === "UNSCOPED"
       || (rule && typeof rule === "object" && typeof rule.column === "string" && Object.keys(rule).length === 1)
-      || (rule && typeof rule === "object" && typeof rule.via === "string" && Object.keys(rule).length === 1);
+      || (rule && typeof rule === "object" && typeof rule.via === "string" && Object.keys(rule).length === 1)
+      // The fourth kind, added in spec 2: null means SHOWN TO EVERYONE. Deliberately narrow
+      // — only the two timetable models may use it, and the test below says so, because a
+      // fail-open kind spreading to a student-bearing model is the one mistake here that
+      // would be silent.
+      || (rule && typeof rule === "object" && typeof rule.columnOrNull === "string" && Object.keys(rule).length === 1);
     assert.ok(ok, `${model} has an illegal declaration: ${JSON.stringify(rule)}`);
   }
 });
@@ -119,4 +124,38 @@ test("a missing scope is refused rather than treated as college-wide", () => {
   for (const bad of [null, undefined]) {
     assert.throws(() => scopePredicateFor("Course", bad), AcademicScopeError, `scope ${bad} must be refused`);
   }
+});
+
+/* -------------------------------------------------------------------------- */
+/* columnOrNull — the one place a null is shown to everyone                    */
+/* -------------------------------------------------------------------------- */
+
+test("columnOrNull lets a null through, and still filters a set value", () => {
+  // A course-less timetable slot is a workshop or a study-support session — what the model
+  // exists to carry. `{ column }` emits { in: ids }, which excludes nulls and would delete
+  // every one of them from a departmental tutor's timetable.
+  assert.deepEqual(scopePredicateFor("TimetableSlot", SCOPED), {
+    OR: [{ academicDepartmentId: { in: ["d1", "d2"] } }, { academicDepartmentId: null }],
+  });
+});
+
+test("columnOrNull still shows the public rows to an account narrowed to nothing", () => {
+  // The state that matters: narrowed off college-wide with no department yet. They see no
+  // students and no courses — and they must still see the college's workshops.
+  assert.deepEqual(scopePredicateFor("TimetableSlot", NARROWED_TO_NOTHING), {
+    OR: [{ academicDepartmentId: { in: [] } }, { academicDepartmentId: null }],
+  });
+});
+
+test("columnOrNull is unfiltered for a college-wide caller, like every other kind", () => {
+  assert.equal(scopePredicateFor("TimetableSlot", WIDE), null);
+  assert.equal(scopePredicateFor("TimetableEvent", WIDE), null);
+});
+
+test("ONLY the two timetable models use columnOrNull", () => {
+  // The fail-open kind must not spread. A student-bearing model declared columnOrNull would
+  // show every row whose department happened to be null to every account, and nothing on any
+  // screen would say so — the one mistake in this map that is silent rather than loud.
+  const users = Object.entries(MODEL_SCOPE).filter(([, r]) => r && r.columnOrNull).map(([m]) => m);
+  assert.deepEqual(users.sort(), ["TimetableEvent", "TimetableSlot"]);
 });

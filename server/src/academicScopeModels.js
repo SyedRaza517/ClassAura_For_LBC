@@ -36,6 +36,58 @@ const MODEL_SCOPE = {
   Enrolment: { via: "student" },
   AttendanceMark: { via: "student" },
 
+  /* ---- Student-owned: everything hanging off one student -------------------- */
+  // Declared in spec 2. Each has a top-level listing route, and scoping the model closes
+  // BOTH that route and every nested include reading a Student through it -- which is the
+  // leak that stopped spec 1. See scripts/smoke-academic-nested-reads.mjs.
+  //
+  // The prediction models are declared for the ROUTES that read them. The pipeline that
+  // WRITES them runs under withoutAcademicScope and is unaffected: CLAUDE.md records that
+  // computing its institution-wide probes from a subset is the most repeated bug in that
+  // area, got wrong three times.
+  StudentPredictionCurrent: { via: "student" },
+  StudentPredictionHistory: { via: "student" },
+  Intervention: { via: "student" },
+  StudentOutcome: { via: "student" },
+  Interaction: { via: "student" },
+  StudentQuery: { via: "student" },
+  StudentReview: { via: "student" },
+  AssessmentGrade: { via: "student" },
+  AssessmentSubmission: { via: "student" },
+  VleEngagement: { via: "student" },
+  // Article 9 health data. routes/mitigations.js carries a confidentiality split of its own
+  // that this boundary must not weaken or duplicate -- read its header before touching that
+  // route.
+  MitigatingCircumstance: { via: "student" },
+  // studentId is NULLABLE here: a tap of an unrecognised tag belongs to nobody. Those rows
+  // fail closed and are visible only to college-wide accounts, which is right -- an
+  // unmatched tap is an administrative diagnostic, not a departmental record.
+  TagTap: { via: "student" },
+
+  /* ---- Curriculum: reached through the columns spec 2 added ------------------ */
+  // Unit and Cohort carry the column themselves, which is what makes every path here a
+  // SINGLE hop. `via` resolves one hop and needs the related model to hold the column, so
+  // HndSession { via: "unit" } threw rather than filtered until Unit had one.
+  Unit: { column: "academicDepartmentId" },
+  Cohort: { column: "academicDepartmentId" },
+  HndSession: { via: "unit" },
+  Assessment: { via: "unit" },
+  Term: { via: "cohort" },
+  TimetableEventGroup: { via: "cohort" },
+  TermCalendar: { via: "course" },
+
+  /* ---- Timetable: null means SHOWN TO EVERYONE ------------------------------- */
+  // THE ONE INVERSION IN THE FEATURE, and it is on the models whose own schema comments say
+  // they deliberately carry sessions that are not units -- "Academic Skills Workshop",
+  // "Study Support". Scoped by their OWN column rather than through the course, so a null is
+  // a decision somebody took rather than a course that happens to be missing.
+  //
+  // `{ column }` emits { academicDepartmentId: { in: ids } }, which EXCLUDES nulls and would
+  // delete every workshop from a departmental tutor's timetable. `columnOrNull` is the kind
+  // that lets them through.
+  TimetableSlot: { columnOrNull: "academicDepartmentId" },
+  TimetableEvent: { columnOrNull: "academicDepartmentId" },
+
   /* ---- Institution-wide: the institution itself --------------------------- */
   // Tenant survives as the single institution settings row rather than a registry, and
   // its integrations, branding and templates describe the college, not a department.
@@ -74,35 +126,19 @@ const MODEL_SCOPE = {
   // Cohort and Unit gain their own academicDepartmentId in spec 2, where they are first
   // filtered. Declared UNSCOPED here rather than given a `via` path that nothing tests.
   Semester: "UNSCOPED",
-  Cohort: "UNSCOPED",
-  Term: "UNSCOPED",
-  Unit: "UNSCOPED",
-  Assessment: "UNSCOPED",
-  AssessmentGrade: "UNSCOPED",
-  AssessmentSubmission: "UNSCOPED",
   AssessmentAdjustment: "UNSCOPED",
-  HndSession: "UNSCOPED",
-  StudentQuery: "UNSCOPED",
-  Interaction: "UNSCOPED",
-  StudentReview: "UNSCOPED",
-  VleEngagement: "UNSCOPED",
   MoodleSync: "UNSCOPED",
 
   /* ---- Institution-wide for now: attendance hardware ---------------------- */
   AttendanceTag: "UNSCOPED",
-  TagTap: "UNSCOPED",
   AttendanceTapConfig: "UNSCOPED",
   AttendanceEmailConfig: "UNSCOPED",
   AttendanceBandConfig: "UNSCOPED",
 
   /* ---- Institution-wide for now: timetabling ------------------------------ */
-  TimetableSlot: "UNSCOPED",
-  TermCalendar: "UNSCOPED",
   Room: "UNSCOPED",
   EventCategory: "UNSCOPED",
-  TimetableEvent: "UNSCOPED",
   TimetableEventStaff: "UNSCOPED",
-  TimetableEventGroup: "UNSCOPED",
   TimetableSettings: "UNSCOPED",
   TimetableUserPref: "UNSCOPED",
 
@@ -128,11 +164,6 @@ const MODEL_SCOPE = {
   // standing and institution-wide probes are questions about the college, and CLAUDE.md
   // records that computing them from a subset is the most repeated bug in that area.
   PredictionModelSettings: "UNSCOPED",
-  StudentPredictionCurrent: "UNSCOPED",
-  StudentPredictionHistory: "UNSCOPED",
-  Intervention: "UNSCOPED",
-  StudentOutcome: "UNSCOPED",
-  MitigatingCircumstance: "UNSCOPED",
 
   /* ---- Institution-wide, permanently: support referrals ------------------- */
   // These carry the OTHER department vocabulary — Wellbeing, ASK, Student Support — and
@@ -176,6 +207,12 @@ function scopePredicateFor(model, scope) {
   if (scope.collegeWide) return null;
 
   const match = { in: scope.academicDepartmentIds || [] };
+  // SHOWN TO EVERYONE WHEN NULL. The only kind in this map that lets a row through on the
+  // ABSENCE of a department, and it exists for exactly two models -- see their declaration
+  // above for why a workshop must not vanish from a departmental tutor's timetable.
+  if (rule.columnOrNull) {
+    return { OR: [{ [rule.columnOrNull]: match }, { [rule.columnOrNull]: null }] };
+  }
   if (rule.column) return { [rule.column]: match };
   return { [rule.via]: { academicDepartmentId: match } };
 }
