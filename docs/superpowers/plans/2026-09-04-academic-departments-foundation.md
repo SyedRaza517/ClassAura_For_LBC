@@ -593,7 +593,9 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `runWithAcademicScope(scope, fn)`, `withoutAcademicScope(reason, fn)`, `currentScope() -> {academicDepartmentIds, collegeWide}|null`, `AcademicScopeError`. Tasks 4, 5 and 6 all consume these.
+- Produces: `runWithAcademicScope(scope, fn)`, `withoutAcademicScope(reason, fn)`, `currentScope() -> {academicDepartmentIds, collegeWide}|null`, `scopeForStaff(staff) -> {academicDepartmentIds, collegeWide}`, `CONFINED_BY_ROUTER`, `AcademicScopeError`. Tasks 4, 5 and 6 all consume these.
+
+**`scopeForStaff` is an extraction made for testability, and it is the point of this task.** The first draft of this plan had `requireAuth` compute the scope inline, which left the single most security-critical decision in the spec — *does this account see everything?* — reachable only by booting the server and looking. As a pure function it takes a staff row and returns a scope, so every case can be asserted in milliseconds with no Express and no database: college-wide true, college-wide false with memberships, college-wide false with **none**, a missing flag, a truthy non-boolean flag, and a row whose `include` was forgotten. `requireAuth` is then plumbing, and plumbing is what the smoke suite is for.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1073,163 +1075,277 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
+### Task 5: Turn the guard on — bind in `requireAuth`, wrap background work
 
-### Task 5: Bind the scope in `requireAuth`, and wrap all background work
+This is the task that makes every unscoped query throw. It is also the one the first
+draft of this plan got wrong: it had no test, only "edit the file, boot the server,
+grep". The single most security-critical decision in the spec cannot be verified by
+looking at a log.
 
-This is the task that turns the guard on. Until it lands, every query throws.
+**It is therefore split in two.** The *decision* (`scopeForStaff`) is pure and was
+unit-tested in Task 3. The *plumbing* — does `requireAuth` actually bind it, does an
+unscoped query actually throw, does a scoped account actually get refused — is
+integration behaviour, and is proved by a smoke suite written **before** the wiring.
+
+This moves the guard's proof forward from Task 8, deliberately. A guard and the
+evidence it works belong in the same commit; three tasks of drift between them is three
+tasks in which "it seemed to boot fine" stands in for a test.
 
 **Files:**
-- Modify: `server/src/auth.js:103-109` (staff branch of `requireAuth`)
-- Modify: `server/src/auth.js:83-99` (student and applicant branches)
+- Create: `scripts/smoke-academic-scope.mjs`
+- Modify: `server/src/auth.js` (staff, student and applicant branches of `requireAuth`)
 - Modify: `server/src/serializers.js` (`sStaff`)
-- Modify: every scheduler and background entry point in `server/src/index.js`
-- Modify: `server/src/prediction/runner.js`, `server/src/moodle.js`
+- Modify: `server/src/index.js`, `server/src/prediction/runner.js`, `server/src/moodle.js` (background wrapping)
 
 **Interfaces:**
-- Consumes: `runWithAcademicScope`, `withoutAcademicScope` from Task 3.
-- Produces: `req.user.collegeWide` and `req.user.academicDepartmentIds` on every authenticated request. Tasks 7, 8 and 10 read these.
+- Consumes: `runWithAcademicScope`, `withoutAcademicScope`, `scopeForStaff`, `CONFINED_BY_ROUTER` from Task 3; the extension from Task 4.
+- Produces: `req.user.collegeWide` and `req.user.academicDepartmentIds` on every authenticated request. Tasks 7 and 10 read these.
 
-- [ ] **Step 1: Load the memberships in `requireAuth` and bind the scope**
+- [ ] **Step 1: RED — write the smoke suite before touching `auth.js`**
 
-In `server/src/auth.js`, the staff branch currently reads:
+Create `scripts/smoke-academic-scope.mjs`, following `scripts/smoke-referrals.mjs`'s
+header exactly (same `ROOT` / `createRequire` / `PrismaClient` setup, same `ok` / `bad` /
+`check` helpers, same `DATABASE_URL` guard, same non-zero exit on failure).
+
+Before writing each assertion, name the production change that would make it fail. They
+are recorded here so a later reader can check the test still catches what it claims:
 
 ```js
-const staff = await prisma.staff.findUnique({ where: { id: payload.sub } });
+// 1. AN UNSCOPED QUERY THROWS.
+//    Breaks if: db.js returns query(args) instead of throwing when currentScope() is
+//    null. That is the fail-open db.js records as lost when the tenant guard went, and
+//    the only thing that catches a background job nobody wrapped.
+await check("a departmental query with no bound scope throws", async () => {
+  const scoped = require(`${ROOT}/server/src/db`);
+  await assert.rejects(() => scoped.course.findMany(), /no academic scope bound/);
+});
+
+// 2. …AND SUCCEEDS INSIDE ONE.
+//    The control for assertion 1. Without it, a client that is simply broken passes
+//    assertion 1 perfectly.
+await check("the same query succeeds inside a bound scope", async () => {
+  const { withoutAcademicScope } = require(`${ROOT}/server/src/academicScope`);
+  const scoped = require(`${ROOT}/server/src/db`);
+  const rows = await withoutAcademicScope("smoke: control", () => scoped.course.findMany());
+  assert.ok(Array.isArray(rows));
+});
+
+// 3. requireAuth BINDS A SCOPE.
+//    Breaks if: requireAuth calls next() without runWithAcademicScope. Asserted over
+//    HTTP rather than by reading the file, because the failure mode is "the middleware
+//    ran but bound nothing", which no amount of grep can see. Any authenticated read
+//    would 500 with AcademicScopeError.
+await check("an authenticated request reaches a handler with a scope bound", async () => {
+  const res = await api("/hnd/courses", { token: adminToken });
+  assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.data).slice(0, 200)}`);
+});
+
+// 4. A COLLEGE-WIDE ACCOUNT SEES EVERY DEPARTMENT.
+//    Breaks if: scopeForStaff ignores collegeWide, or the extension applies a predicate
+//    to a wide scope. This is the assertion that proves spec 1 is INERT — every account
+//    is college-wide after the migration, so nothing may be filtered.
+await check("a college-wide admin sees courses from every department", async () => {
+  const res = await api("/hnd/courses", { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.ok(res.data.courses.length >= 2, `expected both departments' courses, got ${res.data.courses.length}`);
+});
+
+// 5. AN ACCOUNT NARROWED OFF COLLEGE-WIDE WITH NO DEPARTMENTS SEES NOTHING.
+//    Breaks if: scopePredicateFor returns null for an empty id list, or scopeForStaff
+//    defaults a missing flag to true. The single most dangerous state in the design, and
+//    the one a "it booted fine" check cannot reach because no such account exists yet.
+await check("an account with no departments and no college-wide flag sees no courses", async () => {
+  await db.staff.update({ where: { id: narrowed.id }, data: { collegeWide: false } });
+  const token = await signIn(narrowed.email);
+  const res = await api("/hnd/courses", { token });
+  assert.equal(res.status, 200);
+  assert.equal(res.data.courses.length, 0, "an unassigned, non-college-wide account must see nothing");
+});
+
+// 6. …AND SEES ITS OWN DEPARTMENT ONCE GIVEN ONE.
+//    The control for assertion 5. Without it, a server returning [] for everyone passes
+//    assertion 5 and discriminates nothing — which is exactly why
+//    smoke-tenant-isolation.mjs was deleted rather than adapted.
+await check("the same account sees its own department's courses once granted one", async () => {
+  await db.staffAcademicDepartment.create({ data: { staffId: narrowed.id, academicDepartmentId: business.id } });
+  const token = await signIn(narrowed.email);
+  const res = await api("/hnd/courses", { token });
+  assert.equal(res.data.courses.length, 1);
+  assert.equal(res.data.courses[0].id, businessCourse.id);
+});
+
+// 7. A SCOPED ACCOUNT IS REFUSED ANOTHER DEPARTMENT'S ROW BY DIRECT ID.
+//    Breaks if: the findUnique -> findFirst widening in db.js is removed. By ID, not by
+//    list: a build that filters lists correctly while findUnique does not is the exact
+//    hole the widening exists to close, and assertions 5 and 6 both pass straight
+//    through it.
+await check("a Business-scoped admin gets 404 for a Computing course by id", async () => {
+  const token = await signIn(narrowed.email);
+  const res = await api(`/hnd/courses/${computingCourse.id}`, { token });
+  assert.equal(res.status, 404, `expected 404, got ${res.status}`);
+});
 ```
 
-Change it to include the join rows, and wrap `next()`:
+Fixtures the suite creates and removes: two `AcademicDepartment` rows (`business`,
+`computing`), one `Course` in each, and one extra staff account (`narrowed`) that starts
+college-wide like every other. It restores `narrowed.collegeWide = true` and deletes its
+fixtures in a `finally`, so a failed run does not leave a scoped account behind for the
+next suite to trip over.
+
+- [ ] **Step 2: Run it and watch it fail for the right reason**
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test -- smoke-academic-scope
+```
+
+Expected: assertions 1 and 2 **pass already** — Task 4 installed the extension, so the
+throw is live. Assertions 3–7 **fail**, and the failure must be
+`AcademicScopeError: … no academic scope bound`, i.e. every authenticated request 500s
+because `requireAuth` binds nothing yet.
+
+**If assertion 3 passes at this point, stop.** It means either the extension is not
+installed or `Course` is not declared scoped, and the suite is discriminating nothing.
+
+- [ ] **Step 3: GREEN — bind the scope in `requireAuth`**
+
+In `server/src/auth.js`, the staff branch loads the staff row. Add the memberships:
 
 ```js
-// The membership rows are loaded here rather than in each route because this is the
+// The membership rows are loaded HERE rather than in each route because this is the
 // only place every authenticated request passes through: 41 of the 43 routers apply
-// requireAuth per HANDLER, not per router, so there is no later seam that is
-// guaranteed to run.
+// requireAuth per HANDLER, not per router, so there is no later seam guaranteed to run.
 const staff = await prisma.staff.findUnique({
   where: { id: payload.sub },
   include: { academicDepartments: { select: { academicDepartmentId: true } } },
 });
 ```
 
-...and replace the branch's `next()` with:
+Then replace that branch's `next()` with:
 
 ```js
 req.user = { id: staff.id, kind: "staff", accountRole: staff.accountRole, ...sStaff(staff) };
 // Bind the scope for the REST OF THE REQUEST. Everything downstream of next() runs
 // inside this context, including async handlers and the Prisma calls they await.
-return runWithAcademicScope(
-  {
-    academicDepartmentIds: staff.academicDepartments.map((m) => m.academicDepartmentId),
-    collegeWide: staff.collegeWide === true,
-  },
-  () => next(),
-);
+return runWithAcademicScope(scopeForStaff(staff), () => next());
 ```
 
-**This `findUnique` runs before any scope exists.** It must not be filtered. Leave `Staff` declared `"UNSCOPED"` in `academicScopeModels.js` — spec 4 is what scopes HR, and it will need a bootstrap read that bypasses the extension. Note that in a comment now.
+**This `findUnique` runs before any scope exists and must not be filtered.** `Staff` stays
+declared `"UNSCOPED"` in `academicScopeModels.js`; spec 4 is what scopes HR, and it will
+need a bootstrap read that bypasses the extension. Leave a comment saying so.
 
-- [ ] **Step 2: Do the same for the student and applicant branches**
+- [ ] **Step 4: Bind for students and applicants**
 
-Both are scoped to their own record already, and both must still bind a scope or every query they make will throw. A student is college-wide **within their own data**, because the router allowlist is what confines them:
+Both are already confined by `STUDENT_ROUTERS` / `APPLICANT_ROUTERS` and by their own id.
+Bind the shared constant from Task 3 so the guard's "no scope bound" error keeps meaning
+exactly one thing — a bug:
 
 ```js
 // A student's token reaches only STUDENT_ROUTERS, and every query in those routers is
-// already narrowed to their own id. Binding college-wide here is therefore not a
-// widening — it says "the departmental boundary is not the thing confining this
-// caller", which is true, and it keeps the guard's "no scope bound" error meaning
-// exactly one thing: a bug.
-return runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => next());
+// already narrowed to their own id. Binding CONFINED_BY_ROUTER is therefore not a
+// widening: it says the departmental boundary is not what confines this caller, which
+// is true, and it keeps "no scope bound" meaning a bug rather than a student.
+return runWithAcademicScope(CONFINED_BY_ROUTER, () => next());
 ```
 
-Apply the identical change to the applicant branch, with the same comment adjusted to `APPLICANT_ROUTERS`.
-
-- [ ] **Step 3: Add the two fields to `sStaff`**
+- [ ] **Step 5: Add the two fields to `sStaff`**
 
 In `server/src/serializers.js`, inside `sStaff`, after the `supportDepartments` block:
 
 ```js
   // --- Academic departments ---
-  // Which TEACHING departments this person may see. Not supportDepartments above,
-  // which is who reads a student's wellbeing disclosure. See academicDepartments.js.
+  // Which TEACHING departments this person may see. Not supportDepartments above, which
+  // is who reads a student's wellbeing disclosure. See academicDepartments.js.
   //
-  // Present only when the query included the join rows; absent otherwise rather than
+  // Present only when the query included the join rows; ABSENT otherwise rather than
   // defaulted to [], because "nobody asked" and "belongs to none" are different facts
-  // and the second is a real answer the Access screen must be able to show.
+  // and the second is a real answer the Access screen has to be able to show.
   ...(s.academicDepartments
     ? { academicDepartmentIds: s.academicDepartments.map((m) => m.academicDepartmentId) }
     : {}),
-  // Lifts the departmental boundary entirely. Defaults to false on read for the same
-  // reason parseAdminPages fails closed: an account that suddenly sees everything is a
-  // silent, dangerous failure.
+  // Lifts the departmental boundary entirely. `=== true` on read for the same reason
+  // parseAdminPages fails closed: an account that suddenly sees everything is a silent,
+  // dangerous failure.
   collegeWide: s.collegeWide === true,
 ```
 
-- [ ] **Step 4: Wrap every background entry point**
+- [ ] **Step 6: Wrap every background entry point**
 
 Find them:
 
 ```bash
-cd server && grep -rnE "setInterval|setTimeout|cron|scheduler|startSchedul" src/index.js src/*.js | grep -v test
+cd server && grep -rnE "setInterval|setTimeout\(|startSchedul|cron" src/index.js src/*.js | grep -v test
 ```
 
-Wrap each scheduler body, the prediction runner's entry, and `syncFromMoodle`. For the prediction runner in `server/src/prediction/runner.js`:
+Wrap each scheduler body, plus:
 
 ```js
 // THE PREDICTION PIPELINE IS INSTITUTION-WIDE AND MUST STAY THAT WAY. Cohort standing,
 // the timetable probe and the five "does this college record this at all" probes are
 // questions about the INSTITUTION, and CLAUDE.md records that computing them from a
 // subset is the most repeated bug in this area — got wrong three times. Departmental
-// scoping must not narrow them, so the whole run declares itself wide.
-return withoutAcademicScope("prediction: institution-wide probes and cohort standing", async () => {
-  /* existing body */
-});
+// scoping must not narrow them.
+return withoutAcademicScope("prediction: institution-wide probes and cohort standing", async () => { /* body */ });
 ```
-
-For `syncFromMoodle` in `server/src/moodle.js`:
 
 ```js
 // The sync reads and writes every course the VLE offers, before anybody has decided
 // which department they belong to. It cannot be scoped by definition.
-return withoutAcademicScope("moodle sync: imports every course the VLE offers", async () => {
-  /* existing body */
-});
+return withoutAcademicScope("moodle sync: imports every course the VLE offers", async () => { /* body */ });
 ```
 
-- [ ] **Step 5: Boot the server and confirm nothing throws**
+- [ ] **Step 7: Verify GREEN**
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test -- smoke-academic-scope
+```
+
+Expected: all seven PASS. Then boot the server and watch for `AcademicScopeError` in the
+log — each one names an unwrapped background entry point:
 
 ```bash
 cd server && DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" node src/index.js
 ```
 
-Expected: starts cleanly, schedulers run, **no `AcademicScopeError` in the log**. Any that appears names an unwrapped background entry point — wrap it and restart. Stop the server when clean.
+- [ ] **Step 8: Prove each assertion can fail**
 
-- [ ] **Step 6: Prove no background entry point is unwrapped**
+One at a time, reintroduce the bug, confirm the named assertion fails, restore:
 
-```bash
-cd server && grep -rn "withoutAcademicScope" src/ --include=*.js | grep -v test | grep -v academicScope.js
-```
+| # | Break it by | Must fail with |
+|---|---|---|
+| 1 | `db.js` returns `query(args)` instead of throwing when `!scope` | no rejection |
+| 3 | `requireAuth` calls `next()` directly, unwrapped | 500, not 200 |
+| 4 | `scopePredicateFor` ignores `collegeWide` | fewer courses than expected |
+| 5 | `scopePredicateFor` returns `null` when `ids.length === 0` | non-empty list |
+| 6 | `scopeForStaff` returns `[]` regardless of memberships | empty list |
+| 7 | Remove the `findUnique` → `findFirst` widening in `db.js` | 200 instead of 404 |
 
-Expected: one line per scheduler, plus the prediction runner and the Moodle sync. Record the count in the commit message.
+**An assertion that still passes with its bug reintroduced is discriminating nothing and
+must be rewritten.** CLAUDE.md records this happening twice in recent work, and
+`smoke-tenant-isolation.mjs` was deleted for exactly it.
 
-- [ ] **Step 7: Run the full unit suite**
+- [ ] **Step 9: Run everything**
 
 ```bash
 cd server && DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" node --test "src/**/*.test.js"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
 ```
 
-Expected: PASS.
+Expected: both green. A suite failing with `AcademicScopeError` is calling the API from a
+context with no scope — **fix the suite, not the guard.**
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add server/src/auth.js server/src/serializers.js server/src/index.js server/src/prediction/runner.js server/src/moodle.js
-git commit -m "Bind academic scope in requireAuth, and declare every background widening
+git add scripts/smoke-academic-scope.mjs server/src/auth.js server/src/serializers.js server/src/index.js server/src/prediction/runner.js server/src/moodle.js
+git commit -m "Turn the academic scope guard on, with the proof it works
 
 requireAuth is the only place every authenticated request passes through, since
 41 of 43 routers apply auth per handler. Background work names itself with
 withoutAcademicScope(reason) rather than carrying a department id.
 
-The prediction runner is wide by declaration: its institution-wide probes are
-the most repeated bug in that area and scoping must not narrow them.
+The smoke suite was written first and watched failing: assertions 3-7 all 500ed
+with AcademicScopeError before the binding landed. Each was then proved able to
+fail individually by reintroducing the bug it guards.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
@@ -1623,71 +1739,25 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 8: The smoke suite
+### Task 8: The departments API smoke suite
+
+**The guard itself is already proved** — `smoke-academic-scope.mjs` landed with Task 5, in the same commit as the wiring it tests. This suite covers what Task 5 could not: the endpoints from Task 7, which did not exist yet, and the denormalisation drift guard.
 
 **Files:**
 - Create: `scripts/smoke-academic-departments.mjs`
 
 **Interfaces:**
-- Consumes: the endpoints from Task 7, the guard from Tasks 4–6.
+- Consumes: the endpoints from Task 7.
 - Produces: nothing consumed by later tasks.
 
 - [ ] **Step 1: Write the suite**
 
 Create `scripts/smoke-academic-departments.mjs`, following the structure of `scripts/smoke-referrals.mjs` (same `ROOT`/`createRequire`/`PrismaClient` header, same `ok`/`bad`/`check` helpers, same `DATABASE_URL` guard and exit code).
 
-The assertions, each of which must be proved able to fail:
+Assertions 1–5 below **moved to `smoke-academic-scope.mjs` in Task 5** and are not repeated here; duplicating them would mean two suites failing for one bug and neither being the obvious place to look. What remains, each of which must be proved able to fail:
 
 ```js
-// 1. THE GUARD FIRES WHEN NOTHING BOUND A SCOPE.
-//    Not "returns everything" and not "returns nothing" — throws. This is the property
-//    db.js records as lost when the tenant guard went, and the only one that catches a
-//    background job somebody forgot to declare.
-await check("a departmental query with no bound scope throws", async () => {
-  const { runWithAcademicScope } = require(`${ROOT}/server/src/academicScope`);
-  const scoped = require(`${ROOT}/server/src/db`);
-  await assert.rejects(() => scoped.course.findMany(), /no academic scope bound/);
-  // …and succeeds inside one, so the rejection above is the guard and not a broken client.
-  await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => scoped.course.findMany());
-});
-
-// 2. A SCOPED ACCOUNT IS REFUSED ANOTHER DEPARTMENT'S STUDENT BY DIRECT ID.
-//    By ID, not by list. A list that filters correctly while findUnique does not is the
-//    exact hole the findUnique -> findFirst widening in db.js exists to close, and a
-//    test that only reads lists would pass through it.
-await check("a Business-scoped admin gets 404 for a Computing student by id", async () => {
-  const res = await api(`/hnd/students/${computingStudent.id}`, { token: businessAdminToken });
-  assert.equal(res.status, 404, `expected 404, got ${res.status}`);
-});
-
-// 3. A SCOPED ACCOUNT WITH NO DEPARTMENTS SEES NOTHING, NOT EVERYTHING.
-//    The single most dangerous case: narrowed off college-wide, not yet given a
-//    department. `{ in: [] }` must not collapse to "no predicate".
-await check("an account with no departments and no college-wide flag sees no students", async () => {
-  const res = await api("/hnd/students", { token: unassignedAdminToken });
-  assert.equal(res.status, 200);
-  assert.equal(res.data.students.length, 0, "an unassigned account must see nothing");
-});
-
-// 4. A COLLEGE-WIDE ACCOUNT IS ALLOWED.
-//    The control. Without it, assertions 2 and 3 pass just as happily against a server
-//    that is simply broken.
-await check("a college-wide admin sees students from every department", async () => {
-  const res = await api("/hnd/students", { token: superAdminToken });
-  assert.equal(res.status, 200);
-  assert.ok(res.data.students.length >= 2, "expected students from both departments");
-});
-
-// 5. A RAW SQL AGGREGATE REFUSES WITHOUT A SCOPE.
-//    Separate from assertion 1 because $queryRaw never reaches the extension, so
-//    assertion 1 passing tells us nothing about this path. hnd.js:6-21 is the record of
-//    that gap being real.
-await check("a raw attendance aggregate with no bound scope throws", async () => {
-  const { academicSqlPredicate } = require(`${ROOT}/server/src/academicScopeSql`);
-  assert.throws(() => academicSqlPredicate("st"), /no academic scope bound/);
-});
-
-// 6. MOVING A STUDENT'S COHORT MOVES THEIR STORED DEPARTMENT.
+// 1. MOVING A STUDENT'S COHORT MOVES THEIR STORED DEPARTMENT.
 //    The drift guard for the denormalised column. Without this, the column is right on
 //    the day it is written and wrong from the first re-organisation onward.
 await check("moving a student to another department's cohort moves their department", async () => {
@@ -1696,7 +1766,7 @@ await check("moving a student to another department's cohort moves their departm
   assert.equal(row.academicDepartmentId, computingDept.id);
 });
 
-// 7. THE SERIALISER IS AN EXACT KEY SET.
+// 2. THE SERIALISER IS AN EXACT KEY SET.
 //    Asserting that `key` and `colour` are present passes just as happily when a
 //    seventh field leaks. The whole point of an allowlist is that a column added
 //    tomorrow does not appear without somebody deciding it should.
@@ -1720,13 +1790,8 @@ One at a time, reintroduce the bug and confirm the assertion catches it. Restore
 
 | Assertion | Break it by | Must fail with |
 |---|---|---|
-| 1 | Returning `query(args)` instead of throwing when `!scope` in `db.js` | no rejection |
-| 2 | Removing the `findUnique` → `findFirst` widening in `db.js` | 200 instead of 404 |
-| 3 | Returning `null` from `scopePredicateFor` when `ids.length === 0` | non-empty list |
-| 4 | Making `scopePredicateFor` ignore `collegeWide` | empty list |
-| 5 | Returning `{sql:"",params:[]}` instead of throwing when `!scope` | no throw |
-| 6 | Not writing `academicDepartmentId` on the cohort change | stale department id |
-| 7 | Adding `createdAt: d.createdAt` to `sAcademicDepartment` | extra key |
+| 1 | Not writing `academicDepartmentId` on the cohort change | stale department id |
+| 2 | Adding `createdAt: d.createdAt` to `sAcademicDepartment` | extra key |
 
 **If any assertion still passes with its bug reintroduced, it is discriminating nothing and must be rewritten.** CLAUDE.md records this happening twice in recent work.
 
