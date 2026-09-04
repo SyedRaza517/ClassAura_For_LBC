@@ -770,4 +770,25 @@ export const api = {
   // it legitimately outlives the default deadline.
   moodlePreview: () => request("/moodle/preview", { timeoutMs: 180000 }),
   moodleSync: () => request("/moodle/sync", { method: "POST" }),
+
+  // --- Academic departments (Business, Computing, Law) ---
+  //
+  // NOT referralDepartments above. Those are WELLBEING teams and decide who reads a
+  // student's disclosure; these decide which students a member of staff may see at all.
+  // Two access boundaries with one English word between them, so every name here is
+  // spelled academicDepartment.
+  academicDepartments: () => request("/academic-departments"),
+  saveAcademicDepartments: (departments) => request("/academic-departments", { method: "PUT", body: { departments } }),
+  // The two counts that make both fail directions visible: how many accounts see
+  // everything, and how much is not assigned to a department yet.
+  academicDepartmentSummary: () => request("/academic-departments/summary"),
+  // Super-Admin-only on the server. Editing the LIST is configuration; editing who may
+  // SEE a department hands somebody students' registers and pastoral records.
+  saveStaffAcademicAccess: (staffId, academicDepartmentIds, collegeWide) =>
+    request(`/academic-departments/staff/${staffId}`, { method: "PUT", body: { academicDepartmentIds, collegeWide } }),
+
+  // --- Mapping the VLE's own grouping onto a department ---
+  vleCategories: () => request("/vle-department-mapping/categories"),
+  saveVleCategoryMapping: (externalId, academicDepartmentId) =>
+    request("/vle-department-mapping", { method: "PUT", body: { externalId, academicDepartmentId } }),
 };

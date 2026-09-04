@@ -4707,6 +4707,24 @@ function AdminAccess({ store }) {
     api.referralDepartments().then(d => setSupportDepts(d.departments || [])).catch(() => setSupportDepts([]));
   }, []);
 
+  // ACADEMIC departments -- Business, Computing, Law. A DIFFERENT BOUNDARY from the
+  // support queues above, and the two are deliberately not merged into one control:
+  // supportDepartments decides who reads a student's wellbeing disclosure, this decides
+  // which students a person can see at all. One English word, two access decisions.
+  //
+  // Saved through its OWN endpoint, which is Super-Admin-only on the server. The Access
+  // tab is already Super-Admin-only on the client, so anybody looking at this screen may
+  // use it -- but the server does not take that on trust.
+  const [academicDepts, setAcademicDepts] = useState([]);
+  const [academicMembership, setAcademicMembership] = useState([]);
+  const [collegeWide, setCollegeWide] = useState(true);
+  const [savingAcademic, setSavingAcademic] = useState(false);
+  useEffect(() => {
+    // Fails quietly to an empty list, exactly as the support list does: an environment
+    // where the table is not migrated yet must still let a Super Admin set page access.
+    api.academicDepartments().then(d => setAcademicDepts(d.departments || [])).catch(() => setAcademicDepts([]));
+  }, []);
+
   // The pages a person currently has: super admin & unrestricted admin = all;
   // a scoped admin = their list; anyone else = none.
   const grantOf = (p) => p.isSuperAdmin ? ADMIN_PAGES.slice()
@@ -4730,7 +4748,31 @@ function AdminAccess({ store }) {
   // every queue — and it is also what keeps this screen usable against an older API
   // that does not send the field at all.
   const membershipOf = (p) => (Array.isArray(p?.supportDepartments) ? p.supportDepartments.filter(k => typeof k === "string") : []);
-  const pick = (p) => { setSelId(p.id); setPages(grantOf(p)); setMembership(membershipOf(p)); };
+  // Read defensively for the same reason membershipOf is: an older API that does not send
+  // the field must read as NO membership rather than as full membership. The college-wide
+  // flag defaults to TRUE when absent, because that is what the column defaults to --
+  // guessing false would show every account as scoped against an API that has not been
+  // deployed yet, which is a lie in the alarming direction.
+  const academicOf = (p) => (Array.isArray(p?.academicDepartmentIds) ? p.academicDepartmentIds.filter(k => typeof k === "string") : []);
+  const pick = (p) => {
+    setSelId(p.id); setPages(grantOf(p)); setMembership(membershipOf(p));
+    setAcademicMembership(academicOf(p)); setCollegeWide(p?.collegeWide !== false);
+  };
+  const toggleAcademic = (id) => setAcademicMembership(ms => ms.includes(id) ? ms.filter(x => x !== id) : [...ms, id]);
+
+  const saveAcademic = async () => {
+    if (!sel) return;
+    setSavingAcademic(true);
+    // A SEPARATE REQUEST from Save access below, because it is a separate endpoint with a
+    // separate permission. Bundling them would make the ordinary page grant inherit the
+    // Super-Admin-only gate, and a settings admin could no longer edit page access at all.
+    try {
+      await api.saveStaffAcademicAccess(sel.id, collegeWide ? [] : academicMembership, collegeWide);
+      store.notify?.("Academic department access updated");
+      store.refresh?.().catch?.(() => {});
+    } catch (e) { store.notify?.(e.message || "Action failed", "error"); }
+    finally { setSavingAcademic(false); }
+  };
   const toggle = (k) => setPages(ps => ps.includes(k) ? ps.filter(x => x !== k) : [...ps, k]);
   const toggleDept = (k) => setMembership(ms => ms.includes(k) ? ms.filter(x => x !== k) : [...ms, k]);
   const allOn = ADMIN_PAGES.every(k => pages.includes(k));
@@ -4857,6 +4899,71 @@ function AdminAccess({ store }) {
                   )}
                 </div>
               )}
+          {/* ACADEMIC department access. Shown for a Super Admin too: seeing every
+              department is a claim about academic reach, holding every admin page is a
+              claim about administrative authority, and they are frequently not the same
+              person -- which is exactly why collegeWide is a separate column. */}
+          {sel && (
+            <div className="mt-5 border-t border-slate-100 pt-4">
+              <div className="mb-2 flex items-center gap-1.5">
+                <GraduationCap size={14} className="text-slate-400" />
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Academic departments</p>
+              </div>
+              <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-400">
+                Which teaching departments&apos; students, courses and registers this person can see. Not the
+                support queues above &mdash; those decide who reads a wellbeing disclosure; these decide who a
+                student is visible to at all.
+              </p>
+
+              <button
+                onClick={() => setCollegeWide(v => !v)}
+                className={"flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition " + (collegeWide ? "bg-amber-50 text-amber-900 ring-amber-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}
+              >
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={collegeWide ? { background: "#b45309", borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{collegeWide && <Check size={13} className="text-white" />}</span>
+                <span className="min-w-0">College-wide access</span>
+              </button>
+              {collegeWide && (
+                <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
+                  <AlertCircle size={13} className="mt-px shrink-0" />
+                  Sees every department&apos;s students, registers, predictions and pastoral records.
+                </p>
+              )}
+
+              {/* DISABLED, NOT HIDDEN, while college-wide is on. Hiding it leaves an
+                  administrator unable to see what this person would fall back to; showing
+                  it live beside a flag that already grants everything invites the reader to
+                  believe the list still constrains them. */}
+              {academicDepts.length > 0 && (
+                <div className={"mt-3 grid gap-1.5 sm:grid-cols-2 " + (collegeWide ? "pointer-events-none opacity-40" : "")}>
+                  {academicDepts.map(d => {
+                    const on = academicMembership.includes(d.id);
+                    return (
+                      <button key={d.id} onClick={() => toggleAcademic(d.id)} disabled={collegeWide}
+                        className={"flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition " + (on ? "bg-blue-50 text-slate-800 ring-blue-200" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}>
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={on ? { background: d.colour || NAVY, borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{on && <Check size={13} className="text-white" />}</span>
+                        <span className="min-w-0 truncate">{d.name}</span>
+                        {/* A retired department still lists: its students and courses are
+                            still attached to it, so somebody must be able to see them. */}
+                        {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">Retired</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {academicDepts.length === 0 && (
+                <p className="mt-2 text-[11px] text-slate-400">No academic departments yet &mdash; add them in Settings first.</p>
+              )}
+              {!collegeWide && academicMembership.length === 0 && (
+                <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+                  <AlertCircle size={13} className="mt-px shrink-0" />
+                  Not college-wide and on no department &mdash; they will see no students, courses or registers at all.
+                </p>
+              )}
+              <PrimaryBtn onClick={saveAcademic} disabled={savingAcademic} className="mt-3 w-full">
+                <Save size={16} /> {savingAcademic ? "Saving…" : "Save department access"}
+              </PrimaryBtn>
+            </div>
+          )}
           {sel && !sel.isSuperAdmin && (
             <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-100">
               <AlertCircle size={13} className="mt-px shrink-0" /> Granting at least one page makes this person an admin for those pages. Clearing all removes their admin access entirely. Changes take effect the next time they open the app.
@@ -12339,6 +12446,232 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
   );
 }
 
+/* ----- Settings: the college's ACADEMIC departments -------------------------- */
+
+/**
+ * Add, rename and retire the college's academic departments — Business, Computing, Law.
+ *
+ * NOT SupportDepartmentSettings below. That edits WELLBEING teams and decides who reads a
+ * student's disclosure. This decides which students a member of staff may see at all. Two
+ * access boundaries with one English word between them, so every identifier here is
+ * spelled academicDepartment and never a bare department.
+ *
+ * THE KEY IS IMMUTABLE ONCE CREATED, exactly as it is for support departments, and for a
+ * related reason: a saved filter, a URL fragment and the VLE mapping screen all carry it
+ * and none of them re-resolves it afterwards.
+ *
+ * A DEPARTMENT IS RETIRED, NEVER DELETED, and here the stakes are higher than for a
+ * support team. Deleting sets academicDepartmentId to null on every course and student
+ * pointing at it — so under scoping, deleting a department hides a whole department's
+ * students from the staff who teach them, with nothing on screen saying why. The editor
+ * therefore offers retire, and offers removal only for a row this session added.
+ */
+function AcademicDepartmentSettings() {
+  const [rows, setRows] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [newName, setNewName] = useState("");
+
+  const reload = () => {
+    api.academicDepartments()
+      .then(d => setRows((d.departments || []).map(x => ({ ...x, saved: true }))))
+      .catch(e => { setErr(e.message); setRows([]); });
+    // Fetched separately, and its failure is deliberately NOT fatal to the editor: a
+    // college should still be able to name its departments if the counts query is slow or
+    // the table is mid-migration.
+    api.academicDepartmentSummary().then(setSummary).catch(() => setSummary(null));
+  };
+  useEffect(reload, []);
+
+  const setRow = (key, patch) => { setRows(rs => (rs || []).map(r => r.key === key ? { ...r, ...patch } : r)); setDirty(true); setOk(""); };
+  const add = () => {
+    const name = newName.trim();
+    if (!name) return;
+    const key = slugifyDeptKey(name);
+    if (!key) { setErr("That name has no letters or numbers in it, so it cannot make a key."); return; }
+    if ((rows || []).some(r => r.key === key)) { setErr("There is already a department with the key \"" + key + "\"."); return; }
+    setRows(rs => [...(rs || []), { key, name, colour: NAVY, active: true, saved: false, courseCount: 0, studentCount: 0 }]);
+    setNewName(""); setErr(""); setOk(""); setDirty(true);
+  };
+  // Only a row this session added may be dropped outright. One the server already knows
+  // may have courses and students behind it, and removing it from the list retires it —
+  // which is what the Active toggle does, visibly, rather than as a side effect.
+  const drop = (key) => { setRows(rs => (rs || []).filter(r => r.key !== key)); setDirty(true); setOk(""); };
+
+  const save = async () => {
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const r = await api.saveAcademicDepartments((rows || []).map(({ key, name, colour, active }) => ({ key, name: name.trim(), colour, active })));
+      setRows((r.departments || []).map(x => ({ ...x, saved: true })));
+      setDirty(false); setOk("Academic departments saved.");
+      api.academicDepartmentSummary().then(setSummary).catch(() => {});
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
+      <div className="mb-1 flex items-center gap-1.5"><GraduationCap size={15} style={{ color: NAVY }} /><p className="text-sm font-bold text-slate-700">Academic departments</p></div>
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+        The teaching departments this college runs — Business, Computing, Law. Courses belong to one, and staff
+        can be scoped to see only their own. A department&apos;s key is fixed once it exists. Finished with one?
+        Retire it — deleting would detach its courses and students from everybody.
+      </p>
+
+      {/* BOTH FAIL DIRECTIONS, MADE PERMANENTLY VISIBLE.
+          The first line is the deliberate fail-OPEN: every account that existed when this
+          was deployed, and every account created since, sees every department. That is what
+          stops a college being locked out of its own students mid-term — and it must never
+          be silent, or narrowing becomes a decision nobody notices was never taken.
+          The second is the fail-CLOSED: a course or student with no department is visible
+          only to college-wide accounts. Safe, and otherwise a black hole; shown as a count
+          it reads as a to-do list instead. */}
+      {summary && (
+        <div className="mb-4 space-y-1.5 rounded-xl bg-amber-50/60 px-3 py-2.5 ring-1 ring-amber-200/70">
+          <p className="text-[11px] leading-relaxed text-amber-900">
+            <span className="font-bold">{summary.collegeWideStaff} of {summary.totalStaff}</span> staff accounts have
+            <span className="font-semibold"> college-wide access</span> and see every department.
+            {summary.collegeWideStaff === summary.totalStaff ? " Nobody is scoped to a department yet." : ""}
+          </p>
+          <p className="text-[11px] leading-relaxed text-amber-900">
+            <span className="font-bold">{summary.unassignedCourses} of {summary.totalCourses}</span> courses and
+            <span className="font-bold"> {summary.unassignedStudents} of {summary.totalStudents}</span> students are not
+            assigned to a department. Unassigned rows are visible only to college-wide accounts.
+          </p>
+        </div>
+      )}
+
+      {rows === null && <p className="text-xs text-slate-400">Loading…</p>}
+      {rows !== null && rows.length === 0 && (
+        <p className="mb-3 text-xs text-slate-400">No departments yet. Add the first one below — e.g. Business.</p>
+      )}
+
+      <div className="space-y-2">
+        {(rows || []).map(r => (
+          <div key={r.key} className={"flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5 ring-1 " + (r.active ? "bg-slate-50 ring-slate-200" : "bg-white ring-slate-200")}>
+            <input type="color" value={r.colour || NAVY} onChange={e => setRow(r.key, { colour: e.target.value })}
+              className="h-8 w-8 shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-white p-0.5" title="Department colour" />
+            <input value={r.name} onChange={e => setRow(r.key, { name: e.target.value })} className={inputCls + " !w-auto min-w-[180px] flex-1 !bg-white"} placeholder="Department name" />
+            {/* Shown and NOT editable, for the reason in the block comment above. Shown at
+                all because it appears in saved filters and on the VLE mapping rows, and
+                somebody will otherwise wonder where it came from. */}
+            <code className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-400 ring-1 ring-slate-200" title="The key is fixed once the department exists">{r.key}</code>
+            {r.saved && (
+              <span className="shrink-0 text-[11px] text-slate-400">
+                {r.courseCount ?? 0} course{(r.courseCount ?? 0) === 1 ? "" : "s"} · {r.studentCount ?? 0} student{(r.studentCount ?? 0) === 1 ? "" : "s"}
+              </span>
+            )}
+            <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-slate-500">
+              <input type="checkbox" checked={!!r.active} onChange={e => setRow(r.key, { active: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
+              Active
+            </label>
+            {!r.saved && (
+              <button onClick={() => drop(r.key)} className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-600">Remove</button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }}
+          placeholder="e.g. Health &amp; Social Care" className={inputCls + " !w-auto min-w-[220px] flex-1"} />
+        <button onClick={add} className="rounded-xl px-3 py-2 text-xs font-semibold text-white" style={{ background: NAVY }}>Add department</button>
+        <PrimaryBtn onClick={save} disabled={!dirty || busy}>{busy ? "Saving…" : "Save departments"}</PrimaryBtn>
+      </div>
+
+      {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
+      {ok && <p className="mt-2 text-xs text-emerald-600">{ok}</p>}
+
+      <VleDepartmentMapping departments={(rows || []).filter(r => r.saved)} onMapped={reload} />
+    </div>
+  );
+}
+
+/**
+ * Map the VLE's own course grouping onto an academic department.
+ *
+ * CAPTURE, THEN MAP, NEVER GUESS. The sync records the Moodle category it found and stops
+ * there; a person decides what it means. Inferring the department from the course NAME was
+ * the rejected alternative — under scoping a wrong mapping is a Law tutor reading Health &
+ * Social Care pastoral notes, and nothing on any screen would say so.
+ */
+function VleDepartmentMapping({ departments, onMapped }) {
+  const [cats, setCats] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState("");
+
+  const load = () => api.vleCategories().then(d => setCats(d.categories || [])).catch(e => { setErr(e.message); setCats([]); });
+  useEffect(() => { load(); }, []);
+
+  const map = async (externalId, academicDepartmentId) => {
+    setBusyId(externalId); setErr("");
+    try {
+      await api.saveVleCategoryMapping(externalId, academicDepartmentId || null);
+      await load();
+      if (onMapped) onMapped();
+    } catch (e) { setErr(e.message); } finally { setBusyId(null); }
+  };
+
+  if (cats === null) return <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-400">Loading VLE categories…</p>;
+  if (!cats.length) return null;
+
+  return (
+    <div className="mt-5 border-t border-slate-100 pt-4">
+      <div className="mb-1 flex items-center gap-1.5"><Layers size={14} style={{ color: NAVY }} /><p className="text-xs font-bold text-slate-700">Courses from your VLE</p></div>
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+        Your VLE already groups courses — Moodle calls them categories. Map each group to a department once and
+        every future sync follows it. Mapping a group moves its courses <em>and</em> their students.
+      </p>
+      <div className="space-y-2">
+        {cats.map(c => (
+          <div key={c.externalId || "none"} className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
+            <div className="min-w-[200px] flex-1">
+              {/* A null NAME means the token could not read it, NOT that the group has no
+                  name. A Moodle whose token lacks core_course_get_categories still yields
+                  ids, and the admin names the group by looking at what is inside — which is
+                  why the sample courses are on the row rather than behind a tooltip. */}
+              <p className="text-xs font-semibold text-slate-700">
+                {c.name || (c.externalId ? "Category " + c.externalId : "Not from a VLE")}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {c.courseCount} course{c.courseCount === 1 ? "" : "s"} — {c.sampleCourses.join(", ")}{c.courseCount > c.sampleCourses.length ? " …" : ""}
+              </p>
+              {/* SPLIT is a real state, called out rather than flattened to "unmapped": it
+                  means somebody assigned these courses by hand, and a picker reading blank
+                  would invite an administrator to overwrite that with one click. */}
+              {c.splitAcross && (
+                <p className="mt-0.5 text-[11px] font-semibold text-amber-700">
+                  Split across {c.splitAcross.length} departments — choosing one below moves all {c.courseCount}.
+                </p>
+              )}
+            </div>
+            {c.externalId ? (
+              <select
+                value={c.academicDepartmentId || ""}
+                disabled={busyId === c.externalId}
+                onChange={e => map(c.externalId, e.target.value)}
+                className={inputCls + " !w-auto min-w-[170px] !bg-white"}
+              >
+                <option value="">Not assigned</option>
+                {departments.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            ) : (
+              // Courses with no captured category cannot be mapped as a group — there is
+              // nothing to map them by. Shown anyway, because a college whose Moodle
+              // predates the capture has EVERY course here, and a screen that omitted them
+              // would report the mapping as finished before it had begun.
+              <span className="text-[11px] text-slate-400">Assign these on the course itself</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
+    </div>
+  );
+}
+
 /* ----- Settings: the college's own department list --------------------------- */
 
 // A key is a slug and NOTHING ELSE, matching supportDepartments.KEY_RE on the server:
@@ -15693,6 +16026,7 @@ function AdminSettings({ store }) {
       {canAccessPage(store.currentUser, "referrals") && (
         <div className="mb-4">
           <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Student support</p>
+          <AcademicDepartmentSettings />
           <SupportDepartmentSettings />
         </div>
       )}
