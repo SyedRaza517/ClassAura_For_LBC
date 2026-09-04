@@ -38,6 +38,7 @@ const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } =
 const { requireAuth, requireAnyPage, hasPage } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedCourseJoinFromUnit } = require("../academicScopeSql");
+const academicDepartments = require("../academicDepartments");
 const predictionRunner = require("../prediction/runner");
 
 /**
@@ -794,6 +795,10 @@ router.post("/students", requireAuth, requireStudentAdmin, async (req, res) => {
   let s = await prisma.student.create({
     data: {
       firstName, lastName, studentRef, email, cohortId,
+      // Denormalised from the cohort's course. Written HERE, in the same statement as the
+      // cohort, because the two must never disagree: a student whose stored department
+      // does not match their cohort is a student visible to the wrong department's staff.
+      academicDepartmentId: await academicDepartments.forCohort(cohortId),
       dob: dob || null,
       initials: initialsOf(firstName, lastName),
       colour: colourFor(studentRef + lastName),
@@ -851,6 +856,11 @@ router.put("/students/:id", requireAuth, requireStudentAdmin, async (req, res) =
     const cohortId = str(req.body.cohortId) || null;
     if (cohortId && !(await prisma.cohort.findUnique({ where: { id: cohortId } }))) return res.status(400).json({ error: "Unknown cohort" });
     data.cohortId = cohortId;
+    // THE STORED DEPARTMENT FOLLOWS THE COHORT, in the same update. Without this the
+    // column is correct on the day it is written and wrong from the first reorganisation
+    // onward -- and a stale value here is not a cosmetic error, it is a student left
+    // visible to the department they have just left and hidden from the one they joined.
+    data.academicDepartmentId = await academicDepartments.forCohort(cohortId);
   }
   if (req.body?.dob !== undefined) {
     const dob = str(req.body.dob);

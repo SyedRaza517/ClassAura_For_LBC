@@ -102,6 +102,16 @@ const sCourse = (p) => ({
   // Present only when the query asked Prisma to count relations.
   ...(p._count ? { unitCount: p._count.units, cohortCount: p._count.cohorts } : {}),
 });
+// An ALLOWLIST, like every serialiser here. Five fields out, and a column added to
+// AcademicDepartment tomorrow does not ship to the browser because somebody forgot.
+// smoke-academic-departments.mjs asserts the key set EXACTLY, so a sixth field cannot
+// appear without a test failing.
+const sAcademicDepartment = (d) => ({
+  id: d.id, key: d.key, name: d.name, colour: d.colour, active: d.active,
+  // Present only when the query asked Prisma to count relations, matching sCourse.
+  ...(d._count ? { courseCount: d._count.courses, studentCount: d._count.students } : {}),
+});
+
 const sCohort = (c) => ({ id: c.id, name: c.name, courseId: c.courseId, startDate: c.startDate ?? null, createdAt: c.createdAt });
 const sTerm = (t) => ({ id: t.id, cohortId: t.cohortId, year: t.year, index: t.index, name: t.name, start: t.start, end: t.end });
 const sUnit = (m) => ({
@@ -335,4 +345,5 @@ const sTermCalendar = (c) => ({
   published: !!c.published,
 });
 
-module.exports = { sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sReferralForDepartment, sReferralForReferrer, sReferralForStudent, sReferralTransfer, sReferralMessage, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };
+module.exports = {
+  sAcademicDepartment, sStaff, sSignup, sCheckin, sLeave, sDoc, sAdj, sNotification, sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sApplicant, sSession, sMark, sInteraction, sReferralForDepartment, sReferralForReferrer, sReferralForStudent, sReferralTransfer, sReferralMessage, sAssessment, sGrade, sTimesheet, sStudentQuery, sTimetableSlot, sTermCalendar, parseAdminPages };

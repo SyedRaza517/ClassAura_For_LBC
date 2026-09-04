@@ -133,8 +133,32 @@ async function byKey(key) {
   return (await all()).find((d) => d.key === k) || null;
 }
 
+/**
+ * Which academic department a cohort belongs to, via its course. Null when the cohort has
+ * none, its course has none, or there is no cohort at all.
+ *
+ * THE ONE IMPLEMENTATION OF THE DENORMALISATION, and it is deliberately shared. Student
+ * .academicDepartmentId is a stored copy of this answer -- stored because Student.cohortId
+ * is nullable, so deriving it on read would leave cohortless students belonging to no
+ * department and invisible to every scoped account, and because it would be a two-hop join
+ * on the most frequent query in the application.
+ *
+ * The price of a stored copy is drift, and drift is only avoidable if every writer uses
+ * the same rule. Three call sites do: creating a student, changing a student's cohort, and
+ * mapping a VLE category onto a department. A fourth that computed it by hand would be the
+ * bug this function exists to prevent.
+ */
+async function forCohort(cohortId) {
+  if (!cohortId) return null;
+  const cohort = await prisma.cohort.findUnique({
+    where: { id: cohortId },
+    select: { course: { select: { academicDepartmentId: true } } },
+  });
+  return cohort?.course?.academicDepartmentId ?? null;
+}
+
 module.exports = {
   KEY_RE, COLOUR_RE, DEFAULT_COLOUR,
   cleanOne, cleanList, invalidate,
-  all, active, byKey,
+  all, active, byKey, forCohort,
 };

@@ -139,6 +139,9 @@ app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
 // sign-in screen must be branded before anyone has signed in — and the router
 // enforces that split with an allowlist rather than trusting each handler.
 app.use("/api/branding", wrapAsync(require("./routes/branding")));
+// The college's academic departments -- Business, Computing, Law -- and who may see
+// them. Gated on the existing "settings" page rather than a new ADMIN_PAGES key.
+app.use("/api/academic-departments", wrapAsync(require("./routes/academicDepartments")));
 // A college's own offer-letter / application-form PDFs. Their document is used AS the
 // page and the applicant's details written on it — never redrawn. See docTemplate.js.
 app.use("/api/doc-templates", wrapAsync(require("./routes/docTemplates")));
