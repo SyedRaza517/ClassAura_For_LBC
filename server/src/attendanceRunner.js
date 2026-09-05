@@ -61,7 +61,21 @@ async function loadConfig() {
 // Shallow-merge the patch over the stored blob; `values` and `templates` merge one level
 // deeper so saving one band's template (or one value) doesn't wipe the others.
 async function saveConfig(patch = {}) {
-  const row = await prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } }).catch(() => null);
+  // NO `.catch(() => null)` ON THIS READ, and the distinction is the whole config.
+  //
+  // This is a read-modify-write: the row that comes back becomes the BASE the patch
+  // merges over. Swallowing a read error made `cur` an empty object, so the upsert below
+  // wrote the patch ALONE — every band template, every institution value and
+  // `lastRunPeriod` gone, from one transient error, silently, on a path a scheduler
+  // calls unattended.
+  //
+  // Losing `lastRunPeriod` is the worst of it: it is the marker that stops a month's
+  // letters going out twice, so the failure does not merely erase settings, it re-emails
+  // the whole college about their attendance.
+  //
+  // A read that fails must abort the save. The caller gets an error and the stored
+  // config is untouched, which is recoverable; the alternative is not.
+  const row = await prisma.attendanceEmailConfig.findUnique({ where: { id: CONFIG_ID } });
   const cur = (row && row.data) || {};
   const next = { ...cur, ...patch };
   if (patch.values) next.values = { ...(cur.values || {}), ...patch.values };

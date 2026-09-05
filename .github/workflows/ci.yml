@@ -61,6 +61,17 @@ jobs:
       - name: Build client
         run: npm run build --workspace client
         env:
+          # SKIP_API_URL_CHECK, and it is required rather than lazy. The guard in
+          # client/vite.config.js refuses any host that is not one of this project's two
+          # APIs, and it cannot infer one here: it derives the right host from
+          # VERCEL_GIT_COMMIT_REF, which GitHub Actions does not set. So the build threw
+          # on every run — CI has not compiled the client since the guard landed, which
+          # is the one thing this step exists to prove.
+          #
+          # The alternative, naming a real API host here, would make CI's build differ
+          # from the deploy's for no benefit: nothing in CI calls the API, and the host
+          # is baked in for the phone's sake, not the compiler's.
+          SKIP_API_URL_CHECK: "1"
           VITE_API_URL: https://ci.invalid/api
 
       # Applies every migration to the empty database. Proves the migration

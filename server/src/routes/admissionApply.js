@@ -54,24 +54,29 @@ router.post("/", async (req, res) => {
   // use a different email or sign in to the Student Portal instead.
   if (data.email) {
     const emailLc = String(data.email).toLowerCase();
+    // FAILS CLOSED, like the identical check in routes/applicant.js. Each of these three
+    // carried `.catch(() => null)`, which answered "no clash" whenever the database did
+    // not answer at all — on a PUBLIC, unauthenticated endpoint that then writes a row
+    // holding criminal-conviction, medical and ethnicity declarations. A transient error
+    // was enough to attach an application to an email that already belongs to a staff or
+    // student login, and login is shared across all three kinds.
+    //
+    // The catches predate de-tenanting, when an unauthenticated query threw inside the
+    // scoping extension and swallowing it kept the form working. That extension is gone;
+    // `withoutAcademicScope` covers the one exemption still needed. An error now reaches
+    // wrapAsync and the applicant sees a 500, which is true, instead of a duplicate
+    // identity, which is not.
     const [staff, student, appl] = await Promise.all([
-      prisma.staff.findFirst({ where: { email: emailLc } }).catch(() => null),
+      prisma.staff.findFirst({ where: { email: emailLc } }),
       // WRAPPED, because this runs UNAUTHENTICATED. A person applying has no account, let
       // alone a department, so there is no scope -- and the duplicate check must see the
       // WHOLE college anyway: a student already enrolled is a clash whichever department
       // they are in.
-      //
-      // The `.catch(() => null)` below is what made this dangerous rather than merely
-      // broken. Without the wrapper the guard threw, the catch swallowed it as "no clash",
-      // and the staff and admission halves of the same check still worked -- so nothing
-      // 500ed and nothing looked wrong, while a public applicant could register on an
-      // ENROLLED STUDENT'S email address. Login is shared across the three account kinds,
-      // so that resolves to the wrong account.
       withoutAcademicScope(
         "applicant email check: unauthenticated, and a clash is a clash in any department",
         () => prisma.student.findFirst({ where: { email: emailLc } }),
-      ).catch(() => null),
-      prisma.admission.findFirst({ where: { email: { equals: emailLc, mode: "insensitive" }, passwordHash: { not: null } } }).catch(() => null),
+      ),
+      prisma.admission.findFirst({ where: { email: { equals: emailLc, mode: "insensitive" }, passwordHash: { not: null } } }),
     ]);
     if (staff || student || appl) {
       return res.status(409).json({ error: "This email is already in use. Please use a different email, or sign in to the Student Portal to continue your application." });

@@ -71,6 +71,24 @@ services:
                                  #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
                                  # NEVER rotate it casually — every stored secret is encrypted
                                  # under it and becomes unreadable if it changes.
+      # --- document storage (Supabase Storage) ---
+      # WITHOUT THESE, EVERY DOCUMENT UPLOAD FAILS. src/storage.js reads all three and
+      # they were declared in no configuration file at all, so a service created from
+      # this blueprint got `undefined`, isConfigured() returned false, and staff
+      # documents, applicant passports and ID scans could not be stored. The only
+      # signal was one line at boot that nobody reads at the moment an upload is
+      # refused. Added 5 Sep 2026; a Blueprint only applies at service CREATION, so
+      # set them by hand on any service that already exists.
+      - key: SUPABASE_URL
+        sync: false              # https://<project-ref>.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false              # Project Settings → API → service_role. Bypasses row-level
+                                 # security, so server-side only — never expose to a client.
+      - key: SUPABASE_BUCKET
+        value: documents         # MUST BE A PRIVATE BUCKET. It holds payroll and HR files
+                                 # tied to named people, and applicants' identity documents;
+                                 # reads go through short-lived signed URLs minted only after
+                                 # the API has checked the caller may see that file.
       # --- Moodle (VLE) import ---
       # NOTE: these are HOST-level values and they now simply apply. The fence that
       # let only the college named by DEFAULT_TENANT_SLUG inherit them is gone with

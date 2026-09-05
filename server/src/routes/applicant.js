@@ -25,30 +25,35 @@ const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|#%]+/g, " ").replace
 // Login is shared, so an applicant email must be unique across all three or the login
 // would resolve to the wrong account. `exceptId` skips the caller's own Admission row.
 async function emailInUse(emailLc, exceptId) {
+  // THESE LOOKUPS FAIL CLOSED. Each one used to carry `.catch(() => null)`, which turned
+  // "the database did not answer" into "no clash" — the one answer this function must
+  // never invent. A transient error on any of the three let a public applicant register
+  // on an ENROLLED STUDENT'S email address, and because login is shared across staff,
+  // students and applicants, that resolves to the wrong account.
+  //
+  // The catches were added for a reason that no longer exists: the tenant-scoping
+  // extension threw when a query ran unauthenticated, and swallowing it kept the endpoint
+  // working. Tenancy is gone, `withoutAcademicScope` handles the remaining scope
+  // exemption explicitly, and so the only thing the catches can still do is hide a real
+  // failure. An error now propagates to wrapAsync and the caller gets a 500 — the honest
+  // answer to "we could not check", and a far better outcome than a duplicate identity.
   const [staff, student, appl] = await Promise.all([
-    prisma.staff.findFirst({ where: { email: emailLc } }).catch(() => null),
+    prisma.staff.findFirst({ where: { email: emailLc } }),
     // WRAPPED, because this runs UNAUTHENTICATED. A person applying has no account, let
     // alone a department, so there is no scope -- and the duplicate check must see the
     // WHOLE college anyway: a student already enrolled is a clash whichever department
     // they are in.
-    //
-    // The `.catch(() => null)` below is what made this dangerous rather than merely
-    // broken. Without the wrapper the guard threw, the catch swallowed it as "no clash",
-    // and the staff and admission halves of the same check still worked -- so nothing
-    // 500ed and nothing looked wrong, while a public applicant could register on an
-    // ENROLLED STUDENT'S email address. Login is shared across the three account kinds,
-    // so that resolves to the wrong account.
     withoutAcademicScope(
       "applicant email check: unauthenticated, and a clash is a clash in any department",
       () => prisma.student.findFirst({ where: { email: emailLc } }),
-    ).catch(() => null),
+    ),
     prisma.admission.findFirst({
       where: {
         email: { equals: emailLc, mode: "insensitive" },
         passwordHash: { not: null },
         ...(exceptId ? { id: { not: exceptId } } : {}),
       },
-    }).catch(() => null),
+    }),
   ]);
   return !!(staff || student || appl);
 }

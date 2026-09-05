@@ -144,7 +144,7 @@ async function runBirthdays() {
   const t = today();
   const mmdd = t.slice(5);   // "MM-DD"
   const year = t.slice(0, 4);
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0, stubbed = 0;
 
   const students = await prisma.student.findMany({
     where: { active: true },
@@ -188,12 +188,27 @@ async function runBirthdays() {
        <p style="margin:0">${signOffHtml(brand, "With warm wishes")}</p>`
     );
 
-    await email.sendEmail(person.email, subject, text, { html });
+    // THE RESULT IS CHECKED, AND THE LEDGER ONLY MOVES ON SUCCESS.
+    //
+    // email.sendEmail NEVER THROWS. It returns { sent, stubbed, error } — a rejected
+    // send, and a server with no mailer configured at all, both come back as
+    // `sent: false`. So `await sendEmail(...); await markSent(key);` wrote the
+    // permanent de-duplication row for a message nobody received, counted it as sent,
+    // and logged "N sent" — and because the ledger is what stops a repeat, it would
+    // never be retried on any later tick either.
+    //
+    // attendanceEmailService.js already learned this and counts `stubbed` apart from
+    // `failed` for the same reason; that reasoning belongs here too.
+    const res = await email.sendEmail(person.email, subject, text, { html });
+    if (!res?.sent) {
+      if (res?.stubbed) stubbed++; else failed++;
+      continue;   // no markSent — tomorrow's tick tries again
+    }
     await markSent(key);
     sent++;
   }
 
-  return { sent, skipped };
+  return { sent, skipped, failed, stubbed };
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +245,7 @@ async function runBankHolidayReminders() {
 
   const pretty = formatDate(date);
   const subject = `College closed ${pretty} — ${match.name}`;
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0, stubbed = 0;
 
   for (const r of recipients) {
     if (!r.email) { skipped++; continue; }
@@ -252,13 +267,25 @@ async function runBankHolidayReminders() {
        <p style="margin:0 0 12px">We hope you enjoy the break and take some time to rest.</p>
        <p style="margin:0">${signOffHtml(brand, "Best wishes")}</p>`
     );
-    await email.sendEmail(r.email, subject, text, { html });
+    const res = await email.sendEmail(r.email, subject, text, { html });
+    if (!res?.sent) { if (res?.stubbed) stubbed++; else failed++; continue; }
     sent++;
   }
 
-  // Mark the broadcast done only after attempting it, so a crash mid-send retries next tick.
-  await markSent(key);
-  return { sent, skipped, holiday: match.name };
+  // ONE KEY FOR THE WHOLE BROADCAST, so the rule differs from the per-person jobs: this
+  // key means "the closure notice for this date went out", not "this person got it".
+  //
+  // Marked when at least one message actually landed. Marking unconditionally — which is
+  // what `await sendEmail(...)` followed by an unconditional markSent amounted to, since
+  // sendEmail never throws — retired the broadcast even when the mailer was down and NOT
+  // ONE person was told the college would be closed. Nothing would ever retry it.
+  //
+  // Not requiring every send to succeed, either: one bad address among four hundred must
+  // not re-broadcast to the other three hundred and ninety-nine tomorrow. A partial
+  // failure is logged and counted; a total one is left to the next tick.
+  if (sent > 0) await markSent(key);
+  else if (failed || stubbed) console.error(`[notifications] bank-holiday broadcast reached nobody (${failed} failed, ${stubbed} stubbed) — not marking done, will retry`);
+  return { sent, skipped, failed, stubbed, holiday: match.name };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +300,7 @@ async function runAssessmentReminders() {
   // send falls back to the server's own MAIL_FROM rather than an invented address.
   const from = await mailFrom.resolve("ask");
   const target = addDays(today(), 14); // due in 2 weeks
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, failed = 0, stubbed = 0;
 
   const assessments = await prisma.assessment.findMany({
     where: { dueDate: target },
@@ -325,13 +352,19 @@ async function runAssessmentReminders() {
          <p style="margin:0">${signOffHtml(brand, "Best wishes")}</p>`
       );
 
-      await email.sendEmail(student.email, subject, text, { html, from });
+      // Same rule as the birthday job: the ledger row is what stops a retry, so it must
+      // not be written for a message that was never delivered.
+      const res = await email.sendEmail(student.email, subject, text, { html, from });
+      if (!res?.sent) {
+        if (res?.stubbed) stubbed++; else failed++;
+        continue;   // no markSent — a later tick can still reach them before the deadline
+      }
       await markSent(key);
       sent++;
     }
   }
 
-  return { sent, skipped };
+  return { sent, skipped, failed, stubbed };
 }
 
 // ---------------------------------------------------------------------------
