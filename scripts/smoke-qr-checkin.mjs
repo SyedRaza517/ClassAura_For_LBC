@@ -23,6 +23,7 @@
 //   node scripts/smoke-qr-checkin.mjs
 //   (needs API_URL + DATABASE_URL + JWT_SECRET; the runner supplies all three)
 import { createRequire } from "node:module";
+import { fixtureDepartmentFor, stamp } from "./lib/fixture-department.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -90,6 +91,14 @@ const QC_EMAIL = "100129@edtech.co.uk";
 // every later assertion by that student, so it is done by somebody with nothing else to do.
 const QD_ID = "st-100135";
 const QD_EMAIL = "100135@edtech.co.uk";
+// Two more with budgets of their own, for the blocks added 5 Sep 2026 (the department
+// boundary and the edges of the window). Spending QA's or QC's budget on them pushed the
+// device-trail scan near the end of the suite into a 429. 100110 is the local bench's
+// student and no other suite's, which is what makes it free here.
+const QE_ID = "st-100133";
+const QE_EMAIL = "100133@edtech.co.uk";
+const QF_ID = "st-100110";
+const QF_EMAIL = "100110@edtech.co.uk";
 // Comfortably past TAP_MAX (10 a minute, student.js) without depending on the number.
 const FLOOD = 14;
 const S_PASSWORD = "qr-checkin-suite-2026";
@@ -120,7 +129,7 @@ const shift = (hhmm, mins) => {
 
 // Everything this run creates, so the finally block puts the database back exactly as
 // the seed left it — the suites share one seeded database.
-const made = { sessions: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [], staff: [] };
+const made = { sessions: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [], staff: [], departments: [] };
 let configExisted = false, priorConfig = null;
 
 async function cleanup() {
@@ -128,7 +137,7 @@ async function cleanup() {
     // Every QR tap row these three students produced, including the refusals this
     // suite asserted only by their HTTP answers. Bulk on (student, method) rather
     // than tracked ids because EVERY outcome logs a row and most are never read back.
-    await db.tagTap.deleteMany({ where: { studentId: { in: [QA_ID, QB_ID, QC_ID] }, method: "qr" } }).catch(() => {});
+    await db.tagTap.deleteMany({ where: { studentId: { in: [QA_ID, QB_ID, QC_ID, QD_ID, QE_ID, QF_ID] }, method: "qr" } }).catch(() => {});
     for (const id of made.marks) await db.attendanceMark.delete({ where: { id } }).catch(() => {});
     for (const id of made.sessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
@@ -137,6 +146,9 @@ async function cleanup() {
     for (const id of made.cohorts) await db.cohort.delete({ where: { id } }).catch(() => {});
     for (const id of made.courses) await db.course.delete({ where: { id } }).catch(() => {});
     for (const id of made.staff) await db.staff.delete({ where: { id } }).catch(() => {});
+    // After the units and the staff: deleting a department nulls the units pointing at it
+    // and cascades the memberships, and both are already gone by here.
+    for (const id of made.departments) await db.academicDepartment.delete({ where: { id } }).catch(() => {});
 
     // Put the config back exactly as it was — a college left switched ON is the one
     // piece of state here that changes the product for real users.
@@ -157,7 +169,7 @@ async function cleanup() {
     }
 
     // The seeded students have NO password and tokenVersion 0. Restore both.
-    for (const id of [QA_ID, QB_ID, QC_ID, QD_ID]) {
+    for (const id of [QA_ID, QB_ID, QC_ID, QD_ID, QE_ID, QF_ID]) {
       await db.student.update({ where: { id }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
     }
   } catch (e) {
@@ -171,16 +183,28 @@ try {
   priorConfig = existingConfig?.settings ?? {};
 
   const adminLogin = await login("admin@edtech.co.uk", SEED_PASSWORD);
+
+  // The department the signing-in admin is narrowed to, if any. Null on the ordinary pass
+
+  // (nothing stamped, fixtures exactly as before); under SMOKE_SCOPED_DEPARTMENT=1 it is
+
+  // the one department everything seeded belongs to, and every unit, course and cohort
+
+  // this suite builds carries it — so the same assertions hold on the guard's other side.
+
+  const DEPT = await fixtureDepartmentFor(db, "admin@edtech.co.uk");
   const adminToken = adminLogin.data?.token;
   if (!adminToken) throw new Error(`admin sign-in failed (HTTP ${adminLogin.status}) — cannot run this suite`);
 
-  for (const [id] of [[QA_ID], [QB_ID], [QC_ID], [QD_ID]]) {
+  for (const [id] of [[QA_ID], [QB_ID], [QC_ID], [QD_ID], [QE_ID], [QF_ID]]) {
     await db.student.update({ where: { id }, data: { passwordHash: bcrypt.hashSync(S_PASSWORD, 10), tokenVersion: 0 } });
   }
   const qaToken = (await login(QA_EMAIL, S_PASSWORD)).data?.token;
   const qbToken = (await login(QB_EMAIL, S_PASSWORD)).data?.token;
   const qcToken = (await login(QC_EMAIL, S_PASSWORD)).data?.token;
-  if (!qaToken || !qbToken || !qcToken) throw new Error("student sign-in failed — cannot run this suite");
+  const qeToken = (await login(QE_EMAIL, S_PASSWORD)).data?.token;
+  const qfToken = (await login(QF_EMAIL, S_PASSWORD)).data?.token;
+  if (!qaToken || !qbToken || !qcToken || !qeToken || !qfToken) throw new Error("student sign-in failed — cannot run this suite");
 
   const today = todayLocal();
   const now = nowHHMM();
@@ -188,7 +212,7 @@ try {
   // This suite's own timetable. No parking of seeded sessions is needed here, unlike
   // the NFC suite: a QR code names its session, so whatever else the seed timetabled
   // today is never a candidate and cannot make anything ambiguous.
-  const unit = await db.unit.create({ data: { code: `QRA${RUN}`.slice(0, 12), name: `QR Suite Unit ${RUN}`, startDate: today, endDate: today } });
+  const unit = await db.unit.create({ data: { ...stamp(DEPT), code: `QRA${RUN}`.slice(0, 12), name: `QR Suite Unit ${RUN}`, startDate: today, endDate: today } });
   made.units.push(unit.id);
   for (const sid of [QA_ID, QC_ID]) {
     const e = await db.enrolment.create({ data: { studentId: sid, unitId: unit.id } });
@@ -369,7 +393,7 @@ try {
 
   // Enrolment is still checked: the code proves which screen was scanned, never that
   // the scanner belongs in the room.
-  const otherUnit = await db.unit.create({ data: { code: `QRB${RUN}`.slice(0, 12), name: `QR Other Unit ${RUN}`, startDate: today, endDate: today } });
+  const otherUnit = await db.unit.create({ data: { ...stamp(DEPT), code: `QRB${RUN}`.slice(0, 12), name: `QR Other Unit ${RUN}`, startDate: today, endDate: today } });
   made.units.push(otherUnit.id);
   const otherLive = await db.hndSession.create({ data: { unitId: otherUnit.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "qr other" } });
   made.sessions.push(otherLive.id);
@@ -520,9 +544,9 @@ try {
   /* ====================================================================== */
 
   // A Term needs a Cohort, which needs a Course — the seed provides none of the three.
-  const termCourse = await db.course.create({ data: { name: `QR Suite Course ${RUN}` } }).catch(() => null);
+  const termCourse = await db.course.create({ data: { ...stamp(DEPT), name: `QR Suite Course ${RUN}` } }).catch(() => null);
   if (termCourse) made.courses.push(termCourse.id);
-  const termCohort = termCourse ? await db.cohort.create({ data: { courseId: termCourse.id, name: `QR Intake ${RUN}` } }).catch(() => null) : null;
+  const termCohort = termCourse ? await db.cohort.create({ data: { ...stamp(DEPT), courseId: termCourse.id, name: `QR Intake ${RUN}` } }).catch(() => null) : null;
   if (termCohort) made.cohorts.push(termCohort.id);
   const closedTerm = termCohort
     ? await db.term.create({ data: { cohortId: termCohort.id, year: 1, index: 1, name: `QR Closed Term ${RUN}`, start: "2020-01-06", end: "2020-06-30" } }).catch(() => null)
@@ -531,7 +555,7 @@ try {
   if (!closedTerm) {
     console.log("SKIP  could not create a Term fixture — the term lock is NOT exercised in this run");
   } else {
-    const termUnit = await db.unit.create({ data: { code: `QRT${RUN}`.slice(0, 12), name: `QR Term Locked ${RUN}`, termId: closedTerm.id } });
+    const termUnit = await db.unit.create({ data: { ...stamp(DEPT), code: `QRT${RUN}`.slice(0, 12), name: `QR Term Locked ${RUN}`, termId: closedTerm.id } });
     made.units.push(termUnit.id);
     const qbEnrol = await db.enrolment.create({ data: { studentId: QB_ID, unitId: termUnit.id } });
     made.enrolments.push(qbEnrol.id);
@@ -656,6 +680,98 @@ try {
   const importedMint = await call(`/hnd/sessions/${imported.id}/qr-code`, { token: adminToken });
   check("a class imported from Moodle mints a code like any other",
     importedMint.status === 200 && typeof importedMint.data?.code === "string", `HTTP ${importedMint.status}`);
+
+  // ---- The academic department boundary, on the code itself ----------------------
+  //
+  // Since 4 Sep 2026 a member of staff can be narrowed to one or more academic
+  // departments, and the guarded Prisma client then hides every other department's
+  // classes from them. The mint reads the session through that client, so a narrowed
+  // administrator asking for another department's code gets "not found" — and that has
+  // to be asserted rather than inferred, because it is the one path a college-wide test
+  // account can never take. Built here with two real departments and an account narrowed
+  // to one of them, so it holds in the ordinary pass AND the scoped pass.
+  const deptA = await db.academicDepartment.create({ data: { key: `qr-a-${RUN}`, name: `QR Suite Dept A ${RUN}` } });
+  const deptB = await db.academicDepartment.create({ data: { key: `qr-b-${RUN}`, name: `QR Suite Dept B ${RUN}` } });
+  made.departments.push(deptA.id, deptB.id);
+  const narrowed = await db.staff.create({ data: {
+    name: `Narrowed ${RUN}`, jobTitle: "Administrator", dept: "Administration",
+    email: `narrowed-${RUN}@smoke.test`, passwordHash: bcrypt.hashSync(S_PASSWORD, 10),
+    accountRole: "ADMIN", adminPages: JSON.stringify(["registers", "live-attendance"]), initials: "NA", colour: "#334155",
+    collegeWide: false, academicDepartments: { create: { academicDepartmentId: deptA.id } },
+  } });
+  made.staff.push(narrowed.id);
+  const narrowedToken = (await login(narrowed.email, S_PASSWORD)).data?.token;
+  const unitA = await db.unit.create({ data: { code: `QRDA${RUN}`.slice(0, 12), name: `QR Dept A Unit ${RUN}`, startDate: today, endDate: today, academicDepartmentId: deptA.id } });
+  const unitB = await db.unit.create({ data: { code: `QRDB${RUN}`.slice(0, 12), name: `QR Dept B Unit ${RUN}`, startDate: today, endDate: today, academicDepartmentId: deptB.id } });
+  made.units.push(unitA.id, unitB.id);
+  const liveA = await db.hndSession.create({ data: { unitId: unitA.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "qr dept a" } });
+  const liveB = await db.hndSession.create({ data: { unitId: unitB.id, date: today, startTime: shift(now, -3), endTime: shift(now, 117), description: "qr dept b" } });
+  made.sessions.push(liveA.id, liveB.id);
+
+  const ownMint = await call(`/hnd/sessions/${liveA.id}/qr-code`, { token: narrowedToken });
+  check("an administrator narrowed to a department can put their own department's code on the screen",
+    ownMint.status === 200 && typeof ownMint.data?.code === "string", `HTTP ${ownMint.status}`);
+  const otherMint = await call(`/hnd/sessions/${liveB.id}/qr-code`, { token: narrowedToken });
+  const foreignLive = await call(`/hnd/sessions/${liveB.id}/live`, { token: narrowedToken });
+  check("and cannot mint, or even see, another department's class",
+    otherMint.status === 404 && !otherMint.data?.code && foreignLive.status === 404,
+    `mint ${otherMint.status} live ${foreignLive.status}`);
+  // Breaks if: the mint route's session read ever moves to an unguarded client, or the
+  // narrowed account's own department is filtered out — the two ways the boundary fails.
+
+  // The boundary is between MEMBERS OF STAFF. A student belongs to the class they are
+  // enrolled on, whichever department it sits in, and their scan must never be caught by
+  // a wall that exists to keep one administrator out of another's registers.
+  const enrolB = await db.enrolment.create({ data: { studentId: QE_ID, unitId: unitB.id } });
+  made.enrolments.push(enrolB.id);
+  const scanB = await call("/student/me/qr-check-in", { method: "POST", token: qeToken, body: { sessionId: liveB.id, code: codeFor(liveB.id) } });
+  if (scanB.status === 201) made.marks.push((await db.attendanceMark.findFirst({ where: { sessionId: liveB.id, studentId: QE_ID }, select: { id: true } }))?.id);
+  check("a student's scan is never blocked by the department boundary",
+    scanB.status === 201 && scanB.data?.status === "P", `HTTP ${scanB.status} ${scanB.data?.reason || ""}`);
+
+  // ---- The mint and the scan agree at the EDGES of the window ---------------------
+  //
+  // attendanceTap.js says the mint and the scan MUST agree to the minute, and the shared
+  // predicate is the mechanism — but until now the only PAIRED assertion was the closed
+  // term. The historic bug that predicate exists for was a projector advertising a code
+  // the server refused, and it lived exactly at these edges: just before the start,
+  // inside the early-grace window, and the grace setting itself, which this suite had
+  // pinned at zero for the whole run. Three pairs, with a real grace of ten minutes.
+  const graceOn = await call("/tags/settings", { method: "PUT", token: adminToken, body: { earlyGraceMins: 10 } });
+  check("an administrator can let students check in before the class starts",
+    graceOn.status === 200 && graceOn.data?.earlyGraceMins === 10, `HTTP ${graceOn.status} earlyGraceMins=${graceOn.data?.earlyGraceMins}`);
+  const soon = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, 5), endTime: shift(now, 125), description: "qr in grace" } });
+  const later = await db.hndSession.create({ data: { unitId: unit.id, date: today, startTime: shift(now, 30), endTime: shift(now, 150), description: "qr before grace" } });
+  made.sessions.push(soon.id, later.id);
+  for (const sid of [QE_ID, QF_ID]) {
+    const e = await db.enrolment.create({ data: { studentId: sid, unitId: unit.id } });
+    made.enrolments.push(e.id);
+  }
+
+  const mintSoon = await call(`/hnd/sessions/${soon.id}/qr-code`, { token: adminToken });
+  const scanSoon = await call("/student/me/qr-check-in", { method: "POST", token: qeToken, body: { sessionId: soon.id, code: codeFor(soon.id) } });
+  if (scanSoon.status === 201) made.marks.push((await db.attendanceMark.findFirst({ where: { sessionId: soon.id, studentId: QE_ID }, select: { id: true } }))?.id);
+  check("inside the grace window the screen has a code, says when it opened, and a scan is marked Present",
+    mintSoon.status === 200 && typeof mintSoon.data?.code === "string" && mintSoon.data?.phase === "open"
+      && mintSoon.data?.opensAt === shift(soon.startTime, -10) && scanSoon.status === 201 && scanSoon.data?.status === "P",
+    `mint ${mintSoon.status} phase=${mintSoon.data?.phase} opensAt=${mintSoon.data?.opensAt} scan ${scanSoon.status} ${scanSoon.data?.status || scanSoon.data?.reason || ""}`);
+
+  const mintLater = await call(`/hnd/sessions/${later.id}/qr-code`, { token: adminToken });
+  const scanLater = await call("/student/me/qr-check-in", { method: "POST", token: qeToken, body: { sessionId: later.id, code: codeFor(later.id) } });
+  check("before the grace window the screen has NO code and says when it opens, and a scan is refused as not running",
+    mintLater.status === 200 && mintLater.data?.code === null && mintLater.data?.phase === "before"
+      && mintLater.data?.opensAt === shift(later.startTime, -10) && scanLater.status === 409 && scanLater.data?.reason === "no_session_now",
+    `mint ${mintLater.status} code=${mintLater.data?.code} phase=${mintLater.data?.phase} scan ${scanLater.status} ${scanLater.data?.reason || ""}`);
+
+  // Breaks if: either side stops reading earlyGraceMins, or reads it from a different
+  // place than the other. Grace back to zero, and the same class is "before" for both.
+  const graceOff = await call("/tags/settings", { method: "PUT", token: adminToken, body: { earlyGraceMins: 0 } });
+  const mintSoonNoGrace = await call(`/hnd/sessions/${soon.id}/qr-code`, { token: adminToken });
+  const scanSoonNoGrace = await call("/student/me/qr-check-in", { method: "POST", token: qfToken, body: { sessionId: soon.id, code: codeFor(soon.id) } });
+  check("with the grace removed, the same class is not yet open on the screen AND at the scan",
+    graceOff.status === 200 && mintSoonNoGrace.data?.code === null && mintSoonNoGrace.data?.phase === "before"
+      && scanSoonNoGrace.status === 409 && scanSoonNoGrace.data?.reason === "no_session_now",
+    `mint code=${mintSoonNoGrace.data?.code} phase=${mintSoonNoGrace.data?.phase} scan ${scanSoonNoGrace.status} ${scanSoonNoGrace.data?.reason || ""}`);
 
   // The Registers page needs to know whether to offer a "QR code" action on each session
   // at all — a button that only ever leads to "switched off" is a dead end.
