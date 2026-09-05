@@ -102,8 +102,10 @@ const token = officer.body.token;
 const students = await call("/hnd/students", { token });
 const student = (students.body || [])[0];
 if (!student) {
+  // EXIT 2, NOT 0 — the runner maps only 2 to SKIP, so exit 0 reported this whole
+  // health-data suite as PASS with none of it run. Article 9 data is what it covers.
   console.log("SKIP — no seeded students, so there is nobody to record a claim against");
-  process.exit(0);
+  process.exit(2);
 }
 
 const created = [];

@@ -190,8 +190,14 @@ and `findFirst` afterwards returns whichever row the planner picks — a college
 attendance bands or progression thresholds becoming a coin toss between two rows. The
 constant key makes the second writer collide with the first instead, which is the whole
 point of it. Reads stay on `findFirst`, because a read that must not create a row should
-not be able to, and the key is what guarantees there is at most one row to find. Any sixth
-config table of this shape wants the same two halves.
+not be able to, and the key is what guarantees there is at most one row to find. Any
+further config table of this shape wants the same two halves.
+
+**There are nine of them now, not five.** `AttendanceEmailConfig`,
+`SupportDepartmentConfig`, `AdmissionTrackerSettings` and `Tenant` itself carry the same
+constant key; `grep 'default("singleton")' server/prisma/schema.prisma` is the count that
+is actually true. This paragraph said "any sixth" for four tables longer than that was
+right, which is exactly how somebody comes to believe they are adding the first new one.
 
 `integrationConfig.js` holds the provider registry (`moodle`, `canvas`, `blackboard`,
 `email`, `sharepoint`). Precedence is: what the college saved through Settings, then
@@ -259,11 +265,26 @@ pastoral record, and a caseload containing the whole intake is the same as no ca
 *unknown* programme age is deliberately not exempt — muting every code for a student the
 calendar cannot place fails safe in the wrong direction.
 
-**Two tables are dead ends.** `AssessmentSubmission` is written by *nothing* — no VLE
-adapter, no importer — so a signal reading it measures the integration, not the student.
-`Admission` and `SlcApplication` hold a student's name and typed college ID as plain
-strings with no relation to `Student`, so nothing on them is reachable from this pipeline,
-however useful the columns look.
+**Some columns are dead ends, and the list changed — check before relying on it.**
+Corrected 5 Sep 2026; the previous wording was wrong in both halves and load-bearing
+decisions had been built on it.
+
+`AssessmentSubmission` **is** written — `moodle.js` upserts it during the sync, for
+*observed* activities only. The real qualification is narrower than "nothing writes it":
+on an install with no Moodle the table is empty, and every reader guards on
+`count() > 0` first, so it degrades honestly. A signal reading it measures the student
+where the integration reports, and reports nothing where it does not.
+
+`Admission.linkedStudentId` and `SlcApplication.studentId` are the actual dead ends, and
+they are worse than a dead table because **the readers exist**. Both are real foreign
+keys; neither is written by anything in `server/src` (only by dry-run backfill tools). So
+every `entryProfile*` figure, `rightToStudyExpiresOn`, and every `funding*` column is
+permanently null at every install — scored, tested, shipped, always empty. Editing an SLC
+record also never rescores the student, because `markStale()` hangs off the link.
+
+`Admission.studentId` — the *typed* college ID, a plain string beside the FK — is the
+hazard to watch: it names the applicant's SharePoint folder, so one typo files a person's
+identity documents under another student's number.
 
 **"Outcome" means two different things and the collision has caused three bugs.** An
 intervention's `outcome` is the response to something staff did; a `StudentOutcome` is what
@@ -339,11 +360,16 @@ decile of a cohort sitting between 88% and 92% is three points off the mean.
 
 ## Workload, funding and VLE engagement
 
-**Five modules now emit `TRIP_` codes into one `riskDriverCodes` column** — `tripwires`,
-`coverage`, `cohort`, `workload`, `funding`. They are written independently and cannot see
-each other, so `schema-contract.test.js` asserts the five vocabularies are disjoint and
-all `TRIP_`-prefixed. A duplicate string would make two different findings
-indistinguishable on the screen.
+**Twelve modules now emit `TRIP_` codes into one `riskDriverCodes` column** —
+`tripwires`, `coverage`, `cohort`, `workload`, `funding`, `sessions`, `intake`,
+`history`, `divergence`, `assessmentType`, `timetable`, `earlyWindow`. They are written
+independently and cannot see each other, so `schema-contract.test.js` asserts the twelve
+vocabularies are disjoint and all `TRIP_`-prefixed. A duplicate string would make two
+different findings indistinguishable on the screen.
+
+(This said "five" until 5 Sep 2026, seven modules after it stopped being true. The test
+is the authority, not this paragraph: anyone adding a thirteenth from the old list would
+have checked for collisions against fewer than half the vocabularies that exist.)
 
 **A busy calendar is a figure; a busy calendar PLUS something about this student is a
 code.** `assessmentsDueSoon` already established that a timetable fact fires cohort-wide

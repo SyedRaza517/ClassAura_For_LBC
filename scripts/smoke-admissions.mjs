@@ -331,6 +331,33 @@ try {
   check("...but no application is created", (await db.admission.count({ where: { email: hpEmail } })) === 0);
 
   // ------------------------------------------------------------------------
+  console.log("\n--- the public form is rate limited ---");
+  // LAST OF THE APPLY POSTS, deliberately. This burst spends the per-IP budget for the
+  // rest of the hour, so anything above that still needs the form has to run before it.
+  //
+  // What the limiter is for: the duplicate-email check answers "does this address
+  // already belong to somebody here?" to anybody, with a distinguishable 409 — the same
+  // roster oracle /api/applicant/check-email was limited to close. And every accepted
+  // call writes a row carrying criminal-conviction, medical and ethnicity answers, with
+  // only a honeypot in the way.
+  let limited = null;
+  for (let i = 0; i < 30 && limited === null; i++) {
+    const r = await call("/admission-apply", {
+      method: "POST",
+      body: { firstName: "Burst", surname: `Test${i}`, email: `adm-burst-${RUN}-${i}@smoke.invalid` },
+    });
+    if (r.status === 429) limited = i;
+  }
+  check("a burst of submissions is refused with 429", limited !== null, limited === null ? "never limited in 30 tries" : `limited after ${limited}`);
+  // The refusal must not become a NEW oracle: a 429 that named an account, or that
+  // differed between a known and an unknown address, would leak exactly what the limit
+  // exists to protect.
+  const overBudget = await call("/admission-apply", { method: "POST", body: { firstName: "Dup", surname: "Licate", email: "admin@edtech.co.uk" } });
+  check("...and the refusal confirms nothing about the address", overBudget.status === 429 && !/already in use/i.test(JSON.stringify(overBudget.data || {})), `HTTP ${overBudget.status}`);
+  // Rows the burst managed to create before the cap, so the pile is left as we found it.
+  await db.admission.deleteMany({ where: { email: { contains: `adm-burst-${RUN}-` } } });
+
+  // ------------------------------------------------------------------------
   console.log("\n--- the course and intake lists the public form offers ---");
   const blank = await call("/admission-config/courses", { method: "POST", token: adminToken, body: { name: "   " } });
   check("a nameless course is refused", blank.status === 400, `HTTP ${blank.status}`);

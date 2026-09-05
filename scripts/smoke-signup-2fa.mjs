@@ -100,6 +100,23 @@ if (r.data?.staff?.totpRequired !== true) {
   console.log("  re-enrolment. They will run as soon as TOTP_ENFORCED is true.");
   console.log("=".repeat(64));
   await db.$disconnect().catch(() => {});
+  // SKIP ONLY IF NOTHING HAS ALREADY FAILED.
+  //
+  // Fifteen assertions have run by this point — signup validation, "an existing email
+  // leaks nothing", "staff cannot list requests (403)", "staff cannot approve (403)",
+  // "allowance applied". They are about signup RBAC, not about 2FA, and they hold
+  // whether or not TOTP_ENFORCED is set.
+  //
+  // The exit was unconditional, so any of those failing still reported
+  // `SKIP  (feature disabled in this build)` and a green run. A regression in who may
+  // approve a sign-up request was invisible — and the banner above prints `pass` while
+  // never once reading `fail`, which is what made it look thorough.
+  //
+  // 2 means "the switched-off half was not run". A real failure is still a failure.
+  if (fail > 0) {
+    console.log(`\n${pass} passed, ${fail} FAILED before the skip — these are signup checks, not 2FA ones.\n`);
+    process.exit(1);
+  }
   process.exit(2);
 }
 check("2FA mandatory on the new account", r.data?.staff?.totpRequired === true);

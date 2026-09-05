@@ -86,7 +86,12 @@ const { id: officerId, token } = officer;
 // denominator is null for a second, uninteresting reason, and that would mask the
 // null this suite exists to check.
 const seedUnit = await db.enrolment.groupBy({ by: ["unitId"], _count: { _all: true }, orderBy: { _count: { unitId: "desc" } }, take: 1 });
-if (!seedUnit.length) { console.log("SKIP — the seed produced no enrolments, so no cohort exists to measure"); process.exit(0); }
+// EXIT 2, NOT 0. scripts/test.mjs maps only exit 2 to SKIP; exit 0 is recorded as
+// `PASS smoke-assessment-tracker.mjs`, so this suite's entire body could be bypassed
+// while the summary line claimed coverage of it. That is the precise failure CLAUDE.md
+// describes when it says a SKIP must read differently from a PASS — a switched-off
+// feature has to stay visible instead of counting as coverage.
+if (!seedUnit.length) { console.log("SKIP — the seed produced no enrolments, so no cohort exists to measure"); process.exit(2); }
 const fixtureUnitId = seedUnit[0].unitId;
 const madeAssessment = await call("/assessments", {
   method: "POST", token: adminToken,
