@@ -266,7 +266,7 @@ router.post("/me/tap-check-in", async (req, res) => {
     await logTap(req, { ...base, outcome: decision.reason });
     return res.status(409).json({
       error: decision.reason === "term_locked"
-        ? "That class is outside its teaching term, so the register is closed."
+        ? "That class is outside term dates, so check-in is closed."
         : "No class of yours is running right now.",
       reason: decision.reason,
     });
@@ -358,7 +358,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   const settings = await tapConfig.get();
   if (!settings.qrEnabled) {
     await logTap(req, { studentId: req.user.id, method: "qr", outcome: "disabled" });
-    return res.status(403).json({ error: "QR check-in isn't switched on for this college.", reason: "qr_off" });
+    return res.status(403).json({ error: "Scanning to check in isn't switched on. Your lecturer will mark you in.", reason: "qr_off" });
   }
 
   const rawSessionId = req.body?.sessionId;
@@ -451,7 +451,7 @@ router.post("/me/qr-check-in", async (req, res) => {
 
   if (!termOpenOn(session.unit?.term, date)) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "term_locked" });
-    return res.status(423).json({ error: "That class is outside its teaching term, so the register is closed.", reason: "term_locked" });
+    return res.status(423).json({ error: "That class is outside term dates, so check-in is closed.", reason: "term_locked" });
   }
 
   const shaped = {
