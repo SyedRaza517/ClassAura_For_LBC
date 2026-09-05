@@ -7,7 +7,7 @@
     "dev": "node --watch --watch-path=./src src/index.js",
     "start": "node src/index.js",
     "migrate": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
+    "migrate:deploy": "node prisma/check-database-url.js && prisma migrate deploy",
     "migrate:status": "prisma migrate status",
     "generate": "prisma generate",
     "seed": "node prisma/seed.js",

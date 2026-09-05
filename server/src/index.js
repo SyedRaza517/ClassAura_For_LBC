@@ -60,7 +60,7 @@ app.use("/api/branding", express.json({ limit: "2mb" }));
 app.use(express.json({ limit: "1mb" }));
 
 // Health check
-app.get("/api/health", (_req, res) => res.json({ ok: true, service: "edtech-hub-api" }));
+app.get("/api/health", (_req, res) => res.json(require("./health").healthPayload()));
 
 // wrapAsync makes a rejected promise inside an async handler reach the error
 // middleware below instead of terminating the process — see asyncRoutes.js.
@@ -183,6 +183,10 @@ app.listen(PORT, () => {
   console.log(`Files: ${require("./storage").describeStorage()}`);
   console.log(`SharePoint: ${require("./sharepoint").describe()}`);
   console.log(`Check-in codes: ${require("./secrets").describeCheckInCodes()}`);
+  // Which Postgres address, and whether it is the right kind. A Supabase transaction
+  // pooler URL breaks queries and hangs migrations; this makes it visible in the first
+  // screen of the log rather than at the first scan of the first lecture.
+  console.log(`Database: ${require("./databaseUrl").describeDatabaseUrl(process.env.DATABASE_URL)}`);
   startKeepAlive();
   require("./scheduler").startScheduler();
   require("./attendanceScheduler").start();

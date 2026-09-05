@@ -49,7 +49,10 @@ services:
         value: 1d
       # --- secrets: set these in the Render dashboard (never committed) ---
       - key: DATABASE_URL
-        sync: false              # your Supabase session-pooler URL (from server/.env)
+        sync: false              # your Supabase SESSION pooler URL (port 5432), from server/.env.
+                                 # NOT the transaction pooler (port 6543): Prisma's queries fail on it
+                                 # and migrate deploy hangs. The build step now refuses a 6543 URL
+                                 # up front (server/prisma/check-database-url.js) rather than stalling.
       - key: JWT_SECRET
         sync: false              # the long random secret from server/.env
       - key: CLIENT_URL

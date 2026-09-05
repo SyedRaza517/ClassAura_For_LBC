@@ -21,6 +21,14 @@ layer, sent alongside the merged view so "reset to the college default" has some
 reset to. Neither route is documented below; see §8 of `STATUS.md` on how much of the API
 this file still omits.
 
+## Health
+
+| Method | Path | Auth | Answer |
+|---|---|---|---|
+| GET | `/api/health` | none | `{ ok: true, service: "edtech-hub-api", version }` |
+
+`version` is the first seven characters of the commit the host built (Render's `RENDER_GIT_COMMIT`), or `null` where the host does not say. The client and the API deploy separately and a browser can be hours newer than the server it talks to; this is how to tell which build is answering without signing in. Nothing else is here on purpose: the endpoint is public and pinged by the keep-alive. In particular it does not say whether check-in codes are signed with a real secret: that secret is the session secret, so the answer would tell an anonymous caller whether every login token on a misconfigured deployment is forgeable. A production process refuses to start without a real secret, so `ok: true` from a production host already answers the question.
+
 ## Auth
 | Method | Path | Access | Body | Returns |
 |--------|------|--------|------|---------|

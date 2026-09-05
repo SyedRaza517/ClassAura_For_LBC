@@ -15,7 +15,7 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
 
    | Key | Value |
    |-----|-------|
-   | `DATABASE_URL` | your Supabase **session-pooler** URL (from `server/.env`) |
+   | `DATABASE_URL` | your Supabase **session-pooler** URL (from `server/.env`): the one on port **5432**. Not the transaction pooler on port 6543, which breaks Prisma's queries and hangs migrations. Since 5 Sep 2026 `npm run migrate:deploy` (the build step) checks this first and refuses a 6543 URL with the fix in the message, so a wrong paste fails the build in seconds instead of stalling it |
    | `JWT_SECRET` | the long random secret from `server/.env` |
    | `CLIENT_URL` | your dashboard URL (fill after step 2), e.g. `https://edtech-hub.vercel.app` |
    | `CORS_ORIGINS` | `https://edtech-hub.vercel.app,capacitor://localhost,http://localhost` |
@@ -23,7 +23,7 @@ The repo already contains **`render.yaml`** (a Blueprint) and Prisma is a runtim
 
 4. Deploy → note the URL, e.g. `https://edtech-hub-api.onrender.com`. That is your **API base**.
    - `NODE_ENV=production` and `JWT_EXPIRES=1d` are set for you.
-   - Health check: `GET /api/health`.
+   - Health check: `GET /api/health`. Since 5 Sep 2026 it also answers `version` (the first seven characters of the commit Render built, so you can see which build is live without signing in). It deliberately does not say which secret signs codes and sessions; a production process cannot start without a real one, so a healthy production host is the answer.
    - Free plan sleeps after 15 min idle (cold start ~30s). Use **Starter ($7/mo)** for always-on.
 
 > ⚠️ `CORS_ORIGINS` **must** include `capacitor://localhost` and `http://localhost` or the mobile apps can't call the API.
