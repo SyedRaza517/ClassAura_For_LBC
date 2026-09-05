@@ -7016,11 +7016,17 @@ function HndPercentages({ store }) {
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up lg:col-span-2">
           <p className="mb-3 text-sm font-bold text-slate-700">Attendance by unit</p>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={visibleUnits.map(m => ({ code: m.code, pct: unitTotals[m.id]?.pct ?? 0 }))}>
+            {/* NULL, NOT 0, for a unit whose register was never taken. This said `?? 0`
+                while the Cell fill below said `?? null` — so the same bar was drawn grey
+                ("not measured") and simultaneously labelled "0%" ("nobody attended"),
+                which are different facts and only one of them is true. Recharts draws
+                nothing for a null, which is the honest shape: no bar, and a tooltip that
+                says so rather than naming a figure nobody measured. */}
+            <BarChart data={visibleUnits.map(m => ({ code: m.code, pct: unitTotals[m.id]?.pct ?? null }))}>
               <CartesianGrid stroke={GRID} vertical={false} />
               <XAxis dataKey="code" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
               <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 13 }} formatter={(v) => [`${v}%`, "Attendance"]} />
+              <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 13 }} formatter={(v) => [v == null ? "not measured" : `${v}%`, "Attendance"]} />
               <Bar dataKey="pct" radius={[6, 6, 0, 0]}>
                 {visibleUnits.map(m => <Cell key={m.id} fill={pctTone(unitTotals[m.id]?.pct ?? null).colour} />)}
               </Bar>

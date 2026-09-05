@@ -163,7 +163,23 @@ async function requireAuth(req, res, next) {
     // unit test instead of only by booting the server and reading a list.
     return bindScope(scopeForStaff(staff), next);
   } catch (e) {
-    res.status(401).json({ error: "Invalid or expired token" });
+    // A BAD TOKEN AND A BROKEN DATABASE ARE DIFFERENT ANSWERS.
+    //
+    // This `try` spans the jwt.verify AND the staff/student/applicant lookups, so every
+    // failure came back as 401 "Invalid or expired token" — including a database outage.
+    // The client reads that as "your session ended" and signs the user out, so a
+    // transient infrastructure fault logged out every member of staff and every student
+    // in the college at once, and the logs recorded it as a wave of bad tokens rather
+    // than as the outage it was.
+    //
+    // jwt.verify throws named errors for the cases that really are the caller's fault;
+    // anything else is ours, and 503 says so without inviting a sign-out. Logged too,
+    // because a 401 needs no explanation and this does.
+    if (e?.name === "JsonWebTokenError" || e?.name === "TokenExpiredError" || e?.name === "NotBeforeError") {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+    console.error("[auth] could not resolve the account for a valid token:", e?.message || e);
+    return res.status(503).json({ error: "Sign-in is temporarily unavailable. Please try again shortly." });
   }
 }
 

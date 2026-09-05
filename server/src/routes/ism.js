@@ -41,7 +41,18 @@ async function mirrorOutcome(admissionId) {
   // swallow the "record not found" (P2025) rather than 500 the whole request.
   try {
     await prisma.admission.update({ where: { id: admissionId }, data: { ismOutcome: latest?.admitted || null } });
-  } catch (_) {}
+  } catch (e) {
+    // P2025 ONLY, which is what the comment above always claimed. A bare `catch (_) {}`
+    // swallowed everything, so a genuine write failure left `ismOutcome` holding the
+    // PREVIOUS interview verdict — silently, while the interview record itself said
+    // something else. That value is what the applicant portal shows and what the
+    // admissions funnel counts as an interview outcome, so the two screens disagree
+    // about whether somebody was admitted and nothing anywhere says why.
+    //
+    // A missing row is ordinary here (the link is SetNull, so the admission may have
+    // been deleted). Anything else is a real failure and belongs to the caller.
+    if (e?.code !== "P2025") throw e;
+  }
 }
 
 // The applicant picker for the ISM form — a light list of admissions to link against.
