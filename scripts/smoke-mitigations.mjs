@@ -306,11 +306,27 @@ await check("the audit trail records the DECISION and never the reason", async (
 await check("the prediction register never carries the reason for a claim", async () => {
   // The engine must know THAT a student has cover, never WHY. The server-side test reads
   // metrics.js as text; this one checks what actually reaches a browser.
+  // SCORE FIRST, OR THERE IS NOTHING TO INSPECT. The register is only populated by a
+  // recalculation, and this suite never triggered one — so `/prediction/students` came
+  // back with an empty list, `blob` was `{"students":[],...}`, and the two assertions
+  // below found no category in a payload that contained no students either. The check
+  // passed on every run while discriminating nothing, exactly as its sibling twelve
+  // lines above does not (`assert.ok(mine.length, "no audit rows written…")`).
+  //
+  // Adding the positive half is what exposed it; the run is what makes it mean something.
+  const recalc = await call("/prediction/recalculate", { method: "POST", token, body: {} });
+  assert.equal(recalc.status, 200, `could not score the cohort: ${JSON.stringify(recalc.body).slice(0, 200)}`);
+
   const r = await call("/prediction/students?limit=50", { token });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  const rows = Array.isArray(r.body?.students) ? r.body.students : (Array.isArray(r.body) ? r.body : []);
+  assert.ok(rows.length,
+    `the prediction register came back empty after scoring ${recalc.body?.scored ?? "?"} students — ` +
+    `absence of a category proves nothing about a payload with no students in it`);
   const blob = JSON.stringify(r.body || {});
   assert.ok(!/"category"/.test(blob), "a category leaked into the prediction payload");
   assert.ok(!/Hospital admission/i.test(blob), "claim detail leaked into the prediction payload");
-  return "no category, no detail";
+  return `${rows.length} scored students, no category, no detail`;
 });
 
 /* -------------------------------------------------------------------------- */

@@ -65,6 +65,13 @@ await check("GET /branding needs no token", async () => {
 
 await check("the public endpoint exposes no correspondence details", async () => {
   const r = await call("/branding");
+  // STATUS AND A POSITIVE FIELD FIRST. Six `!(x in r.body)` assertions pass happily when
+  // r.body is `{error: ...}` or `{raw: "..."}` — so a 404 or a 500 on this endpoint read
+  // as six fields safely withheld, and the check would have kept passing if the route
+  // were deleted outright. Absence only means something once the response is real.
+  assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  assert.ok("displayName" in r.body || "primaryColor" in r.body,
+    "the public branding payload carries none of the fields it exists to serve — nothing was actually inspected");
   for (const leaked of ["signatoryName", "signatoryTitle", "legalFooter", "addressLines", "contactPhone", "mailFrom"]) {
     assert.ok(!(leaked in r.body), `${leaked} must not be public`);
   }
@@ -117,12 +124,17 @@ await check("a college can set its own identity", async () => {
 await check("outbound mail is built on the college's OWN domain", async () => {
   const r = await call("/branding/all", { token });
   const mf = r.body.resolved.mailFrom || {};
-  for (const [team, addr] of Object.entries(mf)) {
-    if (!addr) continue;
+  // `|| {}` then a for-of is zero iterations and zero assertions when mailFrom is absent
+  // — the check printed a tick beside its own detail string "(no mail-from configured)",
+  // and would pass with the derivation deleted entirely. The addresses are the subject of
+  // the test, so their absence is a failure, not a pass.
+  const addrs = Object.entries(mf).filter(([, a]) => a);
+  assert.ok(addrs.length, "no mail-from addresses were resolved at all — the college's own domain was never exercised");
+  for (const [team, addr] of addrs) {
     assert.ok(!/edtech\.co\.uk/i.test(addr), `${team} still sends from another institution's domain: ${addr}`);
     assert.ok(/riverside\.ac\.uk/i.test(addr), `${team} should use the college's domain, got: ${addr}`);
   }
-  return mf.pat || "(no mail-from configured)";
+  return `${addrs.length} address(es) on the college's own domain`;
 });
 
 await check("the change is visible to the public endpoint", async () => {

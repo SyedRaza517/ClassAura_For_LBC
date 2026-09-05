@@ -114,10 +114,20 @@ try {
     const e = list.data?.entries || [];
     return e.length < 2 || new Date(e[0].at) >= new Date(e[1].at);
   })());
+  // `(x || []).every(...)` IS VACUOUSLY TRUE. Both of these passed when the filter
+  // returned nothing, when the endpoint 403'd, and if the filtering were removed
+  // altogether — the two checks that exist to prove filtering works could not fail.
+  // A filter is only demonstrated by a non-empty result whose every row matches.
   const filtered = await call("/audit?action=staff.access.changed", { token: admin.token });
-  check("filters by action", (filtered.data?.entries || []).every((e) => e.action === "staff.access.changed"));
+  const fRows = filtered.data?.entries || [];
+  check("filters by action",
+    filtered.status === 200 && fRows.length > 0 && fRows.every((e) => e.action === "staff.access.changed"),
+    `${fRows.length} row(s)`);
   const byEntity = await call(`/audit?entity=Staff&entityId=${target.id}`, { token: admin.token });
-  check("filters to one record's history", (byEntity.data?.entries || []).every((e) => e.entityId === target.id));
+  const eRows = byEntity.data?.entries || [];
+  check("filters to one record's history",
+    byEntity.status === 200 && eRows.length > 0 && eRows.every((e) => e.entityId === target.id),
+    `${eRows.length} row(s)`);
   const actions = await call("/audit/actions", { token: admin.token });
   check("lists the distinct actions present", actions.status === 200 && Array.isArray(actions.data));
 

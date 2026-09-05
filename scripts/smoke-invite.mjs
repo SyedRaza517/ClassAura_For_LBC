@@ -14,6 +14,12 @@ import crypto from "node:crypto";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
 const { PrismaClient } = require(`${ROOT}/server/node_modules/@prisma/client`);
+// Needed to prove the stored hash matches none of the passwords an invite might have
+// shipped — the claim the check near the bottom of this file makes by name.
+const bcrypt = require(`${ROOT}/server/node_modules/bcryptjs`);
+// The passwords an invited account must NOT already hold. Named once so the login
+// attempts below and the stored-hash assertion are demonstrably the same list.
+const GUESSES = ["Password123!", "changeme", "welcome", "edtech2026", ""];
 // The same database the API under test is using. This was a hardcoded SQLite file
 // path — a leftover from before the move to PostgreSQL — which made every suite that
 // touches the database directly fail schema validation before running a single query.
@@ -60,14 +66,26 @@ check("flagged as pending activation", created.data?.pendingActivation === true,
 check("the response says an invitation was sent", created.data?.invited === true);
 
 check("THE OLD HOLE IS CLOSED: password123 is refused", (await call("/auth/login", { method: "POST", body: { email, password: "password123" } })).status === 401);
-for (const guess of ["Password123!", "changeme", "welcome", "edtech2026", ""]) {
+for (const guess of GUESSES) {
   // An empty password is a 400 ("email and password required") rather than a 401;
   // what matters is that no session ever comes back.
   const r = await call("/auth/login", { method: "POST", body: { email, password: guess } });
   check(`a guessed password "${guess || "(empty)"}" is refused`, r.status !== 200 && !r.data?.token, `HTTP ${r.status}`);
 }
 const row = await db.staff.findFirst({ where: { email } });
-check("the stored password is not the shared default", !!row && row.pendingActivation === true);
+// THE LABEL NOW MATCHES WHAT IS CHECKED. This read
+// `check("the stored password is not the shared default", row.pendingActivation === true)`
+// — a claim about the password, asserted by looking at a completely different column,
+// and a duplicate of the "flagged as pending activation" check a few lines above. It
+// would have passed with `password123` hashed into the row, which is precisely the thing
+// its name promised nobody had done.
+check("the invited account is flagged pending activation", !!row && row.pendingActivation === true);
+// The password claim, actually tested: an invited account must hold no usable
+// credential at all until the invitee sets one. A hash that verifies against any of the
+// guesses tried above would mean the invite shipped a known password.
+check("...and carries no usable password until it is activated",
+  !!row && (row.passwordHash === null || !GUESSES.some((g) => g && bcrypt.compareSync(g, row.passwordHash))),
+  row?.passwordHash === null ? "no hash stored" : "hash matches none of the guessed defaults");
 
 console.log("\n--- activating it ---");
 const token = await inviteTokenFor(row.id);

@@ -282,6 +282,18 @@ test("adjustments.js reads nothing but the decision and the window", () => {
   for (const forbidden of ["c.category", "c.detail", ".category", ".detail"]) {
     assert.ok(!src.includes(forbidden), `adjustments.js touches ${forbidden}`);
   }
+
+  // AND THE FIELDS IT MUST READ, which every other source-text guard in this file
+  // carries and this one did not. A negatives-only check passes on an emptied file, on a
+  // stubbed one, and on a matcher that silently matches nothing — the exact failure the
+  // mitigating-circumstances guard below documents having been caught by its own
+  // needed-fields half. Without this, "adjustments.js reads nothing but the decision and
+  // the window" would still pass if it read nothing at all.
+  for (const needed of ["status", "coversFrom", "coversTo", "coversAttendance"]) {
+    assert.ok(src.includes(needed),
+      `adjustments.js no longer mentions "${needed}" — it cannot be applying mitigating ` +
+      `circumstances, and the forbidden-field half above is passing on an empty file.`);
+  }
 });
 
 /* -------------------------------------------------------------------------- */
