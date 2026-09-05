@@ -14,7 +14,7 @@
 // Run with: node --test src/qrResultView.test.js   (from client/)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { qrScanResult, qrScanRefusal } from "./qrResultView.js";
+import { qrScanResult, qrScanRefusal, keepScanAfter } from "./qrResultView.js";
 
 const session = { unitCode: "OBM", unitName: "Organisational Behaviour Management" };
 
@@ -117,4 +117,23 @@ test("nothing at all still produces a usable card", () => {
   const v = qrScanRefusal(undefined);
   assert.ok(v.heading.length > 0);
   assert.ok(v.advice.length > 0);
+});
+
+// ---- A scan interrupted by an expired session -------------------------------------
+//
+// The card clears the one-shot stash the moment it submits, so a student cannot
+// double-mark by reloading. But a 401 means the request never reached the register: the
+// token had expired, the app is about to show the sign-in, and the scan was the last
+// thing they did. Dropping it sends them back to the projector to scan again for no
+// reason of their own. A 401, and only a 401, keeps the scan for after sign-in.
+test("a scan refused because the session expired is kept for after sign-in", () => {
+  assert.equal(keepScanAfter(Object.assign(new Error("Invalid token"), { status: 401 })), true);
+});
+
+test("every other refusal, and a dropped connection, does not resurrect the scan", () => {
+  assert.equal(keepScanAfter(Object.assign(new Error("expired"), { status: 409, body: { reason: "qr_expired" } })), false);
+  assert.equal(keepScanAfter(Object.assign(new Error("no"), { status: 403 })), false);
+  assert.equal(keepScanAfter(Object.assign(new Error("server"), { status: 500 })), false);
+  assert.equal(keepScanAfter(new TypeError("Load failed")), false);
+  assert.equal(keepScanAfter(null), false);
 });

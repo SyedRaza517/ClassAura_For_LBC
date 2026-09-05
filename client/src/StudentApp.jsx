@@ -4,7 +4,7 @@ import PhoneShell from "./PhoneShell";
 import { BrandMark } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
 import { useBackHandler } from "./backButton";
-import { qrScanResult, qrScanRefusal } from "./qrResultView";
+import { qrScanResult, qrScanRefusal, keepScanAfter } from "./qrResultView";
 import { api, setToken } from "./api";
 // The same Face ID / fingerprint control the staff app uses, so both halves behave
 // identically and there is one implementation to keep correct.
@@ -312,7 +312,7 @@ export default function StudentApp({ user, logout }) {
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
-        <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies} />
+        <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies} codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)} />
       </div>
     </PhoneShell>
   );
@@ -320,11 +320,16 @@ export default function StudentApp({ user, logout }) {
 
 // Persistent bottom navigation — the single biggest thing that makes this feel like
 // an app rather than a website: every section is one thumb-tap away, always.
-function TabBar({ screen, setScreen, newReplies }) {
+// `codesOnly`: the Check In tab is drawn with the NFC wave glyph, which is wrong for a
+// college that only shows codes on screen — the first thing a student reads on the bar
+// would name the one technology their college does not use. The More screen already
+// picks its glyph this way; the bar now agrees with it.
+function TabBar({ screen, setScreen, newReplies, codesOnly = false }) {
   return (
     <nav className="sticky bottom-0 z-30 mt-2 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
-      {TABS.map(({ key, label, Icon }) => {
+      {TABS.map(({ key, label, Icon: TabIcon }) => {
         const on = screen === key;
+        const Icon = key === "checkin" && codesOnly ? QrCode : TabIcon;
         return (
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
             className="press relative flex flex-1 flex-col items-center gap-1 py-2">
@@ -469,7 +474,7 @@ function TodaysClasses({ today, loading }) {
                 </span>
                 <span className="mt-0.5 block text-[11.5px] text-slate-400">
                   {c.startTime}&ndash;{c.endTime}
-                  {c.checkedInAt && <> &middot; tapped in {c.checkedInAt}</>}
+                  {c.checkedInAt && <> &middot; checked in {c.checkedInAt}</>}
                   {!c.termOpen && <> &middot; term closed</>}
                 </span>
               </span>
@@ -516,7 +521,7 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
       {tapContext == null && (
         <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
           <Loader2 size={20} className="mx-auto animate-spin text-slate-300" />
-          <p className="mt-2 text-[13px] text-slate-500">Checking whether you can check in…</p>
+          <p className="mt-2 text-[13px] text-slate-500">Just a moment…</p>
         </div>
       )}
 
@@ -573,7 +578,7 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           </p>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
             {tapContext.next
-              ? <>Check-in opens when your next class starts — <strong>{tapContext.next.unitName || tapContext.next.unitCode}</strong> at {tapContext.next.startTime}.</>
+              ? <>Check-in opens when <strong>{tapContext.next.unitName || tapContext.next.unitCode}</strong> starts at {tapContext.next.startTime}.</>
               : "You have no more classes today."}
           </p>
         </div>
@@ -644,6 +649,10 @@ function QrCheckInCard({ qr, reload, onDone }) {
         // Refresh the day's list so the P or L pill appears under the card at once.
         reload();
       } catch (e) {
+        // An expired session is the one refusal that never reached the register. The app
+        // is about to show the sign-in; put the scan back so it submits itself afterwards
+        // instead of sending the student back to the projector. See keepScanAfter.
+        if (keepScanAfter(e)) stashScan(qr);
         setState({ phase: "failed", error: e });
       }
     })();
@@ -1745,9 +1754,9 @@ function CheckInStatusRow({ tapContext, setScreen }) {
   const body = loading
     ? "Checking…"
     : off
-      ? "Your college hasn't switched check-in on yet. When it does, a Check in card appears at the top of your home screen."
+      ? "Your college hasn't switched check-in on yet. When it does, the Check In tab will show you how."
       : running
-        ? `${running > 1 ? "Your classes are running now" : `${tapContext.now[0].unitName || tapContext.now[0].unitCode} is running now`}. The card is at the top of your home screen.`
+        ? `${running > 1 ? "Your classes are running now" : `${tapContext.now[0].unitName || tapContext.now[0].unitCode} is running now`}. ${codes && !stickers ? "Open the Check In tab and scan the code on screen." : "Open the Check In tab."}`
         : next
           ? `Nothing to check in to yet. Your next class starts at ${next.startTime}.`
           : "No more classes today.";
@@ -1755,7 +1764,7 @@ function CheckInStatusRow({ tapContext, setScreen }) {
   return (
     <button
       type="button"
-      onClick={() => setScreen("home")}
+      onClick={() => setScreen("checkin")}
       disabled={loading || off}
       className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default"
     >
