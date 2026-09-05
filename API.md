@@ -291,17 +291,18 @@ applied twice. (Single-process; a multi-process deployment needs a database-leve
 | POST   | `/hnd/semesters` | admin | `{ name, start, end }` |
 | PUT    | `/hnd/semesters/:id` | admin | any of `{ name, start, end }` |
 | DELETE | `/hnd/semesters/:id` | admin | — (sessions and marks are untouched) |
-| GET    | `/hnd/modules` | auth | — |
-| POST   | `/hnd/modules` | admin | `{ code, name, tutor? }` |
-| PUT    | `/hnd/modules/:id` | admin | any of `{ code, name, tutor }` |
-| DELETE | `/hnd/modules/:id` | admin | — (cascades to sessions + marks) |
+| GET    | `/hnd/units` | auth | — |
+| POST   | `/hnd/units` | admin | `{ code, name, tutor? }` |
+| PUT    | `/hnd/units/:id` | admin | any of `{ code, name, tutor }` |
+| DELETE | `/hnd/units/:id` | admin | — (cascades to sessions + marks) |
 | GET    | `/hnd/students` | auth | — |
-| POST   | `/hnd/students` | admin | `{ firstName, lastName, studentRef, email?, moduleIds? }` |
+| POST   | `/hnd/students` | admin | `{ firstName, lastName, studentRef, email?, unitIds? }` |
 | PUT    | `/hnd/students/:id` | admin | any of `{ firstName, lastName, studentRef, email, active }` |
 | DELETE | `/hnd/students/:id` | admin | — |
-| PUT    | `/hnd/students/:id/enrolments` | admin | `{ moduleIds: [] }` (replaces the set) |
-| GET    | `/hnd/sessions?moduleId=` | auth | — |
-| POST   | `/hnd/sessions` | admin | `{ moduleId, date, start, end, description?, audience? }` |
+| PUT    | `/hnd/students/:id/enrolments` | admin | `{ unitIds: [] }` (replaces the set) |
+| PUT    | `/hnd/units/:id/enrolments` | admin | `{ studentIds: [] }` (replaces the set) |
+| GET    | `/hnd/sessions?unitId=` | auth | — |
+| POST   | `/hnd/sessions` | admin | `{ unitId, date, start, end, description?, audience? }` |
 | PUT    | `/hnd/sessions/:id` | admin | any of `{ date, start, end, description, audience }` |
 | DELETE | `/hnd/sessions/:id` | admin | — |
 | GET    | `/hnd/sessions/:id/register` | auth | — enrolled students + their marks |
@@ -314,7 +315,22 @@ applied twice. (Single-process; a multi-process deployment needs a database-leve
 | POST   | `/hnd/sessions/:id/mark-remaining-absent` | `registers` **or the tutor** | `{ override? }` — marks the unmarked absent |
 | POST   | `/hnd/sessions/:id/check-in-window` | `registers` **or the tutor** | `{ action: "close" }` or `{ action: "reopen", minutes? }` — end check-in early / hold it open |
 
-`email` defaults to `<studentRef>@edtech.co.uk` when omitted.
+**The resource is `units`, not `modules`.** Every path and body key above said
+`module`/`moduleId`, and none of them has ever existed: the Prisma model is `Unit`, the
+routes are `/hnd/units`, and the server hard-rejects the documented bodies —
+`unitIds must be an array of unit ids` (400) and `Unit required` (400). Anyone following
+this section verbatim got a 404 or a 400 on every call. Corrected 5 Sep 2026.
+
+**Enrolment can be edited from either side, and the body key differs.**
+`/hnd/students/:id/enrolments` takes `{ unitIds }` — which units this student is on;
+`/hnd/units/:id/enrolments` takes `{ studentIds }` — who is on this unit. Both REPLACE
+the set rather than adding to it, and both refuse a non-array outright: sending a string,
+or omitting the field, once dropped the student off every register with a cheerful 200.
+
+`email` is derived from the institution's own `contactEmail` in branding, and is left
+EMPTY when the college has configured none. It used to default to
+`<studentRef>@edtech.co.uk` — an address on a domain the college does not own — which is
+why it no longer does.
 A mark with `status: null` clears that student's mark. Partial `marks` arrays are
 allowed, so a half-taken register can be saved and finished later.
 
@@ -999,9 +1015,9 @@ Leave    { id, staffId, type, start, end, reason, status, requestedAt, decidedBy
 Adjustment { id, staffId, days, note, date }
 Document { id, name, type, date, scope, assignedTo }
 Semester { id, name, start, end, sessionCount? }
-HndModule { id, code, name, tutor, sessionCount?, studentCount? }
-Student  { id, firstName, lastName, name, studentRef, email, initials, colour, active, moduleIds? }
-Session  { id, moduleId, date, start, end, description, audience, markedCount? }
+Unit     { id, code, name, tutor, sessionCount?, studentCount? }   // model is Unit; there is no HndModule
+Student  { id, firstName, lastName, name, studentRef, email, initials, colour, active, unitIds? }
+Session  { id, unitId, date, start, end, description, audience, markedCount? }
 Mark     { id, sessionId, studentId, status, remark, takenBy, takenAt, checkedInAt }
          // checkedInAt: HH:MM the student tapped in; takenAt is reset by every register save
 AttendanceTag { id, label, active, lastTapAt, createdAt, createdBy }   // `code` ONLY on POST /tags
