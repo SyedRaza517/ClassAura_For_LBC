@@ -87,3 +87,38 @@ test("the explicit-grant-only set matches on both sides", () => {
   const client = clientArray("EXPLICIT_ONLY_PAGES");
   assert.deepEqual(client.sort(), [...EXPLICIT_ONLY].sort());
 });
+
+// A THIRD WAY THE PAIR CAN DRIFT, found the hard way on 7 September 2026.
+//
+// The two assertions above pin ADMIN_PAGES to its client copy and to PAGE_LABELS. Neither
+// looks at the ROUTERS, and a router is where a page key is actually enforced. Renaming
+// attendance-tags to attendance-settings passed both of them while leaving
+// routes/tags.js gated on a key that no longer existed -- so every grant had been
+// migrated to the new key and the router was still demanding the old one. Nobody could
+// reach the screen, and both contract tests were green.
+//
+// requirePage(k) for a k outside ADMIN_PAGES can never be satisfied by an explicit grant,
+// because the Access screen cannot offer a checkbox for a page that is not in the list.
+// It is therefore always a bug, and always a silent one: the route answers 403 to
+// somebody holding exactly the page it names.
+test("every requirePage key is a real page in ADMIN_PAGES", () => {
+  const dir = path.join(__dirname, "routes");
+  const used = new Map(); // key -> [files]
+  const walk = (d) => {
+    for (const name of fs.readdirSync(d)) {
+      const full = path.join(d, name);
+      if (fs.statSync(full).isDirectory()) { walk(full); continue; }
+      if (!name.endsWith(".js") || name.endsWith(".test.js")) continue;
+      for (const m of fs.readFileSync(full, "utf8").matchAll(/requirePage\("([^"]+)"\)/g)) {
+        if (!used.has(m[1])) used.set(m[1], []);
+        used.get(m[1]).push(name);
+      }
+    }
+  };
+  walk(dir);
+
+  const unknown = [...used.entries()].filter(([k]) => !ADMIN_PAGES.includes(k));
+  assert.deepEqual(unknown.map(([k, f]) => `${k} (${f.join(", ")})`), [],
+    "these routers gate on a page key that is not in ADMIN_PAGES, so no grant can ever " +
+    "satisfy them and the route answers 403 to somebody who holds the page");
+});

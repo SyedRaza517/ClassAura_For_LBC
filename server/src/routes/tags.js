@@ -13,7 +13,7 @@ const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
 const tapConfig = require("../attendanceTapConfig");
 
-router.use(requireAuth, requirePage("attendance-tags"));
+router.use(requireAuth, requirePage("attendance-settings"));
 
 // 16 random bytes, base64url. Not sequential and not derived from the label: a code
 // guessable from the sticker in the next room is a check-in nobody attended.
