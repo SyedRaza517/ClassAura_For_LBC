@@ -84,6 +84,20 @@ const sEvent = (e) => ({
   category: e.category?.name ?? null,
   categoryColour: e.category?.colour ?? null,
 
+  // The SCHOOL this class belongs to, as an id only.
+  //
+  // NULL IS A REAL ANSWER HERE and is passed through rather than coerced: on this model
+  // a null academicDepartmentId means "belongs to no one school, shown to everyone",
+  // which is the correct state for the workshops and study-support sessions the table
+  // exists to hold. The schema says so at length, and academicScopeModels.js gives it
+  // its own `columnOrNull` kind for it.
+  //
+  // No name and no colour, unlike category above. Those would cost a join on every
+  // event in a date window, and the one screen that needs them — the planner — already
+  // holds the whole school list from GET /timetabling/departments and can resolve the
+  // id without the server repeating a name several hundred times per request.
+  academicDepartmentId: e.academicDepartmentId ?? null,
+
   // Names only. A timetable needs to say who is teaching; it does not need their
   // email address, their site, or anything else on Staff.
   staff: (e.staff || []).map((x) => ({ id: x.staffId, name: x.staff?.name || "" })),

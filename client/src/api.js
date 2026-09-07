@@ -256,6 +256,18 @@ export const api = {
   ttUpdateCampus: (id, d) => request(`/timetabling/campuses/${id}`, { method: "PUT", body: d }),
   ttDeleteCampus: (id) => request(`/timetabling/campuses/${id}`, { method: "DELETE" }),
 
+  // The school (AcademicDepartment) list, read from the SCHEDULING page.
+  //
+  // Deliberately not /academic-departments: that route is gated on "settings", and a
+  // timetabler is exactly the person who holds scheduling and not settings — they would
+  // get a 403 and an empty School picker on the one screen they are meant to use.
+  // Create is here for the same reason. There is no update and no delete on purpose:
+  // a department is an access-control boundary (it decides which staff see which
+  // students), so renaming or retiring one belongs on Settings with the membership
+  // editor, not beside the room list.
+  ttDepartments: () => request("/timetabling/departments"),
+  ttCreateDepartment: (d) => request("/timetabling/departments", { method: "POST", body: d }),
+
   // Group membership. On /hnd rather than /timetabling because moving a student
   // between groups rewrites which department can see them — see the comment on the
   // routes themselves. A scheduling-only account gets 403 here, by design.

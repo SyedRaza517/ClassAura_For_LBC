@@ -150,6 +150,190 @@ const keepEaster = await call("/timetabling/events", { method: "POST", token: ad
 } });
 check("but a college that teaches on them can say so", (keepEaster.data?.dates || []).includes("2027-03-29"), JSON.stringify(keepEaster.data?.dates));
 
+console.log("\n--- two sessions in one day: one class, TWO registers ---");
+//
+// The owner's requirement in one sentence: "scheduling will create the register as per
+// sessions". A day with a morning block and an afternoon block is ONE class in the
+// planner's head and TWO registers in the lecturer's, and neither half of that is true
+// on its own. One event per day gives one register covering six hours a student may have
+// attended half of — an attendance percentage that cannot distinguish "came all day"
+// from "came after lunch". Two unrelated events lose the other half: cancelling the
+// class has to cancel both, and nothing but a shared seriesId records that they are the
+// same class.
+//
+// 2027-05-10 is a Monday and is NOT a bank holiday — 3 May is, 10 May is not — so the
+// skipping rule above cannot quietly empty this series and make the counts below read
+// as a sessions bug.
+const SD = "2027-05-10";
+const split = await mkEvent({
+  date: SD, endDate: SD, days: [1],
+  sessions: [{ start: "09:00", end: "12:00" }, { start: "13:00", end: "16:00" }],
+  // start/end are sent as well, exactly as the entry screen sends them. `sessions` must
+  // WIN rather than be merged with them, or a two-session day quietly becomes three
+  // events and every register denominator on it is a third too big.
+  start: "09:00", end: "12:00",
+  title: `Split ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+});
+// Counted from the database rather than from `created`, because `created` is the number
+// the handler believes and this is the number the timetable has.
+const splitRows = await db.timetableEvent.findMany({
+  where: { title: `Split ${TAG}` }, orderBy: { startTime: "asc" },
+  select: { id: true, date: true, startTime: true, endTime: true, seriesId: true },
+});
+check("TWO SESSIONS OVER A ONE-DAY RANGE CREATE TWO EVENTS", splitRows.length === 2,
+  `${split.status} ${split.data?.error || ""} — ${splitRows.length} rows`);
+check("at the two times asked for, not one merged block",
+  splitRows[0]?.startTime === "09:00" && splitRows[0]?.endTime === "12:00" &&
+  splitRows[1]?.startTime === "13:00" && splitRows[1]?.endTime === "16:00",
+  JSON.stringify(splitRows.map((r) => `${r.startTime}-${r.endTime}`)));
+// `.every` on an empty array is true, so the length is asserted alongside it — otherwise
+// a create that produced nothing at all would pass this line.
+check("both on the one date the range named", splitRows.length === 2 && splitRows.every((r) => r.date === SD),
+  JSON.stringify(splitRows.map((r) => r.date)));
+check("and the response says how many it built per day", split.data?.sessionsPerDay === 2, JSON.stringify(split.data?.sessionsPerDay));
+
+// The seriesId is what makes "cancel this class for the rest of term" reach the
+// afternoon half. Two ids would make the pair two classes that merely look alike, and
+// every later bulk action would silently do half the job. Truthiness is asserted first:
+// two nulls are equal to each other, and a suite that accepted that would report a
+// series where there is none.
+check("BOTH SESSIONS SHARE ONE seriesId — the pair is still one class",
+  !!splitRows[0]?.seriesId && splitRows[0].seriesId === splitRows[1]?.seriesId,
+  JSON.stringify(splitRows.map((r) => r.seriesId)));
+check("and the response names that same seriesId",
+  !!split.data?.seriesId && split.data.seriesId === splitRows[0]?.seriesId, String(split.data?.seriesId));
+
+const pubSplit = await publish(SD, SD);
+check("the two-session day published", pubSplit.status === 200, String(pubSplit.status));
+const splitRegs = await db.hndSession.findMany({
+  where: { timetableEventId: { in: splitRows.map((r) => r.id) } },
+  orderBy: { startTime: "asc" },
+  select: { id: true, cohortId: true, startTime: true, endTime: true, timetableEventId: true },
+});
+// THE ASSERTION THIS BLOCK EXISTS FOR. Verified through the bare client because the
+// publish response reports a count it computed itself; what matters is the rows.
+check("PUBLISHING TWO SESSIONS CREATES TWO REGISTERS FOR ONE GROUP", splitRegs.length === 2, `got ${splitRegs.length}`);
+check("one register per session, not one spanning both",
+  splitRegs.length === 2 && splitRegs[0].startTime === "09:00" && splitRegs[0].endTime === "12:00" &&
+  splitRegs[1].startTime === "13:00" && splitRegs[1].endTime === "16:00",
+  JSON.stringify(splitRegs.map((r) => `${r.startTime}-${r.endTime}`)));
+check("both for the SAME single group — two sessions, not two intakes",
+  splitRegs.length === 2 && new Set(splitRegs.map((r) => r.cohortId)).size === 1 && splitRegs[0].cohortId === cohortA.id,
+  JSON.stringify(splitRegs.map((r) => r.cohortId)));
+check("and each hangs off its own event", splitRegs.length === 2 && new Set(splitRegs.map((r) => r.timetableEventId)).size === 2);
+
+// Overlapping halves are a data-entry error rather than a policy a college can hold: one
+// group cannot be in two places at 11:00, and a register per session would then count
+// that hour twice in the same student's denominator. REFUSED — unlike a clash with
+// ANOTHER event, which is only a warning above, because that one has legitimate cases
+// (a room split between half-groups) and this one has none.
+const overlap = await mkEvent({
+  date: SD, endDate: SD, days: [1], start: "09:00", end: "12:00",
+  sessions: [{ start: "09:00", end: "12:00" }, { start: "11:00", end: "14:00" }],
+  title: `Overlap ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+});
+check("OVERLAPPING SESSIONS ARE REFUSED, AND THE REASON NAMES THE OVERLAP",
+  overlap.status === 400 && /overlap/i.test(overlap.data?.error || ""), `${overlap.status} ${overlap.data?.error}`);
+check("and the refusal wrote nothing — not even the first, legal half",
+  (await db.timetableEvent.count({ where: { title: `Overlap ${TAG}` } })) === 0);
+
+// The mirror of it, and the one that matters more: a morning block ending exactly when
+// the afternoon block starts is what a teaching day LOOKS like. A validator written as
+// "end >= start" rather than "end > start" refuses every normal timetable, and the
+// screen then has no way to express the thing it was built for.
+const b2b = await mkEvent({
+  date: SD, endDate: SD, days: [1], start: "09:00", end: "12:00",
+  sessions: [{ start: "09:00", end: "12:00" }, { start: "12:00", end: "15:00" }],
+  title: `BackToBack ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+});
+// The 201 is asserted TOGETHER with both halves existing, deliberately. A server that
+// ignores `sessions` altogether also answers 201 — it just builds one event — so a
+// status-only assertion here would pass on a build with no feature in it at all, which
+// is the failure mode CLAUDE.md records having shipped twice.
+const b2bRows = await db.timetableEvent.findMany({
+  where: { title: `BackToBack ${TAG}` }, orderBy: { startTime: "asc" }, select: { startTime: true, endTime: true },
+});
+check("BACK-TO-BACK SESSIONS ARE ACCEPTED — a normal teaching day is not a clash",
+  b2b.status === 201 && b2bRows.length === 2, `${b2b.status} ${b2b.data?.error || ""} — ${b2bRows.length} rows`);
+check("and they meet rather than merge",
+  b2bRows.length === 2 && b2bRows[0].endTime === "12:00" && b2bRows[1].startTime === "12:00",
+  JSON.stringify(b2bRows.map((r) => `${r.startTime}-${r.endTime}`)));
+
+// Two is the cap because a register is per session and a day of five sessions is five
+// registers a lecturer has to take; the limit is a deliberate product decision, so the
+// third is refused rather than truncated. Truncation would create two events and report
+// success, and the missing afternoon would only surface when nobody had a register for
+// it.
+const three = await mkEvent({
+  date: SD, endDate: SD, days: [1], start: "09:00", end: "11:00",
+  sessions: [{ start: "09:00", end: "11:00" }, { start: "11:30", end: "13:00" }, { start: "14:00", end: "16:00" }],
+  title: `Three ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+});
+check("A THIRD SESSION IN ONE DAY IS REFUSED", three.status === 400, `${three.status} ${three.data?.error || ""}`);
+check("and none of the three was created — not silently truncated to two",
+  (await db.timetableEvent.count({ where: { title: `Three ${TAG}` } })) === 0);
+
+// The single-event path already refuses this; the sessions path is a second entry to the
+// same column and has to refuse it too. A register from 14:00 to 09:00 is a negative
+// hour, which every duration figure downstream would happily average.
+const backwards = await mkEvent({
+  date: SD, endDate: SD, days: [1], start: "09:00", end: "12:00",
+  sessions: [{ start: "14:00", end: "09:00" }],
+  title: `Backwards ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+});
+check("A SESSION ENDING BEFORE IT STARTS IS REFUSED", backwards.status === 400, `${backwards.status} ${backwards.data?.error || ""}`);
+check("and nothing was created", (await db.timetableEvent.count({ where: { title: `Backwards ${TAG}` } })) === 0);
+
+console.log("\n--- schools, and the events that belong to one ---");
+//
+// "School" is what this screen calls an AcademicDepartment — the same table
+// academicDepartments.js configures from Settings, exposed here because a scheduler
+// placing a class should not have to leave the planner to name the school it belongs to.
+// The list names the college's internal structure, so it sits behind the same login as
+// everything else in this router.
+check("ANONYMOUS CANNOT LIST SCHOOLS", (await call("/timetabling/departments")).status === 401,
+  String((await call("/timetabling/departments")).status));
+
+const schoolName = `School ${TAG}`;
+const school = await call("/timetabling/departments", { method: "POST", token: admin.token, body: { name: schoolName } });
+check("a school was created", school.status === 201 && !!school.data?.id, `${school.status} ${JSON.stringify(school.data)}`);
+check("and it came back with a colour to draw it in", typeof school.data?.colour === "string" && school.data.colour.length > 0, String(school.data?.colour));
+
+// Case-INSENSITIVELY, because "Business" and "business" are one school to everybody
+// except the database. A list holding both is a filter that silently shows half the
+// timetable, and the half it hides is whichever one the scheduler did not pick.
+const dupSchool = await call("/timetabling/departments", { method: "POST", token: admin.token, body: { name: schoolName.toUpperCase() } });
+check("THE SAME SCHOOL NAME IN A DIFFERENT CASE IS REFUSED", dupSchool.status === 409, `${dupSchool.status} ${JSON.stringify(dupSchool.data)}`);
+check("and no second row was written",
+  (await db.academicDepartment.count({ where: { name: { contains: TAG, mode: "insensitive" } } })) === 1);
+
+const schools = await call("/timetabling/departments", { token: admin.token });
+check("the new school is on the list", Array.isArray(schools.data) && schools.data.some((d) => d.id === school.data?.id && d.name === schoolName),
+  `${schools.status} ${JSON.stringify(schools.data)}`);
+
+// READ BACK FROM THE DATABASE, NOT FROM THE RESPONSE. A handler that echoes its own
+// input and never writes the column is indistinguishable from a working one at the API
+// boundary, and the failure surfaces a term later as a school filter showing an empty
+// week.
+const owned = (await mkEvent({
+  date: SD, start: "16:30", end: "17:30", title: `Owned ${TAG}`,
+  unitId: unit.id, cohortIds: [cohortA.id], academicDepartmentId: school.data?.id || "",
+})).data?.event;
+check("an event was created with a school on it", !!owned?.id);
+const ownedRow = owned?.id
+  ? await db.timetableEvent.findUnique({ where: { id: owned.id }, select: { academicDepartmentId: true } })
+  : null;
+check("THE SCHOOL IS STORED ON THE EVENT, NOT MERELY ECHOED",
+  !!school.data?.id && ownedRow?.academicDepartmentId === school.data.id, String(ownedRow?.academicDepartmentId));
+
+// "" is how a screen says "no school" without a second verb, matching every other
+// nullable relation on this route. It must land as NULL: TimetableEvent's null is a
+// DECISION — "shown to everyone" — and an empty string is a foreign key to nothing that
+// no scoping rule reads as either answer.
+const unowned = (await mkEvent({ date: SD, start: "17:30", end: "18:30", title: `Unowned ${TAG}`, academicDepartmentId: "" })).data?.event;
+check("an empty school clears the link rather than storing a blank",
+  !!unowned?.id && (await db.timetableEvent.findUnique({ where: { id: unowned.id }, select: { academicDepartmentId: true } }))?.academicDepartmentId === null);
+
 console.log("\n--- a draft event builds nothing ---");
 const draft = (await mkEvent({ date: D, start: "09:00", end: "12:00", title: `Draft ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id] })).data?.event;
 check("a draft event was created", !!draft?.id);
@@ -230,6 +414,10 @@ await db.hndSession.deleteMany({ where: { unitId: unit.id } });
 await db.enrolment.deleteMany({ where: { unitId: unit.id } });
 await db.student.deleteMany({ where: { lastName: TAG } });
 await db.timetableEvent.deleteMany({ where: { title: { contains: TAG } } });
+// After the events, which point at it. Matched case-insensitively because the duplicate
+// the 409 assertion sends is the same name uppercased — if that guard ever regresses and
+// the row IS created, this is what stops it outliving the run.
+await db.academicDepartment.deleteMany({ where: { name: { contains: TAG, mode: "insensitive" } } });
 await db.unit.delete({ where: { id: unit.id } }).catch(() => {});
 await db.cohort.deleteMany({ where: { courseId: course.id } });
 await db.room.deleteMany({ where: { name: `R-${TAG}` } });

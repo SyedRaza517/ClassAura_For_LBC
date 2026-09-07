@@ -13,6 +13,12 @@ const { requireAuth, requirePage } = require("../auth");
 const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
 const { normaliseCampus } = require("../timetabling/campusMatch");
 const { seriesDates } = require("../timetabling/recurrence");
+const { parseSessions } = require("../timetabling/sessions");
+// The SAME module the Settings screen validates against, imported rather than
+// reimplemented: the key rules and the name cap live in one place, so a school this
+// route accepts cannot be one that screen then refuses to save.
+const departments = require("../academicDepartments");
+const audit = require("../audit");
 const { randomUUID } = require("node:crypto");
 
 router.use(requireAuth, requirePage("scheduling"));
@@ -285,6 +291,183 @@ router.delete("/categories/:id", async (req, res) => {
   }
 });
 
+/* ---------------------------------------------------- schools (departments) -- */
+
+// The college's SCHOOLS — its AcademicDepartment rows — as the planner needs them.
+//
+// WHY THIS EXISTS BESIDE /api/academic-departments RATHER THAN INSTEAD OF IT.
+//
+// That router lists the same rows and is gated on requirePage("settings"). A timetabler
+// is exactly the person who holds "scheduling" and NOT "settings" — the two are separate
+// grants precisely so the person building next term is not also the person editing the
+// college's configuration. Pointed at the settings route they would get a 403 and an
+// empty School picker on the one screen they are meant to spend the week in, with
+// nothing on it saying why.
+//
+// NAMES AND COLOURS ONLY, and that is the boundary rather than an economy. Department
+// MEMBERSHIP — which staff and which students are in one, and the counts that reveal how
+// many — is an access-control question: routes/academicDepartments.js gates the staff
+// half on Super Admin alone, because that endpoint can hand somebody the whole college.
+// None of that is needed to label a class, so none of it is served here. `key` and
+// `active` are left out for the same reason there is no `_count`: this answers "what may
+// I file this class under", and the answer is a label, an id and a colour.
+router.get("/departments", async (_req, res) => {
+  // AcademicDepartment is declared UNSCOPED in academicScopeModels.js, so this needs no
+  // withoutAcademicScope() wrapper — the department LIST is a college-wide fact, and a
+  // scoped account that could not read it could not be shown the name of its own school.
+  //
+  // Active only, unlike the settings route. That one deliberately shows retired
+  // departments because managing them is the job; this is a picker, and offering a
+  // retired school as a destination for next term's classes is how a retired school
+  // stops being retired.
+  const rows = await prisma.academicDepartment.findMany({
+    where: { active: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true, colour: true },
+  });
+  res.json(rows);
+});
+
+/**
+ * A name → the immutable slug AcademicDepartment.key requires.
+ *
+ * The key is never shown and never edited, but it is @unique and — per the schema —
+ * immutable once created, because a saved filter, a URL fragment and the VLE mapping
+ * screen all carry it and none of them re-resolves it afterwards. Deriving it from the
+ * name is what lets this endpoint take `{ name }` alone; the Settings screen asks for
+ * both because that is where an administrator is deliberately editing configuration,
+ * and a timetabler adding "School of Law" at four in the afternoon should not have to
+ * learn what a slug is.
+ *
+ * Accents are folded rather than dropped, so "Santé" becomes "sante" and not "sant".
+ */
+function slugifyName(name) {
+  return String(name)
+    .normalize("NFKD")
+    // NFKD splits an accented letter into a letter plus a combining mark, and
+    // \p{M} then drops the mark -- so "Sante" survives where stripping every
+    // non-ASCII character outright would leave "Sant".
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    // KEY_RE caps at 40. Trimmed again after the slice because cutting mid-word can
+    // leave the hyphen that was joining it.
+    .slice(0, 40)
+    .replace(/-+$/, "");
+}
+
+/**
+ * Add ONE school. Additive only, and that is the entire safety story of this handler.
+ *
+ * THIS DELIBERATELY DOES NOT REUSE PUT /api/academic-departments, and the reason is the
+ * shape of that endpoint rather than its gate. It is a whole-list replace with
+ * retire-by-omission: anything absent from the submitted array is set active:false. A
+ * planner screen calling it to add one school would have to send back every other school
+ * exactly as it found it, and the first time it sent a short list — a stale cache, a
+ * filtered array, a failed load that resolved to [] — it would retire the college's
+ * entire organisation chart with a 200 and no warning. There is no request this endpoint
+ * can be given that retires anything, because it only ever creates.
+ *
+ * There is deliberately no update and no delete here either. Renaming or retiring a
+ * school changes what other people can see, is audited as a configuration change, and
+ * belongs on the Settings screen with the rest of the organisation chart.
+ */
+router.post("/departments", async (req, res) => {
+  const name = str(req.body?.name);
+  if (!name) return res.status(400).json({ error: "A school name is required" });
+
+  const key = slugifyName(name);
+
+  // Every validation rule comes from departments.cleanOne rather than being restated —
+  // KEY_RE, the 60-character name cap, the colour default. A second copy of those rules
+  // is a second thing to keep in step with the Settings screen, and the failure would be
+  // a row this route accepts that that screen then refuses to save.
+  const cleaned = departments.cleanOne({ key, name, colour: departments.DEFAULT_COLOUR });
+  if (!cleaned) {
+    // Reached when the name slugifies to nothing — a name written entirely in a script
+    // with no ASCII letters or digits, or one made only of punctuation.
+    //
+    // A generated fallback key ("dept-9f2a") was the rejected alternative. The key is
+    // IMMUTABLE and travels in saved filters and URL fragments for the life of the
+    // install, so quietly minting a meaningless permanent identifier to avoid one error
+    // message is the worse trade. The Settings screen is where a key can be typed by
+    // hand, so that is where this points.
+    return res.status(400).json({
+      error: "That name has no letters or digits to build a key from. Add this school on " +
+        "the Settings screen, where the key can be typed directly.",
+    });
+  }
+
+  // CAPPED AT THE SAME 50 THE SETTINGS SCREEN ENFORCES, and the cap is not cosmetic.
+  // departments.cleanList() slices a submitted list to 50, and PUT / retires by
+  // omission — so a 51st school created here would be dropped from the next Settings
+  // save. That currently surfaces as a 400 rather than a silent retirement, but only by
+  // way of a count comparison written for a different reason, and this route has no
+  // business relying on it.
+  const existing = await prisma.academicDepartment.findMany({ select: { id: true, key: true, name: true, active: true } });
+  if (existing.length >= 50) {
+    return res.status(400).json({ error: "This college already has the maximum of 50 schools." });
+  }
+
+  // CASE-INSENSITIVE ON THE NAME, not just on the derived key, matching the instinct
+  // campuses already follow through normaliseCampus: a college that has "Computing"
+  // wants to be told so rather than given a second "computing" beside it. Two schools
+  // with names differing only in case are indistinguishable on every picker in the
+  // application, and a class filed under the wrong one is invisible to the department
+  // that teaches it.
+  //
+  // Retired rows count. A retired school still holds its courses and students, and
+  // creating a fresh row with the same name would leave the college with two — the
+  // populated one nobody can pick and the empty one everybody picks.
+  const lower = name.toLowerCase();
+  const clash = existing.find((d) => d.name.toLowerCase() === lower) ||
+                existing.find((d) => d.key === cleaned.key);
+  if (clash) {
+    return res.status(409).json({
+      error: clash.active
+        ? `"${clash.name}" already exists.`
+        : `"${clash.name}" already exists but has been retired. Bring it back on the Settings screen rather than adding a second one.`,
+      department: { id: clash.id, name: clash.name },
+    });
+  }
+
+  let row;
+  try {
+    row = await prisma.academicDepartment.create({ data: cleaned });
+  } catch (e) {
+    // Two administrators adding the same school at once. The read above cannot close
+    // that window; the unique on `key` can, and the loser is told what the winner made
+    // rather than being handed a 500.
+    if (e.code !== "P2002") throw e;
+    const won = await prisma.academicDepartment.findUnique({ where: { key: cleaned.key } });
+    return res.status(409).json({
+      error: `"${won?.name || name}" already exists.`,
+      ...(won ? { department: { id: won.id, name: won.name } } : {}),
+    });
+  }
+
+  // The cache in academicDepartments.js is a 30-second TTL invalidated on save, and the
+  // Settings route invalidates it for exactly this reason. A school created here and not
+  // invalidated is one that scoping checks and the mapping screen cannot see for half a
+  // minute — long enough to be reported as "it did not save".
+  departments.invalidate();
+
+  // AUDITED LIKE THE SETTINGS EDIT IT IS. This route is reachable by an account holding
+  // "scheduling" and not "settings", so it is the one way the organisation chart can
+  // change without the Settings screen being opened. An unaudited path to a change that
+  // is audited everywhere else is a gap in the log rather than an absence of one.
+  audit.record(req, {
+    action: "academicDepartments.created", entity: "AcademicDepartment", entityId: row.id,
+    summary: `School "${row.name}" was added from the timetable planner by ` +
+      (req.user?.name || "an administrator"),
+    before: null,
+    after: { key: row.key, name: row.name, active: row.active },
+  });
+
+  res.status(201).json({ id: row.id, name: row.name, colour: row.colour });
+});
+
 /* ----------------------------------------------------------------- events -- */
 
 const { findClashes } = require("../timetabling/overlap");
@@ -359,7 +542,18 @@ function parseEvent(body, partial) {
 
   // Nullable relations. An empty string clears the link; that is how a screen says
   // "no room" without a separate verb.
-  for (const [key, field] of [["unitId", "unitId"], ["courseId", "courseId"], ["roomId", "roomId"], ["categoryId", "categoryId"]]) {
+  //
+  // academicDepartmentId — the SCHOOL — joins the list here rather than getting a
+  // clause of its own, because it wants exactly the same treatment: optional, cleared
+  // by an empty string, never invented. The column has existed on TimetableEvent since
+  // the scoping work and nothing has ever set it, so every event at every install
+  // carries NULL. That is not an accident to be fixed by defaulting: on this model NULL
+  // means "shown to everyone" (the schema says so at length, and academicScopeModels.js
+  // gives it its own `columnOrNull` kind), which is the right answer for the workshops
+  // and study-support sessions this table exists to hold. Setting it is how a class
+  // becomes one school's rather than the college's, and that has to stay a decision the
+  // administrator takes.
+  for (const [key, field] of [["unitId", "unitId"], ["courseId", "courseId"], ["roomId", "roomId"], ["categoryId", "categoryId"], ["academicDepartmentId", "academicDepartmentId"]]) {
     if (body?.[key] !== undefined) data[field] = str(body[key]) || null;
   }
 
@@ -438,58 +632,111 @@ function createEventWithAssignments(data, staffIds, cohortIds, include) {
 // module taught Monday and Thursday was two series — and two series drift, because
 // somebody moves the Monday one and nothing records that the Thursday one was ever the
 // same class. `seriesId` is what ties them together now.
+// A DAY MAY BE TWO BLOCKS, AND EACH BLOCK IS ITS OWN EVENT. A module taught 09:00-12:00
+// and 13:00-16:00 on three days for twelve weeks is 72 rows, all under one seriesId, and
+// therefore 72 registers — which is what the college is actually asking for when it says
+// "morning and afternoon". See timetabling/sessions.js for why this is two events rather
+// than one event holding two time ranges.
 router.post("/events", async (req, res) => {
-  const { data, error } = parseEvent(req.body, false);
+  // SESSIONS ARE PARSED BEFORE THE EVENT, and the order is load-bearing rather than
+  // tidy. parseEvent requires `start` and `end`, so a client that expressed its times
+  // ONLY as sessions[] — the natural thing to send, and what the planner screen does —
+  // would be refused for omitting a field its sessions replace. Feeding parseEvent the
+  // first session closes that, and leaves the legacy top-level pair working untouched
+  // because parseSessions falls back to exactly those two fields when no array is sent.
+  const { sessions, error: sessionError } = parseSessions(req.body);
+  if (sessionError) return res.status(400).json({ error: sessionError });
+
+  const { data, error } = parseEvent({ ...req.body, start: sessions[0].start, end: sessions[0].end }, false);
   if (error) return res.status(400).json({ error });
 
   const staffIds = ids(req.body?.staffIds);
   const cohortIds = ids(req.body?.cohortIds);
 
-  // No endDate means the old behaviour exactly: one event on one date.
   const endDate = str(req.body?.endDate);
-  if (!endDate) {
+
+  // No endDate AND one session means the old behaviour exactly: one event on one date,
+  // no seriesId, the same response keys. Every client written before sessions existed
+  // lands here unchanged.
+  //
+  // TWO SESSIONS ON A SINGLE DAY DELIBERATELY DOES NOT, and that is the one place this
+  // handler's shape had to change rather than merely extend. Leaving the fast path to
+  // match on `!endDate` alone would have taken a request carrying a morning and an
+  // afternoon block and written the morning, silently, with a 201 and `created: 1` — the
+  // quiet half-save this module exists to prevent. A one-off day with two blocks falls
+  // through to the loop below and gets a seriesId, which is correct: the two halves are
+  // one submission and "cancel this class" has to reach both.
+  if (!endDate && sessions.length === 1) {
     const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
     const row = await createEventWithAssignments(data, staffIds, cohortIds, EVENT_INCLUDE);
-    return res.status(201).json({ event: sEvent(row), warnings, created: 1 });
+    return res.status(201).json({ event: sEvent(row), warnings, created: 1, sessionsPerDay: 1 });
   }
 
-  if (!DATE_RE.test(endDate)) return res.status(400).json({ error: "endDate must be YYYY-MM-DD" });
-  if (endDate < data.date) return res.status(400).json({ error: "endDate must not be before the start date" });
+  let dates;
+  if (endDate) {
+    if (!DATE_RE.test(endDate)) return res.status(400).json({ error: "endDate must be YYYY-MM-DD" });
+    if (endDate < data.date) return res.status(400).json({ error: "endDate must not be before the start date" });
 
-  const skip = new Set(ids(req.body?.skip));
-  // Bank holidays are skipped unless the caller says otherwise, matching /repeat. The
-  // college that DOES teach on Easter Monday says so; hardcoding one answer to somebody
-  // else's policy is the worse failure.
-  if (req.body?.skipBankHolidays !== false) {
-    for (let y = Number(data.date.slice(0, 4)); y <= Number(endDate.slice(0, 4)); y++) {
-      for (const d of bankHolidays.ukBankHolidays(y) || []) skip.add(d);
+    const skip = new Set(ids(req.body?.skip));
+    // Bank holidays are skipped unless the caller says otherwise, matching /repeat. The
+    // college that DOES teach on Easter Monday says so; hardcoding one answer to somebody
+    // else's policy is the worse failure.
+    if (req.body?.skipBankHolidays !== false) {
+      for (let y = Number(data.date.slice(0, 4)); y <= Number(endDate.slice(0, 4)); y++) {
+        for (const d of bankHolidays.ukBankHolidays(y) || []) skip.add(d);
+      }
     }
+
+    dates = seriesDates(data.date, endDate, req.body?.days, { skip: [...skip] });
+    if (!dates.length) {
+      // An empty series is a real answer — "Tuesdays" over a range containing no Tuesday —
+      // and 400 with the reason beats silently creating nothing and reporting success.
+      return res.status(400).json({ error: "No dates fall on the days you chose within that range." });
+    }
+  } else {
+    // Two blocks, one day, no range. NO weekday filter and NO bank-holiday skip here:
+    // the administrator typed this single date, and silently dropping it because it is
+    // Easter Monday would report success having created nothing at all.
+    dates = [data.date];
   }
 
-  const dates = seriesDates(data.date, endDate, req.body?.days, { skip: [...skip] });
-  if (!dates.length) {
-    // An empty series is a real answer — "Tuesdays" over a range containing no Tuesday —
-    // and 400 with the reason beats silently creating nothing and reporting success.
-    return res.status(400).json({ error: "No dates fall on the days you chose within that range." });
-  }
-
-  // Reported PER DATE, because "week 4 clashes" is actionable and "there were clashes"
-  // is not. Checked before each create so a later date sees the earlier ones.
+  // DATES OUTER, SESSIONS INNER, so the rows are written in the order a person reads a
+  // timetable and `first` below is genuinely the earliest class. It also means the
+  // afternoon block's clash check runs after the morning one is stored, which is the
+  // same "a later date sees the earlier ones" property the date loop already had — and
+  // back-to-back blocks still do not warn, because findClashes is half-open.
+  //
+  // Reported PER DATE AND PER BLOCK, because "week 4, the afternoon" is actionable and
+  // "there were clashes" is not. `date` and `clashes` keep their meaning; `start`/`end`
+  // are what stop two warnings on one date being indistinguishable once a day can hold
+  // two blocks.
   const seriesId = randomUUID();
   const warnings = [];
   let first = null;
   for (const date of dates) {
-    const found = await checkClashes({ ...data, date, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
-    if (found.length) warnings.push({ date, clashes: found });
-    const row = await createEventWithAssignments(
-      { ...data, date, seriesId }, staffIds, cohortIds, first ? null : EVENT_INCLUDE,
-    );
-    if (!first) first = row;
+    for (const session of sessions) {
+      const candidate = { ...data, date, startTime: session.start, endTime: session.end, id: null };
+      const found = await checkClashes(candidate, { roomId: data.roomId || null, staffIds, cohortIds });
+      if (found.length) warnings.push({ date, start: session.start, end: session.end, clashes: found });
+      const row = await createEventWithAssignments(
+        { ...data, date, startTime: session.start, endTime: session.end, seriesId },
+        staffIds, cohortIds, first ? null : EVENT_INCLUDE,
+      );
+      if (!first) first = row;
+    }
   }
 
   res.status(201).json({
-    event: sEvent(first), seriesId, created: dates.length,
-    dates, warnings,
+    event: sEvent(first), seriesId,
+    // Every row written. `dates` and `sessionsPerDay` are the two factors of it, sent
+    // separately so a screen can say "24 days × 2 sessions" rather than an unexplained
+    // 48 — a number nobody can check is a number nobody trusts.
+    created: dates.length * sessions.length,
+    dates, sessionsPerDay: sessions.length,
+    // Echoed back NORMALISED — sorted, trimmed — because the client may have sent them
+    // in either order and the screen should name the blocks the way they were stored.
+    sessions,
+    warnings,
   });
 });
 
