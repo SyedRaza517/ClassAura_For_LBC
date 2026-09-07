@@ -7,9 +7,10 @@
 // folding this into it would mean one screen where half the fields are relations and
 // half are strings.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
-  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2, ChevronDown,
+  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2, ChevronDown, Search,
   GraduationCap,
 } from "lucide-react";
 import { api } from "./api";
@@ -59,9 +60,16 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
 
   return (
     <div className="relative">
+      {/* A MAGNIFIER, NOT JUST A CHEVRON, and the hint text says "search" too.
+          With only a chevron this control is indistinguishable from a native <select>,
+          so nobody discovers they can type — which is the whole reason it exists over
+          one. The chevron stays because it still opens like a dropdown. */}
       <button type="button" onClick={() => { setOpen((v) => !v); setQ(""); }}
-        className={`${inputCls} flex items-center justify-between text-left ${chosen ? "text-slate-700" : "text-slate-400"}`}>
-        <span className="truncate">{chosen ? chosen.label : placeholder}</span>
+        className={`${inputCls} flex items-center justify-between gap-2 text-left transition hover:border-slate-400 ${chosen ? "text-slate-700" : "text-slate-400"}`}>
+        <span className="flex min-w-0 items-center gap-2">
+          <Search size={14} className="shrink-0 text-slate-400" />
+          <span className="truncate">{chosen ? chosen.label : placeholder}</span>
+        </span>
         <ChevronDown size={15} className="shrink-0 text-slate-400" />
       </button>
       {open && (
@@ -1140,9 +1148,30 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
           selectedId={editing?.id} />
       )}
 
-      {editing && (
+      {editing && createPortal(
+        // RENDERED INTO document.body, NOT WHERE IT SITS IN THE TREE, and this is a bug
+        // fix rather than a preference.
+        //
+        // `.fade-up` — the admin console's entrance animation, applied to the whole view
+        // — is declared `animation: … both`. The forwards half of that fill holds the
+        // final keyframe for ever, and although that keyframe says `transform: none`, the
+        // browser computes it as `matrix(1, 0, 0, 1, 0, 0)`. ANY computed transform other
+        // than the keyword `none` makes an element the containing block for its
+        // fixed-position descendants — so `fixed inset-0` here resolved against a
+        // 1465px-tall view container instead of the viewport.
+        //
+        // The modal was therefore centred in 1465px and drawn from y=281 in an 1100px
+        // window: its footer, and the Save button in it, sat 159px BELOW the bottom of
+        // the screen with no way to reach them. Measured, not guessed.
+        //
+        // The root cause is that shared animation, and every modal in the console
+        // inherits it — the others only look fine because they are short enough that
+        // being centred in a taller box still lands them on screen. Fixing `.fade-up`
+        // would fix all of them at once, but it is used in 110 places and this is not
+        // the change to make blind. A portal takes this screen out of the containing
+        // block entirely, which is also the right thing for a modal on its own merits.
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: NAVY }}>
               <p className="text-base font-extrabold">{editing.id ? "Edit event" : "New event"}</p>
               <button onClick={() => setEditing(null)} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
@@ -1181,11 +1210,10 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     options={rooms.filter((r) => r.active).map((r) => ({ id: r.id, label: r.label, sub: r.kind || "" }))}
                     onChange={(id) => setEditing({ ...editing, roomId: id })} />
                 </Field>
-                <Field label="Category">
-                  <select className={inputCls} value={editing.categoryId || ""} onChange={(e) => setEditing({ ...editing, categoryId: e.target.value })}>
-                    <option value="">No category</option>
-                    {cats.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                <Field label="Category" hint="Type to search">
+                  <SearchOne value={editing.categoryId || ""} placeholder="No category" noneLabel="No category"
+                    options={cats.filter((c) => c.active).map((c) => ({ id: c.id, label: c.name }))}
+                    onChange={(id) => setEditing({ ...editing, categoryId: id })} />
                 </Field>
                 {/* Nullable on purpose. An exam, a workshop or a staff meeting belongs to
                     no module — which is exactly what HndSession.unitId being NOT NULL
@@ -1217,7 +1245,16 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
               /* --------------------------------------------------- A NEW EVENT --
                  School and groups once at the top, then one block per module. */
               <>
-                <div className="grid gap-3 sm:grid-cols-2">
+                {/* The shared head is TINTED and labelled, so the eye can tell at a glance
+                    which two answers cover everything below from the per-module cards that
+                    follow. Without the boundary the form reads as one long column of
+                    equally-weighted fields, and the fact that School and Groups are asked
+                    once — the whole point of the layout — is invisible. */}
+                <div className="rounded-xl border p-4" style={{ background: alpha(NAVY, 4), borderColor: alpha(NAVY, 14) }}>
+                  <p className="mb-3 text-[11px] font-extrabold uppercase tracking-wide" style={{ color: NAVY }}>
+                    Applies to every module below
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
                   {/* THE SCHOOL IS THE FIRST FIELD ON THE FORM, ahead of the title.
                       It is the question a timetabler answers first in their head — "this
                       is the Computing lot" — and asking it first is what lets everything
@@ -1252,6 +1289,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                       <span className="mt-1 block text-[11px] font-semibold text-amber-700">No groups belong to that school. Tick “Show all schools” to see the rest.</span>
                     )}
                   </Field>
+                  </div>
                 </div>
 
                 {/* ONE BLOCK PER MODULE. Everything that legitimately differs between
@@ -1263,9 +1301,10 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                   const pv = previewBlocks[i];
                   const unitOpts = narrow(units, b.unitId ? [b.unitId] : []);
                   return (
-                    <div key={b.key} className="mt-3 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
+                    <div key={b.key} className="mt-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                       <div className="mb-2 flex items-center gap-2">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Module {i + 1}</p>
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-extrabold text-white" style={{ background: NAVY }}>{i + 1}</span>
+                        <p className="text-sm font-extrabold text-slate-700">{(b.title || "").trim() || "Module " + (i + 1)}</p>
                         {editing.blocks.length > 1 && (
                           <button type="button" onClick={() => setEditing({ ...editing, blocks: editing.blocks.filter((_, j) => j !== i) })}
                             className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-600">
@@ -1316,11 +1355,10 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                             options={rooms.filter((r) => r.active).map((r) => ({ id: r.id, label: r.label, sub: r.kind || "" }))}
                             onChange={(id) => setBlock(i, { roomId: id })} />
                         </Field>
-                        <Field label="Category">
-                          <select className={inputCls} value={b.categoryId || ""} onChange={(e) => setBlock(i, { categoryId: e.target.value })}>
-                            <option value="">No category</option>
-                            {cats.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
+                        <Field label="Category" hint="Type to search">
+                          <SearchOne value={b.categoryId || ""} placeholder="No category" noneLabel="No category"
+                            options={cats.filter((c) => c.active).map((c) => ({ id: c.id, label: c.name }))}
+                            onChange={(id) => setBlock(i, { categoryId: id })} />
                         </Field>
                         <Field label="Start date">
                           <input type="date" className={inputCls} value={b.date || ""} onChange={(e) => setBlock(i, { date: e.target.value })} />
@@ -1473,7 +1511,8 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                 className="flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}><Check size={15} /> Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {settings && (
