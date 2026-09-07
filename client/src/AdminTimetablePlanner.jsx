@@ -215,30 +215,53 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState([]);
   const [making, setMaking] = useState(false);
-  const [draft, setDraft] = useState({ courseId: "", newCourse: "", name: "", startDate: "" });
+  const [draft, setDraft] = useState({ course: "", name: "", startDate: "" });
 
   const courseName = (id) => courses.find((c) => c.id === id)?.name || "";
 
   // The sentinel the course <select> uses for "I am going to type one". A literal rather
   // than an empty string, because empty already means "nothing chosen yet" and the
   // Create button has to be able to tell those apart.
-  const NEW_COURSE = "__new__";
+  /** Existing course whose name matches what was typed, ignoring case and edge spaces. */
+  const matchCourse = (typed, list = courses) => {
+    const want = String(typed || "").trim().toLowerCase();
+    return want ? list.find((c) => (c.name || "").trim().toLowerCase() === want) : undefined;
+  };
+
+  // Says which of the two things the button is about to do, WHILE TYPING.
+  //
+  // A free text box that silently either reuses or creates is the one thing worth
+  // guarding against here: "BSc Software Engineering" and "BSc Software Engineerng" look
+  // identical at a glance and produce two programmes, and the mistake is only visible
+  // weeks later when half the students are on the wrong one. Naming the matched course
+  // back makes a typo obvious before the click rather than after it.
+  const typedCourse = matchCourse(draft.course);
+  const courseHint = !draft.course.trim()
+    ? "Type it — existing ones will suggest themselves"
+    : typedCourse
+      ? `Existing course — the group joins "${typedCourse.name}"`
+      : "New course — created with the group";
 
   /**
-   * The course this group will belong to, creating it if the administrator typed a new
-   * name.
+   * The course this group will belong to, creating it if the name is a new one.
    *
-   * MATCHED CASE-INSENSITIVELY AGAINST WHAT ALREADY EXISTS FIRST. Course.name is unique,
-   * but Postgres compares it case-sensitively, so "BSc Software Engineering" and "BSc
-   * software engineering" are two different courses to the database and one course to
-   * everybody else. Reusing the existing row is what stops a college accumulating three
-   * spellings of one programme, each with its own groups and its own half of the
-   * students — the same failure the campus list exists to prevent.
+   * A FREE TEXT BOX RATHER THAN A DROPDOWN, because most of the time the course is
+   * already known to the person typing and making them hunt for it in a list of forty
+   * is slower than typing it. The existing courses are offered as browser suggestions
+   * (a <datalist>), so picking one is still a keystroke away.
+   *
+   * MATCHED CASE-INSENSITIVELY AGAINST WHAT ALREADY EXISTS FIRST, and that is the part
+   * that matters. Course.name is unique, but Postgres compares it case-sensitively, so
+   * "BSc Software Engineering" and "BSc software engineering" are two courses to the
+   * database and one course to everybody else. A free text box makes that easy to do by
+   * accident — which is exactly why the box has to resolve to the existing row rather
+   * than create beside it. Otherwise a college accumulates three spellings of one
+   * programme, each holding its own groups and its own share of the students. Same
+   * failure the campus list exists to prevent, reached from the other direction.
    */
   const resolveCourseId = async () => {
-    if (draft.courseId !== NEW_COURSE) return draft.courseId;
-    const wanted = draft.newCourse.trim();
-    const existing = courses.find((c) => (c.name || "").trim().toLowerCase() === wanted.toLowerCase());
+    const wanted = draft.course.trim();
+    const existing = matchCourse(wanted);
     if (existing) return existing.id;
     try {
       return (await api.addCourse({ name: wanted })).id;
@@ -247,7 +270,7 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       // use theirs rather than failing the group the administrator was actually making.
       if (!/already exists/i.test(e?.message || "")) throw e;
       const fresh = await api.listCourses().catch(() => []);
-      const found = fresh.find((c) => (c.name || "").trim().toLowerCase() === wanted.toLowerCase());
+      const found = matchCourse(wanted, fresh);
       if (!found) throw e;
       return found.id;
     }
@@ -274,7 +297,7 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       // be selected — selecting an id the <select> has no <option> for silently shows
       // nothing, and a course created a moment ago would not be in the picker either.
       if (refreshHnd) await refreshHnd().catch(() => {});
-      setDraft({ courseId: "", newCourse: "", name: "", startDate: "" });
+      setDraft({ course: "", name: "", startDate: "" });
       setMaking(false);
       setGroupId(made?.id || "");
       setNote(`"${made?.name || draft.name}" created. Add students to it below.`);
@@ -355,20 +378,17 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
 
         {making && (
           <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-4">
-            <Field label="Course">
-              <select className={inputCls} value={draft.courseId} onChange={(e) => setDraft({ ...draft, courseId: e.target.value })}>
-                <option value="">Choose a course…</option>
-                {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                <option value={NEW_COURSE}>+ Add a new course…</option>
-              </select>
+            <Field label="Course" hint={courseHint}>
+              {/* A plain text box, with the college's existing courses offered as
+                  browser suggestions. Typing an existing name reuses that course;
+                  anything new is created with the group. */}
+              <input className={inputCls} list="tt-course-options" value={draft.course}
+                onChange={(e) => setDraft({ ...draft, course: e.target.value })}
+                placeholder="BSc Software Engineering" />
+              <datalist id="tt-course-options">
+                {courses.map((c) => <option key={c.id} value={c.name} />)}
+              </datalist>
             </Field>
-            {draft.courseId === NEW_COURSE && (
-              <Field label="New course name" hint="Created with the group">
-                <input className={inputCls} autoFocus value={draft.newCourse}
-                  onChange={(e) => setDraft({ ...draft, newCourse: e.target.value })}
-                  placeholder="BSc Software Engineering" />
-              </Field>
-            )}
             <Field label="Group name" hint="The intake, e.g. SEP 25">
               <input className={inputCls} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="SEP 25" />
             </Field>
@@ -382,16 +402,12 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
                   the course, so the button must wait for it — otherwise Create fires with
                   the sentinel as a courseId and the server rejects it as unknown. */}
               <button onClick={createGroup}
-                disabled={!draft.name.trim() || !draft.courseId || (draft.courseId === NEW_COURSE && !draft.newCourse.trim())}
+                disabled={!draft.name.trim() || !draft.course.trim()}
                 className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
                 <Check size={15} /> Create group
               </button>
             </div>
-            {!courses.length && draft.courseId !== NEW_COURSE && (
-              <p className="text-xs text-slate-500 sm:col-span-4">
-                No courses yet — choose <strong>+ Add a new course…</strong> above and type one. It is created with the group.
-              </p>
-            )}
+
           </div>
         )}
       </div>
