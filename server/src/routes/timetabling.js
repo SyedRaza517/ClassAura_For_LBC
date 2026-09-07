@@ -10,7 +10,8 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requirePage } = require("../auth");
-const { sRoom, sCategory } = require("../timetabling/serialize");
+const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
+const { normaliseCampus } = require("../timetabling/campusMatch");
 
 router.use(requireAuth, requirePage("scheduling"));
 
@@ -23,7 +24,9 @@ const MAX = 200;
 // the person who needs to see the retired ones. The staff-facing picker filters to
 // active itself.
 router.get("/rooms", async (_req, res) => {
-  const rows = await prisma.room.findMany({ orderBy: [{ campus: "asc" }, { name: "asc" }] });
+  // campusRef included so roomLabel prints the CURRENT campus name rather than the
+  // legacy string frozen into the row.
+  const rows = await prisma.room.findMany({ include: { campusRef: true }, orderBy: [{ campus: "asc" }, { name: "asc" }] });
   res.json(rows.map(sRoom));
 });
 
@@ -38,7 +41,15 @@ function parseRoom(body, partial) {
     data.name = name.slice(0, MAX);
   }
   if (body?.floor !== undefined) data.floor = str(body.floor).slice(0, MAX);
+  // The legacy free-text column. Still writable so an install mid-migration is not
+  // broken, but campusId below is what the screens set and what the unique is on.
   if (body?.campus !== undefined) data.campus = str(body.campus).slice(0, MAX);
+  if (body?.campusId !== undefined) {
+    // Empty string means "no campus", stored as NULL. Not "" — a room with no campus
+    // must not be a room on a campus whose name is blank, and @@unique([name, campusId])
+    // treats those two very differently.
+    data.campusId = str(body.campusId) || null;
+  }
   if (body?.kind !== undefined) data.kind = str(body.kind).slice(0, MAX);
   if (body?.active !== undefined) data.active = !!body.active;
 
@@ -55,14 +66,55 @@ function parseRoom(body, partial) {
   return { data };
 }
 
+/**
+ * Give `data` a real campusId whenever a campus was named, creating the Campus if the
+ * college has not got one by that name yet.
+ *
+ * WITHOUT THIS THE DUPLICATE-ROOM GUARD SILENTLY STOPS WORKING, and the failure is the
+ * quiet kind. Room's unique is @@unique([name, campusId]) since campuses became rows.
+ * A caller that sends only the legacy `campus` string — every client written before
+ * 7 Sep 2026 — leaves campusId NULL, Postgres treats NULLs as distinct, and two rooms
+ * called "101" on the same campus are BOTH accepted. Caught by
+ * smoke-timetabling.mjs's "the same room on the same campus is refused", which started
+ * returning 201.
+ *
+ * It also finishes the migration incrementally: every room saved through this route
+ * moves itself onto a Campus row, so the legacy column drains rather than lingering.
+ */
+async function resolveCampusId(data) {
+  // An explicit campusId always wins — including an explicit null, which means "no
+  // campus" and must not be second-guessed from a stale string.
+  if (data.campusId !== undefined) return;
+  if (data.campus === undefined) return;
+
+  const wanted = String(data.campus).trim().replace(/\s+/g, " ");
+  if (!wanted) { data.campusId = null; return; }
+
+  const key = normaliseCampus(wanted);
+  const existing = (await prisma.campus.findMany({ select: { id: true, name: true } }))
+    .find((c) => normaliseCampus(c.name) === key);
+  if (existing) { data.campusId = existing.id; return; }
+
+  try {
+    data.campusId = (await prisma.campus.create({ data: { name: wanted } })).id;
+  } catch (e) {
+    // Two administrators adding the same campus at once. The loser reads the winner's
+    // row rather than failing the room save, which is what the person was doing.
+    if (e.code !== "P2002") throw e;
+    const row = await prisma.campus.findFirst({ where: { name: wanted } });
+    data.campusId = row?.id ?? null;
+  }
+}
+
 router.post("/rooms", async (req, res) => {
   const { data, error } = parseRoom(req.body, false);
   if (error) return res.status(400).json({ error });
+  await resolveCampusId(data);
   try {
-    const row = await prisma.room.create({ data });
+    const row = await prisma.room.create({ data, include: { campusRef: true } });
     res.status(201).json(sRoom(row));
   } catch (e) {
-    // The unique is (name, campus) — so this fires only for a genuine duplicate on
+    // The unique is (name, campusId) — so this fires only for a genuine duplicate on
     // the same campus, not for room 101 existing at another site.
     if (e.code === "P2002") return res.status(409).json({ error: "That room already exists on that campus" });
     throw e;
@@ -72,8 +124,9 @@ router.post("/rooms", async (req, res) => {
 router.put("/rooms/:id", async (req, res) => {
   const { data, error } = parseRoom(req.body, true);
   if (error) return res.status(400).json({ error });
+  await resolveCampusId(data);
   try {
-    const row = await prisma.room.update({ where: { id: req.params.id }, data });
+    const row = await prisma.room.update({ where: { id: req.params.id }, data, include: { campusRef: true } });
     res.json(sRoom(row));
   } catch (e) {
     if (e.code === "P2002") return res.status(409).json({ error: "That room already exists on that campus" });
@@ -95,6 +148,75 @@ router.delete("/rooms/:id", async (req, res) => {
     res.json({ ok: true, eventsLeftWithoutARoom: affected });
   } catch (e) {
     if (e.code === "P2025") return res.status(404).json({ error: "Room not found" });
+    throw e;
+  }
+});
+
+/* ---------------------------------------------------------------- campuses -- */
+
+// Everything, retired included: an administrator managing campuses is the person who
+// needs to see the retired ones. Pickers filter to active themselves.
+router.get("/campuses", async (_req, res) => {
+  const rows = await prisma.campus.findMany({ orderBy: { name: "asc" } });
+  res.json(rows.map(sCampus));
+});
+
+function parseCampus(body, partial) {
+  const data = {};
+  if (!partial || body?.name !== undefined) {
+    const name = str(body?.name);
+    if (!name) return { error: "A campus name is required" };
+    data.name = name.slice(0, MAX);
+  }
+  if (body?.active !== undefined) data.active = !!body.active;
+  return { data };
+}
+
+router.post("/campuses", async (req, res) => {
+  const { data, error } = parseCampus(req.body, false);
+  if (error) return res.status(400).json({ error });
+  try {
+    res.status(201).json(sCampus(await prisma.campus.create({ data })));
+  } catch (e) {
+    if (e.code === "P2002") return res.status(409).json({ error: "That campus already exists" });
+    throw e;
+  }
+});
+
+router.put("/campuses/:id", async (req, res) => {
+  const { data, error } = parseCampus(req.body, true);
+  if (error) return res.status(400).json({ error });
+  try {
+    res.json(sCampus(await prisma.campus.update({ where: { id: req.params.id }, data })));
+  } catch (e) {
+    if (e.code === "P2002") return res.status(409).json({ error: "That campus already exists" });
+    if (e.code === "P2025") return res.status(404).json({ error: "Campus not found" });
+    throw e;
+  }
+});
+
+// DEACTIVATES RATHER THAN DELETES WHEN ROOMS STILL POINT AT IT, and that is the whole
+// difference from the rooms and categories handlers above.
+//
+// Room.campusId is SetNull, so deleting a campus with rooms on it would silently
+// detach every one of them — and Room's unique is @@unique([name, campusId]), so two
+// rooms called "101" on the deleted campus would both land on campusId NULL and
+// collide. The delete would then succeed for one college and fail with a constraint
+// error for another, depending on data nobody was looking at.
+//
+// Deactivating keeps the rooms attached and takes the campus out of every picker,
+// which is what "delete this campus" actually means to the person asking.
+router.delete("/campuses/:id", async (req, res) => {
+  const rooms = await prisma.room.count({ where: { campusId: req.params.id } });
+  try {
+    if (rooms > 0) {
+      const row = await prisma.campus.update({ where: { id: req.params.id }, data: { active: false } });
+      return res.json({ ok: true, deactivated: true, rooms, campus: sCampus(row) });
+    }
+    await prisma.campus.delete({ where: { id: req.params.id } });
+    res.json({ ok: true, deactivated: false, rooms: 0 });
+  } catch (e) {
+    if (e.code === "P2025") return res.status(404).json({ error: "Campus not found" });
     throw e;
   }
 });
@@ -164,6 +286,7 @@ router.delete("/categories/:id", async (req, res) => {
 /* ----------------------------------------------------------------- events -- */
 
 const { findClashes } = require("../timetabling/overlap");
+const { syncEventRegisters } = require("../timetabling/registers");
 const { sEvent } = require("../timetabling/serialize");
 
 // Everything sEvent names. Kept in one constant because four handlers need the same
@@ -172,7 +295,8 @@ const { sEvent } = require("../timetabling/serialize");
 const EVENT_INCLUDE = {
   unit: { select: { code: true, name: true } },
   course: { select: { name: true } },
-  room: { select: { id: true, name: true, floor: true, campus: true } },
+  // campusRef so roomLabel prints the CURRENT campus name, not the legacy string.
+  room: { select: { id: true, name: true, floor: true, campus: true, campusRef: { select: { name: true } } } },
   category: { select: { name: true, colour: true } },
   staff: { include: { staff: { select: { name: true } } } },
   groups: { include: { cohort: { select: { name: true } } } },
@@ -363,7 +487,14 @@ router.put("/events/:id", async (req, res) => {
     });
   });
 
-  res.json({ event: sEvent(row), warnings });
+  // The register follows the event — unless it has already been marked, in which case
+  // it stays where it is and says so. `frozen` is how an administrator learns that the
+  // class they just moved has a taken register still sitting at the old time; without
+  // it the edit looks entirely successful and the divergence surfaces weeks later, in
+  // a dispute, with nobody able to say when the times stopped matching.
+  const registers = await syncEventRegisters(existing.id);
+
+  res.json({ event: sEvent(row), warnings, registers });
 });
 
 router.delete("/events/:id", async (req, res) => {
@@ -465,10 +596,59 @@ router.post("/events/publish", async (req, res) => {
     where: { date: { gte: from, lte: to } },
     data: { published: req.body.published },
   });
+
+  // Stamped in a SECOND pass, narrowed to `publishedAt: null`, and only when going live.
+  //
+  // publishedAt means "when this first went out". Re-publishing a term after a
+  // withdrawal must not rewrite it, or the record of when students were first told is
+  // destroyed by an administrator fixing a typo. Withdrawing does not clear it either,
+  // for the same reason — which is what makes it distinguishable from `published`.
+  if (req.body.published) {
+    await prisma.timetableEvent.updateMany({
+      where: { date: { gte: from, lte: to }, published: true, publishedAt: null },
+      data: { publishedAt: new Date() },
+    });
+  }
   // NOT a changedAt bump. Publishing does not move anything; marking a whole term as
   // "recently changed" the moment it goes live would make the highlight meaningless
   // on the first day anybody used it.
-  res.json({ updated: count });
+
+  // REGISTERS ARE BUILT AFTER THE FLAG IS SET, one event at a time, and the outcome is
+  // REPORTED rather than summarised as "published".
+  //
+  // A term publish is exactly where an administrator needs to know that four workshops
+  // produced no register because they have no module, and that two registers did not
+  // move because they had already been taken. Returning only a count leaves all of that
+  // to be discovered later by whoever the register is wrong for.
+  const ids = req.body.published
+    ? (await prisma.timetableEvent.findMany({
+        where: { date: { gte: from, lte: to }, published: true },
+        select: { id: true },
+      })).map((e) => e.id)
+    : [];
+
+  const registers = { created: 0, updated: 0, frozen: [], skipped: [] };
+  for (const id of ids) {
+    const r = await syncEventRegisters(id);
+    registers.created += r.created;
+    registers.updated += r.updated;
+    registers.frozen.push(...r.frozen);
+    registers.skipped.push(...r.skipped);
+  }
+  // Collapsed to counts per reason: a term of 300 workshops would otherwise return 300
+  // identical sentences, and a report nobody can read is not a report.
+  const bySkipReason = {};
+  for (const s of registers.skipped) bySkipReason[s.reason] = (bySkipReason[s.reason] || 0) + 1;
+
+  res.json({
+    updated: count,
+    registers: {
+      created: registers.created,
+      updated: registers.updated,
+      frozen: registers.frozen,
+      skipped: Object.entries(bySkipReason).map(([reason, events]) => ({ reason, events })),
+    },
+  });
 });
 
 /* --------------------------------------------------------------- settings -- */

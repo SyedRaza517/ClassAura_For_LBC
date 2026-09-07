@@ -42,9 +42,16 @@ router.get("/resources", async (req, res) => {
     case "room": {
       // Active only. The planner shows retired rooms because it manages them; a
       // reader looking for somewhere to be should not be offered one.
-      const where = { active: true, ...(q ? { OR: [{ name: like }, { campus: like }] } : {}) };
+      // Searches BOTH the campus relation and the legacy string. Only the relation
+      // would miss every room the migration's fold could not place — which are exactly
+      // the rooms whose campus somebody is most likely to be hunting for. Only the
+      // string would miss any campus renamed since.
+      const where = {
+        active: true,
+        ...(q ? { OR: [{ name: like }, { campus: like }, { campusRef: { name: like } }] } : {}),
+      };
       [rows, total] = await Promise.all([
-        prisma.room.findMany({ where, orderBy: [{ campus: "asc" }, { name: "asc" }], take: limit }),
+        prisma.room.findMany({ where, include: { campusRef: { select: { name: true } } }, orderBy: [{ campus: "asc" }, { name: "asc" }], take: limit }),
         prisma.room.count({ where }),
       ]);
       break;

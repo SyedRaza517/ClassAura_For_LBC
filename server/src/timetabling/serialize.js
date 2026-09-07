@@ -19,14 +19,30 @@
 function roomLabel(r) {
   if (!r) return "";
   const head = [r.name, r.floor].filter(Boolean).join(" - ");
-  return r.campus ? `${head} [${r.campus}]` : head;
+  // The RELATED campus first. That promise above — renaming a campus renames it
+  // everywhere — stopped being true the moment campuses became rows: reading only the
+  // legacy `campus` string would keep printing the name the room was created with,
+  // for ever, with no way to correct it. The string stays as the fallback for a room
+  // the migration's fold could not place.
+  const campus = r.campusRef?.name || r.campus;
+  return campus ? `${head} [${campus}]` : head;
 }
+
+const sCampus = (c) => ({ id: c.id, name: c.name, active: !!c.active });
 
 const sRoom = (r) => ({
   id: r.id,
   name: r.name,
   floor: r.floor || "",
-  campus: r.campus || "",
+  // The RELATED campus wins, falling back to the legacy free-text column.
+  //
+  // Both exist on purpose for one release: 20260907T120000_timetabling_registers folded
+  // the strings into Campus rows, and Room.campus is retained as the only record of
+  // what the text actually said. The fallback matters for a room whose spelling the
+  // fold could not place — it still shows its campus rather than going blank, which is
+  // what a bare `campusRef.name` would do to exactly the rooms needing attention.
+  campus: r.campusRef?.name ?? r.campus ?? "",
+  campusId: r.campusId ?? null,
   // Passed through as null, never coerced to 0. Null is "we have not recorded how
   // many this room seats"; zero would be "this room seats nobody", and a future
   // capacity check would take the second at face value and retire a real room.
@@ -96,4 +112,4 @@ function sResource(type, row) {
   }
 }
 
-module.exports = { sRoom, sCategory, sEvent, sResource, roomLabel };
+module.exports = { sRoom, sCampus, sCategory, sEvent, sResource, roomLabel };

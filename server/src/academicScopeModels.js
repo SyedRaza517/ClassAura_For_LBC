@@ -150,6 +150,10 @@ const MODEL_SCOPE = {
 
   /* ---- Institution-wide for now: timetabling ------------------------------ */
   Room: "UNSCOPED",
+  // A campus is a building, not a department. Two departments teach in the same one and
+  // neither owns it, so there is no department to scope it by — the same reasoning as
+  // Room directly above, which it is the parent of.
+  Campus: "UNSCOPED",
   EventCategory: "UNSCOPED",
   TimetableEventStaff: "UNSCOPED",
   TimetableSettings: "UNSCOPED",
