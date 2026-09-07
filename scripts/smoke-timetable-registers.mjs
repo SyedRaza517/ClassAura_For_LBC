@@ -92,6 +92,32 @@ check("DELETING A CAMPUS WITH ROOMS DEACTIVATES IT RATHER THAN DETACHING THEM", 
 check("and the room is still on it", (await db.room.findUnique({ where: { id: room.id } }))?.campusId === campus.id);
 await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: admin.token, body: { active: true } });
 
+console.log("\n--- named groups, filled in one action ---");
+const inGroupA = await call(`/hnd/cohorts/${cohortA.id}/students`, { token: admin.token });
+check("a group lists its members", inGroupA.status === 200 && inGroupA.data.length === 2, `${inGroupA.data?.length}`);
+
+// `loose` is enrolled on the module but in NO group. Adding them proves the group is
+// filled by an explicit act rather than derived from enrolment.
+const added = await call(`/hnd/cohorts/${cohortA.id}/students`, { method: "POST", token: admin.token, body: { studentIds: [loose.id] } });
+check("students can be added to a group in one call", added.data?.changed === 1, JSON.stringify(added.data));
+check("and an unassigned student is not reported as moved", (added.data?.moved || []).length === 0);
+
+// b1 is in group B. Adding them to A must MOVE them, and say so — Student.cohortId is
+// a single column, so there is no way to be in both, and an administrator adding forty
+// people has no other way to notice they have emptied another class.
+const movedRes = await call(`/hnd/cohorts/${cohortA.id}/students`, { method: "POST", token: admin.token, body: { studentIds: [b1.id] } });
+check("MOVING A STUDENT BETWEEN GROUPS IS REPORTED, NOT SILENT",
+  (movedRes.data?.moved || []).some((m) => m.studentRef === `${TAG}-b1`), JSON.stringify(movedRes.data?.moved));
+check("and group B is now empty", (await db.student.count({ where: { cohortId: cohortB.id } })) === 0);
+
+// Put b1 back, so the merged-class assertions below have a group B to register.
+await call(`/hnd/cohorts/${cohortB.id}/students`, { method: "POST", token: admin.token, body: { studentIds: [b1.id] } });
+await call(`/hnd/cohorts/${cohortA.id}/students`, { method: "DELETE", token: admin.token, body: { studentIds: [loose.id] } });
+check("removing from a group empties the column rather than deleting anyone",
+  (await db.student.findUnique({ where: { id: loose.id } }))?.cohortId === null);
+check("an empty studentIds list is refused",
+  (await call(`/hnd/cohorts/${cohortA.id}/students`, { method: "POST", token: admin.token, body: { studentIds: [] } })).status === 400);
+
 console.log("\n--- a draft event builds nothing ---");
 const draft = (await mkEvent({ date: D, start: "09:00", end: "12:00", title: `Draft ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id] })).data?.event;
 check("a draft event was created", !!draft?.id);

@@ -251,6 +251,18 @@ export const api = {
   ttUpdateRoom: (id, d) => request(`/timetabling/rooms/${id}`, { method: "PUT", body: d }),
   ttDeleteRoom: (id) => request(`/timetabling/rooms/${id}`, { method: "DELETE" }),
 
+  ttCampuses: () => request("/timetabling/campuses"),
+  ttCreateCampus: (d) => request("/timetabling/campuses", { method: "POST", body: d }),
+  ttUpdateCampus: (id, d) => request(`/timetabling/campuses/${id}`, { method: "PUT", body: d }),
+  ttDeleteCampus: (id) => request(`/timetabling/campuses/${id}`, { method: "DELETE" }),
+
+  // Group membership. On /hnd rather than /timetabling because moving a student
+  // between groups rewrites which department can see them — see the comment on the
+  // routes themselves. A scheduling-only account gets 403 here, by design.
+  ttGroupStudents: (id) => request(`/hnd/cohorts/${id}/students`),
+  ttAddToGroup: (id, studentIds) => request(`/hnd/cohorts/${id}/students`, { method: "POST", body: { studentIds } }),
+  ttRemoveFromGroup: (id, studentIds) => request(`/hnd/cohorts/${id}/students`, { method: "DELETE", body: { studentIds } }),
+
   ttCategories: () => request("/timetabling/categories"),
   ttCreateCategory: (d) => request("/timetabling/categories", { method: "POST", body: d }),
   ttUpdateCategory: (id, d) => request(`/timetabling/categories/${id}`, { method: "PUT", body: d }),

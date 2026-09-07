@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
-  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon,
+  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2,
 } from "lucide-react";
 import { api } from "./api";
 import { NAVY, alpha } from "./branding";
@@ -32,13 +32,17 @@ const inputCls = "w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-s
 
 function RoomsTab() {
   const [rooms, setRooms] = useState([]);
+  const [campuses, setCampuses] = useState([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
-  const [draft, setDraft] = useState({ name: "", floor: "", campus: "", capacity: "", kind: "" });
+  const [draft, setDraft] = useState({ name: "", floor: "", campusId: "", capacity: "", kind: "" });
 
   const load = useCallback(async () => {
     setBusy(true); setErr("");
-    try { setRooms(await api.ttRooms()); }
+    try {
+      const [rm, cp] = await Promise.all([api.ttRooms(), api.ttCampuses()]);
+      setRooms(rm); setCampuses(cp);
+    }
     catch (e) { setErr(e?.message || "Could not load rooms."); }
     finally { setBusy(false); }
   }, []);
@@ -48,11 +52,11 @@ function RoomsTab() {
     setErr("");
     try {
       await api.ttCreateRoom(draft);
-      setDraft({ name: "", floor: "", campus: "", capacity: "", kind: "" });
+      setDraft({ name: "", floor: "", campusId: "", capacity: "", kind: "" });
       load();
     } catch (e) {
       // 409 is the duplicate case and it is worth saying precisely, because the
-      // constraint is (name, campus): the same room number on another campus is
+      // constraint is (name, campusId): the same room number on another campus is
       // allowed, and an administrator hitting this needs to know that.
       setErr(e?.message?.includes("already exists") ? "That room already exists on that campus. The same number on a different campus is fine." : (e?.message || "Could not add the room."));
     }
@@ -76,7 +80,12 @@ function RoomsTab() {
       <div className="mb-4 grid gap-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:grid-cols-6">
         <Field label="Name"><input className={inputCls} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="101" /></Field>
         <Field label="Floor"><input className={inputCls} value={draft.floor} onChange={(e) => setDraft({ ...draft, floor: e.target.value })} placeholder="First floor" /></Field>
-        <Field label="Campus"><input className={inputCls} value={draft.campus} onChange={(e) => setDraft({ ...draft, campus: e.target.value })} placeholder="Harrow" /></Field>
+        <Field label="Campus" hint={campuses.length ? undefined : "Add one on the Campuses tab"}>
+          <select className={inputCls} value={draft.campusId} onChange={(e) => setDraft({ ...draft, campusId: e.target.value })}>
+            <option value="">No campus</option>
+            {campuses.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
         <Field label="Seats" hint="Blank = not recorded"><input className={inputCls} type="number" min={0} value={draft.capacity} onChange={(e) => setDraft({ ...draft, capacity: e.target.value })} /></Field>
         <Field label="Kind"><input className={inputCls} value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })} placeholder="Lecture" /></Field>
         <div className="flex items-end">
@@ -105,6 +114,210 @@ function RoomsTab() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- campuses -- */
+
+function CampusesTab() {
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState(true);
+  const [err, setErr] = useState("");
+  const [name, setName] = useState("");
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr("");
+    try { setRows(await api.ttCampuses()); }
+    catch (e) { setErr(e?.message || "Could not load campuses."); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const remove = async (c) => {
+    setErr("");
+    try {
+      const res = await api.ttDeleteCampus(c.id);
+      // Deleting a campus that still has rooms DEACTIVATES it instead, because the
+      // alternative silently detaches every room on it. Saying which happened is the
+      // difference between an administrator understanding the list and distrusting it.
+      if (res?.deactivated) setErr(`"${c.name}" still has ${res.rooms} room(s), so it has been retired rather than deleted. Its rooms keep their campus.`);
+      load();
+    } catch (e) { setErr(e?.message || "Could not delete the campus."); }
+  };
+
+  return (
+    <div>
+      {err && <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"><AlertTriangle size={15} /> {err}</div>}
+      <p className="mb-3 text-xs text-slate-500">
+        Your sites. Rooms belong to one, and the register dashboard filters by them — which is why this is a list rather than something typed onto each room, where “Ealing” and “ealing” would count separately.
+      </p>
+      <div className="mb-4 flex flex-wrap items-end gap-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+        <Field label="Campus name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Harrow" /></Field>
+        <button
+          onClick={async () => { setErr(""); try { await api.ttCreateCampus({ name }); setName(""); load(); } catch (e) { setErr(e?.message || "Could not add the campus."); } }}
+          disabled={!name.trim()} className="flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}><Plus size={15} /> Add</button>
+      </div>
+
+      {busy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
+        <div className="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <th className="px-3 py-2">Campus</th><th className="px-3 py-2">Status</th><th className="px-3 py-2" />
+            </tr></thead>
+            <tbody>
+              {!rows.length && <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">No campuses yet. Add the first one above.</td></tr>}
+              {rows.map((c) => (
+                <tr key={c.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2 font-semibold text-slate-700">{c.name}</td>
+                  <td className="px-3 py-2 text-slate-500">{c.active ? "In use" : "Retired"}</td>
+                  <td className="px-3 py-2 text-right">
+                    {!c.active && (
+                      <button onClick={async () => { try { await api.ttUpdateCampus(c.id, { active: true }); load(); } catch (e) { setErr(e?.message || "Could not restore."); } }}
+                        className="mr-1 rounded px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100">Restore</button>
+                    )}
+                    <button onClick={() => remove(c)} aria-label={`Delete ${c.name}`} className="rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- groups -- */
+
+// A named, reusable class list — "BSc Software Engineering SEP 25" — built once and
+// then picked in one click when a class is timetabled, instead of naming forty
+// students every time.
+//
+// ONE STUDENT IS IN ONE GROUP. Student.cohortId is a single column, so adding somebody
+// here takes them out of wherever they were. The screen says so before the click and
+// names who moved after it: an administrator adding forty people has no other way to
+// notice they have just emptied another class.
+function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refreshHnd }) {
+  // Courses, cohorts and students load lazily — the store only fetches them when a
+  // page that needs them is opened, and Scheduling was not one of them. Without this
+  // an administrator who lands here first sees an empty group list and concludes the
+  // feature is broken rather than unloaded.
+  useEffect(() => { if (!hndLoaded && refreshHnd) refreshHnd().catch(() => {}); }, [hndLoaded, refreshHnd]);
+
+  const [groupId, setGroupId] = useState(cohorts[0]?.id || "");
+  const [members, setMembers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+  const [q, setQ] = useState("");
+  const [picked, setPicked] = useState([]);
+
+  const courseName = (id) => courses.find((c) => c.id === id)?.name || "";
+
+  const load = useCallback(async (id) => {
+    if (!id) { setMembers([]); return; }
+    setBusy(true); setErr("");
+    try { setMembers(await api.ttGroupStudents(id)); }
+    catch (e) { setErr(e?.message || "Could not load the group."); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { load(groupId); }, [groupId, load]);
+
+  const memberIds = new Set(members.map((m) => m.id));
+  const term = q.trim().toLowerCase();
+  const candidates = students
+    .filter((s) => !memberIds.has(s.id))
+    .filter((s) => !term || `${s.firstName || ""} ${s.lastName || ""} ${s.studentRef || ""}`.toLowerCase().includes(term))
+    .slice(0, 50);
+
+  const add = async () => {
+    setErr(""); setNote("");
+    try {
+      const res = await api.ttAddToGroup(groupId, picked);
+      setPicked([]); setQ("");
+      // Naming who moved, not just how many were added. The move is the surprising
+      // half and it is invisible on this screen otherwise.
+      setNote(`${res.changed} student(s) added.` + (res.moved?.length ? ` ${res.moved.length} moved out of another group: ${res.moved.map((m) => m.name || m.studentRef).join(", ")}.` : ""));
+      load(groupId);
+    } catch (e) {
+      setErr(e?.message?.includes("403") || e?.status === 403
+        ? "You need the Students page to move students between groups — it changes which department can see them."
+        : (e?.message || "Could not add those students."));
+    }
+  };
+
+  const removeOne = async (s) => {
+    setErr(""); setNote("");
+    try { await api.ttRemoveFromGroup(groupId, [s.id]); load(groupId); }
+    catch (e) { setErr(e?.message || "Could not remove that student."); }
+  };
+
+  return (
+    <div>
+      {err && <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"><AlertTriangle size={15} /> {err}</div>}
+      {note && <div className="mb-3 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200"><Check size={15} /> {note}</div>}
+
+      <p className="mb-3 text-xs text-slate-500">
+        Build a class list once and reuse it. When you timetable a class, pick the group instead of naming every student. A student belongs to <strong>one</strong> group — adding them here removes them from wherever they were.
+      </p>
+
+      <div className="mb-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+        <Field label="Group" hint="Groups are created on the Registers page, under the course they belong to.">
+          <select className={inputCls} value={groupId} onChange={(e) => { setGroupId(e.target.value); setPicked([]); setNote(""); }}>
+            <option value="">Choose a group…</option>
+            {cohorts.map((c) => (
+              <option key={c.id} value={c.id}>{courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+
+      {!groupId ? <p className="py-8 text-center text-sm text-slate-400">Choose a group to see and edit who is in it.</p> : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">In this group ({members.length})</h4>
+            {busy ? <div className="flex justify-center py-8 text-slate-400"><Loader2 className="animate-spin" size={18} /></div> : (
+              <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+                {!members.length && <li className="py-8 text-center text-sm text-slate-400">Nobody yet. Add students from the right.</li>}
+                {members.map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 py-1.5">
+                    <span className="flex-1 truncate text-sm text-slate-700">{`${s.firstName || ""} ${s.lastName || ""}`.trim()}</span>
+                    <span className="text-xs text-slate-400">{s.studentRef}</span>
+                    <button onClick={() => removeOne(s)} aria-label={`Remove ${s.firstName} ${s.lastName}`} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={14} /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Add students</h4>
+            <input className={`${inputCls} mb-2`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or student number…" />
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+              {!candidates.length && <li className="py-8 text-center text-sm text-slate-400">{term ? "Nobody matches that." : "Everyone is already in this group."}</li>}
+              {candidates.map((s) => {
+                const on = picked.includes(s.id);
+                return (
+                  <li key={s.id}>
+                    <label className="flex cursor-pointer items-center gap-2 py-1.5">
+                      <input type="checkbox" checked={on} onChange={() => setPicked(on ? picked.filter((x) => x !== s.id) : [...picked, s.id])} />
+                      <span className="flex-1 truncate text-sm text-slate-700">{`${s.firstName || ""} ${s.lastName || ""}`.trim()}</span>
+                      <span className="text-xs text-slate-400">{s.studentRef}</span>
+                      {/* Flagged BEFORE the click, not reported after it. */}
+                      {s.cohortId && s.cohortId !== groupId && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">in another group</span>}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <button onClick={add} disabled={!picked.length}
+              className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
+              <Plus size={15} /> Add {picked.length || ""} to this group
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -159,7 +372,7 @@ function CategoriesTab() {
 
 export default function AdminTimetablePlanner({ store }) {
   const [tab, setTab] = useState("calendar");
-  const TABS = [["calendar", "Calendar", CalendarDays], ["rooms", "Rooms", DoorOpen], ["categories", "Categories", Tag]];
+  const TABS = [["calendar", "Calendar", CalendarDays], ["groups", "Groups", Users], ["rooms", "Rooms", DoorOpen], ["campuses", "Campuses", Building2], ["categories", "Categories", Tag]];
   return (
     <div>
       <div className="mb-4 flex gap-1 border-b border-slate-200">
@@ -176,7 +389,9 @@ export default function AdminTimetablePlanner({ store }) {
           fetched for other pages, and adding an endpoint for them would be a second
           source of truth for the same rows. */}
       {tab === "calendar" && <PlannerCalendarTab staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} />}
+      {tab === "groups" && <GroupsTab cohorts={store?.cohorts || []} courses={store?.courses || []} students={store?.students || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
       {tab === "rooms" && <RoomsTab />}
+      {tab === "campuses" && <CampusesTab />}
       {tab === "categories" && <CategoriesTab />}
     </div>
   );

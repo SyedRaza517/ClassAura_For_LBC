@@ -618,6 +618,96 @@ router.delete("/cohorts/:id", requireAuth, requireRegisters, async (req, res) =>
   catch (_e) { res.status(404).json({ error: "Cohort not found" }); }
 });
 
+/* ---------------------- who is IN a group ---------------------- */
+//
+// A cohort IS the reusable named group — "BSc Software Engineering SEP 25" — that a
+// timetabled class is addressed to. These two routes are how a whole class gets put
+// into one in a single action instead of student by student.
+//
+// GUARDED ON "students", NOT ON "registers" OR "scheduling", and that is not a
+// stylistic choice. Moving a student between cohorts rewrites their stored
+// academicDepartmentId, which is what decides WHICH DEPARTMENT CAN SEE THEM. Behind the
+// scheduling page it would let somebody whose job is placing classes on a calendar move
+// a student out of one department's sight and into another's. It is the same act as
+// PUT /students/:id with a cohortId, so it carries the same guard.
+
+router.get("/cohorts/:id/students", requireAuth, async (req, res) => {
+  const rows = await prisma.student.findMany({
+    where: { cohortId: req.params.id },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+  res.json(rows.map(sStudent));
+});
+
+/**
+ * Put students into a group, or take them out of it (`cohortId: null` on the body's
+ * behalf when `remove` is true).
+ *
+ * ONE STUDENT IS IN ONE GROUP. Student.cohortId is a single column, so adding somebody
+ * to this group REMOVES them from whichever they were in. That is reported back rather
+ * than done quietly: `moved` names the students who were somewhere else, because an
+ * administrator adding forty people has no other way to notice they have just emptied
+ * another class.
+ */
+async function setCohortMembership(req, res, { remove }) {
+  const cohort = remove ? null : await prisma.cohort.findUnique({ where: { id: req.params.id } });
+  if (!remove && !cohort) return res.status(404).json({ error: "Group not found" });
+
+  const ids = Array.isArray(req.body?.studentIds)
+    ? [...new Set(req.body.studentIds.filter((x) => typeof x === "string" && x.trim()))]
+    : [];
+  if (!ids.length) return res.status(400).json({ error: "studentIds must be a non-empty list" });
+  // The same ceiling the audit blob uses. A request larger than this is an import,
+  // and an import is a different endpoint with a different confirmation.
+  if (ids.length > 500) return res.status(400).json({ error: "Move at most 500 students at a time" });
+
+  const students = await prisma.student.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, firstName: true, lastName: true, studentRef: true, cohortId: true },
+  });
+  if (students.length !== ids.length) return res.status(400).json({ error: "One or more students do not exist" });
+
+  // On removal, only students actually in THIS group are touched. Without that check a
+  // stale browser tab could pull somebody out of a group they were never in.
+  const targets = remove ? students.filter((s) => s.cohortId === req.params.id) : students;
+  if (!targets.length) return res.json({ ok: true, changed: 0, moved: [] });
+
+  const cohortId = remove ? null : cohort.id;
+  // THE STORED DEPARTMENT FOLLOWS THE COHORT, resolved ONCE for the group rather than
+  // per student — it is a property of the cohort, and asking it per student would be
+  // the same query forty times for one answer.
+  const academicDepartmentId = await academicDepartments.forCohort(cohortId);
+
+  const { count } = await prisma.student.updateMany({
+    where: { id: { in: targets.map((s) => s.id) } },
+    data: { cohortId, academicDepartmentId },
+  });
+
+  // A cohort change moves a student's scoring window to that cohort's term calendar,
+  // so every one of them is restated as stale. Same call the single-student path makes.
+  await flagStale(targets.map((s) => s.id), remove ? "students being removed from a group" : "students being added to a group");
+
+  const moved = targets
+    .filter((s) => s.cohortId && s.cohortId !== cohortId)
+    .map((s) => ({ id: s.id, name: `${s.firstName} ${s.lastName}`.trim(), studentRef: s.studentRef, fromCohortId: s.cohortId }));
+
+  audit.record(req, {
+    action: remove ? "cohort.students.removed" : "cohort.students.added",
+    entity: "Cohort", entityId: req.params.id,
+    summary: remove
+      ? `${count} student(s) removed from a group by ${req.user?.name || "an administrator"}`
+      : `${count} student(s) added to ${cohort.name} by ${req.user?.name || "an administrator"}` +
+        (moved.length ? ` — ${moved.length} moved out of another group` : ""),
+    before: Object.fromEntries(targets.slice(0, 40).map((s) => [s.id, s.cohortId])),
+    after: Object.fromEntries(targets.slice(0, 40).map((s) => [s.id, cohortId])),
+  });
+
+  res.json({ ok: true, changed: count, moved });
+}
+
+router.post("/cohorts/:id/students", requireAuth, requireStudentAdmin, (req, res) => setCohortMembership(req, res, { remove: false }));
+router.delete("/cohorts/:id/students", requireAuth, requireStudentAdmin, (req, res) => setCohortMembership(req, res, { remove: true }));
+
 /* ============================== terms ============================== */
 // Each cohort runs 6 terms (Year 1 T1-3, Year 2 T1-3). Dates drive which term is
 // "active" (contains today) — that's what opens/pauses attendance later.
