@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   windowFor, shiftAnchor, datesIn, isoDay, minutes,
   placeEvent, colourOf, annotationLines, changedWithin, RANGE_LABEL,
+  seriesPreviewDates,
 } from "./timetableView.js";
 
 const PERIODS = [
@@ -182,4 +183,35 @@ test("the range label prints the month once inside a month, twice across one", (
   // the abbreviation "ought" to be.
   assert.equal(RANGE_LABEL("week", "2026-08-31", "2026-09-06"), "31 Aug - 6 Sept 26");
   assert.equal(RANGE_LABEL("month", "2026-08-31", "2026-10-04"), "August 2026");
+});
+
+// --- seriesPreviewDates: the count the form shows before it writes anything ---
+
+test("seriesPreviewDates: several weekdays come back in date order", () => {
+  // 2026-09-07 is a Monday, 2026-09-10 the Thursday.
+  assert.deepEqual(seriesPreviewDates("2026-09-07", "2026-09-17", [1, 4]),
+    ["2026-09-07", "2026-09-10", "2026-09-14", "2026-09-17"]);
+});
+
+test("seriesPreviewDates: no days named falls back to the start date's weekday", () => {
+  // Empty must NOT mean "no dates" — that is the commonest case of all, a single
+  // weekly class, and previewing zero for it would read as a broken form.
+  assert.deepEqual(seriesPreviewDates("2026-09-07", "2026-09-21", []),
+    ["2026-09-07", "2026-09-14", "2026-09-21"]);
+});
+
+test("seriesPreviewDates: a skipped date is dropped, not shifted", () => {
+  assert.deepEqual(seriesPreviewDates("2026-09-07", "2026-09-28", [1], ["2026-09-14"]),
+    ["2026-09-07", "2026-09-21", "2026-09-28"]);
+});
+
+test("seriesPreviewDates: matches the server across the spring clock change", () => {
+  // BST begins 2026-03-29. These must all stay Tuesdays — the same case
+  // server/src/timetabling/seriesDates.test.js pins.
+  assert.deepEqual(seriesPreviewDates("2026-03-24", "2026-04-14", [2]),
+    ["2026-03-24", "2026-03-31", "2026-04-07", "2026-04-14"]);
+});
+
+test("seriesPreviewDates: an inverted range gives nothing", () => {
+  assert.deepEqual(seriesPreviewDates("2026-09-28", "2026-09-07", [1]), []);
 });

@@ -6,16 +6,17 @@
 // that one is scoped to a course/year/term and has free-text lecturer and room, and
 // folding this into it would mean one screen where half the fields are relations and
 // half are strings.
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
-  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2,
+  ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2, ChevronDown,
 } from "lucide-react";
 import { api } from "./api";
 import { NAVY, alpha } from "./branding";
 import TimetableCalendar from "./TimetableCalendar";
 import TimetableSettingsModal from "./TimetableSettingsModal";
-import { windowFor, shiftAnchor, RANGE_LABEL } from "./timetableView";
+import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates } from "./timetableView";
+import { ukBankHolidaysRange } from "./bankHolidays";
 
 function Field({ label, children, hint }) {
   return (
@@ -27,6 +28,110 @@ function Field({ label, children, hint }) {
   );
 }
 const inputCls = "w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm";
+
+// ISO order, Monday first, matching isoDay() and every other weekday list in this
+// feature. A Sunday-first row would put the weekend either side of the working week.
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/* --------------------------------------------------------------- pickers -- */
+//
+// A <select> is fine for five options and unusable for four hundred. A college's staff
+// list, module list and room list are all in the hundreds, and "scroll until you find
+// L. Whitfield" is how a timetabler ends up entering the wrong lecturer.
+//
+// Both pickers filter a list ALREADY IN MEMORY rather than calling an endpoint per
+// keystroke: staff, units, rooms and cohorts are loaded once by the store or the tab,
+// they are small enough to filter client-side, and a debounce plus a spinner would be
+// slower and more code for a worse result. Students would be different — 9,000 of them
+// is a directory, not a list — which is why no picker here offers one.
+
+/** Single-choice search box. `value` is an id or "", `options` is [{ id, label, sub }]. */
+function SearchOne({ value, options, onChange, placeholder, allowNone = true, noneLabel = "None" }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const chosen = options.find((o) => o.id === value);
+  const term = q.trim().toLowerCase();
+  // Capped at 50 so a blank search does not paint the whole list; typing narrows it.
+  const shown = options
+    .filter((o) => !term || `${o.label} ${o.sub || ""}`.toLowerCase().includes(term))
+    .slice(0, 50);
+
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => { setOpen((v) => !v); setQ(""); }}
+        className={`${inputCls} flex items-center justify-between text-left ${chosen ? "text-slate-700" : "text-slate-400"}`}>
+        <span className="truncate">{chosen ? chosen.label : placeholder}</span>
+        <ChevronDown size={15} className="shrink-0 text-slate-400" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
+          <input autoFocus className="w-full border-b border-slate-200 px-2.5 py-2 text-sm outline-none"
+            placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <ul className="max-h-56 overflow-y-auto py-1">
+            {allowNone && (
+              <li><button type="button" onClick={() => { onChange(""); setOpen(false); }}
+                className="w-full px-2.5 py-1.5 text-left text-sm text-slate-400 hover:bg-slate-50">{noneLabel}</button></li>
+            )}
+            {!shown.length && <li className="px-2.5 py-3 text-center text-sm text-slate-400">Nothing matches.</li>}
+            {shown.map((o) => (
+              <li key={o.id}>
+                <button type="button" onClick={() => { onChange(o.id); setOpen(false); }}
+                  className={`w-full px-2.5 py-1.5 text-left text-sm hover:bg-slate-50 ${o.id === value ? "font-bold text-slate-800" : "text-slate-700"}`}>
+                  {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-400">{o.sub}</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Multi-choice search box. `value` is an array of ids; chosen ones show as chips. */
+function SearchMany({ value = [], options, onChange, placeholder }) {
+  const [q, setQ] = useState("");
+  const term = q.trim().toLowerCase();
+  const chosen = options.filter((o) => value.includes(o.id));
+  const shown = options
+    .filter((o) => !value.includes(o.id))
+    .filter((o) => !term || `${o.label} ${o.sub || ""}`.toLowerCase().includes(term))
+    .slice(0, 50);
+
+  return (
+    <div className="rounded-lg border border-slate-300">
+      {/* Chosen ones stay VISIBLE as chips rather than as highlighted rows in a
+          scrolling list. With a multi-select, what you have picked scrolls out of
+          sight the moment you look for the next one. */}
+      {!!chosen.length && (
+        <div className="flex flex-wrap gap-1 border-b border-slate-200 p-1.5">
+          {chosen.map((o) => (
+            <span key={o.id} className="flex items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-2 pr-1 text-xs font-bold text-slate-700">
+              {o.label}
+              <button type="button" aria-label={`Remove ${o.label}`} onClick={() => onChange(value.filter((v) => v !== o.id))}
+                className="rounded-full p-0.5 hover:bg-slate-300"><X size={11} /></button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input className="w-full px-2.5 py-1.5 text-sm outline-none" placeholder={placeholder}
+        value={q} onChange={(e) => setQ(e.target.value)} />
+      {!!term && (
+        <ul className="max-h-40 overflow-y-auto border-t border-slate-200 py-1">
+          {!shown.length && <li className="px-2.5 py-2 text-center text-sm text-slate-400">Nothing matches.</li>}
+          {shown.map((o) => (
+            <li key={o.id}>
+              <button type="button" onClick={() => { onChange([...value, o.id]); setQ(""); }}
+                className="w-full px-2.5 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
+                {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-400">{o.sub}</span> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ rooms -- */
 
@@ -588,16 +693,34 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
     return course ? `${course.name} — ${c.name}` : c.name;
   };
 
+  // What the series WOULD create, computed here so the count can be shown BEFORE the
+  // request. Bank holidays are subtracted because the server subtracts them, and a
+  // preview that disagreed with the result would be worse than no preview at all.
+  const seriesPreview = useMemo(() => {
+    if (!editing || editing.id || !editing.date || !editing.endDate) return [];
+    const y1 = Number(editing.date.slice(0, 4));
+    const y2 = Number(editing.endDate.slice(0, 4));
+    const skip = Number.isFinite(y1) && Number.isFinite(y2) ? (ukBankHolidaysRange(y1, y2) || []) : [];
+    return seriesPreviewDates(editing.date, editing.endDate, editing.days || [], skip);
+  }, [editing]);
+
   const save = async () => {
     setErr(""); setNote(""); setWarnings([]);
     try {
       const body = { ...editing, staffIds: editing.staffIds || [], cohortIds: editing.cohortIds || [] };
+      // The repeat fields belong to CREATE only. Sent on an update they would be
+      // ignored, but leaving them on the object invites somebody to honour them later
+      // and turn "fix this Tuesday's room" into a term of new classes.
+      if (editing.id) { delete body.endDate; delete body.days; }
       const r = editing.id ? await api.ttUpdateEvent(editing.id, body) : await api.ttCreateEvent(body);
       // A CLASH IS A WARNING, NOT A FAILURE. The server saved it. Closing the editor
       // and showing the warnings above the grid is the honest reading — refusing to
       // close would imply the save had not happened, and an administrator would try
       // again and create a second copy.
       setWarnings(r.warnings || []);
+      // Say how many were made when it was a series. "Saved" after creating forty-two
+      // classes leaves an administrator to go and count them.
+      if (!editing.id && r.created > 1) setNote(`${r.created} classes created, ${r.dates?.[0]} to ${r.dates?.[r.dates.length - 1]}.`);
       setEditing(null);
       load();
     } catch (e) { setErr(e?.message || "Could not save the event."); }
@@ -678,14 +801,15 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
             </div>
             <div className="grid flex-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2">
               <Field label="Title"><input className={inputCls} value={editing.title || ""} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></Field>
-              <Field label="Date"><input type="date" className={inputCls} value={editing.date || ""} onChange={(e) => setEditing({ ...editing, date: e.target.value })} /></Field>
+              <Field label={editing.id ? "Date" : "Start date"}>
+                <input type="date" className={inputCls} value={editing.date || ""} onChange={(e) => setEditing({ ...editing, date: e.target.value })} />
+              </Field>
               <Field label="Start"><input type="time" className={inputCls} value={editing.start || ""} onChange={(e) => setEditing({ ...editing, start: e.target.value })} /></Field>
               <Field label="End"><input type="time" className={inputCls} value={editing.end || ""} onChange={(e) => setEditing({ ...editing, end: e.target.value })} /></Field>
-              <Field label="Room">
-                <select className={inputCls} value={editing.roomId || ""} onChange={(e) => setEditing({ ...editing, roomId: e.target.value })}>
-                  <option value="">No room</option>
-                  {rooms.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-                </select>
+              <Field label="Room" hint="Type to search by number or campus">
+                <SearchOne value={editing.roomId || ""} placeholder="No room" noneLabel="No room"
+                  options={rooms.filter((r) => r.active).map((r) => ({ id: r.id, label: r.label, sub: r.kind || "" }))}
+                  onChange={(id) => setEditing({ ...editing, roomId: id })} />
               </Field>
               <Field label="Category">
                 <select className={inputCls} value={editing.categoryId || ""} onChange={(e) => setEditing({ ...editing, categoryId: e.target.value })}>
@@ -697,23 +821,64 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                   no module — which is exactly what HndSession.unitId being NOT NULL
                   cannot express, and the reason this feature has its own table. */}
               <Field label="Module" hint="Optional — exams and meetings have none">
-                <select className={inputCls} value={editing.unitId || ""} onChange={(e) => setEditing({ ...editing, unitId: e.target.value })}>
-                  <option value="">No module</option>
-                  {units.map((u) => <option key={u.id} value={u.id}>{u.code ? `${u.code} — ` : ""}{u.name}</option>)}
-                </select>
+                <SearchOne value={editing.unitId || ""} placeholder="No module" noneLabel="No module"
+                  options={units.map((u) => ({ id: u.id, label: u.code ? `${u.code} — ${u.name}` : u.name }))}
+                  onChange={(id) => setEditing({ ...editing, unitId: id })} />
               </Field>
-              <Field label="Teaching staff" hint="Ctrl/Cmd-click for more than one">
-                <select multiple size={4} className={inputCls} value={editing.staffIds || []}
-                  onChange={(e) => setEditing({ ...editing, staffIds: [...e.target.selectedOptions].map((o) => o.value) })}>
-                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+              <Field label="Teaching staff" hint="Type a name; add as many as teach it">
+                <SearchMany value={editing.staffIds || []} placeholder="Search staff…"
+                  options={staff.map((s) => ({ id: s.id, label: s.name, sub: s.dept || "" }))}
+                  onChange={(v) => setEditing({ ...editing, staffIds: v })} />
               </Field>
-              <Field label="Groups" hint="Ctrl/Cmd-click for more than one">
-                <select multiple size={4} className={inputCls} value={editing.cohortIds || []}
-                  onChange={(e) => setEditing({ ...editing, cohortIds: [...e.target.selectedOptions].map((o) => o.value) })}>
-                  {cohorts.map((c) => <option key={c.id} value={c.id}>{cohortLabel(c)}</option>)}
-                </select>
+              <Field label="Groups" hint="Type a group name; each gets its own register">
+                <SearchMany value={editing.cohortIds || []} placeholder="Search groups…"
+                  options={cohorts.map((c) => ({ id: c.id, label: cohortLabel(c) }))}
+                  onChange={(v) => setEditing({ ...editing, cohortIds: v })} />
               </Field>
+              {/* REPEATS ARE PART OF CREATING, not a second action afterwards.
+                  It used to be a window.prompt asking for one end date, which could only
+                  ever produce ONE weekday — so a module taught Monday and Thursday was
+                  two unrelated series that drift apart the first time one is moved.
+                  Editing an existing event does not show this: changing one occurrence
+                  must not silently generate a term. */}
+              {!editing.id && (
+                <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 sm:col-span-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Repeat until" hint="Leave blank for a single class">
+                      <input type="date" className={inputCls} value={editing.endDate || ""}
+                        min={editing.date || undefined}
+                        onChange={(e) => setEditing({ ...editing, endDate: e.target.value })} />
+                    </Field>
+                    <Field label="On these days" hint="Defaults to the start date's own day">
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {DAY_LABELS.map((lbl, i) => {
+                          const iso = i + 1;
+                          const on = (editing.days || []).includes(iso);
+                          return (
+                            <button key={iso} type="button" disabled={!editing.endDate}
+                              onClick={() => setEditing({ ...editing, days: on ? (editing.days || []).filter((d) => d !== iso) : [...(editing.days || []), iso] })}
+                              className={`h-8 w-9 rounded text-xs font-bold disabled:opacity-40 ${on ? "text-white" : "bg-white text-slate-500 ring-1 ring-slate-300"}`}
+                              style={on ? { background: NAVY } : undefined}>{lbl}</button>
+                          );
+                        })}
+                      </div>
+                    </Field>
+                  </div>
+                  {/* The COUNT BEFORE THE BUTTON. Three weekdays across a 14-week term
+                      with two groups is 42 classes and 84 registers; that number belongs
+                      in front of somebody before they press Save, not after. */}
+                  {editing.endDate && (
+                    <p className="mt-2 text-xs font-semibold text-slate-600">
+                      {seriesPreview.length
+                        ? <>Creates <strong>{seriesPreview.length}</strong> classes, {seriesPreview[0]} to {seriesPreview[seriesPreview.length - 1]}
+                            {(editing.cohortIds || []).length > 1 ? <> · {seriesPreview.length * editing.cohortIds.length} registers across {editing.cohortIds.length} groups</> : null}
+                            . UK bank holidays are skipped.</>
+                        : <span className="text-amber-700">No dates fall on those days in that range.</span>}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="sm:col-span-2">
                 <Field label="Notes"><textarea rows={2} className={inputCls} value={editing.notes || ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} /></Field>
               </div>

@@ -219,3 +219,33 @@ export function RANGE_LABEL(view, from, to) {
     : f.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" });
   return `${left} - ${t.toLocaleDateString("en-GB", { ...DMY, timeZone: "UTC" })} ${String(yr).slice(2)}`;
 }
+
+/**
+ * The dates a repeating class falls on: every day between `start` and `end` inclusive
+ * whose ISO weekday is in `days`, minus `skip`.
+ *
+ * A MIRROR OF seriesDates() IN server/src/timetabling/recurrence.js, and it exists only
+ * so the form can say "creates 42 classes" BEFORE the request rather than after it. The
+ * server is authoritative; if the two ever disagree the server wins and the count was
+ * merely wrong on screen. Kept deliberately identical in its two awkward rules so it
+ * cannot mislead:
+ *
+ *   - empty `days` means the START DATE'S OWN WEEKDAY, not "no days". Returning nothing
+ *     there would preview an empty series for the commonest case of all.
+ *   - a skipped date is DROPPED, never shifted to the next occurrence, which would push
+ *     the rest of the term along by a week.
+ *
+ * This is NOT datesIn() above: that one answers "which columns does this grid carry",
+ * treats an empty list as empty, and overrides everything in day view.
+ */
+export function seriesPreviewDates(start, end, days = [], skip = []) {
+  const out = [];
+  if (!start || !end || end < start) return out;
+  const wanted = new Set((days || []).filter((n) => Number.isInteger(n) && n >= 1 && n <= 7));
+  if (!wanted.size) wanted.add(isoDay(start));
+  const skipSet = new Set(skip || []);
+  for (let d = start, guard = 0; d <= end && guard < 400; d = addDays(d, 1), guard++) {
+    if (wanted.has(isoDay(d)) && !skipSet.has(d)) out.push(d);
+  }
+  return out;
+}

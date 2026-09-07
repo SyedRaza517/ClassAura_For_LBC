@@ -12,6 +12,8 @@ const prisma = require("../db");
 const { requireAuth, requirePage } = require("../auth");
 const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
 const { normaliseCampus } = require("../timetabling/campusMatch");
+const { seriesDates } = require("../timetabling/recurrence");
+const { randomUUID } = require("node:crypto");
 
 router.use(requireAuth, requirePage("scheduling"));
 
@@ -429,16 +431,66 @@ function createEventWithAssignments(data, staffIds, cohortIds, include) {
   });
 }
 
+// Create one event, or a whole series in one call.
+//
+// A SERIES IS ONE REQUEST, NOT A CREATE FOLLOWED BY A REPEAT. The two-step it replaces
+// (create Tuesday, then "repeat weekly until") could only ever produce ONE weekday, so a
+// module taught Monday and Thursday was two series — and two series drift, because
+// somebody moves the Monday one and nothing records that the Thursday one was ever the
+// same class. `seriesId` is what ties them together now.
 router.post("/events", async (req, res) => {
   const { data, error } = parseEvent(req.body, false);
   if (error) return res.status(400).json({ error });
 
   const staffIds = ids(req.body?.staffIds);
   const cohortIds = ids(req.body?.cohortIds);
-  const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
 
-  const row = await createEventWithAssignments(data, staffIds, cohortIds, EVENT_INCLUDE);
-  res.status(201).json({ event: sEvent(row), warnings });
+  // No endDate means the old behaviour exactly: one event on one date.
+  const endDate = str(req.body?.endDate);
+  if (!endDate) {
+    const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
+    const row = await createEventWithAssignments(data, staffIds, cohortIds, EVENT_INCLUDE);
+    return res.status(201).json({ event: sEvent(row), warnings, created: 1 });
+  }
+
+  if (!DATE_RE.test(endDate)) return res.status(400).json({ error: "endDate must be YYYY-MM-DD" });
+  if (endDate < data.date) return res.status(400).json({ error: "endDate must not be before the start date" });
+
+  const skip = new Set(ids(req.body?.skip));
+  // Bank holidays are skipped unless the caller says otherwise, matching /repeat. The
+  // college that DOES teach on Easter Monday says so; hardcoding one answer to somebody
+  // else's policy is the worse failure.
+  if (req.body?.skipBankHolidays !== false) {
+    for (let y = Number(data.date.slice(0, 4)); y <= Number(endDate.slice(0, 4)); y++) {
+      for (const d of bankHolidays.ukBankHolidays(y) || []) skip.add(d);
+    }
+  }
+
+  const dates = seriesDates(data.date, endDate, req.body?.days, { skip: [...skip] });
+  if (!dates.length) {
+    // An empty series is a real answer — "Tuesdays" over a range containing no Tuesday —
+    // and 400 with the reason beats silently creating nothing and reporting success.
+    return res.status(400).json({ error: "No dates fall on the days you chose within that range." });
+  }
+
+  // Reported PER DATE, because "week 4 clashes" is actionable and "there were clashes"
+  // is not. Checked before each create so a later date sees the earlier ones.
+  const seriesId = randomUUID();
+  const warnings = [];
+  let first = null;
+  for (const date of dates) {
+    const found = await checkClashes({ ...data, date, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
+    if (found.length) warnings.push({ date, clashes: found });
+    const row = await createEventWithAssignments(
+      { ...data, date, seriesId }, staffIds, cohortIds, first ? null : EVENT_INCLUDE,
+    );
+    if (!first) first = row;
+  }
+
+  res.status(201).json({
+    event: sEvent(first), seriesId, created: dates.length,
+    dates, warnings,
+  });
 });
 
 router.put("/events/:id", async (req, res) => {

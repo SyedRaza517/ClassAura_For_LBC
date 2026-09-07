@@ -118,6 +118,38 @@ check("removing from a group empties the column rather than deleting anyone",
 check("an empty studentIds list is refused",
   (await call(`/hnd/cohorts/${cohortA.id}/students`, { method: "POST", token: admin.token, body: { studentIds: [] } })).status === 400);
 
+console.log("\n--- one request, a whole series ---");
+// 2027-03-01 is a Monday. Mon+Thu over three weeks = 6 classes.
+const series = await call("/timetabling/events", { method: "POST", token: admin.token, body: {
+  date: "2027-03-01", endDate: "2027-03-18", days: [1, 4],
+  start: "09:00", end: "12:00", title: `Series ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id],
+} });
+check("a date range creates the whole series in one call", series.data?.created === 6, `created ${series.data?.created}`);
+check("MULTI-WEEKDAY: both Mondays and Thursdays, in date order",
+  JSON.stringify(series.data?.dates) === JSON.stringify(["2027-03-01","2027-03-04","2027-03-08","2027-03-11","2027-03-15","2027-03-18"]),
+  JSON.stringify(series.data?.dates));
+const seriesRows = await db.timetableEvent.findMany({ where: { seriesId: series.data?.seriesId }, select: { id: true, date: true } });
+check("they share one seriesId, so the series is findable later", seriesRows.length === 6, `${seriesRows.length}`);
+check("and a single-date create still returns created:1",
+  (await call("/timetabling/events", { method: "POST", token: admin.token, body: { date: "2027-03-02", start: "09:00", end: "10:00", title: `Single ${TAG}` } })).data?.created === 1);
+
+// A range naming a weekday that never falls in it is a real answer, not an empty success.
+const impossible = await call("/timetabling/events", { method: "POST", token: admin.token, body: {
+  date: "2027-03-01", endDate: "2027-03-01", days: [6], start: "09:00", end: "10:00", title: `Nope ${TAG}`,
+} });
+check("a range containing none of the chosen days is REFUSED, not silently empty",
+  impossible.status === 400 && /No dates fall/i.test(impossible.data?.error || ""), `${impossible.status} ${impossible.data?.error}`);
+
+// Bank holidays are skipped unless the caller opts out. Easter Monday 2027 is 29 March.
+const overEaster = await call("/timetabling/events", { method: "POST", token: admin.token, body: {
+  date: "2027-03-22", endDate: "2027-04-05", days: [1], start: "09:00", end: "10:00", title: `Easter ${TAG}`,
+} });
+check("UK bank holidays are skipped by default", !(overEaster.data?.dates || []).includes("2027-03-29"), JSON.stringify(overEaster.data?.dates));
+const keepEaster = await call("/timetabling/events", { method: "POST", token: admin.token, body: {
+  date: "2027-03-22", endDate: "2027-04-05", days: [1], start: "14:00", end: "15:00", title: `EasterKeep ${TAG}`, skipBankHolidays: false,
+} });
+check("but a college that teaches on them can say so", (keepEaster.data?.dates || []).includes("2027-03-29"), JSON.stringify(keepEaster.data?.dates));
+
 console.log("\n--- a draft event builds nothing ---");
 const draft = (await mkEvent({ date: D, start: "09:00", end: "12:00", title: `Draft ${TAG}`, unitId: unit.id, cohortIds: [cohortA.id] })).data?.event;
 check("a draft event was created", !!draft?.id);

@@ -42,4 +42,56 @@ function weeklyDates(startDate, endDate, { skip = [], maxWeeks = MAX_WEEKS } = {
   return out;
 }
 
-module.exports = { weeklyDates, MAX_WEEKS };
+// A term of Monday/Wednesday/Friday classes across a whole year is under 160 dates. The
+// cap is the same insurance MAX_WEEKS is: a typo in the end date must not generate a
+// year of rows for every weekday at once.
+const MAX_DATES = 400;
+
+/**
+ * Every date between `startDate` and `endDate` inclusive whose ISO weekday is in `days`,
+ * minus anything in `skip`.
+ *
+ * MULTI-WEEKDAY, which weeklyDates deliberately is not. A module taught Monday and
+ * Thursday is ONE decision by the person entering it and TWO series to weeklyDates — and
+ * two series drift, because somebody moves the Monday one and the Thursday one stays
+ * where it was, with nothing recording that they were ever the same class.
+ *
+ * `days` is ISO weekdays, 1 = Monday to 7 = Sunday. Empty means "the weekday the start
+ * date falls on", so a caller that passes nothing gets the obvious single-day series
+ * rather than an empty one — the failure mode that would silently create no classes.
+ *
+ * All arithmetic is in UTC, for the reason weeklyDates records above: local-time
+ * arithmetic across the spring clock change lands on 23:00 the previous day and slips
+ * the rest of the series back by a date.
+ */
+function seriesDates(startDate, endDate, days = [], { skip = [], max = MAX_DATES } = {}) {
+  const out = [];
+  if (!startDate || !endDate || endDate < startDate) return out;
+
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  if (Number.isNaN(cursor.getTime())) return out;
+
+  // JS getUTCDay is 0 = Sunday; ISO is 7 = Sunday. Everything else in this feature
+  // speaks ISO, so the conversion happens here rather than leaking two conventions.
+  const isoDay = (d) => (d.getUTCDay() === 0 ? 7 : d.getUTCDay());
+
+  const wanted = new Set(
+    (Array.isArray(days) ? days : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= 7),
+  );
+  if (!wanted.size) wanted.add(isoDay(cursor));
+
+  const skipSet = new Set(skip);
+  while (out.length < max) {
+    const iso = cursor.toISOString().slice(0, 10);
+    if (iso > endDate) break;
+    // A skipped date is a class that does NOT happen, not one moved to the next
+    // occurrence — shifting would push the rest of the term along by a week.
+    if (wanted.has(isoDay(cursor)) && !skipSet.has(iso)) out.push(iso);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+module.exports = { weeklyDates, seriesDates, MAX_WEEKS, MAX_DATES };
