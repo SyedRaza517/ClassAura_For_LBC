@@ -31,6 +31,19 @@ function modelBody(name) {
   return m ? m[1] : null;
 }
 
+/**
+ * The same body with every comment line removed.
+ *
+ * NEEDED FOR NEGATIVE ASSERTIONS, and the reason is a bug this file already had. The
+ * comment on HndSession explains why `@@unique([unitId, date, startTime])` was removed
+ * — so it QUOTES the line, and a test asserting the declaration is absent matched the
+ * explanation instead and failed against a correct schema. A negative assertion that
+ * cannot tell a declaration from a mention of one is worse than none: it would equally
+ * have passed had the constraint been reinstated with a comment nearby.
+ */
+const declarations = (body) =>
+  String(body ?? "").split("\n").filter((l) => !/^\s*(\/\/|\/\/\/)/.test(l)).join("\n");
+
 const MODELS = [
   "Room", "EventCategory", "TimetableEvent",
   "TimetableEventStaff", "TimetableEventGroup",
@@ -68,7 +81,12 @@ test("a room number is unique per campus, not globally", () => {
   // Two campuses may both have a room 101 — the reference institution has exactly
   // that, listing "101 [Harrow]" and "101 - First floor [Great Titchfield Street]".
   // A unique on name alone would refuse the second one.
-  assert.match(modelBody("Room"), /@@unique\(\[name, campus\]\)/);
+  //
+  // Keyed on campusId since 7 Sep 2026. It was [name, campus] against the free-text
+  // string, which meant "101" on "Ealing" and "101" on "ealing" were two different
+  // rooms — the constraint that exists to prevent a duplicate room was defeated by a
+  // capital letter.
+  assert.match(modelBody("Room"), /@@unique\(\[name, ?campusId\]\)/);
 });
 
 test("an event cannot list the same staff member or group twice", () => {
@@ -103,4 +121,82 @@ test("the timetable settings row is a singleton, by constant primary key", () =>
 
 test("events are indexed by date, because every read is a date-window read", () => {
   assert.match(modelBody("TimetableEvent"), /@@index\(\[date\]\)/);
+});
+
+// ---------------------------------------------------------------------------
+// The register link (7 Sep 2026), and the two indexes Prisma cannot see.
+// ---------------------------------------------------------------------------
+
+test("HndSession does NOT carry @@unique([unitId, date, startTime])", () => {
+  // Reinstating it would forbid the second register a MERGED CLASS needs — one module,
+  // one start time, two groups — and would forbid it at the database, so the failure
+  // surfaces as a 500 on publish rather than as anything a person can act on.
+  //
+  // The guarantee it used to give (a repeated generate run silently doubling every
+  // attendance denominator) is not lost: HndSession_generated_key applies it to exactly
+  // the rows it still describes.
+  // `declarations`, not the raw body: the comment three lines above the indexes quotes
+  // this exact constraint to explain why it went, and matching that would fail against
+  // a correct schema while equally passing on a reinstated one.
+  assert.ok(
+    !/@@unique\(\[unitId, ?date, ?startTime\]\)/.test(declarations(modelBody("HndSession"))),
+    "the @@unique was reinstated — see HndSession_generated_key in 20260907T120000_timetabling_registers",
+  );
+});
+
+test("HndSession names both partial indexes in a comment", () => {
+  // THIS COMMENT IS THE ONLY THING PRISMA LEAVES BEHIND. A partial unique index is not
+  // expressible in schema.prisma, so `prisma migrate dev` sees both as drift and would
+  // drop them — and nothing would notice until duplicate registers appeared. The
+  // comment is what a person reads before deciding the indexes are stale junk.
+  const body = modelBody("HndSession");
+  assert.match(body, /HndSession_generated_key/);
+  assert.match(body, /HndSession_event_group_key/);
+  assert.match(body, /20260907T120000_timetabling_registers/,
+    "the comment must name the migration the indexes live in, or they cannot be found");
+});
+
+test("HndSession.timetableEventId, cohortId and roomId are all nullable", () => {
+  // Every one of them is absent for a register the Moodle import or the three-hour-block
+  // generator created, and NOT NULL would make those registers impossible to write.
+  const body = modelBody("HndSession");
+  for (const f of ["timetableEventId", "cohortId", "roomId"]) {
+    assert.match(body, new RegExp(`${f}\\s+String\\?`), `HndSession.${f} must stay nullable`);
+  }
+});
+
+test("deleting a timetable event, group or room never cascades into attendance", () => {
+  // SetNull on all three. Cascade here would let removing a room delete the registers
+  // taken in it — the college's evidence for who attended, destroyed by a tidy-up.
+  const body = modelBody("HndSession");
+  const rels = body.match(/onDelete: \w+/g) || [];
+  assert.ok(rels.length >= 3, "expected the three new relations to declare onDelete");
+  assert.ok(!/onDelete: Cascade/.test(body.split("marks AttendanceMark[]")[1] || ""),
+    "no relation added below `marks` may cascade — attendance must survive its timetable");
+});
+
+test("Campus.name is unique, so a spelling cannot be entered twice", () => {
+  assert.match(modelBody("Campus"), /name\s+String\s+@unique/);
+});
+
+test("Room keys its unique on campusId, not the campus string", () => {
+  // With the string, "Room 101" on "Ealing" and on "ealing" were two different rooms,
+  // so the constraint meant to prevent a duplicate room was defeated by a capital.
+  const body = modelBody("Room");
+  assert.match(body, /@@unique\(\[name, ?campusId\]\)/);
+  assert.ok(!/@@unique\(\[name, ?campus\]\)/.test(body), "the old string-keyed unique is still there");
+});
+
+test("Room.campus is retained, because it is the only record of the free text", () => {
+  // Dropping it in the migration that consumes it would leave nothing to check the
+  // fold against, and nothing to recover from if two campuses were wrongly merged.
+  assert.match(modelBody("Room"), /campus\s+String\s+@default\(""\)/);
+});
+
+test("TimetableEvent.publishedAt is nullable, and distinct from published", () => {
+  // NULL means never published; published=false after a withdrawal means "was, is not
+  // now". Register creation triggers on the transition and must tell them apart.
+  const body = modelBody("TimetableEvent");
+  assert.match(body, /publishedAt\s+DateTime\?/);
+  assert.match(body, /published\s+Boolean/);
 });

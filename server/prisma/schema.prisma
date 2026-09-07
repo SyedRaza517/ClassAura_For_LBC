@@ -731,6 +731,9 @@ model Cohort {
   students Student[]
 
   timetableEvents TimetableEventGroup[]
+  // This group's own registers. A merged class gives each group its own — see
+  // HndSession.cohortId.
+  registers       HndSession[]
 
   /// Which academic department runs this intake. Denormalised from the course, exactly as
   /// Student.academicDepartmentId is denormalised through the cohort.
@@ -1130,13 +1133,51 @@ model HndSession {
 
   marks AttendanceMark[]
 
-  // One register per unit, per day, per start time. Generation de-duplicates in the
-  // request, but without this the database allowed a second run on a different
-  // weekday to create a whole parallel set — silently doubling every attendance
-  // denominator — and two concurrent generates to create exact duplicates.
-  @@unique([unitId, date, startTime])
+  // The timetabled event this register was built from. NULL for every register created
+  // by the three-hour-block generator in routes/hnd.js and by the Moodle import, which
+  // is why it cannot be required.
+  //
+  // SetNull, not Cascade: deleting a timetable entry must never delete attendance.
+  // The register survives, unlinked, and stays in the record the college is asked to
+  // evidence.
+  timetableEvent   TimetableEvent? @relation(fields: [timetableEventId], references: [id], onDelete: SetNull)
+  timetableEventId String?
+  // WHICH GROUP this register is for. A merged class — one lecture, two intakes —
+  // keeps a separate register per group, so the event alone does not identify one.
+  cohort   Cohort? @relation(fields: [cohortId], references: [id], onDelete: SetNull)
+  cohortId String?
+  // Where the class is. The field the student app has been missing: registers came
+  // from hardcoded time blocks, and a block does not know which room it is in.
+  room   Room?   @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomId String?
+
+  // UNIQUENESS IS TWO PARTIAL INDEXES, NOT AN @@unique HERE, AND PRISMA CANNOT SEE THEM.
+  //
+  // This model carried @@unique([unitId, date, startTime]). It stopped a second
+  // generate run on a different weekday creating a whole parallel set of registers —
+  // silently doubling every attendance denominator — and stopped two concurrent
+  // generates creating exact duplicates. That guarantee still holds, unchanged, for
+  // generator- and Moodle-created registers: HndSession_generated_key applies it
+  // WHERE "timetableEventId" IS NULL.
+  //
+  // But a MERGED CLASS legitimately needs two registers for one module at one start
+  // time, one per group, and the old constraint forbade exactly that. Timetable-created
+  // registers are therefore identified by HndSession_event_group_key, on
+  // ("timetableEventId", COALESCE("cohortId", '')). The COALESCE is load-bearing:
+  // Postgres treats NULLs as distinct, so a plain two-column unique would accept
+  // unlimited duplicate registers for any event with no group — reopening the exact
+  // hole the original constraint existed to close.
+  //
+  // Both live in prisma/migrations/20260907T120000_timetabling_registers as raw SQL.
+  // Prisma cannot express a partial unique index, so `prisma migrate dev` sees them as
+  // drift and would drop both, and nothing would notice until duplicate registers
+  // appeared in production. timetabling/schema-contract.test.js asserts this comment is
+  // still here and that the @@unique has not been reinstated.
   @@unique([moodleSessionId])
   @@index([unitId, date])
+  @@index([timetableEventId])
+  @@index([cohortId])
+  @@index([roomId])
 }
 
 // One student's mark for one session. status is P | L | E | A
@@ -3136,11 +3177,45 @@ model VleEngagement {
 // A teachable space. Decomposed rather than stored as one label because the source
 // system displays "101 - First floor [Great Titchfield Street]" -- name, floor and
 // campus are three facts, and a room search by campus needs them apart.
+// The college's campuses, as a managed list rather than free text on every room.
+//
+// Room.campus was a plain string, so "Ealing", "ealing" and "Ealing Campus" were three
+// campuses to anything built on it — and the register dashboard filters by campus. A
+// dropdown backed by rows cannot be misspelled; a text box silently splits a college's
+// reporting in three and the split is invisible in the numbers afterwards.
+//
+// Not a JSON settings blob like the other small lists, because rooms hold a foreign key
+// into it and a JSON array has nothing to point at.
+model Campus {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  // Retired campuses stay, so historic rooms keep the campus they were actually on.
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rooms Room[]
+
+  @@index([active])
+}
+
 model Room {
   id        String   @id @default(cuid())
   name      String
   floor     String   @default("")
+  // RETAINED, NOT DROPPED, for one release after the campus migration.
+  //
+  // 20260907T120000_timetabling_registers folds these strings into Campus rows and
+  // fills campusId from them. This column is then the only record of what the free
+  // text actually said, and dropping it in the same migration that consumes it would
+  // leave nothing to check the match against — including nothing to recover from if
+  // two campuses turned out to have been folded into one.
+  //
+  // Readers should use campusRef.name. serialize.js already prefers it and falls back
+  // here, so a room the migration could not match still shows its campus.
   campus    String   @default("")
+  campusRef Campus?  @relation(fields: [campusId], references: [id], onDelete: SetNull)
+  campusId  String?
   // NULLABLE ON PURPOSE. Null means "we have not recorded how many this room seats",
   // which is not the same as zero. A zero would make the room unusable by any future
   // capacity check, and would put a real room permanently out of use because nobody
@@ -3155,11 +3230,19 @@ model Room {
   updatedAt DateTime @updatedAt
 
   events TimetableEvent[]
+  // The registers held in this room. See HndSession.roomId.
+  registers HndSession[]
 
   // Two campuses may both have a room 101, and the reference institution has exactly
   // that. A unique on name alone would refuse the second one.
-  @@unique([name, campus])
+  //
+  // Keyed on campusId rather than the campus string now that campuses are rows: with
+  // the string, "Room 101" at "Ealing" and at "ealing" were two different rooms, so
+  // the constraint that exists to prevent a duplicate room was defeated by a
+  // capital letter.
+  @@unique([name, campusId])
   @@index([active])
+  @@index([campusId])
 }
 
 // What kind of thing an event is -- "Lecture", "Seminar", "Exam", "Tutorial".
@@ -3218,6 +3301,23 @@ model TimetableEvent {
 
   staff  TimetableEventStaff[]
   groups TimetableEventGroup[]
+  // The registers this event built — one per group. See HndSession.
+  registers HndSession[]
+
+  // The occurrences one submission of the entry form created, so that "cancel this
+  // class for the rest of term" is expressible at all. Without it a series is only
+  // findable by matching on its fields, which stops working the moment one occurrence
+  // is moved. NULL for an event created singly.
+  seriesId String?
+  // The administrator's per-series answer to "should this produce registers". A
+  // column rather than an inference from unitId: a module CAN have a register, and
+  // whether it SHOULD is a different question that only the college can answer —
+  // a revision session on a taught module is the case that separates them.
+  createRegisters Boolean @default(true)
+  // NULL means never published. Deliberately distinct from published=false, which
+  // after a withdrawal means "was published, is not now". Register creation triggers
+  // on the transition into published, so it has to be able to tell those apart.
+  publishedAt DateTime?
 
   // Every read of this table is a date-window read.
 
@@ -3241,6 +3341,7 @@ model TimetableEvent {
   @@index([roomId])
   @@index([unitId])
   @@index([academicDepartmentId])
+  @@index([seriesId])
 }
 
 // Which staff member teaches an event. Several are allowed -- a lecture with a
