@@ -8,7 +8,7 @@
 import React, { useMemo } from "react";
 import { CalendarDays, Clock3 } from "lucide-react";
 import {
-  windowFor, datesIn, isoDay, placeEvent, colourOf, annotationLines, changedWithin, minutes,
+  windowFor, datesIn, isoDay, placeEvent, colourOf, annotationLines, changedWithin, minutes, layoutDay,
 } from "./timetableView";
 import { NAVY, alpha } from "./branding";
 import { TT } from "./timetableTheme";
@@ -108,17 +108,32 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
                   removed: the reference draws one flat wash, and the stripes read as
                   meaning something when they mean nothing. */}
               {periods.map((p) => <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid }} className="border-b" />)}
-              {(byDate.get(d) || []).map((e) => {
+              {/* SIDE BY SIDE WHEN THEY SHARE AN HOUR.
+                  Every tile used to be `left: 2, right: 2` — the full width of the
+                  column — so a second class at the same time was drawn exactly over the
+                  first and the two titles interleaved into doubled, unreadable text.
+                  A merged class, a module taught to two groups, and a genuine
+                  double-booking all produce that, and the double-booking is the one
+                  somebody most needs to SEE rather than have hidden underneath.
+                  layoutDay works out the lanes; back-to-back classes stay full width. */}
+              {layoutDay(byDate.get(d) || []).map(({ event: e, lane, lanes }) => {
                 const pos = placeEvent(e, periods);
                 // Null means the event falls entirely outside the periods this
                 // reader has switched on. Not drawn, and not clamped to the edge —
                 // see placeEvent.
                 if (!pos) return null;
+                // Percentages, so the columns hold at any width; the 2px inset is taken
+                // off each tile rather than off the column, so neighbours never touch.
+                const w = 100 / lanes;
                 return (
                   <EventTile
                     key={e.id} event={e} settings={settings} today={today}
                     onSelect={onSelectEvent} selected={selectedId === e.id}
-                    style={{ position: "absolute", top: `${pos.topPct}%`, height: `${pos.heightPct}%`, left: 2, right: 2 }}
+                    style={{
+                      position: "absolute",
+                      top: `${pos.topPct}%`, height: `${pos.heightPct}%`,
+                      left: `calc(${lane * w}% + 2px)`, width: `calc(${w}% - 4px)`,
+                    }}
                   />
                 );
               })}

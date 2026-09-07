@@ -249,3 +249,58 @@ export function seriesPreviewDates(start, end, days = [], skip = []) {
   }
   return out;
 }
+
+/**
+ * Give every event in one day a lane, so that classes sharing an hour sit side by side
+ * instead of on top of one another.
+ *
+ * WITHOUT THIS THEY ARE DRAWN AT THE SAME COORDINATES. Every event was positioned
+ * `left: 2, right: 2` — the full width of its day column — so a second class at the same
+ * time rendered exactly over the first and the two titles interleaved into unreadable
+ * doubled text. Not a rare case: a merged class, a module with two groups, and a genuine
+ * double-booking all produce it, and the double-booking is the one somebody most needs to
+ * SEE rather than have hidden underneath.
+ *
+ * Returns `[{ event, lane, lanes }]`. `lanes` is the width of the CLUSTER the event
+ * belongs to, not of the whole day: two events at 09:00 and two unrelated ones at 14:00
+ * are two clusters of two, so each is drawn half-width rather than every event in the day
+ * being squeezed to a quarter.
+ *
+ * Overlap is HALF-OPEN, matching overlap.js on the server: 09:00-12:00 and 12:00-15:00 are
+ * back to back, not concurrent, and must not be split into columns.
+ */
+export function layoutDay(events) {
+  const rows = (events || [])
+    .map((e) => ({ event: e, start: minutes(e.start), end: minutes(e.end) }))
+    .filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const out = [];
+  let cluster = [];
+  let clusterEnd = -1;
+
+  // A cluster is a run of events connected by overlap — a chains-together group, not
+  // merely a pair. Closing it only when an event starts at or after the LATEST end so far
+  // is what makes A-overlaps-B, B-overlaps-C share one width even when A and C do not
+  // touch; giving them different widths would leave B a different size from its own
+  // neighbours.
+  const flush = () => {
+    if (!cluster.length) return;
+    const lanes = Math.max(...cluster.map((r) => r.lane)) + 1;
+    for (const r of cluster) out.push({ event: r.event, lane: r.lane, lanes });
+    cluster = [];
+  };
+
+  for (const r of rows) {
+    if (r.start >= clusterEnd) { flush(); clusterEnd = -1; }
+    // First lane whose occupant has finished. Greedy is optimal for interval graphs.
+    const taken = new Set(cluster.filter((c) => c.end > r.start).map((c) => c.lane));
+    let lane = 0;
+    while (taken.has(lane)) lane++;
+    r.lane = lane;
+    cluster.push(r);
+    clusterEnd = Math.max(clusterEnd, r.end);
+  }
+  flush();
+  return out;
+}

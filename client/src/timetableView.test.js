@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import {
   windowFor, shiftAnchor, datesIn, isoDay, minutes,
   placeEvent, colourOf, annotationLines, changedWithin, RANGE_LABEL,
-  seriesPreviewDates,
+  seriesPreviewDates, layoutDay,
 } from "./timetableView.js";
 
 const PERIODS = [
@@ -214,4 +214,79 @@ test("seriesPreviewDates: matches the server across the spring clock change", ()
 
 test("seriesPreviewDates: an inverted range gives nothing", () => {
   assert.deepEqual(seriesPreviewDates("2026-09-28", "2026-09-07", [1]), []);
+});
+
+// --- layoutDay: classes sharing an hour sit side by side, not on top of each other ---
+
+const ev = (id, start, end) => ({ id, start, end });
+const laneOf = (out, id) => out.find((r) => r.event.id === id);
+
+test("layoutDay: one event is full width", () => {
+  const out = layoutDay([ev("a", "09:00", "12:00")]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].lane, 0);
+  assert.equal(out[0].lanes, 1);
+});
+
+test("layoutDay: TWO EVENTS AT THE SAME TIME GET DIFFERENT LANES", () => {
+  // The bug this exists for: both were drawn at left:2/right:2 and the titles
+  // interleaved into unreadable doubled text.
+  const out = layoutDay([ev("a", "09:00", "12:00"), ev("b", "09:00", "12:00")]);
+  assert.equal(out.length, 2);
+  assert.notEqual(laneOf(out, "a").lane, laneOf(out, "b").lane);
+  assert.equal(laneOf(out, "a").lanes, 2);
+  assert.equal(laneOf(out, "b").lanes, 2);
+});
+
+test("layoutDay: BACK-TO-BACK IS NOT AN OVERLAP", () => {
+  // 09:00-12:00 then 12:00-15:00 is an ordinary teaching day. Splitting it into two
+  // columns would halve the width of every normal morning in the college. Half-open,
+  // matching overlap.js on the server.
+  const out = layoutDay([ev("a", "09:00", "12:00"), ev("b", "12:00", "15:00")]);
+  assert.equal(laneOf(out, "a").lanes, 1);
+  assert.equal(laneOf(out, "b").lanes, 1);
+});
+
+test("layoutDay: SEPARATE CLUSTERS ARE SIZED SEPARATELY", () => {
+  // Two at 09:00 and two unrelated at 14:00 are two clusters of two — each half-width.
+  // Sizing by the whole day would squeeze all four to a quarter for no reason.
+  const out = layoutDay([
+    ev("a", "09:00", "10:00"), ev("b", "09:00", "10:00"),
+    ev("c", "14:00", "15:00"), ev("d", "14:00", "15:00"),
+  ]);
+  for (const id of ["a", "b", "c", "d"]) assert.equal(laneOf(out, id).lanes, 2, id);
+});
+
+test("layoutDay: a chain of overlaps shares one width, sized by the WORST moment", () => {
+  // A overlaps B, B overlaps C, A and C do not touch. All three are one cluster and so
+  // share a width — otherwise B would be drawn a different size from both of its own
+  // neighbours.
+  //
+  // That width is TWO, not three, and the difference matters: at no instant are three of
+  // these on at once, so a third column would waste a third of the day for nobody. C
+  // takes the lane A has vacated. The cluster is what sets the width; the lane count
+  // within it is what the width has to be.
+  const out = layoutDay([
+    ev("a", "09:00", "11:00"), ev("b", "10:00", "12:00"), ev("c", "11:30", "13:00"),
+  ]);
+  for (const id of ["a", "b", "c"]) assert.equal(laneOf(out, id).lanes, 2, id);
+  assert.equal(laneOf(out, "c").lane, laneOf(out, "a").lane, "c takes the lane a has left");
+});
+
+test("layoutDay: a lane is REUSED once its occupant has finished", () => {
+  // Three events where the third starts after the first ends: two lanes, not three.
+  const out = layoutDay([
+    ev("a", "09:00", "10:00"), ev("b", "09:30", "12:00"), ev("c", "10:00", "11:00"),
+  ]);
+  assert.equal(laneOf(out, "c").lane, laneOf(out, "a").lane, "c reuses a's lane");
+  assert.equal(laneOf(out, "a").lanes, 2);
+});
+
+test("layoutDay: rubbish in does not throw", () => {
+  assert.deepEqual(layoutDay([]), []);
+  assert.deepEqual(layoutDay(null), []);
+  // A zero-length or inverted event cannot be placed and is dropped rather than
+  // crashing the whole grid.
+  assert.deepEqual(layoutDay([ev("a", "12:00", "12:00")]), []);
+  assert.deepEqual(layoutDay([ev("a", "15:00", "09:00")]), []);
 });
