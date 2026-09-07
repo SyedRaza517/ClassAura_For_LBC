@@ -40,7 +40,7 @@ const OUTCOMES = {
   already_marked: { label: "Already marked", tone: "slate" },
   already_checked_in: { label: "Already clocked in", tone: "slate" },
   no_session_now: { label: "No class running", tone: "amber" },
-  ambiguous: { label: "Two classes — asked which", tone: "amber" },
+  ambiguous: { label: "Two classes, asked which", tone: "amber" },
   term_locked: { label: "Term closed", tone: "amber" },
   tag_unknown: { label: "Tag not recognised", tone: "rose" },
   rate_limited: { label: "Too many attempts", tone: "rose" },
@@ -213,14 +213,14 @@ function TapSettings({ settings, onSaved }) {
         {num("lateAfterMins", "Late after (minutes)", "A check-in this long after the start records Late instead of Present.")}
         {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts check-ins are accepted. Zero means not before it starts.")}
         {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.", 600)}
-        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. Ten seconds is the floor. Any shorter and a phone can't scan it in time.", 300)}
+        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. The shortest allowed is ten seconds, so phones have time to scan.", 300)}
       </div>
 
       <label className="mt-4 flex items-start gap-3">
         <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
         <span className="text-[12px] leading-snug text-slate-600">
           <span className="font-semibold text-slate-800">Staff can clock in with the same stickers.</span>{" "}
-          A tap always records <em>Onsite</em> — they are demonstrably in the building — and working online stays available from the Check-In screen.
+          A tap always records <em>Onsite</em>, because they are in the building. Working online stays available from the Check-In screen.
         </span>
       </label>
     </section>
@@ -246,7 +246,7 @@ function RegisterTag({ onCreated }) {
 
   const create = async (code, labelOverride) => {
     const name = (labelOverride ?? label).trim();
-    if (!name) { setErr("Give the sticker a name first — the room it will live in."); return; }
+    if (!name) { setErr("Give the sticker a name first: the room it will live in."); return; }
     setSaving(true); setErr("");
     try {
       const t = await api.createTag(name, code);
@@ -256,7 +256,7 @@ function RegisterTag({ onCreated }) {
   };
 
   const tapToRegister = async () => {
-    if (!label.trim()) { setErr("Give the sticker a name first — the room it will live in."); return; }
+    if (!label.trim()) { setErr("Give the sticker a name first: the room it will live in."); return; }
     setScanning(true); setErr("");
     try {
       const code = await scanOnce({ alertMessage: "Hold your phone near the new sticker" });
@@ -344,9 +344,9 @@ function RegisterTag({ onCreated }) {
           is held to an NDEF session here deliberately — see nfc.js. */}
       <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
         {nfc?.ok && nfc.readsUnwritten
-          ? "Tapping a blank sticker is the quicker route — nothing to write and nothing to transcribe."
+          ? "Tapping a blank sticker is the quicker route: nothing to write and nothing to transcribe."
           : nfc?.ok
-            ? "An iPhone can't read a blank sticker, so generate a code here and write it on with an NFC writing app — or register the sticker on an Android phone, where tapping a blank one is enough."
+            ? "An iPhone can't read a blank sticker, so generate a code here and write it on with an NFC writing app, or register the sticker on an Android phone, where tapping a blank one is enough."
             : "On an Android phone with NFC you can register a blank sticker just by tapping it, with nothing to write."}
       </p>
     </section>

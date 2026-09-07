@@ -274,7 +274,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
             </span>
           ) : (
             <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[12px] font-bold text-slate-600 ring-1 ring-slate-200">
-              <Clock3 size={12} />Not accepting check-ins
+              <Clock3 size={12} />Check-in closed
             </span>
           )}
           {data?.termLocked && (
@@ -399,7 +399,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
               </li>
             );
           })}
-          {!rows.length && <li className="px-5 py-10 text-center text-sm text-slate-400">Nobody is enrolled on this unit yet.</li>}
+          {!rows.length && <li className="px-5 py-10 text-center text-sm text-slate-400">Nobody is enrolled on this unit yet. An administrator can add students on the Registers page.</li>}
         </ul>
 
         {/* Offered only to somebody the server will let close it. An administrator
@@ -472,6 +472,10 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
   const [mint, setMint] = useState(null);   // the last /qr-code answer
   const [img, setImg] = useState("");       // the current code, rendered
   const [err, setErr] = useState("");
+  // Whether the failure is one the card's own retry can outlive. A dropped connection or
+  // a server error, yes; a refusal (switched off, closed, not found) is an answer, and
+  // "trying again automatically" after an answer reads as two systems talking.
+  const [transient, setTransient] = useState(false);
   // Counts failures rather than just holding one, because it is the retry TRIGGER: two
   // identical failures in a row set the same err string, React skips the no-op state
   // update, and an effect keyed on err would never re-arm the timer — the exact
@@ -530,6 +534,7 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
       // card within a cycle) and the loud missing-key 503, which an administrator can
       // actually act on — so the message is shown, not swallowed.
       setErr(e?.message || "Could not fetch the check-in code.");
+      setTransient(!e?.status || e?.status >= 500 || Boolean(e?.timeout));
       setMint(null); setImg("");
       setFails((n) => n + 1);
     }
@@ -576,7 +581,7 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
           installed app points at this device, so nobody else can scan it.
         </Banner>
       ) : err ? (
-        <Banner tone="amber" Icon={QrCode}>{err} Trying again automatically.</Banner>
+        <Banner tone="amber" Icon={QrCode}>{err}{transient ? " Trying again automatically." : ""}</Banner>
       ) : open ? (
         <div className="flex flex-col items-center gap-4 sm:flex-row">
           <img src={img} alt="Check-in code" className="h-32 w-32 shrink-0 rounded-lg" />

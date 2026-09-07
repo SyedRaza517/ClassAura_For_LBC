@@ -119,7 +119,7 @@ async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT
     const missingRoute = res.status === 404 && !data?.error;
     const err = new Error(
       missingRoute
-        ? "This part of the app is newer than the server it is talking to. The page will work once the API has been redeployed — nothing is wrong with your data."
+        ? "This screen is newer than the server it is talking to. It will work once the server is updated. Nothing is wrong with your data."
         : (data?.error || `Request failed (${res.status})`)
     );
     err.status = res.status;

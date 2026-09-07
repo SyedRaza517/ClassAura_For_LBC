@@ -35,7 +35,7 @@ const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 //
 // This list is deliberately short and deliberately annotated. "The suite fails under the
 // flag" is not a reason to be on it — every suite that failed for a PRODUCT reason was fixed
-// instead, and that is the whole value of the flag. These three cannot pass by construction:
+// instead, and that is the whole value of the flag. These two cannot pass by construction:
 //
 //   smoke-academic-departments  Builds Business AND Computing fixtures and asserts the
 //   smoke-academic-scope        boundary between them. Setting that up requires a
@@ -43,27 +43,16 @@ const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 //                               cannot create the other department's data to be refused
 //                               from. They test scoping; they cannot be run scoped.
 //
-//   smoke-nfc-tap               Creates its units and sessions directly through its own
-//                               unguarded Prisma client rather than through the routes, so
-//                               they land with no department and are invisible to a scoped
-//                               admin. A fixture problem, not a product one: the same
-//                               objects created through POST /hnd/units inherit correctly,
-//                               which smoke-hnd exercises. Fixable by making those fixtures
-//                               department-aware; not fixed here.
-//
-//   smoke-qr-checkin            The same fixture problem as smoke-nfc-tap, arriving with the
-//                               QR check-in merge: its units and sessions are built with the
-//                               suite's own bare Prisma client, so they carry no department
-//                               and GET /hnd/sessions/:id/qr-code answers 404 for a scoped
-//                               admin. The product is right — the mint reads hndSession
-//                               through the guarded client, which is what a scoped account
-//                               is supposed to get. Fixable the same way, and worth doing
-//                               together with smoke-nfc-tap rather than twice.
+// smoke-nfc-tap and smoke-qr-checkin USED TO BE HERE. Both build their units through their
+// own bare Prisma client, so their fixtures carried no department and were invisible to
+// the narrowed admin they then signed in as — a fixture problem, never a product one. Since
+// 5 Sep 2026 both stamp their fixtures with whatever department the signing-in admin is
+// narrowed to (scripts/lib/fixture-department.mjs), so they run in both passes, and the QR
+// suite additionally asserts the boundary itself: a narrowed admin cannot mint a code for
+// another department's class and can for their own.
 const NOT_SCOPEABLE = new Set([
   "smoke-academic-departments.mjs",
   "smoke-academic-scope.mjs",
-  "smoke-nfc-tap.mjs",
-  "smoke-qr-checkin.mjs",
 ]);
 const scopedRun = process.env.SMOKE_SCOPED_DEPARTMENT === "1";
 
@@ -253,7 +242,7 @@ if (runUnit) {
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js", "src/pendingQr.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }

@@ -17,6 +17,7 @@
 //   node scripts/smoke-nfc-tap.mjs
 //   (needs API_URL + DATABASE_URL; the runner supplies both)
 import { createRequire } from "node:module";
+import { fixtureDepartmentFor, stamp } from "./lib/fixture-department.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -143,6 +144,16 @@ try {
   priorConfig = existingConfig?.settings ?? {};
 
   const adminLogin = await login("admin@edtech.co.uk", SEED_PASSWORD);
+
+  // The department the signing-in admin is narrowed to, if any. Null on the ordinary pass
+
+  // (nothing stamped, fixtures exactly as before); under SMOKE_SCOPED_DEPARTMENT=1 it is
+
+  // the one department everything seeded belongs to, and every unit, course and cohort
+
+  // this suite builds carries it — so the same assertions hold on the guard's other side.
+
+  const DEPT = await fixtureDepartmentFor(db, "admin@edtech.co.uk");
   const adminToken = adminLogin.data?.token;
   if (!adminToken) throw new Error(`admin sign-in failed (HTTP ${adminLogin.status}) — cannot run this suite`);
 
@@ -356,7 +367,7 @@ try {
   }
 
   const unit = await db.unit.create({
-    data: { code: `NFC${RUN}`.slice(0, 12), name: `Tap Suite Unit ${RUN}`, startDate: today, endDate: today },
+    data: { ...stamp(DEPT), code: `NFC${RUN}`.slice(0, 12), name: `Tap Suite Unit ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(unit.id);
   const enrol = await db.enrolment.create({ data: { studentId: A_ID, unitId: unit.id } });
@@ -486,7 +497,7 @@ try {
   /* ====================================================================== */
 
   const strangerUnit = await db.unit.create({
-    data: { code: `NOEN${RUN}`.slice(0, 12), name: `Not Enrolled ${RUN}`, startDate: today, endDate: today },
+    data: { ...stamp(DEPT), code: `NOEN${RUN}`.slice(0, 12), name: `Not Enrolled ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(strangerUnit.id);
   const strangerSession = await db.hndSession.create({
@@ -588,10 +599,10 @@ try {
   // A Term needs a Cohort, which needs a Course — and this database seeds none of the
   // three. Built explicitly rather than reused, so the fixture cannot collide with
   // whatever another suite left behind.
-  const termCourse = await db.course.create({ data: { name: `Tap Suite Course ${RUN}` } }).catch(() => null);
+  const termCourse = await db.course.create({ data: { ...stamp(DEPT), name: `Tap Suite Course ${RUN}` } }).catch(() => null);
   if (termCourse) made.courses.push(termCourse.id);
   const termCohort = termCourse
-    ? await db.cohort.create({ data: { courseId: termCourse.id, name: `Tap Intake ${RUN}` } }).catch(() => null)
+    ? await db.cohort.create({ data: { ...stamp(DEPT), courseId: termCourse.id, name: `Tap Intake ${RUN}` } }).catch(() => null)
     : null;
   if (termCohort) made.cohorts.push(termCohort.id);
   const closedTerm = termCohort
@@ -604,7 +615,7 @@ try {
     console.log("SKIP  could not create a Term fixture — the term lock is NOT exercised in this run");
   } else {
     const termUnit = await db.unit.create({
-      data: { code: `TRM${RUN}`.slice(0, 12), name: `Term Locked ${RUN}`, termId: closedTerm.id },
+      data: { ...stamp(DEPT), code: `TRM${RUN}`.slice(0, 12), name: `Term Locked ${RUN}`, termId: closedTerm.id },
     });
     made.units.push(termUnit.id);
     // A DIFFERENT student, enrolled on this unit and nothing else. A_ID has several
@@ -789,7 +800,7 @@ try {
   if (!cToken) throw new Error(`third student sign-in failed (HTTP ${cLogin.status}) — cannot run the tap-context and ambiguity blocks`);
 
   const cUnit = await db.unit.create({
-    data: { code: `CTX${RUN}`.slice(0, 12), name: `Context Suite Unit ${RUN}`, startDate: today, endDate: today },
+    data: { ...stamp(DEPT), code: `CTX${RUN}`.slice(0, 12), name: `Context Suite Unit ${RUN}`, startDate: today, endDate: today },
   });
   made.units.push(cUnit.id);
   const cEnrol = await db.enrolment.create({ data: { studentId: C_ID, unitId: cUnit.id } });

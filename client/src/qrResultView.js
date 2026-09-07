@@ -87,3 +87,17 @@ export function qrScanRefusal(error) {
     advice: "Try scanning again. If it still won't work, ask your lecturer to mark you in.",
   };
 }
+
+/**
+ * After a refused submit: should the scan be put back for after sign-in?
+ *
+ * The card clears the one-shot stash the moment it submits, so a reload cannot turn one
+ * scan into two marks. A 401 is the one answer that means the request never reached the
+ * register at all: the session had expired, the app is about to show the sign-in, and the
+ * scan was the last thing the student did. Losing it sends them back to the projector for
+ * no reason of their own. Every other refusal was a real answer to a real submit, and a
+ * dropped connection is retried by scanning again — neither is resurrected.
+ */
+export function keepScanAfter(error) {
+  return error?.status === 401;
+}

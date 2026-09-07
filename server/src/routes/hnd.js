@@ -1636,7 +1636,7 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     where: { id: req.params.id },
     include: { unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
-  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session) return res.status(404).json({ error: "That class could not be found." });
 
   const [enrolments, marks, settings] = await Promise.all([
     prisma.enrolment.findMany({ where: { unitId: session.unitId }, include: { student: true } }),
@@ -1773,7 +1773,7 @@ router.get("/sessions/:id/qr-code", requireAuth, lecturerGate(["live-attendance"
     // answered 423, the exact failure the today list's acceptingTaps comment records.
     select: { id: true, date: true, startTime: true, endTime: true, checkInClosedAt: true, checkInOpenUntil: true, unit: { select: { term: { select: { start: true, end: true } } } } },
   });
-  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session) return res.status(404).json({ error: "That class could not be found." });
 
   // Epoch seconds for the window arithmetic, local strings for the register decision —
   // the same split the verify route keeps. The rotation window is timezone-free maths;
@@ -1848,7 +1848,7 @@ router.post("/sessions/:id/check-in-window", requireAuth, lecturerGate(["registe
     where: { id: req.params.id },
     include: { unit: { select: { code: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
-  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session) return res.status(404).json({ error: "That class could not be found." });
 
   const action = String(req.body?.action || "");
   if (action !== "close" && action !== "reopen") {
@@ -1914,7 +1914,7 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["r
     where: { id: req.params.id },
     include: { unit: { include: { term: true } } },
   });
-  if (!session) return res.status(404).json({ error: "Session not found" });
+  if (!session) return res.status(404).json({ error: "That class could not be found." });
 
   // The same term gate the register save enforces. A convenience button must not be a
   // way around a closed term.
@@ -1932,7 +1932,7 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["r
   // check in when the class actually ran. PUT /register has the same hole, but this is a
   // single button and reaches every enrolled student at once.
   if (session.date > localDate()) {
-    return res.status(400).json({ error: "That class hasn't happened yet — its register can't be closed off." });
+    return res.status(400).json({ error: "That class hasn't happened yet, so its register can't be closed off." });
   }
 
   const [enrolments, marks] = await Promise.all([
