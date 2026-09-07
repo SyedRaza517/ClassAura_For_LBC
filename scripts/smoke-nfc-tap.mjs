@@ -194,10 +194,27 @@ try {
   // the behaviour now, and it is not a leak: this route is keyed on req.user.id with no
   // id parameter, so a student sees their own classes and nobody else's — the same ones
   // /me/timetable already gives them. What must stay hidden while the feature is off is
-  // the CHECK-IN state, and `enabled: false` with an empty `now` is what says so.
+  // the CHECK-IN state, and `enabled: false` is what says so.
+  //
+  // THE EMPTY-`now` HALF WAS STALE FROM 4 SEPTEMBER AND THIS SUITE DID NOT SAY SO.
+  //
+  // Deleting the config row leaves the DEFAULTS, and the defaults changed when QR
+  // check-in shipped switched on: `enabled: false, qrEnabled: true`. The route empties
+  // `now` only when BOTH capture methods are off, which is right — a QR-only college's
+  // students must still be told which class is running, or they have nothing to scan
+  // against. So with no row at all the day is legitimately returned, and requiring
+  // `now.length === 0` asserted a contract the product had deliberately left behind.
+  //
+  // It survived because it is ORDER-DEPENDENT: the config is cached for 30 seconds in
+  // the API process, so in a full run an earlier suite's switch-off was still being
+  // served here and the assertion passed on someone else's state. Run alone it failed —
+  // at this commit, at the merge that shipped QR, and on production today.
+  //
+  // The assertion keeps the property it is named for — ONE SHAPE for `now`, an array in
+  // every case, never null — and drops the emptiness it can no longer mean.
   check("tap-context reports disabled, with one shape for `now` rather than two",
-    offCtx.status === 200 && offCtx.data?.enabled === false && Array.isArray(offCtx.data?.now) && offCtx.data.now.length === 0,
-    `HTTP ${offCtx.status} now=${JSON.stringify(offCtx.data?.now)}`);
+    offCtx.status === 200 && offCtx.data?.enabled === false && Array.isArray(offCtx.data?.now),
+    `HTTP ${offCtx.status} enabled=${offCtx.data?.enabled} now=${JSON.stringify(offCtx.data?.now)}`);
 
   // Switch it on THROUGH THE API, not by writing the row directly.
   //
