@@ -215,9 +215,43 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState([]);
   const [making, setMaking] = useState(false);
-  const [draft, setDraft] = useState({ courseId: "", name: "", startDate: "" });
+  const [draft, setDraft] = useState({ courseId: "", newCourse: "", name: "", startDate: "" });
 
   const courseName = (id) => courses.find((c) => c.id === id)?.name || "";
+
+  // The sentinel the course <select> uses for "I am going to type one". A literal rather
+  // than an empty string, because empty already means "nothing chosen yet" and the
+  // Create button has to be able to tell those apart.
+  const NEW_COURSE = "__new__";
+
+  /**
+   * The course this group will belong to, creating it if the administrator typed a new
+   * name.
+   *
+   * MATCHED CASE-INSENSITIVELY AGAINST WHAT ALREADY EXISTS FIRST. Course.name is unique,
+   * but Postgres compares it case-sensitively, so "BSc Software Engineering" and "BSc
+   * software engineering" are two different courses to the database and one course to
+   * everybody else. Reusing the existing row is what stops a college accumulating three
+   * spellings of one programme, each with its own groups and its own half of the
+   * students — the same failure the campus list exists to prevent.
+   */
+  const resolveCourseId = async () => {
+    if (draft.courseId !== NEW_COURSE) return draft.courseId;
+    const wanted = draft.newCourse.trim();
+    const existing = courses.find((c) => (c.name || "").trim().toLowerCase() === wanted.toLowerCase());
+    if (existing) return existing.id;
+    try {
+      return (await api.addCourse({ name: wanted })).id;
+    } catch (e) {
+      // Someone else created it between the list loading and this click. Refetch and
+      // use theirs rather than failing the group the administrator was actually making.
+      if (!/already exists/i.test(e?.message || "")) throw e;
+      const fresh = await api.listCourses().catch(() => []);
+      const found = fresh.find((c) => (c.name || "").trim().toLowerCase() === wanted.toLowerCase());
+      if (!found) throw e;
+      return found.id;
+    }
+  };
 
   // Creating the group here rather than only on the Registers page: the whole point of
   // this tab is "build the class list once", and sending somebody to another screen to
@@ -230,16 +264,17 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
   const createGroup = async () => {
     setErr(""); setNote("");
     try {
+      const courseId = await resolveCourseId();
       const made = await api.addCohort({
-        courseId: draft.courseId,
+        courseId,
         name: draft.name.trim(),
         ...(draft.startDate ? { startDate: draft.startDate } : {}),
       });
-      // The store owns the cohort list, so it has to be refetched before the new group
-      // can be selected — selecting an id the <select> has no <option> for silently
-      // shows nothing.
+      // The store owns both lists, so they have to be refetched before the new group can
+      // be selected — selecting an id the <select> has no <option> for silently shows
+      // nothing, and a course created a moment ago would not be in the picker either.
       if (refreshHnd) await refreshHnd().catch(() => {});
-      setDraft({ courseId: "", name: "", startDate: "" });
+      setDraft({ courseId: "", newCourse: "", name: "", startDate: "" });
       setMaking(false);
       setGroupId(made?.id || "");
       setNote(`"${made?.name || draft.name}" created. Add students to it below.`);
@@ -247,7 +282,7 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       const m = e?.message || "";
       setErr(
         m.includes("already exists") ? `A group called "${draft.name.trim()}" already exists on that course. Names are unique per course.`
-        : e?.status === 403 || m.includes("403") ? "You need the Registers page to create a group. You can still add students to an existing one."
+        : e?.status === 403 || m.includes("403") ? "You need the Registers page to create a group or a course. You can still add students to an existing group."
         : m || "Could not create the group.",
       );
     }
@@ -324,8 +359,16 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
               <select className={inputCls} value={draft.courseId} onChange={(e) => setDraft({ ...draft, courseId: e.target.value })}>
                 <option value="">Choose a course…</option>
                 {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value={NEW_COURSE}>+ Add a new course…</option>
               </select>
             </Field>
+            {draft.courseId === NEW_COURSE && (
+              <Field label="New course name" hint="Created with the group">
+                <input className={inputCls} autoFocus value={draft.newCourse}
+                  onChange={(e) => setDraft({ ...draft, newCourse: e.target.value })}
+                  placeholder="BSc Software Engineering" />
+              </Field>
+            )}
             <Field label="Group name" hint="The intake, e.g. SEP 25">
               <input className={inputCls} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="SEP 25" />
             </Field>
@@ -335,14 +378,18 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
             <div className="flex items-end">
               {/* Both required: the course because Cohort.courseId is NOT NULL, the name
                   because it is what anybody picking this group will read. */}
-              <button onClick={createGroup} disabled={!draft.courseId || !draft.name.trim()}
+              {/* When "add a new course" is chosen the typed name is what stands in for
+                  the course, so the button must wait for it — otherwise Create fires with
+                  the sentinel as a courseId and the server rejects it as unknown. */}
+              <button onClick={createGroup}
+                disabled={!draft.name.trim() || !draft.courseId || (draft.courseId === NEW_COURSE && !draft.newCourse.trim())}
                 className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
                 <Check size={15} /> Create group
               </button>
             </div>
-            {!courses.length && (
-              <p className="text-xs text-amber-700 sm:col-span-4">
-                No courses exist yet. A group belongs to a course, so add one on the Registers page first.
+            {!courses.length && draft.courseId !== NEW_COURSE && (
+              <p className="text-xs text-slate-500 sm:col-span-4">
+                No courses yet — choose <strong>+ Add a new course…</strong> above and type one. It is created with the group.
               </p>
             )}
           </div>
