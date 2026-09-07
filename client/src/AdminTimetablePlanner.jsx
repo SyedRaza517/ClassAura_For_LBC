@@ -64,7 +64,12 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
         <ChevronDown size={15} className="shrink-0 text-slate-400" />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
+        <>
+          {/* A click-away catcher. Without it the panel can only be dismissed by
+              choosing something, so a reader who opened it to look ends up having to
+              pick a value they did not want. */}
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
           <input autoFocus className="w-full border-b border-slate-200 px-2.5 py-2 text-sm outline-none"
             placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
           <ul className="max-h-56 overflow-y-auto py-1">
@@ -82,7 +87,8 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
               </li>
             ))}
           </ul>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -91,6 +97,13 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
 /** Multi-choice search box. `value` is an array of ids; chosen ones show as chips. */
 function SearchMany({ value = [], options, onChange, placeholder }) {
   const [q, setQ] = useState("");
+  // SUGGESTIONS APPEAR ON FOCUS, NOT ONLY ONCE SOMETHING IS TYPED.
+  //
+  // The first version showed the list only while `term` was non-empty, so clicking the
+  // box gave you an empty box: nothing indicated that typing would do anything, and
+  // there was no way to see what was available without guessing a letter. A picker that
+  // hides its options until you guess right is a worse dropdown, not a better one.
+  const [focused, setFocused] = useState(false);
   const term = q.trim().toLowerCase();
   const chosen = options.filter((o) => value.includes(o.id));
   const shown = options
@@ -115,13 +128,24 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
         </div>
       )}
       <input className="w-full px-2.5 py-1.5 text-sm outline-none" placeholder={placeholder}
-        value={q} onChange={(e) => setQ(e.target.value)} />
-      {!!term && (
+        value={q} onChange={(e) => setQ(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)} />
+      {(focused || !!term) && (
         <ul className="max-h-40 overflow-y-auto border-t border-slate-200 py-1">
-          {!shown.length && <li className="px-2.5 py-2 text-center text-sm text-slate-400">Nothing matches.</li>}
+          {!shown.length && (
+            <li className="px-2.5 py-2 text-center text-sm text-slate-400">
+              {term ? "Nothing matches." : "Everything here is already chosen."}
+            </li>
+          )}
           {shown.map((o) => (
             <li key={o.id}>
-              <button type="button" onClick={() => { onChange([...value, o.id]); setQ(""); }}
+              {/* onMouseDown, not onClick: the input's blur fires first and would close
+                  the list before a click could land on it, so every selection would
+                  need two attempts. preventDefault keeps the focus where it is so the
+                  box stays open for the next one. */}
+              <button type="button"
+                onMouseDown={(e) => { e.preventDefault(); onChange([...value, o.id]); setQ(""); }}
                 className="w-full px-2.5 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
                 {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-400">{o.sub}</span> : null}
               </button>
@@ -466,13 +490,19 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       <div className="mb-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-end gap-2">
           <div className="flex-1">
-            <Field label="Group">
-              <select className={inputCls} value={groupId} onChange={(e) => { setGroupId(e.target.value); setPicked([]); setNote(""); }}>
-                <option value="">{cohorts.length ? "Choose a group…" : "No groups yet — create one"}</option>
-                {cohorts.map((c) => (
-                  <option key={c.id} value={c.id}>{courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name}</option>
-                ))}
-              </select>
+            <Field label="Group" hint={cohorts.length > 8 ? "Type to search" : undefined}>
+              {/* Searchable rather than a bare <select>: a college running twenty
+                  programmes has sixty or more intakes, and finding "SEP 25" by
+                  scrolling is the same problem the event form's pickers exist to
+                  solve. */}
+              <SearchOne value={groupId}
+                placeholder={cohorts.length ? "Choose a group…" : "No groups yet — create one"}
+                allowNone={false}
+                options={cohorts.map((c) => ({
+                  id: c.id,
+                  label: courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name,
+                }))}
+                onChange={(id) => { setGroupId(id); setPicked([]); setNote(""); }} />
             </Field>
           </div>
           <button onClick={() => { setMaking((v) => !v); setErr(""); setNote(""); }}
