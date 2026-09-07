@@ -285,7 +285,19 @@ export const api = {
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     return request(`/timetabling/events?${q.toString()}`);
   },
-  ttCreateEvent: (d) => request("/timetabling/events", { method: "POST", body: d }),
+  // A LONG DEADLINE, BECAUSE ONE CALL CAN NOW WRITE SEVENTY-TWO EVENTS.
+  //
+  // A series is expanded server-side: three weekdays over a twelve-week term with two
+  // sessions a day is 72 rows, each preceded by its own clash query, all sequential in
+  // one request. Under the default 30s that is a plausible timeout against a remote
+  // database — and a timeout here is the WORST outcome available, because the client
+  // aborts while the server carries on and commits every row. TimetableEvent has no
+  // unique constraint and no idempotency key, so pressing Save again writes a second
+  // complete series and doubles the attendance denominator of every student in it.
+  //
+  // Follows the pattern already set by saveDocTemplate (60s), predictionRecalculate
+  // (120s) and moodlePreview (180s): a call that legitimately takes minutes says so.
+  ttCreateEvent: (d) => request("/timetabling/events", { method: "POST", body: d, timeoutMs: 180000 }),
   ttUpdateEvent: (id, d) => request(`/timetabling/events/${id}`, { method: "PUT", body: d }),
   ttDeleteEvent: (id) => request(`/timetabling/events/${id}`, { method: "DELETE" }),
   ttRepeatEvent: (id, d) => request(`/timetabling/events/${id}/repeat`, { method: "POST", body: d }),

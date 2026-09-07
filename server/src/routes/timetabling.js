@@ -637,6 +637,29 @@ function createEventWithAssignments(data, staffIds, cohortIds, include) {
 // therefore 72 registers — which is what the college is actually asking for when it says
 // "morning and afternoon". See timetabling/sessions.js for why this is two events rather
 // than one event holding two time ranges.
+/**
+ * Confirm every relation id on `data` names a row that exists.
+ *
+ * Returns a message naming the offending field, or null. Only checks the keys actually
+ * present and non-null, so it costs nothing for the fields a caller left alone.
+ */
+async function checkRelations(data) {
+  const checks = [
+    ["unitId", "module", (id) => prisma.unit.count({ where: { id } })],
+    ["roomId", "room", (id) => prisma.room.count({ where: { id } })],
+    ["categoryId", "category", (id) => prisma.eventCategory.count({ where: { id } })],
+    ["academicDepartmentId", "school", (id) => prisma.academicDepartment.count({ where: { id } })],
+  ];
+  for (const [field, label, count] of checks) {
+    const id = data[field];
+    if (!id) continue;
+    if ((await count(id)) === 0) {
+      return `That ${label} no longer exists — reload the page and choose it again.`;
+    }
+  }
+  return null;
+}
+
 router.post("/events", async (req, res) => {
   // SESSIONS ARE PARSED BEFORE THE EVENT, and the order is load-bearing rather than
   // tidy. parseEvent requires `start` and `end`, so a client that expressed its times
@@ -652,6 +675,21 @@ router.post("/events", async (req, res) => {
 
   const staffIds = ids(req.body?.staffIds);
   const cohortIds = ids(req.body?.cohortIds);
+
+  // A STALE ID IS THE ADMINISTRATOR'S PROBLEM AND MUST BE NAMED, not a 500.
+  //
+  // These four go straight to Prisma as foreign keys. A room deleted in another tab, a
+  // category retired between page load and save, a school that no longer exists — each
+  // raises P2003 inside the create transaction, which index.js logs and answers as
+  // `500 "Server error"`. The screen then shows "Module 1: Server error": a message that
+  // names neither the field nor the fact that reloading fixes it, and a client mistake
+  // recorded in the log as a server fault.
+  //
+  // One count per relation actually present on the body — four cheap reads at most, and
+  // only on the create path, against a request that is about to do far more work than
+  // this.
+  const relationErr = await checkRelations(data);
+  if (relationErr) return res.status(400).json({ error: relationErr });
 
   const endDate = str(req.body?.endDate);
 
@@ -713,17 +751,42 @@ router.post("/events", async (req, res) => {
   const seriesId = randomUUID();
   const warnings = [];
   let first = null;
-  for (const date of dates) {
-    for (const session of sessions) {
-      const candidate = { ...data, date, startTime: session.start, endTime: session.end, id: null };
-      const found = await checkClashes(candidate, { roomId: data.roomId || null, staffIds, cohortIds });
-      if (found.length) warnings.push({ date, start: session.start, end: session.end, clashes: found });
-      const row = await createEventWithAssignments(
-        { ...data, date, startTime: session.start, endTime: session.end, seriesId },
-        staffIds, cohortIds, first ? null : EVENT_INCLUDE,
-      );
-      if (!first) first = row;
+  let written = 0;
+  try {
+    for (const date of dates) {
+      for (const session of sessions) {
+        const candidate = { ...data, date, startTime: session.start, endTime: session.end, id: null };
+        const found = await checkClashes(candidate, { roomId: data.roomId || null, staffIds, cohortIds });
+        if (found.length) warnings.push({ date, start: session.start, end: session.end, clashes: found });
+        const row = await createEventWithAssignments(
+          { ...data, date, startTime: session.start, endTime: session.end, seriesId },
+          staffIds, cohortIds, first ? null : EVENT_INCLUDE,
+        );
+        if (!first) first = row;
+        written++;
+      }
     }
+  } catch (e) {
+    // A HALF-WRITTEN SERIES IS REPORTED WITH ITS seriesId, not swallowed into a bare 500.
+    //
+    // The loop is deliberately N small transactions rather than one large one — each
+    // createEventWithAssignments is already a transaction, and holding one open across
+    // seventy-two of them would pin a connection for the whole request. The cost of that
+    // choice is that a failure at row 40 leaves 40 committed rows, and until now the
+    // seriesId that identifies them was minted here and only ever returned in the SUCCESS
+    // body. So the rows existed, were on the calendar, and the one handle that could
+    // find them as a set had been discarded — leaving an administrator to identify forty
+    // classes by title and date, by eye.
+    //
+    // Rethrowing after answering is not an option, so the error is logged for the
+    // operator and the caller is told exactly what to clean up.
+    console.error("[timetabling] series create failed after", written, "row(s), seriesId", seriesId, "-", e?.message);
+    return res.status(500).json({
+      error: `Only ${written} of ${dates.length * sessions.length} classes were created before this failed. `
+        + `They are saved under series ${seriesId} — delete those before trying again, or you will get two copies.`,
+      seriesId, created: written, expected: dates.length * sessions.length,
+      partial: true,
+    });
   }
 
   res.status(201).json({

@@ -70,9 +70,22 @@ test("OVERLAPPING SESSIONS ARE REFUSED", () => {
 });
 
 test("OVERLAP IS CAUGHT WHATEVER ORDER THEY ARRIVE IN", () => {
-  // The sort runs before the overlap test on purpose. Checking the pair as submitted
-  // would let the same two blocks through simply for being typed afternoon-first,
-  // which is exactly how a bug like this survives a green suite.
+  // An overlapping pair typed afternoon-first is still refused.
+  //
+  // THIS TEST DOES NOT PROVE THE SORT, and the comment that used to sit here claimed it
+  // did — that checking the pair as submitted "would let the same two blocks through".
+  // It would not: unsorted, out[0].end (15:00) > out[1].start (09:00) is still true and
+  // the pair is still refused. Removing the sort turns only "two sessions come back in
+  // order" red, which was demonstrated by mutation in review.
+  //
+  // What the sort actually prevents is the opposite mistake — a FALSE POSITIVE on a
+  // legal reversed pair, 13:00-16:00 submitted before 09:00-12:00, where the unsorted
+  // comparison reads 16:00 > 09:00 and refuses a perfectly ordinary teaching day. That
+  // case is covered by "two sessions come back in order", which deepEquals the result
+  // and so fails if an error comes back instead.
+  //
+  // Left in place because the behaviour is worth pinning; the comment is corrected
+  // because in this codebase these comments are read as evidence.
   assert.match(
     parseSessions({ sessions: [{ start: "12:00", end: "15:00" }, { start: "09:00", end: "13:00" }] }).error,
     /overlap/i,

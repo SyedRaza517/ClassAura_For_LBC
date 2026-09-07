@@ -1004,6 +1004,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
     // have to choose between rolling back work the college wanted and reporting a partial
     // success it had no vocabulary for.
     const failures = [];
+    const unsure = [];
     const madeWarnings = [];
     const savedKeys = new Set();
     let created = 0;
@@ -1040,7 +1041,23 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         // only actionable if the reader knows which of the three it came from.
         for (const w of r.warnings || []) madeWarnings.push({ ...w, module: name });
       } catch (e) {
-        failures.push(`${name}: ${e?.message || "refused by the server"}`);
+        // REFUSED IS NOT THE SAME AS UNKNOWN, and only one of the two is safe to retry.
+        //
+        // A 400 means the server read the request and declined it: nothing was written,
+        // the block is unchanged, and pressing Save again is correct. Anything else — a
+        // timeout, a 5xx, a dropped connection — means the request may have been carried
+        // out anyway. The server writes a series row by row and has no unique constraint
+        // to lean on, so a second Save after a timeout writes a SECOND complete series
+        // and doubles the attendance denominator of every student in it.
+        //
+        // So an unknown outcome is reported differently and the block is marked, rather
+        // than being quietly re-armed as though it had simply been rejected.
+        const refused = e?.status === 400 || e?.status === 409;
+        const partial = e?.body?.partial ? ` ${e.body.created} of ${e.body.expected} were created — series ${e.body.seriesId}.` : "";
+        failures.push(refused
+          ? `${name}: ${e?.message || "refused by the server"}`
+          : `${name}: ${e?.message || "the server did not answer"} — THIS MAY HAVE SAVED.${partial} Check the calendar before saving it again.`);
+        if (!refused) unsure.push(name);
       }
     }
 
@@ -1050,7 +1067,13 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       const expected = previewTotals.classes;
       setNote(
         `${created} class(es) created across ${editing.blocks.length} module(s).`
-        + (previewTotals.registers ? ` ${previewTotals.registers} register(s) will follow.` : "")
+        // Saving writes the CLASSES. The registers are built by "Publish this period"
+        // over a date range — syncEventRegisters is called from the publish handler and
+        // from an event edit, never from create. Saying "will follow" implied they were
+        // already on their way and left an administrator waiting for something that
+        // needed a second action nobody had mentioned; these dates are usually months
+        // outside the window they are looking at, so it would not have arrived.
+        + (previewTotals.registers ? ` Publish these dates to create the ${previewTotals.registers} register(s).` : "")
         // Said ONLY when the two disagree. The preview is computed from the same dates and
         // the same bank holidays the server uses, so a mismatch means one of them is
         // wrong — most likely a server that does not expand two sessions yet — and
@@ -1068,7 +1091,8 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
     // that pressing Save again creates a second copy of everything that already
     // succeeded. Naming the failures is the rest of the point — one "could not save" in
     // front of three modules is three things to go and check by hand.
-    setErr(`${failures.length} module(s) were not saved — ${failures.join("; ")}`);
+    setErr(`${failures.length} module(s) were not saved — ${failures.join("; ")}`
+      + (unsure.length ? " Do not press Save again until you have checked the calendar — a repeat could create a second copy." : ""));
     if (created) {
       setNote(`${created} class(es) from the other module(s) were created. Only the modules still shown are left to fix.`);
       setEditing((ev) => ({ ...ev, blocks: ev.blocks.filter((b) => !savedKeys.has(b.key)) }));
@@ -1191,8 +1215,16 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     invite somebody to "correct" it to the value it already had. An absent
                     key is left absent in the body too, and the update route treats an
                     absent key as "unchanged" — so nothing here can blank a school it
-                    cannot see. */}
-                {"academicDepartmentId" in editing && (
+                    cannot see.
+
+                    `depts.length` IS PART OF THE SAME GUARD, not a separate nicety. The
+                    school list is the one fetch in load() whose failure is deliberately
+                    swallowed, so it can legitimately be empty while the event holds a
+                    school id — and SearchOne, finding no option matching that id, falls
+                    back to its placeholder and renders "No school". That is precisely the
+                    lie the paragraph above is about, arriving through the list rather than
+                    through the field. */}
+                {"academicDepartmentId" in editing && depts.length > 0 && (
                   <Field label="School" hint="Which school this class belongs to">
                     <SearchOne value={editing.academicDepartmentId || ""} placeholder="No school" noneLabel="No school"
                       options={depts.map((d) => ({ id: d.id, label: d.name }))}
@@ -1459,14 +1491,15 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     {" · "}{previewTotals.sessions} session{previewTotals.sessions === 1 ? "" : "s"} a day
                     {" · "}{previewTotals.weeks} week{previewTotals.weeks === 1 ? "" : "s"}
                     {" · "}{previewTotals.groups} group{previewTotals.groups === 1 ? "" : "s"}
-                    {" = "}<span style={{ color: NAVY }}>{previewTotals.classes} class{previewTotals.classes === 1 ? "" : "es"}, {previewTotals.registers} register{previewTotals.registers === 1 ? "" : "s"}</span>
+                    {" = "}<span style={{ color: NAVY }}>{previewTotals.classes} class{previewTotals.classes === 1 ? "" : "es"}</span>
+                    {previewTotals.registers ? <span className="text-slate-500">, then {previewTotals.registers} register{previewTotals.registers === 1 ? "" : "s"} once published</span> : null}
                   </p>
                   {/* Zero registers is a real outcome and is said out loud rather than
                       printed as a bare 0. A class with no group attached produces no
                       register at all, and somebody who came here to open registers would
                       otherwise find out weeks later. */}
                   {!previewTotals.groups && (
-                    <p className="mt-1 text-xs font-semibold text-amber-700">No group chosen, so no registers will be created. Add one above if these classes need attendance taking.</p>
+                    <p className="mt-1 text-xs font-semibold text-amber-700">No group chosen, so these classes will never produce a register. Add one above if they need attendance taking.</p>
                   )}
                 </div>
               </>
