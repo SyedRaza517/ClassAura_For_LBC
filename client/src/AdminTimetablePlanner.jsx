@@ -1392,14 +1392,27 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                             options={cats.filter((c) => c.active).map((c) => ({ id: c.id, label: c.name }))}
                             onChange={(id) => setBlock(i, { categoryId: id })} />
                         </Field>
-                        <Field label="Start date">
-                          <input type="date" className={inputCls} value={b.date || ""} onChange={(e) => setBlock(i, { date: e.target.value })} />
-                        </Field>
-                        <Field label="Repeat until" hint="Leave blank for a single class">
-                          <input type="date" className={inputCls} value={b.endDate || ""} min={b.date || undefined}
-                            onChange={(e) => setBlock(i, { endDate: e.target.value })} />
-                        </Field>
-                        <Field label="On these days" hint="Defaults to the start date's own day">
+                        {/* THE MODULE'S TWO DATES SIT SIDE BY SIDE, IN THEIR OWN PANEL.
+                            They were a grid apart — the start date in the right column
+                            beside Category, the end date in the left column below it —
+                            so the pair never read as a range, and the second was labelled
+                            "Repeat until", which sounds like an optional repetition
+                            setting rather than the date the module finishes. It was
+                            reported as "there is no start and end date", which is
+                            precisely what the layout was saying. */}
+                        <div className="rounded-lg bg-white p-2.5 ring-1 ring-slate-200 sm:col-span-2">
+                          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Module runs</p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <Field label="Start date" hint="The first class">
+                              <input type="date" className={inputCls} value={b.date || ""} onChange={(e) => setBlock(i, { date: e.target.value })} />
+                            </Field>
+                            <Field label="End date" hint="Repeats weekly until then — blank for one class only">
+                              <input type="date" className={inputCls} value={b.endDate || ""} min={b.date || undefined}
+                                onChange={(e) => setBlock(i, { endDate: e.target.value })} />
+                            </Field>
+                          </div>
+                        </div>
+                        <Field label="On these days" hint={b.endDate ? "Which weekday(s) it falls on" : "Set an end date first"}>
                           <div className="flex flex-wrap gap-1 pt-1">
                             {DAY_LABELS.map((lbl, di) => {
                               const iso = di + 1;
@@ -1421,7 +1434,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                             and folding them into one block loses the second one. */}
                         <div className="rounded-lg bg-white p-2.5 ring-1 ring-slate-200 sm:col-span-2">
                           <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Sessions a day</span>
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">How many sessions a day?</span>
                             {[1, 2].map((n) => (
                               <button key={n} type="button" onClick={() => setBlock(i, { sessionCount: n })}
                                 className={`rounded-lg px-3 py-1 text-xs font-bold ${b.sessionCount === n ? "text-white" : "bg-white text-slate-500 ring-1 ring-slate-300"}`}
