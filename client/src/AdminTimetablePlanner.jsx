@@ -214,8 +214,44 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
   const [note, setNote] = useState("");
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState([]);
+  const [making, setMaking] = useState(false);
+  const [draft, setDraft] = useState({ courseId: "", name: "", startDate: "" });
 
   const courseName = (id) => courses.find((c) => c.id === id)?.name || "";
+
+  // Creating the group here rather than only on the Registers page: the whole point of
+  // this tab is "build the class list once", and sending somebody to another screen to
+  // make the empty group first breaks that in half.
+  //
+  // The COURSE IS REQUIRED because Cohort.courseId is NOT NULL — a group belongs to a
+  // programme, and it is what makes "SEP 25" unambiguous when three courses each have
+  // one. The name is unique per course for the same reason, so the 409 is worth saying
+  // in full rather than as "could not create".
+  const createGroup = async () => {
+    setErr(""); setNote("");
+    try {
+      const made = await api.addCohort({
+        courseId: draft.courseId,
+        name: draft.name.trim(),
+        ...(draft.startDate ? { startDate: draft.startDate } : {}),
+      });
+      // The store owns the cohort list, so it has to be refetched before the new group
+      // can be selected — selecting an id the <select> has no <option> for silently
+      // shows nothing.
+      if (refreshHnd) await refreshHnd().catch(() => {});
+      setDraft({ courseId: "", name: "", startDate: "" });
+      setMaking(false);
+      setGroupId(made?.id || "");
+      setNote(`"${made?.name || draft.name}" created. Add students to it below.`);
+    } catch (e) {
+      const m = e?.message || "";
+      setErr(
+        m.includes("already exists") ? `A group called "${draft.name.trim()}" already exists on that course. Names are unique per course.`
+        : e?.status === 403 || m.includes("403") ? "You need the Registers page to create a group. You can still add students to an existing one."
+        : m || "Could not create the group.",
+      );
+    }
+  };
 
   const load = useCallback(async (id) => {
     if (!id) { setMembers([]); return; }
@@ -265,17 +301,59 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       </p>
 
       <div className="mb-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-        <Field label="Group" hint="Groups are created on the Registers page, under the course they belong to.">
-          <select className={inputCls} value={groupId} onChange={(e) => { setGroupId(e.target.value); setPicked([]); setNote(""); }}>
-            <option value="">Choose a group…</option>
-            {cohorts.map((c) => (
-              <option key={c.id} value={c.id}>{courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name}</option>
-            ))}
-          </select>
-        </Field>
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <Field label="Group">
+              <select className={inputCls} value={groupId} onChange={(e) => { setGroupId(e.target.value); setPicked([]); setNote(""); }}>
+                <option value="">{cohorts.length ? "Choose a group…" : "No groups yet — create one"}</option>
+                {cohorts.map((c) => (
+                  <option key={c.id} value={c.id}>{courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <button onClick={() => { setMaking((v) => !v); setErr(""); setNote(""); }}
+            className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">
+            {making ? <><X size={15} /> Cancel</> : <><Plus size={15} /> New group</>}
+          </button>
+        </div>
+
+        {making && (
+          <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-4">
+            <Field label="Course">
+              <select className={inputCls} value={draft.courseId} onChange={(e) => setDraft({ ...draft, courseId: e.target.value })}>
+                <option value="">Choose a course…</option>
+                {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Group name" hint="The intake, e.g. SEP 25">
+              <input className={inputCls} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="SEP 25" />
+            </Field>
+            <Field label="Starts" hint="Optional">
+              <input type="date" className={inputCls} value={draft.startDate} onChange={(e) => setDraft({ ...draft, startDate: e.target.value })} />
+            </Field>
+            <div className="flex items-end">
+              {/* Both required: the course because Cohort.courseId is NOT NULL, the name
+                  because it is what anybody picking this group will read. */}
+              <button onClick={createGroup} disabled={!draft.courseId || !draft.name.trim()}
+                className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
+                <Check size={15} /> Create group
+              </button>
+            </div>
+            {!courses.length && (
+              <p className="text-xs text-amber-700 sm:col-span-4">
+                No courses exist yet. A group belongs to a course, so add one on the Registers page first.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
-      {!groupId ? <p className="py-8 text-center text-sm text-slate-400">Choose a group to see and edit who is in it.</p> : (
+      {!groupId ? (
+        <p className="py-8 text-center text-sm text-slate-400">
+          {cohorts.length ? "Choose a group to see and edit who is in it." : "Create your first group above, then pick students for it."}
+        </p>
+      ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
             <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">In this group ({members.length})</h4>
