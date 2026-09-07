@@ -5,6 +5,7 @@
 // "type": "module", so node runs this directly.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { groupNav } from "./navGroups.js";
 
 const GROUPS = { "assessments-record": { label: "Assessments Record" } };
@@ -86,4 +87,61 @@ test("an empty or missing list is an empty tree, not a crash", () => {
   // state for that, and this must not throw on the way there.
   assert.deepEqual(groupNav([], GROUPS), []);
   assert.deepEqual(groupNav(undefined, GROUPS), []);
+});
+
+test("the three attendance screens collapse under one parent, in order", () => {
+  // Taking a register, watching one fill and choosing how students check in are three
+  // jobs on one subject. The order is the order a member of staff meets them.
+  const items = [
+    { key: "summaries", label: "Daily Summaries" },
+    { key: "registers", label: "Registers", group: "attendance" },
+    { key: "live-attendance", label: "Dashboard", group: "attendance" },
+    { key: "attendance-settings", label: "Settings", group: "attendance" },
+    { key: "students", label: "All Students" },
+  ];
+  const tree = groupNav(items, { attendance: { label: "Attendance" } });
+
+  // The group sits where its FIRST child sat, so introducing it does not shuffle the
+  // rest of the sidebar out from under anybody who knows where things are.
+  assert.equal(tree[0].kind, "item");
+  assert.equal(tree[0].item.key, "summaries");
+  assert.equal(tree[1].kind, "group");
+  assert.equal(tree[1].id, "attendance");
+  assert.equal(tree[1].label, "Attendance");
+  assert.deepEqual(tree[1].children.map((c) => c.key),
+    ["registers", "live-attendance", "attendance-settings"]);
+  assert.equal(tree[2].item.key, "students");
+});
+
+// ---------------------------------------------------------------------------------
+// The two tests above exercise groupNav with their OWN items, so they pass whatever
+// StaffHub is configured to do. That is the right scope for a pure function and the
+// wrong scope for "are the attendance screens actually grouped" -- written alone they
+// would be coverage that discriminates nothing, which this repository has been bitten
+// by before. So the configuration itself is pinned here, by reading the source, the
+// way adminPages-contract.test.js pins its pair.
+test("StaffHub really does put the three attendance screens in the attendance group", () => {
+  const src = readFileSync(new URL("./StaffHub.jsx", import.meta.url), "utf8");
+
+  assert.match(src, /"attendance":\s*\{\s*label:\s*"Attendance"/,
+    'NAV_GROUPS no longer declares an "attendance" group with the label "Attendance".');
+
+  for (const key of ["registers", "live-attendance", "attendance-settings"]) {
+    // Doubled backslashes: this is a TEMPLATE LITERAL, so `\{` and `\s` would be eaten
+    // as string escapes before RegExp ever saw them, leaving a pattern that matches the
+    // literal letter "s" and never fires.
+    const entry = new RegExp(`\\{[^}]*key:\\s*"${key}"[^}]*\\}`);
+    const m = src.match(entry);
+    assert.ok(m, `no nav entry found for "${key}"`);
+    assert.match(m[0], /group:\s*"attendance"/,
+      `the nav entry for "${key}" is not in the attendance group: ${m[0]}`);
+  }
+});
+
+test("the attendance parent disappears when permission removes every child", () => {
+  // The invariant the whole file exists for, asserted for this group specifically: a
+  // parent that outlives its children advertises screens the account was never granted.
+  const tree = groupNav([{ key: "students", label: "All Students" }],
+    { attendance: { label: "Attendance" } });
+  assert.ok(!tree.some((n) => n.kind === "group"));
 });

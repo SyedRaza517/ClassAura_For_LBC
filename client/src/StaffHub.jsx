@@ -2236,7 +2236,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
 // The assignable admin pages, in nav order. "access" is intentionally excluded —
 // it is Super-Admin-only and never granted. Keep in sync with server validate.js.
 const ADMIN_PAGES = ["executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents", "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-settings", "students", "attendance-emails", "assessments", "assessment-tracker", "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings"];
-const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Registers — HND", "live-attendance": "Live Attendance", "attendance-settings": "Check-in: QR & NFC", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", "admissions-tracker": "Admission Tracker", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
+const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kpi: "KPIs", checkin: "Check-In", balances: "Holiday Balances", calendar: "Holiday Calendar", requests: "Leave Requests", documents: "Documents", approvals: "Approvals", signups: "Sign-Up Requests", summaries: "Daily Summaries", registers: "Attendance — Registers", "live-attendance": "Attendance — Dashboard", "attendance-settings": "Attendance — Settings", students: "Students", "attendance-emails": "Attendance Emails", assessments: "Assessments", "assessment-tracker": "Assessment Tracker", pat: "PAT", prediction: "Predictive Analysis", mitigations: "Mitigating Circumstances", staffreviews: "Staff Reviews", studentreviews: "Student Reviews", studentqueries: "Student Queries", staff: "Staff", timesheets: "Timesheets", timetable: "Timetable", scheduling: "Scheduling", admissions: "Admissions", "admissions-tracker": "Admission Tracker", ism: "ISM (Interviews)", slc: "SLC — Student Loans", referrals: "Referrals (support departments)", passwords: "Reset Passwords", settings: "Settings" };
 
 // COLLAPSIBLE SIDEBAR GROUPS.
 //
@@ -2255,6 +2255,15 @@ const PAGE_LABELS = { executive: "Executive Dashboard", overview: "Overview", kp
 // in navGroups.js, which is pure and therefore testable under plain node — see
 // navGroups.test.js, which pins the empty-parent invariant described above.
 const NAV_GROUPS = {
+  // Taking a register, watching one fill, and choosing how students check in are three
+  // jobs on one subject, and a member of staff moves between them within the hour. They
+  // collapse under one parent for the same reason the assessment screens do.
+  //
+  // Child labels DROP the parent's word -- Registers / Dashboard / Settings, not three
+  // rows all starting "Attendance" -- matching the convention student-records and
+  // admissions already set. Permission still sits on each child; the parent grants
+  // nothing and vanishes entirely if permission removes all three.
+  "attendance": { label: "Attendance", I: ClipboardList },
   "assessments-record": { label: "Assessments Record", I: ClipboardList },
   // Seeing a timetable and building one are different jobs for different people, but
   // they are the same subject, so they collapse under one parent. Permission still
@@ -2882,9 +2891,9 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "approvals", label: "Approvals", I: ThumbsUp },
     { key: "signups", label: "Sign-Up Requests", I: UserCheck },
     { key: "summaries", label: "Daily Summaries", I: UserPlus },
-    { key: "registers", label: "Registers — HND", I: ClipboardList },
-    { key: "live-attendance", label: "Live Attendance", I: Radio },
-    { key: "attendance-tags", label: "Check-in: QR & NFC", I: Nfc },
+    { key: "registers", label: "Registers", I: ClipboardList, group: "attendance" },
+    { key: "live-attendance", label: "Dashboard", I: Radio, group: "attendance" },
+    { key: "attendance-settings", label: "Settings", I: Nfc, group: "attendance" },
     { key: "students", label: "All Students", I: GraduationCap, group: "student-records" },
     { key: "studentreviews", label: "Reviews", I: MessageSquare, group: "student-records" },
     { key: "studentqueries", label: "Queries", I: Inbox, group: "student-records" },
