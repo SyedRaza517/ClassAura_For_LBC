@@ -33,7 +33,7 @@ two registers for one module at one time.
   arithmetic in UTC.
 - **Comments explain WHY, at length, including why an alternative was rejected.** This
   is the house style and it is load-bearing.
-- **Push to the `edtech` remote, not `origin`.**
+- **Push to `origin`** — it is the EdTech repo. An earlier note said to use an `edtech` remote instead; that remote no longer exists, and the LBC project it distinguished from was severed on 1 Sep 2026.
 - Prove every regression test can fail before trusting it.
 
 ---
