@@ -511,7 +511,7 @@ export default function MyTimetable({ onBack }) {
       {selected && (() => {
         // ANCHORED TO THE TILE, and flipped rather than clipped.
         //
-        // The panel is ~320 wide and ~340 tall. Placed naively to the right of and below
+        // The panel is ~380 wide and ~340 tall. Placed naively to the right of and below
         // the tile it would fall off the screen for anything on Friday or after lunch, so
         // each axis independently chooses the side with room. Clamped as well, because a
         // tile near a corner can leave neither side comfortable.
@@ -525,7 +525,14 @@ export default function MyTimetable({ onBack }) {
         // becomes the containing block for `position: fixed`, so the clamp against
         // window.innerWidth was clamping to the wrong box entirely and the card landed
         // half off the left edge. The device decides this, not the caller.
-        const W = 320, H = 340, GAP = 10;
+        // ONE CONSTANT, used both to place the panel and to size it. Widened from 320 to
+        // 380 because module names, room labels and group chips were all wrapping at the
+        // old width — the panel is mostly names, and a name broken over two lines is
+        // harder to scan than a slightly wider card. It is deliberately still a single
+        // number: the flip-and-clamp maths below decides which side of the tile has room
+        // for exactly this width, so a card sized in the JSX and measured here would
+        // start landing off-screen the moment the two drifted apart.
+        const W = 380, H = 340, GAP = 10;
         const rect = handset ? null : anchorRect;
         let style = { position: "fixed", left: 16, right: 16, bottom: 0 };   // handset default
         if (rect) {
