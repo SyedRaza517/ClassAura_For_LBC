@@ -1578,12 +1578,34 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
 
   /* ------------------------------------------------------------------ save -- */
 
+  // WHAT THE SAVE BUTTON IS DOING RIGHT NOW, or null when it is doing nothing.
+  //
+  // A string rather than a boolean, because the two save paths take very different
+  // lengths of time and the honest label differs between them. An edit is one request.
+  // A create is one request PER MODULE BLOCK, each of which expands a start date, an end
+  // date and a set of weekdays into a whole term server-side — seconds, not milliseconds,
+  // and the button gave no sign of it. An administrator watching an unchanged "Save"
+  // reasonably concludes nothing happened.
+  //
+  // The disable is the load-bearing half rather than the spinner. save() has no
+  // idempotency key and the server writes a series row by row with no unique constraint
+  // to collide against, so a second press during the first one writes a SECOND complete
+  // term and doubles the attendance denominator of every student in it. The code below
+  // already warns about that in prose after a timeout; this stops the ordinary case,
+  // which is somebody clicking again because the screen looked dead.
+  const [saving, setSaving] = useState(null);
+
   const save = async () => {
+    // A GUARD, NOT AN ASSERTION. The button is disabled while `saving` is set, so this
+    // should be unreachable — but "should be" is doing the same work here as a unique
+    // constraint would, and there is no unique constraint. Enter is a submit path too.
+    if (saving) return;
     setErr(""); setNote(""); setWarnings([]);
 
     // EDITING KEEPS THE OLD SINGLE-EVENT PATH, untouched. Changing one occurrence must
     // never silently generate a term, so an edit sends one body and gets one event back.
     if (editing.id) {
+      setSaving("Saving…");
       try {
         const body = { ...editing, staffIds: editing.staffIds || [], cohortIds: editing.cohortIds || [] };
         // The repeat fields belong to CREATE only. Sent on an update they would be
@@ -1602,6 +1624,9 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         setEditing(null);
         refresh();
       } catch (e) { setErr(e?.message || "Could not save the event."); }
+      // finally, not a line after the catch: an early return or a throw from setWarnings
+      // would otherwise leave the button spinning for ever with no way back.
+      finally { setSaving(null); }
       return;
     }
 
@@ -1616,8 +1641,17 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
     const madeWarnings = [];
     const savedKeys = new Set();
     let created = 0;
+    const total = editing.blocks.length;
 
-    for (const b of editing.blocks) {
+    try {
+    for (const [i, b] of editing.blocks.entries()) {
+      // COUNTED IN MODULES, WHICH IS WHAT THE LOOP ACTUALLY ITERATES. The tempting label
+      // is a class count, but the classes for a block are expanded server-side inside the
+      // one request — the client cannot see them arrive and a bar that moved in class
+      // units would be inventing the positions between blocks. One module is one request
+      // is one step, and a step that only ever advances when something really finished is
+      // worth more than a smoother lie.
+      setSaving(total > 1 ? `Creating module ${i + 1} of ${total}…` : "Creating classes…");
       const name = (b.title || "").trim() || courseName(units.find((u) => u.id === b.unitId)?.courseId) || "Untitled module";
       const sessions = b.sessions.slice(0, Math.max(1, Math.min(2, b.sessionCount || 1)));
       const body = {
@@ -1668,6 +1702,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         if (!refused) unsure.push(name);
       }
     }
+    } finally { setSaving(null); }
 
     setWarnings(madeWarnings);
 
@@ -1998,7 +2033,10 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: NAVY }}>
               <p className="text-base font-extrabold">{editing.id ? "Edit event" : "New event"}</p>
-              <button onClick={() => setEditing(null)} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
+              {/* Same reason as Cancel below: this is the other way out of the modal, and
+                  leaving it live would make the lock on Cancel decorative. */}
+              <button onClick={() => setEditing(null)} disabled={!!saving} aria-label="Close"
+                className="rounded-full p-1.5 hover:bg-white/20 disabled:opacity-40 disabled:hover:bg-transparent"><X size={18} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
             {editing.id ? (
@@ -2347,16 +2385,30 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                     className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Delete</button>
                 </>
               )}
-              <button onClick={() => setEditing(null)} className="ml-auto rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">Cancel</button>
+              {/* Cancel is locked while a save runs, and it is not a courtesy. Closing the
+                  modal does NOT abort the requests — the loop holds its own reference to
+                  the blocks and carries on writing to the term. An administrator who
+                  cancelled a half-written series and saw the editor vanish would have
+                  every reason to believe nothing was created. */}
+              <button onClick={() => setEditing(null)} disabled={!!saving}
+                className="ml-auto rounded-lg px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent">Cancel</button>
               {/* EVERY block has to be complete, not just the first one. The loop in
                   save() posts them all, and a block missing its title would be one 400
                   in the middle of a run that had already created the classes before it —
                   a partial save to unpick rather than a button that stayed disabled. */}
+              {/* THE LABEL CHANGES, AND SO DOES THE ICON. A spinner that replaces the tick
+                  says "working" at a glance from across a desk; the words say which of the
+                  several things it is working on. Both, because the button is the only
+                  thing on screen that moves while a term is being written. */}
               <button onClick={save}
-                disabled={editing.id
+                disabled={!!saving || (editing.id
                   ? (!editing.title?.trim() || !editing.date)
-                  : !(editing.blocks?.length && editing.blocks.every((b) => (b.title || "").trim() && b.date))}
-                className="flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}><Check size={15} /> Save</button>
+                  : !(editing.blocks?.length && editing.blocks.every((b) => (b.title || "").trim() && b.date)))}
+                aria-busy={!!saving}
+                className="flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                {saving || "Save"}
+              </button>
             </div>
           </div>
         </div>,
