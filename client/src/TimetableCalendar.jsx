@@ -5,7 +5,7 @@
 // screen and the administrator's planner without either growing a copy of the other's
 // loading, error and refresh logic — and it is why the two containers can differ in
 // everything except how a timetable looks.
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Clock3 } from "lucide-react";
 import {
   windowFor, datesIn, isoDay, placeEvent, colourOf, annotationLines, changedWithin, minutes, layoutDay,
@@ -68,8 +68,13 @@ function EmptyGrid({ msg }) {
 
 /* ------------------------------------------------------- day / week grid -- */
 
-function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId }) {
+function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId, onCreateAt }) {
   const periods = settings.periods || [];
+
+  // WHAT THE POINTER IS DOING RIGHT NOW: { date, from, to } while a drag is in
+  // progress, null otherwise. One piece of state rather than three, because a drag
+  // that has a date but no rows is not a state this grid can be in.
+  const [drag, setDrag] = useState(null);
   const byDate = useMemo(() => {
     const m = new Map();
     for (const e of events) { if (!m.has(e.date)) m.set(e.date, []); m.get(e.date).push(e); }
@@ -80,6 +85,25 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
   // look like an hour whether the reader has four periods switched on or twelve.
   const ROW_H = 52;
   const bodyH = Math.max(periods.length * ROW_H, ROW_H);
+
+  // WHERE "NOW" FALLS IN THE GRID, as a percentage — or null when the current time is
+  // outside the periods this reader has switched on, in which case no line is drawn
+  // rather than one pinned to an edge, which would be a lie about the time.
+  //
+  // Ticked once a minute. A value computed only at mount is right for sixty seconds and
+  // then quietly wrong for the rest of the day, which is worse than not drawing it.
+  const [nowMin, setNowMin] = useState(() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); });
+  useEffect(() => {
+    const t = setInterval(() => { const n = new Date(); setNowMin(n.getHours() * 60 + n.getMinutes()); }, 60000);
+    return () => clearInterval(t);
+  }, []);
+  const nowPct = (() => {
+    if (!periods.length) return null;
+    const from = minutes(periods[0].start);
+    const to = minutes(periods[periods.length - 1].end);
+    if (!(nowMin > from && nowMin < to)) return null;
+    return ((nowMin - from) / (to - from)) * 100;
+  })();
 
   return (
     <div className="overflow-x-auto">
@@ -93,7 +117,21 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
             </div>
           ))}
         </div>
-        <div className="flex" style={{ height: bodyH }}>
+        {/* The drag ends wherever the button comes up, including outside the column
+            it started in — releasing over the gutter or off the grid would otherwise
+            leave the selection stuck to the pointer for ever. */}
+        <div
+          className="flex"
+          style={{ height: bodyH }}
+          onMouseUp={() => {
+            if (!drag || !onCreateAt) { setDrag(null); return; }
+            const a = Math.min(drag.from, drag.to);
+            const b = Math.max(drag.from, drag.to);
+            setDrag(null);
+            if (periods[a] && periods[b]) onCreateAt(drag.date, periods[a].start, periods[b].end);
+          }}
+          onMouseLeave={() => setDrag(null)}
+        >
           {/* Hour gutter */}
           <div className="w-14 shrink-0">
             {periods.map((p) => (
@@ -107,7 +145,39 @@ function ColumnGrid({ dates, events, settings, today, onSelectEvent, selectedId 
               {/* Uniform cells with a thin rule per period. An alternating band was tried and
                   removed: the reference draws one flat wash, and the stripes read as
                   meaning something when they mean nothing. */}
-              {periods.map((p) => <div key={p.start} style={{ height: ROW_H, borderColor: TT.grid }} className="border-b" />)}
+              {/* EMPTY SPACE IS NOW THE PRIMARY WAY TO CREATE A CLASS.
+                  Before this the only interaction on the grid was clicking an event
+                  that already existed: to add one you left the calendar, pressed New
+                  event, and typed the date and time you had just been looking at.
+                  Every calendar a person has ever used lets them press the slot they
+                  mean, so the grid read as a picture of a timetable rather than a
+                  timetable. Click one row for that period; drag down for several. */}
+              {periods.map((p, pi) => {
+                const inDrag = drag && drag.date === d && pi >= Math.min(drag.from, drag.to) && pi <= Math.max(drag.from, drag.to);
+                return (
+                  <div
+                    key={p.start}
+                    onMouseDown={() => onCreateAt && setDrag({ date: d, from: pi, to: pi })}
+                    onMouseEnter={() => drag && drag.date === d && setDrag((x) => ({ ...x, to: pi }))}
+                    style={{
+                      height: ROW_H,
+                      borderColor: TT.grid,
+                      background: inDrag ? alpha(NAVY, 22) : undefined,
+                      cursor: onCreateAt ? "cell" : undefined,
+                    }}
+                    className={`border-b transition-colors ${onCreateAt && !inDrag ? "hover:bg-white/45" : ""}`}
+                  />
+                );
+              })}
+
+              {/* THE TIME NOW, on today only. A week grid with no marker makes
+                  "what is on at the moment" a counting exercise against the gutter. */}
+              {d === today && nowPct !== null && (
+                <div className="pointer-events-none absolute left-0 right-0" style={{ top: `${nowPct}%` }}>
+                  <div className="h-px w-full" style={{ background: "#e11d48" }} />
+                  <div className="absolute -left-1 -top-1 h-2 w-2 rounded-full" style={{ background: "#e11d48" }} />
+                </div>
+              )}
               {/* SIDE BY SIDE WHEN THEY SHARE AN HOUR.
                   Every tile used to be `left: 2, right: 2` — the full width of the
                   column — so a second class at the same time was drawn exactly over the
@@ -265,7 +335,7 @@ function ListView({ dates, events, settings, today, onSelectEvent, selectedId })
 
 /* ------------------------------------------------------------------ root -- */
 
-export default function TimetableCalendar({ events = [], settings, view = "week", anchor, today, onSelectEvent, selectedId }) {
+export default function TimetableCalendar({ events = [], settings, view = "week", anchor, today, onSelectEvent, selectedId, onCreateAt }) {
   const handset = useIsHandset();
   const { from, to } = useMemo(() => windowFor(view, anchor), [view, anchor]);
   const dates = useMemo(() => datesIn(from, to, settings?.days, view), [from, to, settings?.days, view]);
@@ -284,6 +354,6 @@ export default function TimetableCalendar({ events = [], settings, view = "week"
     case "list":     return <ListView dates={dates} events={events} settings={settings} today={today} onSelectEvent={onSelectEvent} selectedId={selectedId} />;
     case "month":    return <MonthGrid dates={dates} events={events} settings={settings} today={today} anchor={anchor} onSelectEvent={onSelectEvent} selectedId={selectedId} />;
     case "timeline": return <TimelineGrid dates={dates} events={events} settings={settings} today={today} onSelectEvent={onSelectEvent} selectedId={selectedId} />;
-    default:         return <ColumnGrid dates={dates} events={events} settings={settings} today={today} onSelectEvent={onSelectEvent} selectedId={selectedId} />;
+    default:         return <ColumnGrid dates={dates} events={events} settings={settings} today={today} onSelectEvent={onSelectEvent} selectedId={selectedId} onCreateAt={onCreateAt} />;
   }
 }

@@ -1207,11 +1207,17 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
   // `showAllSchools` is FORM STATE AND NOT PART OF THE EVENT. It never reaches the wire;
   // save() builds each body field by field rather than spreading this object, which is
   // what keeps it out.
-  const blank = () => ({
-    academicDepartmentId: "", showAllSchools: false,
-    cohortIds: [], notes: "", published: false,
-    blocks: [blankBlock(anchor)],
-  });
+  // Given a date and a pair of times, the form opens already describing the slot the
+  // pointer landed on. Without arguments it is the old New-event behaviour exactly.
+  const blank = (date, start, end) => {
+    const b = blankBlock(date || anchor);
+    if (start && end) b.sessions = [{ start, end }, b.sessions[1]];
+    return {
+      academicDepartmentId: "", showAllSchools: false,
+      cohortIds: [], notes: "", published: false,
+      blocks: [b],
+    };
+  };
 
   const setBlock = (i, patch) => setEditing((ev) => ({ ...ev, blocks: ev.blocks.map((b, j) => (j === i ? { ...b, ...patch } : b)) }));
   const setSession = (i, si, patch) => setEditing((ev) => ({
@@ -1543,6 +1549,11 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       ) : (
         <TimetableCalendar events={events} settings={settings} view={view} anchor={anchor} today={today}
           onSelectEvent={(e) => setEditing({ ...e, staffIds: (e.staff || []).map((s) => s.id), cohortIds: (e.groups || []).map((g) => g.id) })}
+          // Press or drag empty space to open the form for exactly that slot. This is
+          // the interaction the grid was missing: previously the only way to add a
+          // class was to leave the calendar, press New event, and retype the date and
+          // time you had just been pointing at.
+          onCreateAt={(date, start, end) => setEditing(blank(date, start, end))}
           selectedId={editing?.id} />
       )}
 
