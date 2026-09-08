@@ -6,7 +6,7 @@
 // that one is scoped to a course/year/term and has free-text lecturer and room, and
 // folding this into it would mean one screen where half the fields are relations and
 // half are strings.
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
@@ -21,14 +21,67 @@ import ConfirmDialog from "./ConfirmDialog";
 import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates, mondayOf } from "./timetableView";
 import { ukBankHolidaysRange } from "./bankHolidays";
 
+// A DIV, NOT A LABEL, AND THAT IS THE FIX FOR AN UNDISMISSABLE DROPDOWN.
+//
+// This wrapped its children in <label className="block"> for two years, which is
+// correct for a caption over ONE native input and quietly catastrophic over a
+// composite widget. A <label> forwards a click anywhere inside it to its labeled
+// control — the first labelable descendant — and SearchOne's click-away backdrop is a
+// plain <div> covering the whole viewport, rendered inside those children. So a click
+// anywhere on screen ran the backdrop's onClick (setOpen(false)) and was then
+// forwarded by the label to SearchOne's toggle button (setOpen(v => !v)), which put it
+// straight back. The panel closed and reopened in the same tick, so it read as "clicking
+// outside does nothing" and the only way out was to pick a value you may not have wanted.
+// Reported exactly that way, twice.
+//
+// Choosing an option was never affected, which is why this survived: the HTML spec
+// exempts clicks on interactive descendants from label forwarding, so the option
+// buttons and the search input were always safe. Only the inert backdrop was not.
+//
+// role="group" + aria-label keeps the caption attached to the control for assistive
+// technology. That is the RIGHT association here rather than a downgrade: a <label>
+// names a single control, and over SearchMany it was naming the first chip's remove
+// button. StaffHub's own Field already wraps in a div for the same reason.
 function Field({ label, children, hint }) {
   return (
-    <label className="block">
+    <div className="block" role="group" aria-label={label}>
       <span className="mb-0.5 block text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
       {children}
       {hint && <span className="mt-0.5 block text-[11px] text-slate-400">{hint}</span>}
-    </label>
+    </div>
   );
+}
+
+/**
+ * Close `onOutside` when a pointer goes down anywhere outside `ref`, while `active`.
+ *
+ * A LISTENER RATHER THAN A FULL-SCREEN DIV, and that is deliberate. The backdrop this
+ * replaces had to be a viewport-covering element in the middle of the form, which made
+ * it hostage to whatever it happened to be nested inside — a <label> that re-fired the
+ * toggle, a transformed ancestor that shrank `fixed` to something smaller than the
+ * screen, a stacking context that painted it under the thing it was meant to cover. A
+ * document listener has no position, no z-index and no parent, so none of those can
+ * reach it, and it works the same from inside the portalled modal as from the tab
+ * behind it.
+ *
+ * `pointerdown`, not `click`: it fires before focus moves, so a picker closes on the
+ * way down rather than waiting for a mouseup that may land somewhere else entirely.
+ * Capture phase, so a child calling stopPropagation cannot strand a panel open.
+ */
+function useDismissOnOutside(ref, onOutside, active) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onOutside(); };
+    // Escape belongs with it: the two are one behaviour ("let me out"), and splitting
+    // them across components is how one of them comes back without the other.
+    const onKey = (e) => { if (e.key === "Escape") onOutside(); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [ref, onOutside, active]);
 }
 const inputCls = "w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm";
 
@@ -72,6 +125,9 @@ function dateHeading(d) {
 function SearchOne({ value, options, onChange, placeholder, allowNone = true, noneLabel = "None" }) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  const box = useRef(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(box, close, open);
   const chosen = options.find((o) => o.id === value);
   const term = q.trim().toLowerCase();
   // Capped at 50 so a blank search does not paint the whole list; typing narrows it.
@@ -80,7 +136,7 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
     .slice(0, 50);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={box}>
       {/* A MAGNIFIER, NOT JUST A CHEVRON, and the hint text says "search" too.
           With only a chevron this control is indistinguishable from a native <select>,
           so nobody discovers they can type — which is the whole reason it exists over
@@ -95,16 +151,12 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
       </button>
       {open && (
         <>
-          {/* A click-away catcher. Without it the panel can only be dismissed by
-              choosing something, so a reader who opened it to look ends up having to
-              pick a value they did not want. */}
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          {/* Dismissal is useDismissOnOutside above — pointer and Escape both. There is
+              deliberately no click-away <div> here any more: see the note on Field for
+              what a viewport-covering div nested in a <label> did to this control. */}
           <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
-          {/* Escape closes it, as every dropdown on the web does. The click-away
-              backdrop below covers the mouse; this covers the keyboard. */}
           <input autoFocus className="w-full border-b border-slate-200 px-2.5 py-2 text-sm outline-none"
-            placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }} />
+            placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
           <ul className="max-h-56 overflow-y-auto py-1">
             {allowNone && (
               <li><button type="button" onClick={() => { onChange(""); setOpen(false); }}
@@ -137,6 +189,14 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
   // there was no way to see what was available without guessing a letter. A picker that
   // hides its options until you guess right is a worse dropdown, not a better one.
   const [focused, setFocused] = useState(false);
+  // The same dismissal as SearchOne, rather than the onBlur this used to carry. Blur
+  // closed on an outside click well enough, but it also closed on a click INSIDE this
+  // control's own caption — and while the caption was a <label> that click bounced
+  // straight back to the input and reopened the list. Two controls dismissing two
+  // different ways is also how one of them silently regresses.
+  const box = useRef(null);
+  const close = useCallback(() => { setFocused(false); setQ(""); }, []);
+  useDismissOnOutside(box, close, focused);
   const term = q.trim().toLowerCase();
   const chosen = options.filter((o) => value.includes(o.id));
   const shown = options
@@ -145,7 +205,7 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
     .slice(0, 50);
 
   return (
-    <div className="rounded-lg border border-slate-300">
+    <div className="rounded-lg border border-slate-300" ref={box}>
       {/* Chosen ones stay VISIBLE as chips rather than as highlighted rows in a
           scrolling list. With a multi-select, what you have picked scrolls out of
           sight the moment you look for the next one. */}
@@ -161,18 +221,20 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
         </div>
       )}
       <input className="w-full px-2.5 py-1.5 text-sm outline-none" placeholder={placeholder}
-        value={q} onChange={(e) => setQ(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onKeyDown={(e) => { if (e.key === "Escape") { setQ(""); e.currentTarget.blur(); } }} />
+        value={q}
+        // setFocused on CHANGE as well as on focus: Escape closes the list while leaving
+        // the caret where it is, and without this, typing after that would filter a list
+        // nobody could see.
+        onChange={(e) => { setQ(e.target.value); setFocused(true); }}
+        onFocus={() => setFocused(true)} />
       {/* OPEN WHILE FOCUSED, AND ONLY THAT.
           This was `focused || term`, so the moment anything had been typed the list
-          stayed open after the box lost focus — clicking elsewhere on the page did
+          stayed open however you left the box — clicking elsewhere on the page did
           nothing and the only way out was to choose something. That is not a dropdown,
-          it is a trap, and it was reported as one.
-          The term clause was never needed: options are taken on MOUSEDOWN with
-          preventDefault, so focus survives a pick and the list stays open for the next
-          one of its own accord. */}
+          it is a trap, and it was reported as one. The term clause was never needed:
+          options are taken on MOUSEDOWN with preventDefault, so focus survives a pick
+          and the list stays open for the next one of its own accord.
+          What clears `focused` is useDismissOnOutside, not a blur handler. */}
       {focused && (
         <ul className="max-h-40 overflow-y-auto border-t border-slate-200 py-1">
           {!shown.length && (
@@ -182,10 +244,10 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
           )}
           {shown.map((o) => (
             <li key={o.id}>
-              {/* onMouseDown, not onClick: the input's blur fires first and would close
-                  the list before a click could land on it, so every selection would
-                  need two attempts. preventDefault keeps the focus where it is so the
-                  box stays open for the next one. */}
+              {/* onMouseDown with preventDefault keeps the caret in the search box, so
+                  the list stays open and a timetabler can add four groups without
+                  clicking back into it between each. The dismissal listener ignores
+                  this: it is a pointerdown INSIDE the control, not outside it. */}
               <button type="button"
                 onMouseDown={(e) => { e.preventDefault(); onChange([...value, o.id]); setQ(""); }}
                 className="w-full px-2.5 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
