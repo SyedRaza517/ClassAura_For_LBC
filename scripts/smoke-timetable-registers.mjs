@@ -339,6 +339,47 @@ const draft = (await mkEvent({ date: D, start: "09:00", end: "12:00", title: `Dr
 check("a draft event was created", !!draft?.id);
 check("A DRAFT EVENT HAS NO REGISTER", (await registersFor(draft.id)).length === 0);
 
+console.log("\n--- CREATING a published series builds its registers, across the whole range ---");
+//
+// Registers used to be built ONLY by publish and by an edit, so saving produced a term
+// of classes with no attendance behind them and the workflow depended on the reader
+// noticing a sentence in a toast. Reported as exactly that: sessions, but no attendance.
+//
+// The assertion that matters is the LAST date, not the first. Building registers for the
+// event in front of you and calling it done is the plausible half-fix, and it passes any
+// check aimed at the start of the series while leaving every later week bare.
+const ONCREATE_FROM = "2026-10-05";       // a Monday
+const ONCREATE_TO = "2026-10-26";         // three Mondays later
+const onCreateSeries = await mkEvent({
+  date: ONCREATE_FROM, endDate: ONCREATE_TO, days: [1],
+  start: "09:00", end: "12:00", title: `OnCreate ${TAG}`,
+  unitId: unit.id, roomId: room.id, cohortIds: [cohortA.id], published: true,
+});
+check("the series was created", onCreateSeries.status === 201, `${onCreateSeries.status} ${onCreateSeries.data?.error || ""}`);
+check("it spans four Mondays", onCreateSeries.data?.created === 4, `created ${onCreateSeries.data?.created}`);
+check("THE CREATE ITSELF REPORTS REGISTERS, rather than telling the reader to go and publish",
+  onCreateSeries.data?.registers?.created === 4, JSON.stringify(onCreateSeries.data?.registers));
+
+const onCreateRows = await db.timetableEvent.findMany({
+  where: { title: `OnCreate ${TAG}` }, select: { id: true, date: true }, orderBy: { date: "asc" },
+});
+check("four events are in the database", onCreateRows.length === 4, String(onCreateRows.length));
+check("the FIRST date has a register", (await registersFor(onCreateRows[0].id)).length === 1);
+check("AND SO DOES THE LAST — registers cover the whole range, not just the date in hand",
+  (await registersFor(onCreateRows[onCreateRows.length - 1].id)).length === 1,
+  `last event ${onCreateRows[onCreateRows.length - 1]?.date}`);
+check("every event in the series has exactly one register",
+  (await Promise.all(onCreateRows.map((e) => registersFor(e.id)))).every((r) => r.length === 1));
+// A draft series must still build nothing, or "build on create" has quietly become
+// "build regardless of published", which is the rule the draft check above protects.
+const onCreateDraft = await mkEvent({
+  date: ONCREATE_FROM, endDate: ONCREATE_TO, days: [2],
+  start: "09:00", end: "12:00", title: `OnCreateDraft ${TAG}`,
+  unitId: unit.id, cohortIds: [cohortA.id], published: false,
+});
+check("A DRAFT SERIES STILL BUILDS NO REGISTERS", onCreateDraft.data?.registers?.created === 0,
+  JSON.stringify(onCreateDraft.data?.registers));
+
 console.log("\n--- publishing builds one register per group ---");
 const merged = (await mkEvent({
   date: D, start: "14:00", end: "17:00", title: `Merged ${TAG}`,

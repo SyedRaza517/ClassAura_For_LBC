@@ -846,6 +846,47 @@ router.delete("/groups/:id", async (req, res) => {
 
 const { findClashes } = require("../timetabling/overlap");
 const { syncEventRegisters } = require("../timetabling/registers");
+
+/**
+ * Build the registers for many events and fold the outcomes into one report.
+ *
+ * Shared by publish and create rather than written twice, because the folding is the
+ * part with a decision in it: skips are COLLAPSED TO COUNTS PER REASON. A term of 300
+ * workshops with no module would otherwise return 300 identical sentences, and a report
+ * nobody can read is not a report.
+ *
+ * Never throws. A register that cannot be built is an ordinary outcome — a draft, a
+ * workshop with no module, a sheet somebody has already marked — and syncEventRegisters
+ * reports those in its return value rather than raising. The one thing this must not do
+ * is turn "this workshop has no register, as expected" into a failed save of the classes
+ * themselves, which are already written by the time we get here.
+ */
+async function buildRegistersFor(ids) {
+  const acc = { created: 0, updated: 0, frozen: [], skipped: [] };
+  for (const id of ids) {
+    try {
+      const r = await syncEventRegisters(id);
+      acc.created += r.created;
+      acc.updated += r.updated;
+      acc.frozen.push(...r.frozen);
+      acc.skipped.push(...r.skipped);
+    } catch (e) {
+      // The classes are saved; this one register is not. Say which, and carry on with
+      // the rest — abandoning the loop would leave a term half-registered with no
+      // record of where it stopped.
+      console.error("[timetabling] register sync failed for event", id, "-", e?.message);
+      acc.skipped.push({ reason: "Could not be built — see the server log." });
+    }
+  }
+  const byReason = {};
+  for (const s of acc.skipped) byReason[s.reason] = (byReason[s.reason] || 0) + 1;
+  return {
+    created: acc.created,
+    updated: acc.updated,
+    frozen: acc.frozen,
+    skipped: Object.entries(byReason).map(([reason, events]) => ({ reason, events })),
+  };
+}
 const { sEvent, sEventRow } = require("../timetabling/serialize");
 
 // Everything sEvent names. Kept in one constant because four handlers need the same
@@ -1199,7 +1240,10 @@ router.post("/events", async (req, res) => {
   if (!endDate && sessions.length === 1) {
     const warnings = await checkClashes({ ...data, id: null }, { roomId: data.roomId || null, staffIds, cohortIds });
     const row = await createEventWithAssignments(data, staffIds, cohortIds, EVENT_INCLUDE);
-    return res.status(201).json({ event: sEvent(row), warnings, created: 1, sessionsPerDay: 1 });
+    // REGISTERS ARE BUILT ON CREATE, not only on publish. See the note in the series
+    // branch below for why this changed.
+    const registers = await buildRegistersFor([row.id]);
+    return res.status(201).json({ event: sEvent(row), warnings, created: 1, sessionsPerDay: 1, registers });
   }
 
   let dates;
@@ -1244,6 +1288,12 @@ router.post("/events", async (req, res) => {
   const warnings = [];
   let first = null;
   let written = 0;
+  // Every row written, so the registers can be built for the WHOLE series afterwards.
+  // Collected rather than re-queried by seriesId: a re-query would also pick up a series
+  // id collision, and it would have to run after the catch block that reports a partial
+  // write — at which point "which rows did we actually create" is exactly the question
+  // that has gone unanswerable.
+  const madeIds = [];
   try {
     for (const date of dates) {
       for (const session of sessions) {
@@ -1255,6 +1305,7 @@ router.post("/events", async (req, res) => {
           staffIds, cohortIds, first ? null : EVENT_INCLUDE,
         );
         if (!first) first = row;
+        madeIds.push(row.id);
         written++;
       }
     }
@@ -1281,8 +1332,28 @@ router.post("/events", async (req, res) => {
     });
   }
 
+  // REGISTERS FOR THE WHOLE SERIES, ACROSS ITS START AND END DATE.
+  //
+  // These used to be built only by "Publish this period" over a date range, and by an
+  // edit. Saving therefore produced a term of classes with no attendance behind them,
+  // and the second action needed to make them real was named nowhere the person saving
+  // would see it — the success note had to TELL them to go and publish the dates, which
+  // is a workflow held together by a sentence. Reported as exactly that: sessions, but
+  // no attendance.
+  //
+  // Building here rather than only on publish is also the honest reading of the form:
+  // the create screen already asks for a start date, an end date and a "create
+  // registers" choice, so it has been asking the college to decide this all along.
+  //
+  // Publish keeps its own pass, and that is not redundant. This one can only cover the
+  // events in front of it; publishing covers a DATE RANGE, including classes created
+  // before this change, classes whose module was attached later, and drafts going live
+  // for the first time. syncEventRegisters is an upsert keyed on the event and group, so
+  // running both is idempotent rather than duplicating anything.
+  const registers = await buildRegistersFor(madeIds);
+
   res.status(201).json({
-    event: sEvent(first), seriesId,
+    event: sEvent(first), seriesId, registers,
     // Every row written. `dates` and `sessionsPerDay` are the two factors of it, sent
     // separately so a screen can say "24 days × 2 sessions" rather than an unexplained
     // 48 — a number nobody can check is a number nobody trusts.
@@ -1481,28 +1552,7 @@ router.post("/events/publish", async (req, res) => {
       })).map((e) => e.id)
     : [];
 
-  const registers = { created: 0, updated: 0, frozen: [], skipped: [] };
-  for (const id of ids) {
-    const r = await syncEventRegisters(id);
-    registers.created += r.created;
-    registers.updated += r.updated;
-    registers.frozen.push(...r.frozen);
-    registers.skipped.push(...r.skipped);
-  }
-  // Collapsed to counts per reason: a term of 300 workshops would otherwise return 300
-  // identical sentences, and a report nobody can read is not a report.
-  const bySkipReason = {};
-  for (const s of registers.skipped) bySkipReason[s.reason] = (bySkipReason[s.reason] || 0) + 1;
-
-  res.json({
-    updated: count,
-    registers: {
-      created: registers.created,
-      updated: registers.updated,
-      frozen: registers.frozen,
-      skipped: Object.entries(bySkipReason).map(([reason, events]) => ({ reason, events })),
-    },
-  });
+  res.json({ updated: count, registers: await buildRegistersFor(ids) });
 });
 
 /* --------------------------------------------------------------- settings -- */

@@ -1641,6 +1641,8 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
     const madeWarnings = [];
     const savedKeys = new Set();
     let created = 0;
+    let madeRegisters = 0;
+    const registerSkips = new Map();   // reason -> how many events gave it
     const total = editing.blocks.length;
 
     try {
@@ -1678,6 +1680,13 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
       try {
         const r = await api.ttCreateEvent(body);
         created += r.created || 1;
+        madeRegisters += r.registers?.created || 0;
+        // A SKIP IS THE INTERESTING HALF and is kept per reason rather than counted.
+        // "18 classes, 0 registers" is the report that sends somebody hunting; "18
+        // classes, no registers — these have no module" is one they can act on.
+        for (const s of r.registers?.skipped || []) {
+          registerSkips.set(s.reason, (registerSkips.get(s.reason) || 0) + (s.events || 1));
+        }
         savedKeys.add(b.key);
         // Tagged with the module, because "week 4 clashes" out of one of three blocks is
         // only actionable if the reader knows which of the three it came from.
@@ -1710,13 +1719,21 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
       const expected = previewTotals.classes;
       setNote(
         `${created} class(es) created across ${editing.blocks.length} module(s).`
-        // Saving writes the CLASSES. The registers are built by "Publish this period"
-        // over a date range — syncEventRegisters is called from the publish handler and
-        // from an event edit, never from create. Saying "will follow" implied they were
-        // already on their way and left an administrator waiting for something that
-        // needed a second action nobody had mentioned; these dates are usually months
-        // outside the window they are looking at, so it would not have arrived.
-        + (previewTotals.registers ? ` Publish these dates to create the ${previewTotals.registers} register(s).` : "")
+        // SAVING NOW WRITES THE REGISTERS TOO, so this reports what was actually built
+        // rather than instructing the reader to go and do it themselves. It used to say
+        // "Publish these dates to create the N register(s)" — true at the time, because
+        // syncEventRegisters ran only on publish and on edit, but a workflow held
+        // together by a sentence in a toast. Somebody who missed it had a term of
+        // classes with no attendance behind them and nothing on screen saying why.
+        //
+        // The server's number, not the preview's: this one is a count of rows written.
+        + (madeRegisters ? ` ${madeRegisters} register(s) created.` : "")
+        // WHY NONE, when the preview expected some. A bare "0 registers" is what sends
+        // somebody hunting through settings; the reason is almost always mundane and
+        // fixable — no module on the class, or a sheet already marked.
+        + (!madeRegisters && registerSkips.size
+          ? ` No registers: ${[...registerSkips.entries()].map(([reason, n]) => `${reason} (${n})`).join("; ")}`
+          : "")
         // Said ONLY when the two disagree. The preview is computed from the same dates and
         // the same bank holidays the server uses, so a mismatch means one of them is
         // wrong — most likely a server that does not expand two sessions yet — and
