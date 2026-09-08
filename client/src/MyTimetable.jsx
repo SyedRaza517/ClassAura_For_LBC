@@ -511,7 +511,7 @@ export default function MyTimetable({ onBack }) {
       {selected && (() => {
         // ANCHORED TO THE TILE, and flipped rather than clipped.
         //
-        // The panel is ~380 wide and ~340 tall. Placed naively to the right of and below
+        // The panel is ~460 wide and ~340 tall. Placed naively to the right of and below
         // the tile it would fall off the screen for anything on Friday or after lunch, so
         // each axis independently chooses the side with room. Clamped as well, because a
         // tile near a corner can leave neither side comfortable.
@@ -525,18 +525,36 @@ export default function MyTimetable({ onBack }) {
         // becomes the containing block for `position: fixed`, so the clamp against
         // window.innerWidth was clamping to the wrong box entirely and the card landed
         // half off the left edge. The device decides this, not the caller.
-        // ONE CONSTANT, used both to place the panel and to size it. Widened from 320 to
-        // 380 because module names, room labels and group chips were all wrapping at the
-        // old width — the panel is mostly names, and a name broken over two lines is
-        // harder to scan than a slightly wider card. It is deliberately still a single
-        // number: the flip-and-clamp maths below decides which side of the tile has room
-        // for exactly this width, so a card sized in the JSX and measured here would
-        // start landing off-screen the moment the two drifted apart.
-        const W = 380, H = 340, GAP = 10;
+        // ONE CONSTANT, used both to place the panel and to size it. 320 → 380 → 460.
+        //
+        // The panel is almost entirely names, and every row of it wraps rather than
+        // truncates, so width is the only lever that puts a line back on one line. 460
+        // is measured against the longest thing that actually appears rather than picked
+        // for roundness: the module row carries "CODE — Full Module Name" (about 38
+        // characters for a real one, e.g. CMP701 — Machine Learning Foundations) and the
+        // room row carries "101 - First floor [Campus]". At 14px both clear the ~400px
+        // of text width this leaves after the icon, the gap and px-4 either side.
+        //
+        // Not wider than that. The card is anchored BESIDE a tile, and every pixel of it
+        // is a pixel of the grid it covers — past roughly a third of the viewport it
+        // stops being a detail panel and starts being a dialog that happens to be
+        // off-centre. Anything longer than the widths above still wraps, which is the
+        // right failure: truncation would hide the end of a lecturer's name.
+        //
+        // It stays a single number because the flip-and-clamp maths below reserves room
+        // for exactly this width. A card sized in the JSX and measured here would land
+        // off-screen the moment the two drifted apart.
+        const MAX_W = 460, H = 340, GAP = 10;
         const rect = handset ? null : anchorRect;
         let style = { position: "fixed", left: 16, right: 16, bottom: 0 };   // handset default
         if (rect) {
           const vw = window.innerWidth, vh = window.innerHeight;
+          // CAPPED BY THE VIEWPORT, because the sheet does not catch every narrow case.
+          // The handset query is max-width 640, so a 641px window takes THIS branch —
+          // and a flat 460 there would be 72% of the screen with no way to clamp it back,
+          // since the clamp below only moves the card, it never narrows it. Taking the
+          // smaller of the two makes the ideal width an ideal rather than a promise.
+          const W = Math.min(MAX_W, vw - 32);
           const left = rect.right + GAP + W < vw ? rect.right + GAP
                      : rect.left - GAP - W > 0 ? rect.left - GAP - W
                      : Math.max(8, Math.min(vw - W - 8, rect.left));
