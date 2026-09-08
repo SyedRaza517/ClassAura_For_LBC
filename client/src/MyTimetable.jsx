@@ -590,12 +590,28 @@ export default function MyTimetable({ onBack }) {
               </div>
 
               <div className="px-4 py-3">
-                {selected.room && <Row icon={MapPin}>{selected.room}</Row>}
-                {/* The campus on its own line. It is already inside the room label, in
-                    square brackets at the very end — the least prominent position in the
-                    string — and "which site is this on" is the question somebody works
-                    out whether they can walk there in ten minutes. */}
+                {/* LOCATION IN THE ORDER SOMEBODY TRAVELS IT: site, then floor, then
+                    door. roomLabel() reads "101 - First floor [Harrow]", which is the
+                    reverse — the room number first and the building last, in brackets,
+                    where it is least likely to be read. Somebody deciding whether they
+                    can get there in ten minutes needs the campus first.
+
+                    Two rows rather than one long string, so each fact is scannable on
+                    its own. Each appears only if it is known: an event with no room has
+                    no location to state, and inventing "—" for the floor of a room
+                    nobody recorded one for would read as a fact. */}
                 {selected.campus && <Row icon={Building2}>{selected.campus}</Row>}
+                {(() => {
+                  const parts = [
+                    selected.roomFloor,
+                    selected.roomName ? `Room ${selected.roomName}` : null,
+                  ].filter(Boolean);
+                  // Falls back to the whole label for an API not yet redeployed with the
+                  // two new fields, so this degrades to what it showed before rather
+                  // than to nothing at all.
+                  const text = parts.length ? parts.join(" · ") : selected.room;
+                  return text ? <Row icon={MapPin}>{text}</Row> : null;
+                })()}
                 {selected.unitCode && <Row icon={BookOpen}>{selected.unitCode}{selected.unitName ? ` — ${selected.unitName}` : ""}</Row>}
                 {!!selected.staff?.length && <Row icon={Users}>{selected.staff.map((s) => s.name).join(", ")}</Row>}
 

@@ -27,7 +27,12 @@ const argOf = (flag) => {
   return i > -1 ? process.argv[i + 1] : null;
 };
 
-const MODULES = [
+// One list per school, chosen by --set or inferred from the school's name. Keyed by a
+// word rather than by a school id because school ids differ between staging and
+// production -- these two databases have drifted -- and a tool that had to be told an id
+// could not be run the same way against both.
+const SETS = {
+  computing: [
   ["CMP701", "Machine Learning Foundations"],
   ["CMP702", "Deep Learning and Neural Networks"],
   ["CMP703", "Natural Language Processing"],
@@ -38,7 +43,15 @@ const MODULES = [
   ["CMP708", "Reinforcement Learning"],
   ["CMP709", "Research Methods for Computing"],
   ["CMP710", "MSc Project and Dissertation"],
-];
+  ],
+  business: [
+    ["BUS701", "Strategic Management"],
+    ["BUS702", "Financial Analysis and Reporting"],
+    ["BUS703", "Marketing in a Digital Economy"],
+    ["BUS704", "Leading People and Organisations"],
+    ["BUS705", "Operations and Supply Chain Management"],
+  ],
+};
 
 (async () => {
   const url = process.env.DATABASE_URL || "";
@@ -46,17 +59,26 @@ const MODULES = [
   console.log(`Database: ${url.replace(/^.*@/, "").split("/")[0]}`);
   console.log(APPLY ? "MODE: APPLY\n" : "MODE: dry run. Nothing will be written. Add --apply.\n");
 
+  // --set names the module list; --school names the school to put it on. Either may be
+  // given alone: the set defaults to the school's word and vice versa, because in
+  // practice "the business modules" and "the business school" are the same request.
+  const setName = (argOf("--set") || argOf("--school") || "computing").toLowerCase();
+  const set = Object.keys(SETS).find((k) => setName.includes(k));
+  if (!set) { console.error(`FAILED: no module set for "${setName}". Known: ${Object.keys(SETS).join(", ")}`); process.exit(1); }
+  const MODULES = SETS[set];
+  const schoolWord = argOf("--school") || set;
+
   try {
-    // A REAL COMPUTING SCHOOL BEATS A DEMO ONE, and the sort is what decides it rather
+    // A REAL SCHOOL BEATS A DEMO ONE, and the sort is what decides it rather
     // than the order the database happens to return rows in. Staging and production have
     // drifted -- production carries a hand-made "Computing", staging only the seeded
     // "DEMO School of Computing" -- and a tool that silently picked whichever came first
     // would put a college's modules in the demo school on one of them.
     const schools = await prisma.academicDepartment.findMany({
-      where: { name: { contains: "Computing", mode: "insensitive" } },
+      where: { name: { contains: schoolWord, mode: "insensitive" } },
       select: { id: true, name: true },
     });
-    if (!schools.length) { console.error("FAILED: no school with 'Computing' in its name."); process.exit(1); }
+    if (!schools.length) { console.error(`FAILED: no school with "${schoolWord}" in its name.`); process.exit(1); }
     schools.sort((a, b) => (a.name.startsWith("DEMO") ? 1 : 0) - (b.name.startsWith("DEMO") ? 1 : 0));
     const school = schools[0];
     console.log(`School: ${school.name}${schools.length > 1 ? `  (of ${schools.length} matching; DEMO ones deprioritised)` : ""}`);

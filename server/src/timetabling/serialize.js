@@ -92,6 +92,12 @@ const sEvent = (e) => ({
   // migration's fold could not place. Null rather than "" when there is no campus at
   // all, so a screen can leave the row out instead of printing an empty one.
   campus: e.room ? (e.room.campusRef?.name || e.room.campus || null) : null,
+  // The two remaining halves of a location, separately, so a screen can order them the
+  // way somebody walks to a class — site, then floor, then door — rather than being
+  // stuck with roomLabel()'s "101 - First floor [Harrow]", which puts the room number
+  // first and the building last. Both null when absent, never "".
+  roomName: e.room?.name || null,
+  roomFloor: e.room?.floor || null,
   categoryId: e.categoryId ?? null,
   category: e.category?.name ?? null,
   categoryColour: e.category?.colour ?? null,
