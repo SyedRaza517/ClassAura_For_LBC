@@ -80,8 +80,11 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
               pick a value they did not want. */}
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute z-20 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
+          {/* Escape closes it, as every dropdown on the web does. The click-away
+              backdrop below covers the mouse; this covers the keyboard. */}
           <input autoFocus className="w-full border-b border-slate-200 px-2.5 py-2 text-sm outline-none"
-            placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+            placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }} />
           <ul className="max-h-56 overflow-y-auto py-1">
             {allowNone && (
               <li><button type="button" onClick={() => { onChange(""); setOpen(false); }}
@@ -140,8 +143,17 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
       <input className="w-full px-2.5 py-1.5 text-sm outline-none" placeholder={placeholder}
         value={q} onChange={(e) => setQ(e.target.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)} />
-      {(focused || !!term) && (
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => { if (e.key === "Escape") { setQ(""); e.currentTarget.blur(); } }} />
+      {/* OPEN WHILE FOCUSED, AND ONLY THAT.
+          This was `focused || term`, so the moment anything had been typed the list
+          stayed open after the box lost focus — clicking elsewhere on the page did
+          nothing and the only way out was to choose something. That is not a dropdown,
+          it is a trap, and it was reported as one.
+          The term clause was never needed: options are taken on MOUSEDOWN with
+          preventDefault, so focus survives a pick and the list stays open for the next
+          one of its own accord. */}
+      {focused && (
         <ul className="max-h-40 overflow-y-auto border-t border-slate-200 py-1">
           {!shown.length && (
             <li className="px-2.5 py-2 text-center text-sm text-slate-400">
