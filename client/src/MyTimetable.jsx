@@ -11,10 +11,23 @@
 // wider than the grid it sits beside — so on a handset it collapses behind the
 // hamburger in the bar, which is exactly what the reference does.
 //
+// THAT WAS TRUE OF A PHONE AND WRONG ABOUT EVERYTHING BETWEEN. The sidebar was hidden
+// on a handset (≤640px) and inline everywhere else, so a tablet at 820 — or a laptop
+// window dragged to half the screen — put a 330px fixed sidebar beside the admin
+// console's own 240px nav rail and left the timetable about 250px, in which a week is
+// two and a half columns. Neither surface is a handset and the sidebar fitted neither,
+// so the breakpoint that matters is not "is this a phone" but "is there room for a
+// column beside the grid" (`useInlineSidebar` below, which MEASURES rather than asks
+// the viewport), and below it the sidebar becomes a drawer over the grid instead of a
+// column beside it. The bar's hamburger already toggled `sidebar`; it now opens that
+// drawer, so there is still exactly one
+// control for this and it is the one that was already there. On a handset it used to
+// toggle a piece of state nothing rendered — a button that did nothing at all.
+//
 // It calls /api/my-timetable, which needs no admin page. With no resource selected
 // the server answers with THIS PERSON'S teaching, found by a join on their id — not
 // a match on their name, which is the entire reason this module exists.
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp,
   Menu, Info, Settings as SettingsIcon, Share2, Printer, Search, MoreVertical,
@@ -34,6 +47,53 @@ import { useIsHandset } from "./PhoneShell";
 // a component that re-reads the clock mid-render can highlight two different days in
 // one paint.
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// IS THERE ROOM FOR A 330px COLUMN BESIDE THE GRID?
+//
+// Not the same question as useIsHandset(), and the two are deliberately separate. That
+// one answers "is this a phone", which is right for deciding that a week grid becomes
+// a list and is measured partly from `pointer: coarse`, because a phone in landscape
+// is still a phone. This one is arithmetic about a layout, and the answer is 330 for
+// the sidebar plus the ~640 a seven-day week needs before it starts scrolling.
+//
+// Rejected: reusing useIsHandset() with a wider query. It is read by TimetableCalendar
+// to decide that a week becomes a LIST, and widening it there would turn a tablet's
+// perfectly good week grid into a list — a change to what a view means, made as a side
+// effect of a sidebar decision.
+//
+// Rejected too, and this is the more tempting one: a plain `(min-width: 1100px)` media
+// query. The viewport is not what this component gets. The admin console keeps a
+// ~240px nav rail beside it — which the reader can collapse — so the same 1100px
+// window is 860px of usable room, or 1100, depending on a control in a file this one
+// cannot see. A query tuned for the rail is wrong when it is collapsed and a query
+// tuned for the staff app is wrong in the console; the number that is right in every
+// host is the width this component was handed. Measured, therefore, not queried.
+//
+// Safe against oscillation because the sidebar is a CHILD of the box being measured:
+// showing or hiding it does not change the box's width, so there is no configuration
+// in which the measurement flips the decision that produced it.
+const SIDEBAR_W = 330;
+const GRID_COMFORTABLE = 640;
+const INLINE_MIN = SIDEBAR_W + GRID_COMFORTABLE;
+
+function useInlineSidebar(ref) {
+  // The first paint has no measurement, so it starts from a guess at the viewport —
+  // a desktop-width window nearly always has the room and a phone never does, and
+  // being wrong for one frame is a flicker rather than a fault. The observer then
+  // replaces the guess with the truth. Guessing `true` unconditionally would flash a
+  // 330px sidebar across a phone on every open.
+  const [fits, setFits] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 1220));
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const read = () => { const w = el.clientWidth; if (w) setFits(w >= INLINE_MIN); };
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return fits;
+}
 
 /** A collapsible sidebar section — "Timetables (0)", "Event Categories (0)". */
 function Section({ label, count, icon, open, onToggle, onAction, children }) {
@@ -73,9 +133,12 @@ export default function MyTimetable({ onBack }) {
   const [prefs, setPrefs] = useState(false);
   const [selected, setSelected] = useState(null);
   // WHERE the tile was, so the panel can sit beside it instead of in a fixed corner.
-  // Null on a handset, where the panel stays a bottom sheet: anchoring a 320px card to
-  // a tile on a 390px screen puts it half off the edge, and a phone has nowhere better
-  // for it to be than the bottom.
+  // On a handset the panel stays a bottom sheet: anchoring a 320px card to a tile on a
+  // 390px screen puts it half off the edge, and a phone has nowhere better for it to
+  // be than the bottom. That is enforced where the panel is placed, NOT here — a tile
+  // reports where it was drawn and that is simply true; whether a screen is wide
+  // enough to use the fact is a different question, and putting the two together in
+  // this setter is what previously left the phone's Day view anchoring anyway.
   const [anchorRect, setAnchorRect] = useState(null);
   // The group whose students are being shown inside the panel, and the roster itself.
   // Fetched on demand rather than with the timetable: a week holds thirty classes and
@@ -85,9 +148,19 @@ export default function MyTimetable({ onBack }) {
   const [noticeOpen, setNoticeOpen] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
-  const [sidebar, setSidebar] = useState(true);
   const [openSections, setOpenSections] = useState({ timetables: false, categories: false });
   const handset = useIsHandset();
+  // The box the sidebar and the grid share, measured — see useInlineSidebar.
+  const bodyRef = useRef(null);
+  const inlineSidebar = useInlineSidebar(bodyRef);
+  // Open where it is a column, shut where it is a drawer over the grid — and reset on
+  // every crossing rather than remembered across one. A drawer left open from a wide
+  // window would cover the whole timetable the moment the window narrowed, and a
+  // reader who closed the column at 1400 does not mean "and keep the drawer shut" at
+  // 800, where it was never a column in the first place. One flag, two presentations,
+  // and the width decides which; the hamburger flips it either way.
+  const [sidebar, setSidebar] = useState(inlineSidebar);
+  useEffect(() => { setSidebar(inlineSidebar); }, [inlineSidebar]);
 
   const load = useCallback(async () => {
     setBusy(true); setErr("");
@@ -122,6 +195,57 @@ export default function MyTimetable({ onBack }) {
   // The grid draws with the reader's chosen layout unless they have set one in My
   // Settings, which wins — the toggle is a quick override, not a second setting.
   const effectiveSettings = settings ? { ...settings, layout } : null;
+
+  // The sidebar's CONTENTS, separated from its frame, because the frame is the only
+  // thing that changes with the width: a column at ≥1100, a drawer over the grid
+  // below it. Written once so the two cannot drift — the View picker below is the
+  // only way to leave Week, and on a handset it was previously not rendered at all,
+  // which left a phone with no way to reach Day, Month or Timeline.
+  const sidebarBody = (
+    <>
+      <div className="flex items-end gap-2 p-3">
+        <label className="relative flex-1">
+          <span className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-slate-500">View</span>
+          <select value={view} onChange={(e) => setView(e.target.value)} className={OUTLINE}>
+            {["day", "week", "month", "timeline"].map((v) => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
+          </select>
+        </label>
+        <div className="flex rounded border" style={{ borderColor: TT.rule }}>
+          <button onClick={() => setLayout("list")} aria-label="List view"
+            className={`p-2 ${layout === "list" ? "bg-slate-200" : "hover:bg-slate-50"}`}><List size={20} className="text-slate-600" /></button>
+          <button onClick={() => setLayout("grid")} aria-label="Grid view"
+            className={`p-2 ${layout === "grid" ? "bg-slate-200" : "hover:bg-slate-50"}`}><LayoutGrid size={20} className="text-slate-600" /></button>
+        </div>
+      </div>
+
+      <MiniMonth anchor={anchor} today={today} weekFrom={from} weekTo={to} onPick={setAnchor} />
+
+      <Section
+        label="Timetables" count={scope.ids.length}
+        open={openSections.timetables}
+        onToggle={() => setOpenSections((s) => ({ ...s, timetables: !s.timetables }))}
+        icon={<button onClick={() => setPicker(true)} aria-label="Select timetables" className="rounded p-1 text-slate-500 hover:bg-slate-100"><Search size={18} /></button>}
+      >
+        {!scope.ids.length ? (
+          <p className="text-sm text-slate-400">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
+        ) : (
+          <div className="space-y-1">
+            {scope.labels.map((l) => <p key={l.id} className="truncate rounded bg-slate-100 px-2 py-1 text-sm text-slate-700">{l.label}</p>)}
+            <button onClick={() => setScope({ type: null, ids: [], labels: [] })} className="pt-1 text-xs font-semibold text-slate-500 hover:text-slate-700">Back to my timetable</button>
+          </div>
+        )}
+      </Section>
+
+      <Section
+        label="Event Categories" count={settings?.colourBy === "category" ? 1 : 0}
+        open={openSections.categories}
+        onToggle={() => setOpenSections((s) => ({ ...s, categories: !s.categories }))}
+        onAction={() => setPrefs(true)}
+      >
+        <p className="text-sm text-slate-400">Colour is currently carrying <b className="text-slate-600">{settings?.colourBy || "category"}</b>. Change it under the gear.</p>
+      </Section>
+    </>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
@@ -177,67 +301,68 @@ export default function MyTimetable({ onBack }) {
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      {/* `relative` so the drawer below can be positioned against THIS box rather than
+          the viewport. `position: fixed` was the obvious choice and is wrong here: the
+          admin console animates its views with a transform, and a transformed ancestor
+          becomes the containing block for fixed descendants — which is exactly how the
+          event detail card ended up half off the left edge of a phone. Anchoring the
+          drawer to the region it covers is also the more honest description: it hides
+          the timetable, not the application bar above it. */}
+      <div ref={bodyRef} className="relative flex min-h-0 flex-1">
         {/* ------------------------------------------------------ sidebar -- */}
-        {sidebar && !handset && (
+        {sidebar && inlineSidebar && (
           <aside className="w-[330px] shrink-0 overflow-y-auto border-r" style={{ background: TT.sidebar, borderColor: TT.rule }}>
-            <div className="flex items-end gap-2 p-3">
-              <label className="relative flex-1">
-                <span className="absolute -top-2 left-2 bg-white px-1 text-[11px] text-slate-500">View</span>
-                <select value={view} onChange={(e) => setView(e.target.value)} className={OUTLINE}>
-                  {["day", "week", "month", "timeline"].map((v) => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
-                </select>
-              </label>
-              <div className="flex rounded border" style={{ borderColor: TT.rule }}>
-                <button onClick={() => setLayout("list")} aria-label="List view"
-                  className={`p-2 ${layout === "list" ? "bg-slate-200" : "hover:bg-slate-50"}`}><List size={20} className="text-slate-600" /></button>
-                <button onClick={() => setLayout("grid")} aria-label="Grid view"
-                  className={`p-2 ${layout === "grid" ? "bg-slate-200" : "hover:bg-slate-50"}`}><LayoutGrid size={20} className="text-slate-600" /></button>
-              </div>
-            </div>
-
-            <MiniMonth anchor={anchor} today={today} weekFrom={from} weekTo={to} onPick={setAnchor} />
-
-            <Section
-              label="Timetables" count={scope.ids.length}
-              open={openSections.timetables}
-              onToggle={() => setOpenSections((s) => ({ ...s, timetables: !s.timetables }))}
-              icon={<button onClick={() => setPicker(true)} aria-label="Select timetables" className="rounded p-1 text-slate-500 hover:bg-slate-100"><Search size={18} /></button>}
-            >
-              {!scope.ids.length ? (
-                <p className="text-sm text-slate-400">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
-              ) : (
-                <div className="space-y-1">
-                  {scope.labels.map((l) => <p key={l.id} className="truncate rounded bg-slate-100 px-2 py-1 text-sm text-slate-700">{l.label}</p>)}
-                  <button onClick={() => setScope({ type: null, ids: [], labels: [] })} className="pt-1 text-xs font-semibold text-slate-500 hover:text-slate-700">Back to my timetable</button>
-                </div>
-              )}
-            </Section>
-
-            <Section
-              label="Event Categories" count={settings?.colourBy === "category" ? 1 : 0}
-              open={openSections.categories}
-              onToggle={() => setOpenSections((s) => ({ ...s, categories: !s.categories }))}
-              onAction={() => setPrefs(true)}
-            >
-              <p className="text-sm text-slate-400">Colour is currently carrying <b className="text-slate-600">{settings?.colourBy || "category"}</b>. Change it under the gear.</p>
-            </Section>
+            {sidebarBody}
           </aside>
+        )}
+
+        {/* THE SAME SIDEBAR, OVER THE GRID INSTEAD OF BESIDE IT.
+            One `sidebarBody` rendered in two frames rather than two copies of the
+            markup: the View picker, the mini month and the magnifier are the only way
+            to change the view or look up a room, and a second copy is how a control
+            gets added to one of them and not the other. The reason it is a drawer
+            rather than a narrower column is that there is no narrower column — a mini
+            month calendar has seven columns and a floor of its own. */}
+        {sidebar && !inlineSidebar && (
+          <>
+            <div className="absolute inset-0 z-40 bg-slate-900/40" onClick={() => setSidebar(false)} aria-hidden="true" />
+            <aside className="absolute inset-y-0 left-0 z-50 w-[min(330px,86vw)] overflow-y-auto shadow-2xl" style={{ background: TT.sidebar }}>
+              <div className="flex items-center gap-2 border-b px-3 py-2" style={{ borderColor: TT.rule }}>
+                <p className="flex-1 text-[13px] font-bold uppercase tracking-wide text-slate-500">Timetable options</p>
+                <button onClick={() => setSidebar(false)} aria-label="Close sidebar" className="rounded p-1 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+              </div>
+              {sidebarBody}
+            </aside>
+          </>
         )}
 
         {/* --------------------------------------------------- main pane -- */}
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {/* Navigation strip */}
-          <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 py-2" style={{ background: TT.strip }}>
+          {/* Navigation strip.
+              FOLDS AS ONE PIECE, NOT SIX. Everything here was a direct child of one
+              `flex-wrap` row, so a narrow pane wrapped it wherever it happened to run
+              out: "Today ⟪ ‹ 8 Sept 2026 ›" on the first line and a lone "⟫" on the
+              second, with the forward arrows separated from the date they move and
+              from each other. The four arrows and the label they move are one control,
+              so they now live in one non-wrapping group that folds intact and centres
+              itself on its own line, and the label truncates (min-w-0) instead of
+              forcing the fold in the first place. */}
+          <div className="flex shrink-0 flex-wrap items-center gap-x-1 gap-y-1.5 px-3 py-2" style={{ background: TT.strip }}>
             <button onClick={() => setAnchor(today)}
-              className="mr-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Today</button>
-            <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1, true))} aria-label="Jump back" className="rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronsLeft size={18} /></button>
-            <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1))} aria-label="Previous" className="rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronLeft size={18} /></button>
-            <p className="min-w-[150px] px-2 text-center text-[15px] font-medium text-slate-700">{RANGE_LABEL(view, from, to)}</p>
-            <button onClick={() => setAnchor((a) => shiftAnchor(view, a, 1))} aria-label="Next" className="rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronRight size={18} /></button>
-            <button onClick={() => setAnchor((a) => shiftAnchor(view, a, 1, true))} aria-label="Jump forward" className="rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronsRight size={18} /></button>
-            {handset && (
-              <button onClick={() => setPicker(true)} aria-label="Select timetables" className="ml-auto rounded p-1.5 text-slate-600 hover:bg-slate-200"><Search size={18} /></button>
+              className="shrink-0 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Today</button>
+            <div className="flex min-w-0 flex-1 items-center justify-center gap-0.5">
+              <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1, true))} aria-label="Jump back" className="shrink-0 rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronsLeft size={18} /></button>
+              <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1))} aria-label="Previous" className="shrink-0 rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronLeft size={18} /></button>
+              <p className="min-w-0 flex-1 truncate px-1 text-center text-[15px] font-medium text-slate-700" style={{ maxWidth: 220 }}>{RANGE_LABEL(view, from, to)}</p>
+              <button onClick={() => setAnchor((a) => shiftAnchor(view, a, 1))} aria-label="Next" className="shrink-0 rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronRight size={18} /></button>
+              <button onClick={() => setAnchor((a) => shiftAnchor(view, a, 1, true))} aria-label="Jump forward" className="shrink-0 rounded p-1.5 text-slate-600 hover:bg-slate-200"><ChevronsRight size={18} /></button>
+            </div>
+            {/* The magnifier follows the sidebar rather than the device: wherever the
+                sidebar is a drawer, the one inside it is behind a hamburger, and
+                "look up a room" is the thing a reader most often wants without
+                opening anything. Shown for the drawer, not only for a handset. */}
+            {!inlineSidebar && (
+              <button onClick={() => setPicker(true)} aria-label="Select timetables" className="shrink-0 rounded p-1.5 text-slate-600 hover:bg-slate-200"><Search size={18} /></button>
             )}
           </div>
 
@@ -287,14 +412,25 @@ export default function MyTimetable({ onBack }) {
         // the tile it would fall off the screen for anything on Friday or after lunch, so
         // each axis independently chooses the side with room. Clamped as well, because a
         // tile near a corner can leave neither side comfortable.
+        // A HANDSET GETS THE SHEET WHATEVER THE TILE REPORTED, and this is a fix
+        // rather than a tidy-up. The comment on `anchorRect` said it was null on a
+        // handset — true of the List view, whose rows call onSelectEvent with no rect,
+        // and false of the Day and Month grids, which are still drawn as grids on a
+        // phone and whose tiles always pass one. So tapping a class on a phone took the
+        // anchored branch and placed a 320px card against a 390px screen; worse, the
+        // admin console animates its views with a transform, and a transformed ancestor
+        // becomes the containing block for `position: fixed`, so the clamp against
+        // window.innerWidth was clamping to the wrong box entirely and the card landed
+        // half off the left edge. The device decides this, not the caller.
         const W = 320, H = 340, GAP = 10;
+        const rect = handset ? null : anchorRect;
         let style = { position: "fixed", left: 16, right: 16, bottom: 0 };   // handset default
-        if (anchorRect) {
+        if (rect) {
           const vw = window.innerWidth, vh = window.innerHeight;
-          const left = anchorRect.right + GAP + W < vw ? anchorRect.right + GAP
-                     : anchorRect.left - GAP - W > 0 ? anchorRect.left - GAP - W
-                     : Math.max(8, Math.min(vw - W - 8, anchorRect.left));
-          const top = Math.max(8, Math.min(vh - H - 8, anchorRect.top));
+          const left = rect.right + GAP + W < vw ? rect.right + GAP
+                     : rect.left - GAP - W > 0 ? rect.left - GAP - W
+                     : Math.max(8, Math.min(vw - W - 8, rect.left));
+          const top = Math.max(8, Math.min(vh - H - 8, rect.top));
           style = { position: "fixed", left, top, width: W };
         }
         const colour = selected.categoryColour || NAVY;

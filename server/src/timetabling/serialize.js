@@ -105,6 +105,31 @@ const sEvent = (e) => ({
 });
 
 /**
+ * One row of the Events LIST — sEvent, plus the one field a list needs that a
+ * calendar does not.
+ *
+ * A SPREAD OF sEvent, NOT A SECOND SHAPE. Everything the list prints — the date, the
+ * times, the title, the module, the room label, the category and its colour, the school
+ * id, the staff and the groups — is already assembled by sEvent for the grid, and a
+ * hand-written second object carrying "most of the same fields" is the drift this
+ * avoids: the day somebody teaches sEvent to print a room differently, the calendar and
+ * the list would disagree about the same class, and nothing would say which was right.
+ *
+ * `seriesId` is the addition, and it is added HERE rather than in sEvent because sEvent
+ * is shared with routes/myTimetable.js — the staff- and student-facing read. A grouping
+ * id is of no use to a lecturer reading their own week, and widening a shape that four
+ * other handlers already return is how a field nobody asked for ends up in a mobile
+ * payload for ever. The list wants it because it is the only thing that says "these
+ * forty rows are ONE thing you created", which is precisely the question a list of
+ * everything is opened to answer.
+ *
+ * Null is passed through rather than coerced. A one-off class genuinely belongs to no
+ * series, and "" would read as a series whose id happens to be blank — the screen has
+ * to be able to tell a standalone class from a member of a term.
+ */
+const sEventRow = (e) => ({ ...sEvent(e), seriesId: e.seriesId ?? null });
+
+/**
  * One TEACHING GROUP — a Cohort — as the Groups tab lists it.
  *
  * THE SCHOOL COMES FROM THE COURSE, AND THIS SERIALISER IS NOT ALLOWED TO FORGET IT.
@@ -181,4 +206,4 @@ function sResource(type, row) {
   }
 }
 
-module.exports = { sRoom, sCampus, sCategory, sEvent, sGroup, sCourseOption, sResource, roomLabel };
+module.exports = { sRoom, sCampus, sCategory, sEvent, sEventRow, sGroup, sCourseOption, sResource, roomLabel };

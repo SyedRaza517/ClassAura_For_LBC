@@ -315,6 +315,27 @@ export const api = {
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     return request(`/timetabling/events?${q.toString()}`);
   },
+  // The Events TAB's read: every class the college has, not a window of them.
+  //
+  // A SECOND METHOD RATHER THAN A FLAG ON ttEvents, because the two return different
+  // shapes and mean different things. ttEvents answers with a bare ARRAY and is
+  // uncapped — the grid draws what it is handed, and an event missing from a week is a
+  // lecture that does not exist on the screen somebody is planning against. This one
+  // answers with { total, limit, truncated, events } and IS capped, because "how many
+  // classes are there" cannot be answered by a page length. A caller that got the two
+  // confused would read `.length` off an object, or `.total` off an array, and both
+  // fail loudly rather than quietly — which is the point of not sharing the method.
+  //
+  // Every parameter is optional and empty ones are dropped, so the filter bar can hold
+  // "" for "not filtering" without having to translate that into an absent key itself:
+  // `from=` on the query string is a value the server would have to have an opinion
+  // about, and the opinion it would need is "ignore it", which is this loop.
+  ttEventList: (params) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    const s = q.toString();
+    return request(`/timetabling/events/list${s ? `?${s}` : ""}`);
+  },
   // A LONG DEADLINE, BECAUSE ONE CALL CAN NOW WRITE SEVENTY-TWO EVENTS.
   //
   // A series is expanded server-side: three weekdays over a twelve-week term with two

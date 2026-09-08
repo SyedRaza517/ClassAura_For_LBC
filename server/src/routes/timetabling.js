@@ -846,7 +846,7 @@ router.delete("/groups/:id", async (req, res) => {
 
 const { findClashes } = require("../timetabling/overlap");
 const { syncEventRegisters } = require("../timetabling/registers");
-const { sEvent } = require("../timetabling/serialize");
+const { sEvent, sEventRow } = require("../timetabling/serialize");
 
 // Everything sEvent names. Kept in one constant because four handlers need the same
 // shape and a query that forgets one of these returns an event whose room is null on
@@ -884,6 +884,124 @@ router.get("/events", async (req, res) => {
     where, include: EVENT_INCLUDE, orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
   res.json(rows.map(sEvent));
+});
+
+/* ------------------------------------------------------------ events list -- */
+
+// How many classes are there, and what are they?
+//
+// A DIFFERENT QUESTION FROM GET /events ABOVE, AND THEREFORE A DIFFERENT ROUTE.
+//
+// That one is a date-WINDOW read for the grid: it is given a from and a to, it must
+// return every event inside them, and it is not capped precisely because the calendar
+// draws what it is handed — an event silently omitted from a week is a lecture that
+// does not exist on the screen somebody is planning against. It also has no total,
+// because the total of a window is the length of the array.
+//
+// This one is the whole table, and the answer to "how many have I created" cannot be
+// found by paging a grid a week at a time. That makes it the mirror shape: the date
+// range is OPTIONAL, the result IS capped, and the count is taken BEFORE the cap and
+// reported separately. Widening GET /events with a `list=true` flag was the rejected
+// alternative — the two disagree about the one thing that matters, whether returning
+// fewer rows than exist is acceptable, and a single handler holding both readings is
+// one edit away from capping the calendar.
+const LIST_LIMIT = 200;
+
+router.get("/events/list", async (req, res) => {
+  const where = {};
+
+  // FROM AND TO ARE OPTIONAL HERE, unlike on the grid read, and are validated only when
+  // sent. "Everything the college has" is the default because it is the question asked;
+  // requiring a window would make the count an answer about a fortnight rather than
+  // about the institution, which is the failure this route exists to fix.
+  //
+  // Each end stands alone. "From September onwards, no end" is how somebody looks at the
+  // term they have just built, and forcing them to invent a closing date to express it
+  // would put a guess into the filter.
+  const from = str(req.query.from), to = str(req.query.to);
+  if (from && !DATE_RE.test(from)) return res.status(400).json({ error: "from must be YYYY-MM-DD" });
+  if (to && !DATE_RE.test(to)) return res.status(400).json({ error: "to must be YYYY-MM-DD" });
+  if (from && to && to < from) return res.status(400).json({ error: "to must not be before from" });
+  // Dates are strings compared as strings, as everywhere else in this schema.
+  if (from || to) where.date = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+
+  if (str(req.query.unitId)) where.unitId = str(req.query.unitId);
+  if (str(req.query.roomId)) where.roomId = str(req.query.roomId);
+  // The one field that ties a term of classes together. A row carries it, so a reader who
+  // has spotted one wrong Tuesday can ask for the other forty-seven at once.
+  if (str(req.query.seriesId)) where.seriesId = str(req.query.seriesId);
+
+  // THREE CASES FOR THE SCHOOL, the same three GET /courses above uses, and the middle
+  // one is not decoration on THIS model. A null academicDepartmentId means "belongs to no
+  // one school, shown to everyone" — the deliberate state of every workshop and every
+  // study-support session, and of every event created before the column was settable. A
+  // filter that could only name a school would make all of those unreachable from the one
+  // screen that lists everything, which is the same as not listing everything.
+  const dept = str(req.query.academicDepartmentId);
+  if (dept === "none") where.academicDepartmentId = null;
+  else if (dept) where.academicDepartmentId = dept;
+
+  // Absent means BOTH, as on the grid read. An administrator building next term is
+  // looking at drafts, and a list that quietly showed only published classes would
+  // report a smaller number than the college has and give no hint why.
+  if (req.query.published === "true") where.published = true;
+  if (req.query.published === "false") where.published = false;
+
+  // The free-text box: the title, the module code, the module name.
+  //
+  // THE MODULE AS WELL AS THE TITLE, because a class is routinely titled something a
+  // person would not type — "Week 3", "Lecture", the course name — while the thing they
+  // are actually looking for is "MGT402". Case-insensitive for the same reason the group
+  // rename above is: "mgt402" and "MGT402" are the same search to everybody except
+  // Postgres.
+  //
+  // NOT the room, the staff name or the group name. Each of those is a relation this
+  // screen already offers a proper filter for or could, and folding them into one text
+  // box would mean a search for "Hall" quietly matching a lecturer called Hall, a room
+  // called Great Hall and a module about halls — a result nobody can explain and nobody
+  // can narrow.
+  const q = str(req.query.q);
+  if (q) {
+    where.OR = [
+      { title: { contains: q, mode: "insensitive" } },
+      { unit: { is: { code: { contains: q, mode: "insensitive" } } } },
+      { unit: { is: { name: { contains: q, mode: "insensitive" } } } },
+    ];
+  }
+
+  // THE COUNT IS TAKEN BEFORE THE CAP, and that is the whole point of the endpoint.
+  // "How many classes are there" is answered by `total`; the length of `events` answers
+  // "how many did we send you", and the two are only the same number when nothing was
+  // cut. Reporting the page length as the count is how a college with 3,000 classes is
+  // told it has 200.
+  const [total, rows] = await Promise.all([
+    prisma.timetableEvent.count({ where }),
+    prisma.timetableEvent.findMany({
+      where,
+      include: EVENT_INCLUDE,
+      // NEWEST DATE FIRST, then chronologically within the day.
+      //
+      // The grid reads ascending because a week is read from Monday. A capped list is a
+      // different decision: the ordering chooses WHICH 200 survive it, and ascending
+      // would hand back the oldest 200 — last year's induction — to somebody who has
+      // just built next term and come here to check it. Within a date the order stays
+      // ascending, because a day is still read from the morning.
+      orderBy: [{ date: "desc" }, { startTime: "asc" }],
+      take: LIST_LIMIT,
+    }),
+  ]);
+
+  // `truncated` IS SENT ALWAYS, INCLUDING AS false. A key that only appears when
+  // something was cut is indistinguishable, from the browser, from a server too old to
+  // send it — and the screen's honest reading of a missing key would have to be "assume
+  // nothing was cut", which is exactly the silent cap this reports. `limit` goes with it
+  // so the screen can say "the first 200" without a second copy of the number.
+  res.json({
+    total,
+    limit: LIST_LIMIT,
+    truncated: total > rows.length,
+    events: rows.map(sEventRow),
+  });
 });
 
 /** Validate an event body. `partial` allows omitted fields on update. */

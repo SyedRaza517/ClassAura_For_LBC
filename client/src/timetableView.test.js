@@ -182,7 +182,15 @@ test("the range label prints the month once inside a month, twice across one", (
   // current ICU, and the assertion is pinned to the real output rather than to what
   // the abbreviation "ought" to be.
   assert.equal(RANGE_LABEL("week", "2026-08-31", "2026-09-06"), "31 Aug - 6 Sept 26");
-  assert.equal(RANGE_LABEL("month", "2026-08-31", "2026-10-04"), "August 2026");
+  // THIS LINE USED TO ASSERT "August 2026", WHICH PINNED A BUG RATHER THAN A CONTRACT.
+  //
+  // That window is September's month grid — windowFor("month", "2026-09-15") returns
+  // exactly this pair, because a month grid covers whole weeks and September 2026 opens
+  // on a Tuesday. The label read "August 2026" while the reader was looking at
+  // September, and the test agreed with it, so the bug was safe for as long as anybody
+  // trusted the suite. Corrected, and covered properly by the two tests at the end of
+  // this file which go through windowFor rather than hand-written dates.
+  assert.equal(RANGE_LABEL("month", "2026-08-31", "2026-10-04"), "September 2026");
 });
 
 // --- seriesPreviewDates: the count the form shows before it writes anything ---
@@ -289,4 +297,31 @@ test("layoutDay: rubbish in does not throw", () => {
   // crashing the whole grid.
   assert.deepEqual(layoutDay([ev("a", "12:00", "12:00")]), []);
   assert.deepEqual(layoutDay([ev("a", "15:00", "09:00")]), []);
+});
+
+test("RANGE_LABEL names the month the grid IS OF, not the one it starts in", () => {
+  // A month window covers whole weeks, so `from` is the Monday of the week containing
+  // the 1st — in the previous month whenever the 1st is not a Monday. September 2026
+  // begins on a Tuesday, so the window opens on 31 August and this read "August 2026"
+  // while the reader was looking at September.
+  const sep = windowFor("month", "2026-09-15");
+  assert.equal(sep.from, "2026-08-31", "precondition: the window really does open in August");
+  assert.equal(RANGE_LABEL("month", sep.from, sep.to), "September 2026");
+
+  // February, where the window opens in January AND the month is short.
+  const feb = windowFor("month", "2026-02-15");
+  assert.equal(RANGE_LABEL("month", feb.from, feb.to), "February 2026");
+
+  // A month that DOES start on a Monday still works — the midpoint is inside it either way.
+  const jun = windowFor("month", "2026-06-15");
+  assert.equal(RANGE_LABEL("month", jun.from, jun.to), "June 2026");
+});
+
+test("RANGE_LABEL gets the year right across a December boundary", () => {
+  // December 2026's grid runs into January 2027; the heading must not follow it.
+  const dec = windowFor("month", "2026-12-15");
+  assert.equal(RANGE_LABEL("month", dec.from, dec.to), "December 2026");
+  // And January's grid opens in the old year.
+  const jan = windowFor("month", "2027-01-15");
+  assert.equal(RANGE_LABEL("month", jan.from, jan.to), "January 2027");
 });

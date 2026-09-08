@@ -209,7 +209,20 @@ export function RANGE_LABEL(view, from, to) {
   const f = utc(from), t = utc(to);
   const yr = t.getUTCFullYear();
   if (view === "day") return `${f.toLocaleDateString("en-GB", { ...DMY, year: "numeric", timeZone: "UTC" })}`;
-  if (view === "month") return f.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  if (view === "month") {
+    // THE MIDPOINT, NOT `from`, AND THIS WAS A REAL BUG.
+    //
+    // A month window covers WHOLE WEEKS (windowFor does that so the grid has no ragged
+    // edge), so `from` is the Monday of the week containing the 1st — which is in the
+    // PREVIOUS month whenever the 1st is not itself a Monday. September 2026 begins on a
+    // Tuesday, so the window opens on 31 August and the heading read "August 2026" while
+    // the reader was looking at September.
+    //
+    // The middle of the range is always inside the month the grid is of, whether the
+    // window is five weeks or six, so it needs no extra argument and no caller changes.
+    const mid = new Date((f.getTime() + t.getTime()) / 2);
+    return mid.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  }
   // Within one month the month name is printed once — "24 - 30 Aug 26", which is
   // what the reference shows. Repeating it ("24 Aug - 30 Aug 26") is longer and says
   // nothing extra; across a boundary both are needed and both are shown.

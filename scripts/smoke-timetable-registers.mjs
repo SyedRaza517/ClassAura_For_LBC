@@ -616,6 +616,40 @@ check("with no staff-school link invented for them",
   (await db.staffAcademicDepartment.count({ where: { academicDepartmentId: schoolId } })) === linksBefore,
   `${await db.staffAcademicDepartment.count({ where: { academicDepartmentId: schoolId } })} vs ${linksBefore}`);
 
+console.log("\n--- the events list: how many, and which ---");
+// The Events tab asks a different question from the calendar: not "what is on this
+// week" but "what exists at all". Its endpoint therefore reports a TOTAL taken before
+// the page limit, and says so when it has capped.
+const listAll = await call("/timetabling/events/list", { token: admin.token });
+check("the events list answers", listAll.status === 200, String(listAll.status));
+check("IT REPORTS A TOTAL, not just the rows it returned",
+  typeof listAll.data?.total === "number" && listAll.data.total >= (listAll.data.events || []).length,
+  `total ${listAll.data?.total} vs ${(listAll.data?.events || []).length} rows`);
+check("and says whether it truncated, in both directions", typeof listAll.data?.truncated === "boolean");
+
+// Filtering must narrow the ROWS without changing what "total" means — the screen
+// prints "6 of 842", and a total that shrank with the filter would make that a lie.
+const mine = await call(`/timetabling/events/list?q=${encodeURIComponent(TAG)}`, { token: admin.token });
+check("a search narrows the rows", (mine.data?.events || []).length < (listAll.data?.events || []).length + 1);
+check("EVERY ROW RETURNED ACTUALLY MATCHES the search",
+  (mine.data?.events || []).every((e) => JSON.stringify(e).includes(TAG)),
+  `${(mine.data?.events || []).length} rows`);
+check("a nonsense search returns nothing rather than everything",
+  ((await call("/timetabling/events/list?q=zzz-no-such-class-zzz", { token: admin.token })).data?.events || []).length === 0);
+
+// published is a THREE-state filter — true, false, or absent meaning both. A handler
+// that treated absent as "true" would hide every draft from the screen built to find them.
+const drafts = await call("/timetabling/events/list?published=false", { token: admin.token });
+const live = await call("/timetabling/events/list?published=true", { token: admin.token });
+check("published=false returns only drafts", (drafts.data?.events || []).every((e) => e.published === false));
+check("published=true returns only published ones", (live.data?.events || []).every((e) => e.published === true));
+check("and omitting it returns BOTH, not one of them",
+  listAll.data?.total === (drafts.data?.total || 0) + (live.data?.total || 0),
+  `${listAll.data?.total} vs ${drafts.data?.total} + ${live.data?.total}`);
+
+check("an inverted date range is refused",
+  (await call("/timetabling/events/list?from=2027-10-01&to=2027-09-01", { token: admin.token })).status === 400);
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
 await db.hndSession.deleteMany({ where: { unitId: unit.id } });

@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import {
   DoorOpen, Tag, CalendarDays, Plus, Trash2, Loader2, AlertTriangle, X, Check,
   ChevronLeft, ChevronRight, Send, Repeat, Settings as SettingsIcon, Users, Building2, ChevronDown, Search,
-  GraduationCap,
+  GraduationCap, List,
 } from "lucide-react";
 import { api } from "./api";
 import { NAVY, alpha } from "./branding";
@@ -35,6 +35,26 @@ const inputCls = "w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-s
 // ISO order, Monday first, matching isoDay() and every other weekday list in this
 // feature. A Sunday-first row would put the weekend either side of the working week.
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/**
+ * "Thu 24 September 2026" out of the stored "2026-09-24".
+ *
+ * PARSED AS UTC AND FORMATTED IN UTC, which is the same care RANGE_LABEL in
+ * timetableView.js already takes. `new Date("2026-09-24")` is UTC midnight, and rendering
+ * it in a timezone west of Greenwich prints the 23rd — so a class on the 24th would head
+ * a group labelled with the day before it, on exactly the machines least likely to be the
+ * ones this was tested on. Pinning both ends removes the question.
+ *
+ * The WEEKDAY is the reason this exists rather than printing the ISO string. A timetable
+ * is read in weekdays — "the Thursday class" — and a heading of bare digits makes the
+ * reader count.
+ */
+function dateHeading(d) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d || "")) return d || "";
+  return new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", {
+    weekday: "short", day: "numeric", month: "long", year: "numeric", timeZone: "UTC",
+  });
+}
 
 /* --------------------------------------------------------------- pickers -- */
 //
@@ -1062,7 +1082,14 @@ function CategoriesTab() {
 
 export default function AdminTimetablePlanner({ store }) {
   const [tab, setTab] = useState("calendar");
-  const TABS = [["calendar", "Calendar", CalendarDays], ["groups", "Groups", Users], ["schools", "Schools", GraduationCap], ["rooms", "Rooms", DoorOpen], ["campuses", "Campuses", Building2], ["categories", "Categories", Tag]];
+  // EVENTS SITS BESIDE CALENDAR, second, because it answers the question the calendar
+  // cannot: "how many classes have I created, and what are they". A grid is read a week
+  // at a time, so counting a term in it means paging fourteen times and adding up — and
+  // a class scheduled outside the window somebody happens to be looking at is, from the
+  // grid alone, indistinguishable from a class that was never created. The two are the
+  // same data seen at two altitudes, which is why they are adjacent rather than at
+  // opposite ends of the row.
+  const TABS = [["calendar", "Calendar", CalendarDays], ["events", "Events", List], ["groups", "Groups", Users], ["schools", "Schools", GraduationCap], ["rooms", "Rooms", DoorOpen], ["campuses", "Campuses", Building2], ["categories", "Categories", Tag]];
   return (
     <div>
       <div className="mb-4 flex gap-1 border-b border-slate-200">
@@ -1078,7 +1105,17 @@ export default function AdminTimetablePlanner({ store }) {
           — store.staff, store.units, store.cohorts and store.courses are all already
           fetched for other pages, and adding an endpoint for them would be a second
           source of truth for the same rows. */}
-      {tab === "calendar" && <PlannerCalendarTab staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
+      {tab === "calendar" && <PlannerCalendarTab mode="calendar" staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
+      {/* THE SAME COMPONENT, NOT A SECOND ONE, and that is the whole design of this tab.
+          Clicking a row has to open the event editor — the single-event form with its
+          school, module, room, staff and group pickers, its clash warnings, its delete
+          and its Repeat weekly. That editor is four hundred lines of state living inside
+          PlannerCalendarTab, and a list that rendered its own copy would be a second
+          editor: two forms against one endpoint, drifting the first time a field is
+          added to one of them. Passing a mode instead swaps only what the BODY draws —
+          a grid or a list — and leaves every piece of editing behaviour identical by
+          construction, because it is the same code running. */}
+      {tab === "events" && <PlannerCalendarTab mode="events" staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
       {/* No `cohorts` here on purpose: the Groups tab reads its list from
           /timetabling/groups, which already carries each group's course, school and
           headcount. Passing the store's copy beside it would give the tab two answers to
@@ -1121,7 +1158,7 @@ const blankBlock = (date) => ({
   sessions: [{ start: "09:00", end: "12:00" }, { start: "13:00", end: "16:00" }],
 });
 
-function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = [], hndLoaded, refreshHnd }) {
+function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts = [], courses = [], hndLoaded, refreshHnd }) {
   // Courses, units and cohorts load lazily — the store only fetches them when a page
   // that needs them is opened. GroupsTab already forces that; the calendar now needs it
   // too, and needs COURSES in particular: the school filter is unit → course → school,
@@ -1169,7 +1206,15 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       // what they are building. That is the whole difference between this screen and
       // the staff one, which is published-only.
       const [ev, st, rm, ct, dp] = await Promise.all([
-        api.ttEvents({ from, to }), api.ttSettings(), api.ttRooms(), api.ttCategories(),
+        // THE WINDOW READ IS SKIPPED ON THE EVENTS TAB. That call answers "what is in
+        // this week", which is a question the list is not asking — it has its own,
+        // unwindowed read below. Leaving it in would fetch a week nobody is looking at
+        // on every mount and on every anchor change, and worse, would leave `events`
+        // holding a plausible-looking array that no longer has anything to do with what
+        // the screen is showing. The other four ARE still needed: rooms, categories and
+        // schools fill the edit modal's pickers, and the modal is shared.
+        mode === "events" ? Promise.resolve([]) : api.ttEvents({ from, to }),
+        api.ttSettings(), api.ttRooms(), api.ttCategories(),
         // Fetched here with the rest rather than in its own effect, so a school added on
         // the Schools tab is in the picker as soon as the calendar is looked at again.
         // Refetched on every window change like the rooms and categories beside it; it
@@ -1192,8 +1237,124 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       setRooms(rm || []); setCats(ct || []);
     } catch (e) { setErr(e?.message || "Could not load the timetable."); }
     finally { setBusy(false); }
-  }, [from, to]);
+  }, [from, to, mode]);
   useEffect(() => { load(); }, [load]);
+
+  /* ------------------------------------------------------------ the LIST -- */
+  //
+  // Everything below this point to the next rule is the Events tab's own state. It sits
+  // in this component rather than in one of its own because the tab's whole purpose is
+  // to open the editor that lives here — see the comment at the call site.
+
+  const [listQ, setListQ] = useState("");
+  // The search box is DEBOUNCED into a second piece of state, and the request is keyed
+  // off that one. Typing "Contract Law" is eleven keystrokes; without this it is eleven
+  // requests, each one counting the table, and the answers race — the reply to "Contr"
+  // can land after the reply to "Contract" and repaint the list with the wrong rows.
+  // 300ms is long enough to swallow a burst of typing and short enough that nobody
+  // notices they are waiting.
+  const [listQApplied, setListQApplied] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setListQApplied(listQ), 300);
+    return () => clearTimeout(t);
+  }, [listQ]);
+
+  const [listSchool, setListSchool] = useState("");
+  const [listPublished, setListPublished] = useState("");
+  const [listFrom, setListFrom] = useState("");
+  const [listTo, setListTo] = useState("");
+  const [list, setList] = useState(null);
+  const [listBusy, setListBusy] = useState(false);
+  const [listErr, setListErr] = useState("");
+
+  // THE INSTITUTION'S TOTAL, HELD SEPARATELY FROM THE FILTERED ONE.
+  //
+  // "14 of 842" needs two numbers and only one of them comes back with the rows. Keeping
+  // the second in its own slot — rather than remembering the last unfiltered response —
+  // is what stops the denominator going stale: filter, then create three classes, and a
+  // remembered 842 would keep being printed beside a filtered count that had moved. It
+  // is refreshed on mount (the first read is unfiltered, so it costs nothing) and again
+  // after anything that writes.
+  //
+  // Null, not 0, until it is known. Zero is a real and important answer here — a college
+  // that has created nothing — and the empty state below says something quite different
+  // for it than for "we have not counted yet".
+  const [allTotal, setAllTotal] = useState(null);
+
+  const listFiltered = !!(listQApplied.trim() || listSchool || listPublished || listFrom || listTo);
+
+  const loadList = useCallback(async () => {
+    setListBusy(true); setListErr("");
+    try {
+      const r = await api.ttEventList({
+        q: listQApplied.trim(), academicDepartmentId: listSchool,
+        published: listPublished, from: listFrom, to: listTo,
+      });
+      setList(r);
+      // Only when nothing was narrowing it. A filtered total is not the college's total,
+      // and writing it here would make "14 of 14" out of "14 of 842".
+      if (!listFiltered) setAllTotal(r.total);
+    } catch (e) { setListErr(e?.message || "Could not load the events."); }
+    finally { setListBusy(false); }
+  }, [listQApplied, listSchool, listPublished, listFrom, listTo, listFiltered]);
+
+  useEffect(() => { if (mode === "events") loadList(); }, [mode, loadList]);
+
+  /** The unfiltered count on its own, for when the list on screen is a narrowed one. */
+  const loadAllTotal = useCallback(async () => {
+    // Swallowed. This number decorates a count line; a failed decoration must not put an
+    // error banner over a list that loaded perfectly well.
+    try { const r = await api.ttEventList({}); setAllTotal(r.total); } catch { /* ignore */ }
+  }, []);
+
+  /**
+   * Reload whatever this tab is actually showing, after something has been written.
+   *
+   * The calendar's `load()` is still called in both modes — it is what refreshes the
+   * rooms, categories and schools the editor's pickers are built from, and on the
+   * calendar it is what redraws the grid. On the Events tab the list is the thing that
+   * has to move, and the unfiltered total with it: creating a class while filtered to
+   * one school changes the college's total without changing the filtered count, and a
+   * denominator that only updated when the filter was cleared would be wrong for as long
+   * as somebody kept working.
+   */
+  const refresh = useCallback(() => {
+    load();
+    if (mode === "events") { loadList(); if (listFiltered) loadAllTotal(); }
+  }, [load, loadList, loadAllTotal, mode, listFiltered]);
+
+  /**
+   * The rows, cut into one bucket per date.
+   *
+   * GROUPED IN THE BROWSER OFF AN ALREADY-SORTED ARRAY, not with a second query and not
+   * with a sort of its own. The server returns the rows date-descending and, within a
+   * date, ascending by start time; walking that list and starting a new bucket whenever
+   * the date changes preserves both orders exactly, so the screen cannot disagree with
+   * the endpoint about what order these are in. A `reduce` into an object would not:
+   * object key order for non-numeric keys is insertion order, which happens to work here
+   * and stops working the day somebody sorts the keys "to be safe".
+   *
+   * The point of it is that 200 rows in one undivided table is a wall. A date heading
+   * every few rows is what makes it a timetable rather than a database dump, and it is
+   * also the only thing that shows a gap — three classes on Monday and none until Friday
+   * is a fact about the term that a flat list hides completely.
+   */
+  const listByDate = useMemo(() => {
+    const out = [];
+    for (const e of list?.events || []) {
+      if (!out.length || out[out.length - 1].date !== e.date) out.push({ date: e.date, events: [] });
+      out[out.length - 1].events.push(e);
+    }
+    return out;
+  }, [list]);
+
+  // Retired schools INCLUDED, unlike the picker inside the editor. A school switched off
+  // on the Schools tab still has last term's classes filed under it, and a filter that
+  // could not name it would make those classes findable only by scrolling — which is the
+  // opposite of what this tab is for. Choosing a value for a NEW event is a different
+  // act, and that picker is right to hide the retired ones.
+  const schoolOptions = depts.map((d) => ({ id: d.id, label: d.name, sub: d.active === false ? "retired" : "" }));
+  const schoolName = (id) => depts.find((d) => d.id === id)?.name || null;
 
   // A NEW EVENT IS A SHARED HEAD AND A LIST OF MODULE BLOCKS.
   //
@@ -1377,7 +1538,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         // again and create a second copy.
         setWarnings(r.warnings || []);
         setEditing(null);
-        load();
+        refresh();
       } catch (e) { setErr(e?.message || "Could not save the event."); }
       return;
     }
@@ -1466,7 +1627,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         + (expected && created !== expected ? ` (${expected} were expected — check the calendar.)` : ""),
       );
       setEditing(null);
-      load();
+      refresh();
       return;
     }
 
@@ -1481,12 +1642,13 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
     if (created) {
       setNote(`${created} class(es) from the other module(s) were created. Only the modules still shown are left to fix.`);
       setEditing((ev) => ({ ...ev, blocks: ev.blocks.filter((b) => !savedKeys.has(b.key)) }));
-      load();
+      refresh();
     }
   };
 
   return (
     <div>
+      {mode === "calendar" && (
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <button onClick={() => setAnchor(today)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Today</button>
         <button onClick={() => setAnchor((a) => shiftAnchor(view, a, -1))} aria-label="Previous" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><ChevronLeft size={16} /></button>
@@ -1505,6 +1667,93 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
           <button onClick={() => setPrefs(true)} aria-label="Display settings" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><SettingsIcon size={16} /></button>
         </div>
       </div>
+      )}
+
+      {/* ------------------------------------------------- the EVENTS tab head --
+          NO DATE ARROWS AND NO "PUBLISH THIS PERIOD" HERE, and both omissions are
+          deliberate. The arrows move a window this list does not have. Publish acts on
+          the window between `from` and `to` — the calendar's window, which on this tab
+          is whatever the anchor happens to be rather than anything on screen — so the
+          button would publish a fortnight nobody was looking at, which is the single
+          most destructive thing on the screen doing something other than what it says. */}
+      {mode === "events" && (
+        <div className="mb-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[200px] flex-1">
+              <Field label="Search">
+                <div className="relative">
+                  <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input className={`${inputCls} pl-8`} value={listQ} onChange={(e) => setListQ(e.target.value)}
+                    placeholder="Title, module code or module name" />
+                </div>
+              </Field>
+            </div>
+            <div className="min-w-[170px]">
+              {/* THE SAME SearchOne the editor uses, so "which school" is asked the same
+                  way in both places. A college with forty schools makes a <select> a
+                  scroll; the picker types. */}
+              <Field label="School">
+                <SearchOne value={listSchool} options={[{ id: "none", label: "No school", sub: "shown to everyone" }, ...schoolOptions]}
+                  onChange={setListSchool} placeholder="Any school" noneLabel="Any school" />
+              </Field>
+            </div>
+            <div className="min-w-[130px]">
+              <Field label="Status">
+                {/* Three states, and "Any" is the default on purpose: an administrator
+                    building next term is working in drafts, and a list that quietly
+                    showed only published classes would report a smaller number than the
+                    college has with nothing on screen to explain the difference. */}
+                <select className={inputCls} value={listPublished} onChange={(e) => setListPublished(e.target.value)}>
+                  <option value="">Any</option>
+                  <option value="true">Published</option>
+                  <option value="false">Draft</option>
+                </select>
+              </Field>
+            </div>
+            <div className="min-w-[140px]">
+              <Field label="From"><input type="date" className={inputCls} value={listFrom} onChange={(e) => setListFrom(e.target.value)} /></Field>
+            </div>
+            <div className="min-w-[140px]">
+              {/* EACH END STANDS ALONE. "From September, no end" is how somebody looks at
+                  the term they have just built, and demanding a closing date to express
+                  it would put an invented value into the filter. */}
+              <Field label="To"><input type="date" className={inputCls} value={listTo} onChange={(e) => setListTo(e.target.value)} /></Field>
+            </div>
+            {listFiltered && (
+              <button onClick={() => { setListQ(""); setListSchool(""); setListPublished(""); setListFrom(""); setListTo(""); }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Clear filters</button>
+            )}
+            <button onClick={() => setEditing(blank())} className="ml-auto flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}><Plus size={14} /> New event</button>
+          </div>
+
+          {/* THE COUNT, WHICH IS THE QUESTION THIS TAB WAS BUILT TO ANSWER.
+              `total` is counted by the server BEFORE the page limit, so this is the
+              number of classes that exist and not the number that were sent — the two
+              differ by 642 at this college's current size, and printing the second would
+              be the exact failure the endpoint's own comments describe.
+              "N of M" only when something is narrowing it, because "842 of 842" reads as
+              though a filter were applied and invites somebody to go looking for it. */}
+          <div className="mt-2 flex flex-wrap items-baseline gap-2">
+            <p className="text-sm font-extrabold text-slate-700">
+              {listBusy && !list ? "Counting…" : (
+                <>
+                  {list?.total ?? 0} class{(list?.total ?? 0) === 1 ? "" : "es"}
+                  {listFiltered && allTotal !== null && allTotal !== list?.total
+                    ? <span className="font-semibold text-slate-500"> of {allTotal}</span> : null}
+                </>
+              )}
+            </p>
+            {/* SAID OUT LOUD, because a silent cap reads as "that is all of them" — which
+                is a wrong answer to the only question on the screen. It names both
+                numbers and what to do about it, rather than a bare "showing 200". */}
+            {list?.truncated && (
+              <p className="text-xs font-semibold text-amber-700">
+                Showing the {list.limit} most recent. Narrow the dates or the search to see the other {list.total - list.limit}.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* An outcome and a failure are different things and are told apart on purpose:
           "12 events published" in slate, "could not publish" in rose. One colour for
@@ -1544,7 +1793,111 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         </div>
       )}
 
-      {busy && !settings ? (
+      {mode === "events" && (
+        listErr ? (
+          <div className="flex items-center gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"><AlertTriangle size={15} /> {listErr}</div>
+        ) : listBusy && !list ? (
+          <div className="flex justify-center py-16 text-slate-400"><Loader2 className="animate-spin" size={20} /></div>
+        ) : !listByDate.length ? (
+          /* TWO EMPTY STATES, NOT ONE, AND THE DIFFERENCE IS THE WHOLE POINT.
+             "Nothing here" in front of a college with 842 classes and a date filter set
+             to last August is a screen telling somebody their term was not saved. The
+             two are told apart by `allTotal`, which is the institution's count and is
+             deliberately not the filtered one; the second offers the way out, because a
+             filter somebody cannot see is a filter they cannot clear. */
+          <div className="rounded-2xl border border-dashed border-slate-200 py-14 text-center">
+            <p className="text-sm font-bold text-slate-500">
+              {allTotal === 0 ? "No classes have been created yet." : "No classes match these filters."}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {allTotal === 0
+                ? "Press New event to schedule the first one, or draw one on the Calendar tab."
+                : `The college has ${allTotal ?? "some"} class${allTotal === 1 ? "" : "es"} in total.`}
+            </p>
+            {allTotal !== 0 && listFiltered && (
+              <button onClick={() => { setListQ(""); setListSchool(""); setListPublished(""); setListFrom(""); setListTo(""); }}
+                className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Clear filters</button>
+            )}
+          </div>
+        ) : (
+          <div className={`space-y-4 ${listBusy ? "opacity-60" : ""}`}>
+            {listByDate.map((day) => (
+              <div key={day.date}>
+                {/* The heading carries the day's OWN count as well as the date. With 200
+                    rows on screen "how many classes are on the Thursday" is a question
+                    the reader would otherwise answer by counting rows. */}
+                <div className="mb-1 flex items-baseline gap-2 border-b border-slate-200 pb-1">
+                  <p className="text-sm font-extrabold text-slate-700">{dateHeading(day.date)}</p>
+                  <p className="text-xs font-semibold text-slate-400">{day.events.length} class{day.events.length === 1 ? "" : "es"}</p>
+                </div>
+                <ul>
+                  {day.events.map((e) => (
+                    <li key={e.id}>
+                      {/* A BUTTON, NOT A DIV WITH AN onClick. The row opens an editor, so
+                          it has to be reachable by keyboard and announced as something
+                          that can be pressed; a clickable div is neither.
+
+                          EXACTLY THE SHAPE THE CALENDAR PASSES, character for character —
+                          the event, plus staffIds and cohortIds flattened out of the
+                          `staff` and `groups` arrays the server sends. The editor reads
+                          those two id arrays and nothing else for its pickers, and a row
+                          that opened the modal without them would present a class with no
+                          lecturer and no group and then SAVE that back over the real
+                          ones. Copied from onSelectEvent below rather than re-derived,
+                          because there is only one correct answer and two places writing
+                          it independently is how they come to differ. */}
+                      <button type="button"
+                        onClick={() => setEditing({ ...e, staffIds: (e.staff || []).map((x) => x.id), cohortIds: (e.groups || []).map((g) => g.id) })}
+                        className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50">
+                        {/* The category's own colour, as a bar down the left. The grid
+                            already colours by it, so a list that ignored it would be the
+                            same classes wearing different clothes. Slate when the class
+                            has no category, rather than nothing at all — an absent bar
+                            would make the rows below it hang half an inch to the left. */}
+                        <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: e.categoryColour || "#cbd5e1" }} />
+                        <span className="w-[104px] shrink-0 text-xs font-bold tabular-nums text-slate-600">{e.start}–{e.end}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span className="truncate text-sm font-bold text-slate-800">{e.title}</span>
+                            {/* DRAFT IS BADGED; PUBLISHED IS NOT. Badging both would put a
+                                chip on every row and train the eye past it, and it is
+                                being invisible to staff that is the exceptional state
+                                worth pointing at. */}
+                            {!e.published && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">Draft</span>}
+                          </span>
+                          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
+                            {/* Each fact is DROPPED when it is absent rather than printed
+                                as an empty column or a dash. A class with no room is a
+                                real and ordinary thing — an online session, a trip — and
+                                a row of dashes reads as missing data to chase. */}
+                            {e.unitCode && <span className="font-semibold text-slate-600">{e.unitCode}{e.unitName ? ` ${e.unitName}` : ""}</span>}
+                            {e.room && <span>{e.room}</span>}
+                            {!!(e.groups || []).length && <span>{e.groups.map((g) => g.name).join(", ")}</span>}
+                            {!!(e.staff || []).length && <span>{e.staff.map((x) => x.name).join(", ")}</span>}
+                            {/* The SCHOOL, resolved from the id against the list this tab
+                                already holds — sEvent ships the id only, on purpose, so
+                                that a name is not repeated several hundred times per
+                                response. An id the list cannot resolve prints nothing
+                                rather than the raw cuid, which would be noise. */}
+                            {schoolName(e.academicDepartmentId) && <span className="text-slate-400">{schoolName(e.academicDepartmentId)}</span>}
+                            {/* Only that it IS one of a set. The id itself is a uuid and
+                                means nothing to a reader; that this Tuesday is part of a
+                                term rather than a one-off is what changes what they do
+                                next. */}
+                            {e.seriesId && <span className="text-slate-400">· part of a series</span>}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {mode === "calendar" && (busy && !settings ? (
         <div className="flex justify-center py-16 text-slate-400"><Loader2 className="animate-spin" size={20} /></div>
       ) : (
         <TimetableCalendar events={events} settings={settings} view={view} anchor={anchor} today={today}
@@ -1555,7 +1908,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
           // time you had just been pointing at.
           onCreateAt={(date, start, end) => setEditing(blank(date, start, end))}
           selectedId={editing?.id} />
-      )}
+      ))}
 
       {editing && createPortal(
         // RENDERED INTO document.body, NOT WHERE IT SITS IN THE TREE, and this is a bug
@@ -1967,7 +2320,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         onConfirm={async () => {
           const id = ask.id;
           setAsk(null);
-          try { await api.ttDeleteEvent(id); setEditing(null); load(); }
+          try { await api.ttDeleteEvent(id); setEditing(null); refresh(); }
           catch (e) { setErr(e?.message || "Could not delete."); }
         }}
       />
@@ -1980,7 +2333,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         onCancel={() => setAsk(null)}
         onConfirm={async () => {
           setAsk(null); setErr(""); setNote("");
-          try { const r = await api.ttPublish({ from, to, published: true }); setNote(`${r.updated} event(s) published.`); load(); }
+          try { const r = await api.ttPublish({ from, to, published: true }); setNote(`${r.updated} event(s) published.`); refresh(); }
           catch (e) { setErr(e?.message || "Could not publish."); }
         }}
       />
@@ -2010,7 +2363,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     // were clashes" is not.
                     setWarnings(r.warnings || []);
                     setNote(`${r.created} weekly copies created.`);
-                    setEditing(null); load();
+                    setEditing(null); refresh();
                   } catch (e) { setErr(e?.message || "Could not repeat the event."); }
                 }}
                 className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: NAVY }}>Repeat</button>
