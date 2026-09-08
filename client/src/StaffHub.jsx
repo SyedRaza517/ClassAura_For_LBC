@@ -6560,6 +6560,18 @@ const fmt12 = (t) => { if (!t) return ""; const [h, m] = String(t).split(":").ma
 
 function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, checkIn, scoped }) {
   const [filter, setFilter] = useState("all"); // all | past | upcoming
+  // THE UNIT PICKER'S OWN FILTERS. This was every unit the college has, rendered as a
+  // card, unfiltered and unsearchable — forty-odd of them filling the screen before a
+  // single register was visible. It is a picker, so the answer is the same one the two
+  // unit galleries use rather than a third invention.
+  const [pickQuery, setPickQuery] = useState("");
+  const [pickCourse, setPickCourse] = useState("");
+  const [pickYear, setPickYear] = useState("");
+  const [pickTerm, setPickTerm] = useState("");
+  const [pickStatus, setPickStatus] = useState("");
+  const [pickTutor, setPickTutor] = useState("");
+  const [pickCover, setPickCover] = useState("");
+  const [pickSort, setPickSort] = useState("teaching");
   // The live-view action every row offers, or null when the college has switched no
   // self check-in method on (see checkInAction.js: no dead-end buttons).
   const action = liveAction(checkIn);
@@ -6625,12 +6637,42 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
   if (!store.units.length) {
     return <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200/70"><EmptyState Icon={BookOpen} title="No units yet" msg="Add a unit on the Units tab, then you can timetable sessions and take registers." /></div>;
   }
+  const pickInCourse = store.units.filter(u => {
+    if (pickCourse === "none" && u.courseId) return false;
+    if (pickCourse && pickCourse !== "none" && u.courseId !== pickCourse) return false;
+    return true;
+  });
+  const pickList = applyUnitFilters(pickInCourse, {
+    course: pickCourse, year: pickYear, term: pickTerm, status: pickStatus,
+    tutor: pickTutor, cover: pickCover, sortBy: pickSort, query: pickQuery,
+  }, today);
+  // THE UNIT YOU ARE LOOKING AT IS ALWAYS IN THE PICKER, even when the filters exclude
+  // it. Otherwise typing a search after choosing a unit makes the selected card vanish
+  // while its registers stay on screen below — the page then shows a register list
+  // belonging to a unit the picker says is not there.
+  const pickShown = unitId && !pickList.some(u => u.id === unitId)
+    ? [...store.units.filter(u => u.id === unitId), ...pickList]
+    : pickList;
+
 
   return (
     <>
       {/* Unit picker */}
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {store.units.map(m => {
+      <UnitFilterBar
+        units={store.units} inCourse={pickInCourse} courses={store.courses} today={today}
+        f={{ course: pickCourse, year: pickYear, term: pickTerm, status: pickStatus,
+             tutor: pickTutor, cover: pickCover, sortBy: pickSort, query: pickQuery, shown: pickList.length }}
+        on={{ course: setPickCourse, year: setPickYear, term: setPickTerm, status: setPickStatus,
+              tutor: setPickTutor, cover: setPickCover, sortBy: setPickSort, query: setPickQuery }}
+      />
+      {/* BOUNDED, AND SCROLLED. Even filtered, a college with four hundred units can
+          produce more cards than a screen holds, and the registers are what this page is
+          for — the picker must not be able to push them below the fold again. */}
+      <div className="mb-4 flex max-h-60 flex-wrap gap-1.5 overflow-y-auto rounded-xl p-0.5">
+        {!pickShown.length && (
+          <p className="px-2 py-3 text-sm text-slate-400">No unit matches those filters.</p>
+        )}
+        {pickShown.map(m => {
           // Session count for the semester in view, not the unit's all-time total.
           const count = store.attendance?.unitTotals?.[m.id]?.sessionCount ?? m.sessionCount;
           return (
