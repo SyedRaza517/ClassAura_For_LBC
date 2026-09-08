@@ -61,7 +61,24 @@ const isHomeSite = (v) => v == null || (isString(v) && HOME_SITES.includes(v));
 const ADMIN_PAGES = [
   "executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents",
   "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-settings", "students", "attendance-emails", "assessments", "assessment-tracker",
-  "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "timetable", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings",
+  // "timetable" was here until 8 Sep 2026 and is deliberately gone, along with the whole
+  // page: routes/timetable.js, its mount, its api.js callers and the AdminTimetable
+  // screen. It built the older weekly TimetableSlot timetable, and it sat in the sidebar
+  // directly above "My Timetable" under a shorter, more obvious name while being
+  // permanently empty -- so a reader looking for classes they had just entered clicked it
+  // first, found nothing, and concluded the save had failed. Reported exactly that way.
+  //
+  // Removing the key alone was the first attempt and adminPages-contract.test.js refused
+  // it: a router still gated on requirePage("timetable") would answer 403 to somebody
+  // holding the very page it names, which is the attendance-tags bug the test was written
+  // for. Either the key stays grantable or the router goes. The router went.
+  //
+  // WHAT THIS COSTS: /api/student/me/timetable still READS TimetableSlot, and this was
+  // its only writer, so a student's weekly timetable can no longer be populated at all.
+  // In practice nothing changed -- both databases hold zero TimetableSlot rows -- but the
+  // gap is now permanent rather than merely unused, and closing it means pointing that
+  // route at TimetableEvent, which is where the classes actually are.
+  "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings",
 ];
 
 module.exports = {

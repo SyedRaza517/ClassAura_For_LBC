@@ -219,14 +219,6 @@ export const api = {
   studentQrCheckIn: (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code }, headers: deviceHeaders() }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
-  timetableCourses: () => request("/timetable/courses"),
-  timetable: (courseId, year, termNumber) => { const q = new URLSearchParams({ courseId }); if (year != null && year !== "") q.set("year", year); if (termNumber != null && termNumber !== "") q.set("termNumber", termNumber); return request(`/timetable?${q.toString()}`); },
-  timetableAutofill: (data) => request("/timetable/autofill", { method: "POST", body: data }),
-  publishTimetable: (data) => request("/timetable/publish", { method: "POST", body: data }),
-  saveTimetableCalendar: (data) => request("/timetable/calendar", { method: "PUT", body: data }),
-  addTimetableSlot: (data) => request("/timetable/slots", { method: "POST", body: data }),
-  updateTimetableSlot: (id, data) => request(`/timetable/slots/${id}`, { method: "PUT", body: data }),
-  removeTimetableSlot: (id) => request(`/timetable/slots/${id}`, { method: "DELETE" }),
 
   // CELCAT-style timetabling. Two groups, and the split is the point: `myTimetable*`
   // is what every lecturer calls and needs no admin page, while `tt*` is the planner

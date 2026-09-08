@@ -109,7 +109,6 @@ app.use("/api/staff-reviews", wrapAsync(require("./routes/staffReviews")));
 app.use("/api/passwords", wrapAsync(require("./routes/passwords")));
 app.use("/api/my-reviews", wrapAsync(require("./routes/myReviews")));
 app.use("/api/student-reviews", wrapAsync(require("./routes/studentReviews")));
-app.use("/api/timetable", wrapAsync(require("./routes/timetable")));
 // The CELCAT-style timetabling module. Two routers, deliberately split by who
 // reads them: /api/timetabling is the planner and is gated on the "scheduling"
 // admin page; /api/my-timetable is what every lecturer reads and carries no page

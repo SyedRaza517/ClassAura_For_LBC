@@ -31,7 +31,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp,
   Menu, Info, Settings as SettingsIcon, Share2, Printer, Search, MoreVertical,
-  List, LayoutGrid, Loader2, AlertTriangle, X, MapPin, Users, BookOpen, Clock3,
+  List, LayoutGrid, Loader2, AlertTriangle, X, MapPin, Users, BookOpen, Clock3, CalendarDays,
 } from "lucide-react";
 import { api } from "./api";
 import TimetableCalendar from "./TimetableCalendar";
@@ -162,6 +162,57 @@ export default function MyTimetable({ onBack }) {
   const [sidebar, setSidebar] = useState(inlineSidebar);
   useEffect(() => { setSidebar(inlineSidebar); }, [inlineSidebar]);
 
+  // WHERE THE NEAREST CLASS IS, when this window has none. `null` = we have not looked
+  // or there is nothing to find; otherwise { date, direction }.
+  //
+  // AN EMPTY WEEK AND AN EMPTY TIMETABLE LOOK IDENTICAL, and that is the whole reason
+  // this exists. A lecturer who has just entered a term, opened this screen on the
+  // current week and found it blank has no way to tell "your classes start a week on
+  // Tuesday" from "nothing saved". The reasonable conclusion is that the save failed,
+  // and the reasonable next action is to enter it all again — which is how a term gets
+  // created twice. Reported exactly that way.
+  const [nearest, setNearest] = useState(null);
+
+  /**
+   * Look forward, then back, for the closest class outside [from, to].
+   *
+   * Forward first, and it is not arbitrary: somebody staring at an empty week has
+   * almost always just entered a term that starts later, so "your next class" answers
+   * the question they actually have. Looking back is the fallback for a term that has
+   * finished, where "your last class was" is the true answer and "no classes" would
+   * imply the record had been lost.
+   *
+   * Six months each way rather than the year the endpoint permits. A year is two
+   * requests big enough to be felt on a handset to answer a question this small, and a
+   * college with nothing scheduled within six months has a different problem than this
+   * banner can help with.
+   */
+  const findNearest = useCallback(async (from, to) => {
+    const addDays = (iso, n) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    const PROBE = 180;
+    try {
+      // Rows come back ordered by date then start time, so the ends of the two lists
+      // are the nearest class in each direction without sorting anything here.
+      const ahead = await api.myTimetable(addDays(to, 1), addDays(to, PROBE), scope.type, scope.ids);
+      const next = (ahead.events || [])[0];
+      if (next) return setNearest({ date: next.date, direction: "next" });
+
+      const behind = await api.myTimetable(addDays(from, -PROBE), addDays(from, -1), scope.type, scope.ids);
+      const list = behind.events || [];
+      if (list.length) setNearest({ date: list[list.length - 1].date, direction: "last" });
+    } catch {
+      // Deliberately silent, and this is the one place in this file where that is right.
+      // The timetable itself has already loaded successfully; this is a hint ABOUT an
+      // empty week. Turning a failed hint into an error banner would report a fault over
+      // a screen that is working, which is worse than the hint simply not appearing.
+      setNearest(null);
+    }
+  }, [scope.type, scope.ids]);
+
   const load = useCallback(async () => {
     setBusy(true); setErr("");
     try {
@@ -169,6 +220,12 @@ export default function MyTimetable({ onBack }) {
       const r = await api.myTimetable(from, to, scope.type, scope.ids);
       setEvents(r.events || []);
       setSettings(r.settings || null);
+      // ONLY WHEN THE WINDOW CAME BACK EMPTY. In the ordinary case this costs nothing:
+      // no second request is made at all. The probe is deliberately not folded into the
+      // first call as a wider range — that would page a year of events into the browser
+      // on every navigation to answer a question almost nobody is asking.
+      setNearest(null);
+      if (!(r.events || []).length) findNearest(from, to);
       // The saved default view applies on FIRST load only. Re-applying it on every
       // fetch would yank a reader out of Month the moment they pressed "next".
       setView((v) => (settings ? v : (r.settings?.view || v)));
@@ -180,7 +237,7 @@ export default function MyTimetable({ onBack }) {
     // `settings` is deliberately not a dependency — it is written by this effect, and
     // including it would re-fetch on every settings change forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, anchor, scope.type, scope.ids]);
+  }, [view, anchor, scope.type, scope.ids, findNearest]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -386,6 +443,29 @@ export default function MyTimetable({ onBack }) {
               <div className="mb-3 flex items-center gap-2 rounded bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200">
                 <AlertTriangle size={16} /> {err}
                 <button onClick={load} className="ml-auto rounded px-2 py-0.5 text-xs font-bold hover:bg-rose-100">Retry</button>
+              </div>
+            )}
+
+            {/* SAID ONLY WHEN THERE IS SOMEWHERE REAL TO SEND THEM.
+                `nearest` is set only after a probe actually found a class, so this
+                cannot become the banner that appears on every empty week and is
+                therefore read by nobody. A reader with genuinely no classes at all
+                still sees the plain empty grid, which is the honest answer for them. */}
+            {!busy && !events.length && nearest && (
+              <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900 ring-1 ring-sky-200">
+                <CalendarDays size={16} className="shrink-0 text-sky-600" />
+                <span className="font-semibold">Nothing in this {view}.</span>
+                <span>
+                  Your {nearest.direction === "next" ? "next" : "last"} class {nearest.direction === "next" ? "is" : "was"}{" "}
+                  {new Date(`${nearest.date}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}.
+                </span>
+                {/* The date is not merely stated, it is a way to get there. Telling
+                    somebody where their class is and leaving them to find it with the
+                    arrows is half an answer. */}
+                <button onClick={() => setAnchor(nearest.date)}
+                  className="ml-auto rounded-lg bg-sky-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-sky-700">
+                  Go to it
+                </button>
               </div>
             )}
 
