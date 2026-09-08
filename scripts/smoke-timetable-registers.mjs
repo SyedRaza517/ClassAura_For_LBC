@@ -691,10 +691,76 @@ check("and omitting it returns BOTH, not one of them",
 check("an inverted date range is refused",
   (await call("/timetabling/events/list?from=2027-10-01&to=2027-09-01", { token: admin.token })).status === 400);
 
+console.log("\n--- A GROUP'S STUDENTS APPEAR ON ITS REGISTER, WITH NO ENROLMENTS AT ALL ---");
+//
+// The fatal one, reported from production: eighteen registers, each saying on its own
+// face "All students in the group (no enrolment data for this module)", every one of
+// them listing nobody.
+//
+// Two endpoints answered "who is on this register" differently. syncEventRegisters chose
+// a roster — cohort intersected with enrolment, falling back to the WHOLE cohort when the
+// module records no enrolments at all — and then kept only a sentence, throwing the list
+// away. GET /sessions/:id/register read Enrolment and never looked at cohortId, so it
+// showed nobody; PUT gated on Enrolment too, so even a hand-built list could not be
+// marked. Both were individually defensible. Together they were a register nobody could
+// take.
+//
+// The fixture is the production case exactly: a module with ZERO enrolments and a group
+// with students in it. A unit carrying both would be served correctly by the old code and
+// prove nothing.
+const noEnrolUnit = await db.unit.create({ data: { code: `NE-${TAG}`, name: `No-enrolment unit ${TAG}`, courseId: course.id } });
+const cohortC = await db.cohort.create({ data: { name: `SEP ${TAG} C`, courseId: course.id } });
+const c1 = await mkStudent("c1", cohortC.id);
+const c2 = await mkStudent("c2", cohortC.id);
+check("the fixture module has NO enrolments",
+  (await db.enrolment.count({ where: { unitId: noEnrolUnit.id } })) === 0);
+check("and the group has two students", (await db.student.count({ where: { cohortId: cohortC.id } })) === 2);
+
+const neEvent = (await mkEvent({
+  date: "2027-04-05", start: "09:00", end: "12:00", title: `NoEnrol ${TAG}`,
+  unitId: noEnrolUnit.id, cohortIds: [cohortC.id], published: true,
+})).data;
+check("the class was created with a register", neEvent?.registers?.created === 1, JSON.stringify(neEvent?.registers));
+
+const neReg = (await registersFor(neEvent.event.id))[0];
+check("the register exists and is tied to the group", neReg?.cohortId === cohortC.id, String(neReg?.cohortId));
+check("and describes itself as covering the whole group",
+  /All students in the group/i.test(neReg?.audience || ""), neReg?.audience);
+
+const sheet = await call(`/hnd/sessions/${neReg.id}/register`, { token: admin.token });
+check("the register opens", sheet.status === 200, String(sheet.status));
+check("IT LISTS THE GROUP'S STUDENTS — the sheet and its own description now agree",
+  (sheet.data?.rows || []).length === 2, `${(sheet.data?.rows || []).length} row(s)`);
+const listedRefs = (sheet.data?.rows || []).map((r) => r.student?.studentRef).sort();
+check("and they are the right two", listedRefs.join(",") === [`${TAG}-c1`, `${TAG}-c2`].sort().join(","), listedRefs.join(","));
+// `enrolled` must still tell the truth. These students are on the register through the
+// group, not through an enrolment, and a screen showing a tick against "enrolled" would
+// be stating something false about their academic record.
+check("each row reports enrolled:false, because that is the fact",
+  (sheet.data?.rows || []).every((r) => r.enrolled === false), JSON.stringify((sheet.data?.rows || []).map((r) => r.enrolled)));
+
+const saved = await call(`/hnd/sessions/${neReg.id}/register`, {
+  method: "PUT", token: admin.token, body: { marks: [{ studentId: c1.id, status: "P" }] },
+});
+check("A MARK CAN ACTUALLY BE SAVED — listing them and refusing the mark is the same failure",
+  saved.status === 200, `${saved.status} ${saved.data?.error || ""}`);
+check("and the mark is in the database", (await db.attendanceMark.count({ where: { sessionId: neReg.id, studentId: c1.id } })) === 1);
+
+// The guard has to still refuse a stranger, or "use the roster" has quietly become
+// "accept anybody" — which is how a mark, and therefore a unit, gets attached to
+// somebody who was never on the course.
+const strayMark = await call(`/hnd/sessions/${neReg.id}/register`, {
+  method: "PUT", token: admin.token, body: { marks: [{ studentId: loose.id, status: "P" }] },
+});
+check("A STUDENT IN NEITHER THE GROUP NOR THE ENROLMENT IS STILL REFUSED",
+  strayMark.status === 400, `${strayMark.status} ${JSON.stringify(strayMark.data)}`);
+check("and no mark was written for them",
+  (await db.attendanceMark.count({ where: { sessionId: neReg.id, studentId: loose.id } })) === 0);
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
-await db.hndSession.deleteMany({ where: { unitId: unit.id } });
-await db.enrolment.deleteMany({ where: { unitId: unit.id } });
+await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id] } } });
+await db.enrolment.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id] } } });
 await db.student.deleteMany({ where: { lastName: TAG } });
 await db.timetableEvent.deleteMany({ where: { title: { contains: TAG } } });
 // The sign-up section's leavings. The links go first: they are cascaded by BOTH parents,

@@ -40,6 +40,7 @@ const prisma = require("../db");
 // Unit.courseId is nullable -- so always joining would quietly change the session counts
 // for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
+const { rosterForSession } = require("../timetabling/registers");
 const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
@@ -1457,15 +1458,25 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
   });
   const byStudent = new Map(session.marks.map((m) => [m.studentId, m]));
 
-  // A student who has since been un-enrolled but was marked on this session
-  // still belongs on the register — otherwise their mark would silently vanish.
-  const extra = session.marks
-    .filter((m) => !enrolments.some((e) => e.studentId === m.studentId))
-    .map((m) => m.studentId);
-  const extraStudents = extra.length ? await prisma.student.findMany({ where: { id: { in: extra } } }) : [];
+  // THE ROSTER, NOT THE ENROLMENT LIST. This read only Enrolment, so a register built
+  // for a GROUP on a module with no enrolment data listed nobody — while its own
+  // `audience` line said it held the whole group. rosterForSession applies the rule that
+  // built the register, so the sheet and its description now agree.
+  const roster = await rosterForSession(session);
+  const rosterIds = new Set(roster.studentIds);
 
-  const students = [...enrolments.map((e) => e.student), ...extraStudents]
-    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+  // A student who has since left the group or been un-enrolled but was marked on this
+  // session still belongs on the register — otherwise their mark would silently vanish.
+  const extra = session.marks.filter((m) => !rosterIds.has(m.studentId)).map((m) => m.studentId);
+
+  // Fetched by id rather than reused from `enrolments`, because a cohort-only roster
+  // contains students who have no Enrolment row at all — exactly the ones that were
+  // missing — so the enrolment join cannot supply them.
+  const needed = [...rosterIds, ...extra];
+  const students = needed.length
+    ? await prisma.student.findMany({ where: { id: { in: needed } } })
+    : [];
+  students.sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
 
   res.json({
     session: sSession(session),
@@ -1532,8 +1543,18 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
     // Enrolment, not mere existence. Checking only that the student exists let a
     // mistyped or stale id attach a mark — and therefore a whole unit — to somebody
     // who was never on the course.
-    const enrolled = await prisma.enrolment.findMany({ where: { unitId: session.unitId, studentId: { in: ids } }, select: { studentId: true } });
-    const okIds = new Set(enrolled.map((e) => e.studentId));
+    // THE SAME ROSTER THE LISTING USES. Gating on Enrolment alone made every register
+    // built for a group unusable on a module with no enrolment data: the sheet listed
+    // the group (after the fix above) and then refused every mark on it with "not
+    // enrolled on this unit". Two endpoints answering "who is on this register"
+    // differently is what produced that, so both now ask rosterForSession.
+    //
+    // This is not a loosening. The check exists so a mistyped or stale id cannot attach
+    // a mark — and therefore a unit — to somebody who was never on the course, and
+    // cohort membership is an explicit act by an administrator exactly as enrolment is.
+    // What it stops being is a check that only recognises ONE of the two ways a student
+    // legitimately arrives on a register.
+    const okIds = new Set((await rosterForSession(session)).studentIds);
     // Marks already on this register stay editable even if the student has since been
     // un-enrolled, so historic registers remain correctable.
     if (okIds.size !== ids.length) {
@@ -1541,7 +1562,7 @@ router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, 
       for (const e of existing) okIds.add(e.studentId);
     }
     const stray = ids.filter((id) => !okIds.has(id));
-    if (stray.length) return res.status(400).json({ error: `${stray.length} student${stray.length === 1 ? " is" : "s are"} not enrolled on this unit` });
+    if (stray.length) return res.status(400).json({ error: `${stray.length} student${stray.length === 1 ? " is" : "s are"} not on this register` });
   }
 
   // Stamp an out-of-term correction so it is identifiable afterwards. A reopened

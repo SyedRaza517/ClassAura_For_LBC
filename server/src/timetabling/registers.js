@@ -159,4 +159,47 @@ async function syncEventRegisters(eventId) {
   return out;
 }
 
-module.exports = { syncEventRegisters };
+/**
+ * Who belongs on ONE register, applying the same rule that built it.
+ *
+ * THE BUG THIS EXISTS TO CLOSE. syncEventRegisters decided a roster and then threw it
+ * away, keeping only a sentence — "All students in the group (no enrolment data for this
+ * module)" — in `audience`. The register screen meanwhile listed students from Enrolment
+ * alone and never looked at cohortId. So a class scheduled for a group whose module has
+ * no enrolments produced a register that said, on its own face, that it held the whole
+ * group, and then showed nobody. Both halves were individually defensible and together
+ * they were a register nobody could take.
+ *
+ * The rule itself stays in roster.js, which has no database and is tested without one.
+ * This only supplies it with rows, so the listing endpoint, the saving endpoint and the
+ * builder cannot drift apart into three answers to one question.
+ *
+ * A session with NO cohort is unchanged: the module's enrolment is the roster, which is
+ * what every register generated from a unit rather than from the timetable relies on.
+ *
+ * @returns {Promise<{ studentIds: string[], rule: "cohort-and-enrolment" | "cohort-only" }>}
+ */
+async function rosterForSession(session) {
+  const enrolled = await prisma.enrolment.findMany({
+    where: { unitId: session.unitId },
+    select: { studentId: true },
+  });
+  const enrolledIds = enrolled.map((e) => e.studentId);
+  if (!session.cohortId) return { studentIds: enrolledIds, rule: "cohort-and-enrolment" };
+
+  const cohortStudents = await prisma.student.findMany({
+    where: { cohortId: session.cohortId },
+    select: { id: true },
+  });
+  return deriveRoster({
+    cohortStudentIds: cohortStudents.map((s) => s.id),
+    enrolledStudentIds: enrolledIds,
+    // A question about the UNIT, asked unfiltered by student — the same hoisted probe
+    // syncEventRegisters uses, and for the same reason. Narrowing it to this group turns
+    // "this module records no enrolments" into "nobody in this group enrolled", which
+    // are different facts with the same shape.
+    unitHasEnrolments: enrolledIds.length > 0,
+  });
+}
+
+module.exports = { syncEventRegisters, rosterForSession };

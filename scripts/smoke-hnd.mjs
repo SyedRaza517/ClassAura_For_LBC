@@ -333,7 +333,11 @@ try {
     made.students.push(outsider.body.id);
     const r = await call(`/hnd/sessions/${s1.body.id}/register`, { method: "PUT", token: admin, body: { marks: [{ studentId: outsider.body.id, status: "P" }] } });
     assert.equal(r.status, 400, `expected 400, got ${r.status} ${JSON.stringify(r.body)}`);
-    assert.match(r.body.error || "", /not enrolled/i);
+    // Wording changed with the roster fix: a student can now reach a register through
+    // their GROUP as well as through an enrolment, so "not enrolled on this unit" was
+    // no longer the reason. The assertion that matters is unchanged -- an outsider,
+    // in neither, is refused and told which register they are not on.
+    assert.match(r.body.error || "", /not on this register/i);
     const leaked = await db.attendanceMark.count({ where: { studentId: outsider.body.id } });
     assert.equal(leaked, 0, `${leaked} mark(s) were written for a non-enrolled student`);
     return r.body.error;
