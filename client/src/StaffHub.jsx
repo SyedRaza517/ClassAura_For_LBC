@@ -10238,6 +10238,214 @@ function CohortManager({ store, course, onClose }) {
 }
 
 /* ----- Courses: the unit gallery, add / edit / delete + open registers ----- */
+// ONE FILTER BAR, USED BY EVERY SCREEN THAT LISTS UNITS.
+//
+// There were two, and they had drifted: Registers → Units carried course pills, a
+// year/term bar, a status bar and a search box, while Assessments → Units carried course
+// pills, a year/term bar and a search box with no status at all. Both rendered a course
+// as its full name — "HND Business – September 2026 | Pearson BTEC Level 5 Higher
+// National Diploma in Business", sixty-odd characters — so nine courses wrapped into six
+// rows of chips that pushed the units themselves off the screen. Fixing one left the
+// other exactly as it was, which is how the same report came back twice.
+//
+// So this takes the state rather than owning it: each screen keeps its own filters (they
+// are independent views and should not move together), and the markup lives once.
+//
+// `f` is the filter state bundle and `on` its setters, passed as two objects rather than
+// fourteen props — the list grows every time a screen needs another axis, and a
+// fourteen-argument call site is where a wrong argument order hides.
+function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, showCover = true }) {
+  const ql = (f.query || "").trim().toLowerCase();
+  const tutorOf = (m) => (m.tutorName || m.tutor || "").trim();
+
+  // Trimmed at the pipe because that is where the redundancy is: every one of these
+  // repeats its own qualification title after it, so the half before the pipe is what
+  // distinguishes one course from another. The FULL name stays as the option's title.
+  const shortCourse = (name) => String(name || "").split("|")[0].trim() || String(name || "");
+  const hasUnassigned = units.some(u => !u.courseId);
+  const courseOpts = [{ id: "", label: "All courses", full: "All courses" },
+    ...courses.map(p => ({ id: p.id, label: shortCourse(p.name), full: p.name, colour: p.colour })),
+    ...(hasUnassigned ? [{ id: "none", label: "No course", full: "Units with no course" }] : [])];
+  const chosenCourse = courseOpts.find(c => c.id === f.course);
+
+  // Every option list is built from the units ACTUALLY IN SCOPE rather than from a fixed
+  // vocabulary. A filter that offers "Year 3" to a two-year course, or a lecturer who
+  // teaches nothing on this course, leads to an empty page — and an empty page from a
+  // control you were invited to press reads as a fault.
+  const years = Array.from(new Set(inCourse.filter(isPlaced).map(u => u.year))).sort((a, b) => a - b);
+  const termScope = f.year && f.year !== "none" ? inCourse.filter(u => u.year === Number(f.year)) : inCourse;
+  const terms = Array.from(new Set(termScope.filter(isPlaced).map(u => u.termNumber))).sort((a, b) => a - b);
+  const anyUnplaced = inCourse.some(u => !isPlaced(u));
+  const statusCounts = inCourse.reduce((a, u) => { const s = unitStatus(u, today); a[s] = (a[s] || 0) + 1; return a; }, {});
+  const statuses = ["current", "past", "future", "unscheduled"].filter(s => statusCounts[s]);
+  const tutors = Array.from(new Set(inCourse.map(tutorOf).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const anyUntutored = inCourse.some(u => !tutorOf(u));
+
+  // What is actually narrowing the list right now. Counted rather than merely shown,
+  // because the failure this page had was a reader looking at four units and not knowing
+  // which of four separate bars was hiding the rest.
+  const activeFilters = [f.course, f.year, f.term, f.status, f.tutor, f.cover, ql].filter(Boolean).length;
+  const clearAll = () => {
+    on.course?.(""); on.year?.(""); on.term?.(""); on.status?.("");
+    on.tutor?.(""); on.cover?.(""); on.query?.("");
+  };
+
+  // One shell for every control, so the bar reads as one row of things rather than as
+  // several bars that happen to sit together — which is what it was.
+  const Pick = ({ label, value, onChange, children, wide }) => (
+    <label className="flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <select value={value} onChange={onChange}
+        className={`bg-transparent text-sm font-semibold text-slate-700 outline-none ${wide ? "max-w-[16rem]" : ""}`}>
+        {children}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="mb-4 rounded-2xl bg-white/70 p-3 ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search first. It is the control that reaches a named unit in one action, and
+            every other control below narrows a list you are browsing instead. */}
+        <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
+          <Search size={15} className="text-slate-400" />
+          <input value={f.query} onChange={e => on.query?.(e.target.value)} placeholder="Search code, name or lecturer…"
+            className="w-44 bg-transparent text-sm outline-none sm:w-64" />
+          {f.query && <button onClick={() => on.query?.("")} aria-label="Clear search" className="rounded p-0.5 text-slate-400 hover:bg-slate-100"><X size={13} /></button>}
+        </div>
+
+        {courseOpts.length > 1 && (
+          <label className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
+            {/* The colour dot carries over from the pills it replaced. It is what explains
+                the colours on the unit cards below; without it the gallery's grouping is
+                unexplained. */}
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-300"
+              style={chosenCourse?.colour ? { background: chosenCourse.colour } : { background: "transparent" }} />
+            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Course</span>
+            <select value={f.course || ""} title={chosenCourse?.full || ""}
+              onChange={e => { on.course?.(e.target.value); on.year?.(""); on.term?.(""); on.status?.(""); }}
+              className="max-w-[18rem] bg-transparent text-sm font-semibold text-slate-700 outline-none">
+              {courseOpts.map(c => <option key={c.id || "all"} value={c.id} title={c.full}>{c.label}</option>)}
+            </select>
+          </label>
+        )}
+
+        {/* Each control appears only when there is something to choose between. A select
+            offering one option is a control that cannot do anything. */}
+        {years.length > 0 && (
+          <Pick label="Year" value={f.year} onChange={e => { on.year?.(e.target.value); on.term?.(""); }}>
+            <option value="">Any</option>
+            {years.map(y => <option key={y} value={String(y)}>Year {y}</option>)}
+            {anyUnplaced && <option value="none">Not set</option>}
+          </Pick>
+        )}
+        {f.year !== "none" && terms.length > 1 && (
+          <Pick label="Term" value={f.term} onChange={e => on.term?.(e.target.value)}>
+            <option value="">Any</option>
+            {terms.map(t => <option key={t} value={String(t)}>Term {t}</option>)}
+          </Pick>
+        )}
+        {statuses.length > 1 && (
+          <Pick label="Status" value={f.status} onChange={e => on.status?.(e.target.value)}>
+            <option value="">Any</option>
+            {statuses.map(s => <option key={s} value={s}>{STATUS_META[s].label} ({statusCounts[s]})</option>)}
+          </Pick>
+        )}
+        {(tutors.length > 1 || (tutors.length === 1 && anyUntutored)) && (
+          <Pick label="Lecturer" value={f.tutor} onChange={e => on.tutor?.(e.target.value)} wide>
+            <option value="">Anyone</option>
+            {tutors.map(t => <option key={t} value={t}>{t}</option>)}
+            {/* "Nobody assigned" is the question that finds the gap before term starts, so
+                it is an option rather than something you infer from an empty list. */}
+            {anyUntutored && <option value="none">Nobody assigned</option>}
+          </Pick>
+        )}
+        {showCover && (
+          <Pick label="Has" value={f.cover} onChange={e => on.cover?.(e.target.value)}>
+            <option value="">Anything</option>
+            <option value="sessions">Registers</option>
+            <option value="no-sessions">No registers</option>
+            <option value="students">Students</option>
+            <option value="no-students">No students</option>
+          </Pick>
+        )}
+        <Pick label="Sort" value={f.sortBy} onChange={e => on.sortBy?.(e.target.value)}>
+          <option value="teaching">Teaching order</option>
+          <option value="code">Code</option>
+          <option value="name">Name</option>
+          {showCover && <option value="students">Most students</option>}
+          {showCover && <option value="sessions">Most registers</option>}
+        </Pick>
+
+        {right && <div className="ml-auto">{right}</div>}
+      </div>
+
+      {/* THE COUNT, AND A WAY BACK. Both halves matter: "5 of 62" is what tells a reader
+          the page is filtered rather than empty, and one button to undo it is what stops
+          them hunting through seven controls for the one they set. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span className="font-semibold">
+          {!activeFilters
+            ? `${f.shown} unit${f.shown === 1 ? "" : "s"}`
+            : `Showing ${f.shown} of ${units.length} unit${units.length === 1 ? "" : "s"}`}
+        </span>
+        {activeFilters > 0 && (
+          <>
+            <span className="rounded-full bg-blue-50 px-2 py-0.5 font-bold text-blue-700">{activeFilters} filter{activeFilters === 1 ? "" : "s"} on</span>
+            <button onClick={clearAll} className="rounded-lg px-2 py-0.5 font-bold text-slate-500 hover:bg-slate-100">Clear all</button>
+          </>
+        )}
+        {chosenCourse?.id && chosenCourse.full !== chosenCourse.label && (
+          <span className="truncate text-slate-400" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The filtering and sorting the bar above describes, applied.
+ *
+ * Shared for the same reason the markup is: two screens filtering the same rows by
+ * different rules is how "Running 2" on one page and "Running 5" on another both look
+ * correct. Pure — no store, no hooks — so it can be reasoned about on its own.
+ */
+function applyUnitFilters(inCourse, f, today) {
+  const ql = (f.query || "").trim().toLowerCase();
+  const tutorOf = (m) => (m.tutorName || m.tutor || "").trim();
+  return inCourse
+    .filter(m => matchesPlace(m, f.year, f.term))
+    .filter(m => !f.status || unitStatus(m, today) === f.status)
+    // "none" is a real choice, not the absence of one: "which modules has nobody been put
+    // against" is the question that finds the gap before term starts.
+    .filter(m => !f.tutor || (f.tutor === "none" ? !tutorOf(m) : tutorOf(m) === f.tutor))
+    .filter(m => {
+      // Counts can be undefined when the list was fetched without them. Treated as
+      // UNKNOWN rather than as zero: reporting "no registers" about a module whose
+      // registers were never counted is the null-is-not-zero mistake, and it would put
+      // real modules on a to-do list of things to go and fix.
+      if (!f.cover) return true;
+      if (f.cover === "sessions") return m.sessionCount > 0;
+      if (f.cover === "no-sessions") return m.sessionCount === 0;
+      if (f.cover === "students") return m.studentCount > 0;
+      if (f.cover === "no-students") return m.studentCount === 0;
+      return true;
+    })
+    .filter(m => !ql || m.code.toLowerCase().includes(ql) || m.name.toLowerCase().includes(ql) || tutorOf(m).toLowerCase().includes(ql))
+    .sort((a, b) => {
+      if (f.sortBy === "code") return a.code.localeCompare(b.code);
+      if (f.sortBy === "name") return a.name.localeCompare(b.name);
+      // Descending, and undefined sorts last rather than as zero — same reason as the
+      // filter above. "Most students" leading with modules nobody counted is noise.
+      if (f.sortBy === "students") return (b.studentCount ?? -1) - (a.studentCount ?? -1);
+      if (f.sortBy === "sessions") return (b.sessionCount ?? -1) - (a.sessionCount ?? -1);
+      // Teaching order — year, then term, then unit number — so the gallery reads the way
+      // the course is actually delivered. Still the right default for reading a course
+      // rather than hunting through it.
+      return placeKey(a) - placeKey(b) || (Number(a.unitNumber) || 999) - (Number(b.unitNumber) || 999) || a.code.localeCompare(b.code);
+    });
+}
+
 function Units({ store, onView, courseFilter = "", setCourseFilter }) {
   const [modal, setModal] = useState(false);
   const [step, setStep] = useState("details");       // details -> schedule (new courses only)
@@ -10359,195 +10567,19 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
     return true;
   });
   const today = todayISO();
-  // The lecturer of a unit, under one name. `tutorName` is the linked staff account's
-  // name and falls back to the free-text `tutor` for units assigned before that relation
-  // existed; reading only one of them would hide half the units from a lecturer filter.
-  const tutorOf = (m) => (m.tutorName || m.tutor || "").trim();
-  const list = inCourse
-    .filter(m => matchesPlace(m, yearFilter, termFilter))
-    .filter(m => !statusFilter || unitStatus(m, today) === statusFilter)
-    // "none" is a real choice, not the absence of one: "which modules has nobody been
-    // put against" is the question that finds the gap before term starts.
-    .filter(m => !tutorFilter || (tutorFilter === "none" ? !tutorOf(m) : tutorOf(m) === tutorFilter))
-    .filter(m => {
-      // Counts can be undefined when the list was fetched without them. Treated as
-      // UNKNOWN rather than as zero: reporting "no registers" about a module whose
-      // registers were never counted is the null-is-not-zero mistake, and it would put
-      // real modules on a to-do list of things to go and fix.
-      if (!coverFilter) return true;
-      const s = m.sessionCount, st = m.studentCount;
-      if (coverFilter === "sessions") return s > 0;
-      if (coverFilter === "no-sessions") return s === 0;
-      if (coverFilter === "students") return st > 0;
-      if (coverFilter === "no-students") return st === 0;
-      return true;
-    })
-    .filter(m => !ql || m.code.toLowerCase().includes(ql) || m.name.toLowerCase().includes(ql) || tutorOf(m).toLowerCase().includes(ql))
-    .sort((a, b) => {
-      if (sortBy === "code") return a.code.localeCompare(b.code);
-      if (sortBy === "name") return a.name.localeCompare(b.name);
-      // Descending, and undefined sorts last rather than as zero — same reason as the
-      // filter above. "Most students" asking for the modules nobody counted is noise.
-      if (sortBy === "students") return (b.studentCount ?? -1) - (a.studentCount ?? -1);
-      if (sortBy === "sessions") return (b.sessionCount ?? -1) - (a.sessionCount ?? -1);
-      // Teaching order — year, then term, then unit number — so the gallery reads the
-      // way the course is actually delivered. The default, and still the right one for
-      // reading a course rather than hunting through it.
-      return placeKey(a) - placeKey(b) || (Number(a.unitNumber) || 999) - (Number(b.unitNumber) || 999) || a.code.localeCompare(b.code);
-    });
-
-  // A SELECT, NOT PILLS, AND THE LENGTH OF THE LABELS IS THE WHOLE REASON.
-  //
-  // These were pills, which is right for the Year and Term filters below — "Year 1",
-  // "Term 2", four characters each. A course is named "HND Business – September 2026 |
-  // Pearson BTEC Level 5 Higher National Diploma in Business": sixty-odd characters, and
-  // nine of them wrapped into six rows of chips that pushed the units themselves off the
-  // screen. A filter taller than the thing it filters is not a filter.
-  //
-  // shortCourse trims at the pipe because that is where the redundancy is: every one of
-  // these repeats its own qualification title after it, so the half before the pipe is
-  // the part that distinguishes one course from another. The FULL name stays as the
-  // option's title attribute, so nothing is actually hidden.
-  const shortCourse = (name) => {
-    const head = String(name || "").split("|")[0].trim();
-    return head || String(name || "");
-  };
-  const courseOpts = [{ id: "", label: "All courses", full: "All courses" },
-    ...store.courses.map(p => ({ id: p.id, label: shortCourse(p.name), full: p.name, colour: p.colour })),
-    ...(hasUnassigned ? [{ id: "none", label: "No course", full: "Units with no course" }] : [])];
-  const chosenCourse = courseOpts.find(c => c.id === courseFilter);
-
-  // The option lists, each built from the units ACTUALLY IN SCOPE rather than from a
-  // fixed vocabulary. A filter that offers "Year 3" to a two-year course, or a lecturer
-  // who teaches nothing on this course, is a filter that leads to an empty page — and an
-  // empty page from a control you were invited to press reads as a fault.
-  const years = Array.from(new Set(inCourse.filter(isPlaced).map(u => u.year))).sort((a, b) => a - b);
-  const termScope = yearFilter && yearFilter !== "none" ? inCourse.filter(u => u.year === Number(yearFilter)) : inCourse;
-  const terms = Array.from(new Set(termScope.filter(isPlaced).map(u => u.termNumber))).sort((a, b) => a - b);
-  const anyUnplaced = inCourse.some(u => !isPlaced(u));
-  const statusCounts = inCourse.reduce((a, u) => { const s = unitStatus(u, today); a[s] = (a[s] || 0) + 1; return a; }, {});
-  const statuses = ["current", "past", "future", "unscheduled"].filter(s => statusCounts[s]);
-  const tutors = Array.from(new Set(inCourse.map(tutorOf).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  const anyUntutored = inCourse.some(u => !tutorOf(u));
-
-  // What is actually narrowing the list right now. Counted rather than merely shown,
-  // because the failure this page had was a reader looking at four units and not knowing
-  // which of four separate bars was hiding the rest.
-  const activeFilters = [courseFilter, yearFilter, termFilter, statusFilter, tutorFilter, coverFilter, ql].filter(Boolean).length;
-  const clearAll = () => {
-    setCourseFilter?.(""); setYearFilter(""); setTermFilter(""); setStatusFilter("");
-    setTutorFilter(""); setCoverFilter(""); setQuery("");
-  };
-
-  // One shell for every control, so the bar reads as one row of things rather than as
-  // several bars that happen to sit together — which is what it was.
-  const Pick = ({ label, value, onChange, children, wide }) => (
-    <label className="flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
-      <select value={value} onChange={onChange}
-        className={`bg-transparent text-sm font-semibold text-slate-700 outline-none ${wide ? "max-w-[16rem]" : ""}`}>
-        {children}
-      </select>
-    </label>
-  );
+  const filters = { course: courseFilter, year: yearFilter, term: termFilter, status: statusFilter,
+    tutor: tutorFilter, cover: coverFilter, sortBy, query };
+  const list = applyUnitFilters(inCourse, filters, today);
 
   return (
     <>
-      <div className="mb-4 rounded-2xl bg-white/70 p-3 ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Search first. It is the control that reaches a named unit in one action,
-              and every other control below narrows a list you are browsing instead. */}
-          <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
-            <Search size={15} className="text-slate-400" />
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search code, name or lecturer…"
-              className="w-44 bg-transparent text-sm outline-none sm:w-64" />
-            {query && <button onClick={() => setQuery("")} aria-label="Clear search" className="rounded p-0.5 text-slate-400 hover:bg-slate-100"><X size={13} /></button>}
-          </div>
-
-          {courseOpts.length > 1 && (
-            <label className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
-              {/* The colour dot carries over from the pills it replaced. It is what
-                  explains the colours on the unit cards below; without it the gallery's
-                  grouping is unexplained. */}
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-300"
-                style={chosenCourse?.colour ? { background: chosenCourse.colour } : { background: "transparent" }} />
-              <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Course</span>
-              <select value={courseFilter || ""} title={chosenCourse?.full || ""}
-                onChange={e => { setCourseFilter?.(e.target.value); setYearFilter(""); setTermFilter(""); setStatusFilter(""); }}
-                className="max-w-[18rem] bg-transparent text-sm font-semibold text-slate-700 outline-none">
-                {courseOpts.map(c => <option key={c.id || "all"} value={c.id} title={c.full}>{c.label}</option>)}
-              </select>
-            </label>
-          )}
-
-          {/* Each control appears only when there is something to choose between. A
-              select offering one option is a control that cannot do anything. */}
-          {years.length > 0 && (
-            <Pick label="Year" value={yearFilter} onChange={e => { setYearFilter(e.target.value); setTermFilter(""); }}>
-              <option value="">Any</option>
-              {years.map(y => <option key={y} value={String(y)}>Year {y}</option>)}
-              {anyUnplaced && <option value="none">Not set</option>}
-            </Pick>
-          )}
-          {yearFilter !== "none" && terms.length > 1 && (
-            <Pick label="Term" value={termFilter} onChange={e => setTermFilter(e.target.value)}>
-              <option value="">Any</option>
-              {terms.map(t => <option key={t} value={String(t)}>Term {t}</option>)}
-            </Pick>
-          )}
-          {statuses.length > 1 && (
-            <Pick label="Status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-              <option value="">Any</option>
-              {statuses.map(s => <option key={s} value={s}>{STATUS_META[s].label} ({statusCounts[s]})</option>)}
-            </Pick>
-          )}
-          {(tutors.length > 1 || (tutors.length === 1 && anyUntutored)) && (
-            <Pick label="Lecturer" value={tutorFilter} onChange={e => setTutorFilter(e.target.value)} wide>
-              <option value="">Anyone</option>
-              {tutors.map(t => <option key={t} value={t}>{t}</option>)}
-              {/* "Nobody assigned" is the question that finds the gap before term starts,
-                  so it is an option rather than something you infer from an empty list. */}
-              {anyUntutored && <option value="none">Nobody assigned</option>}
-            </Pick>
-          )}
-          <Pick label="Has" value={coverFilter} onChange={e => setCoverFilter(e.target.value)}>
-            <option value="">Anything</option>
-            <option value="sessions">Registers</option>
-            <option value="no-sessions">No registers</option>
-            <option value="students">Students</option>
-            <option value="no-students">No students</option>
-          </Pick>
-          <Pick label="Sort" value={sortBy} onChange={e => setSortBy(e.target.value)}>
-            <option value="teaching">Teaching order</option>
-            <option value="code">Code</option>
-            <option value="name">Name</option>
-            <option value="students">Most students</option>
-            <option value="sessions">Most registers</option>
-          </Pick>
-
-          <PrimaryBtn onClick={openAdd} className="ml-auto"><Plus size={16} /> Add unit</PrimaryBtn>
-        </div>
-
-        {/* THE COUNT, AND A WAY BACK. Both halves matter: "5 of 62" is what tells a
-            reader the page is filtered rather than empty, and one button to undo it is
-            what stops them hunting through seven controls for the one they set. */}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <span className="font-semibold">
-            {!activeFilters
-              ? `${list.length} unit${list.length === 1 ? "" : "s"}`
-              : `Showing ${list.length} of ${store.units.length} unit${store.units.length === 1 ? "" : "s"}`}
-          </span>
-          {activeFilters > 0 && (
-            <>
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 font-bold text-blue-700">{activeFilters} filter{activeFilters === 1 ? "" : "s"} on</span>
-              <button onClick={clearAll} className="rounded-lg px-2 py-0.5 font-bold text-slate-500 hover:bg-slate-100">Clear all</button>
-            </>
-          )}
-          {chosenCourse?.id && chosenCourse.full !== chosenCourse.label && (
-            <span className="truncate text-slate-400" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
-          )}
-        </div>
-      </div>
+      <UnitFilterBar
+        units={store.units} inCourse={inCourse} courses={store.courses} today={today}
+        f={{ ...filters, shown: list.length }}
+        on={{ course: setCourseFilter, year: setYearFilter, term: setTermFilter, status: setStatusFilter,
+              tutor: setTutorFilter, cover: setCoverFilter, sortBy: setSortBy, query: setQuery }}
+        right={<PrimaryBtn onClick={openAdd}><Plus size={16} /> Add unit</PrimaryBtn>}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {list.map((m, i) => {
@@ -11053,6 +11085,13 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
   const [query, setQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("");
   const [termFilter, setTermFilter] = useState("");
+  // The axes this screen never had. It carried course pills, a year/term bar and a
+  // search box; status and lecturer were simply unreachable here, so the same unit was
+  // findable on Registers and not on Assessments.
+  const [statusFilter, setStatusFilter] = useState("");
+  const [tutorFilter, setTutorFilter] = useState("");
+  const [sortBy, setSortBy] = useState("teaching");
+  const today = todayISO();
   const perUnit = Object.fromEntries((store.assessmentOverview?.units || []).map(u => [u.id, u]));
   const ql = query.trim().toLowerCase();
   const inCourse = store.units.filter(u => {
@@ -11060,23 +11099,23 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
     if (courseFilter && courseFilter !== "none" && u.courseId !== courseFilter) return false;
     return true;
   });
-  const list = inCourse
-    .filter(u => matchesPlace(u, yearFilter, termFilter))
-    .filter(u => !ql || u.code.toLowerCase().includes(ql) || u.name.toLowerCase().includes(ql))
-    .sort((a, b) => placeKey(a) - placeKey(b) || (Number(a.unitNumber) || 999) - (Number(b.unitNumber) || 999) || a.code.localeCompare(b.code));
+  // NO `cover` HERE, and the sort loses its two count-based options with it. This screen
+  // is fed by store.assessmentOverview, which does not carry sessionCount or
+  // studentCount — offering "No registers" would filter on undefined and silently return
+  // nothing, which reads as "there are none" rather than "this page cannot answer that".
+  const filters = { course: courseFilter, year: yearFilter, term: termFilter, status: statusFilter,
+    tutor: tutorFilter, cover: "", sortBy, query };
+  const list = applyUnitFilters(inCourse, filters, today);
   const courseById = Object.fromEntries(store.courses.map(c => [c.id, c]));
-  const pills = [{ v: "", l: "All courses" }, ...store.courses.map(c => ({ v: c.id, l: c.name })), ...(store.units.some(u => !u.courseId) ? [{ v: "none", l: "No course" }] : [])];
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1.5">
-          {pills.map(p => (
-            <button key={p.v} onClick={() => { setCourseFilter(p.v); setYearFilter(""); setTermFilter(""); }} className={`press rounded-full px-3 py-1.5 text-xs font-bold shadow-sm transition ${courseFilter === p.v ? "text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`} style={courseFilter === p.v ? { background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` } : {}}>{p.l}</button>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search units…" className="w-40 bg-transparent text-sm outline-none sm:w-56" /></div>
-      </div>
-      <PlaceFilter units={inCourse} year={yearFilter} setYear={setYearFilter} term={termFilter} setTerm={setTermFilter} className="mb-4" />
+      <UnitFilterBar
+        units={store.units} inCourse={inCourse} courses={store.courses} today={today}
+        f={{ ...filters, shown: list.length }}
+        on={{ course: setCourseFilter, year: setYearFilter, term: setTermFilter, status: setStatusFilter,
+              tutor: setTutorFilter, sortBy: setSortBy, query: setQuery }}
+        showCover={false}
+      />
       <p className="mb-3 text-[11px] text-slate-500">Units come from the Registers section — add or edit them there. Open one to define its assessments and enter marks.</p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {list.map((u, i) => {
