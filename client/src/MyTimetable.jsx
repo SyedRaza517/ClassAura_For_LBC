@@ -72,6 +72,16 @@ export default function MyTimetable({ onBack }) {
   const [picker, setPicker] = useState(false);
   const [prefs, setPrefs] = useState(false);
   const [selected, setSelected] = useState(null);
+  // WHERE the tile was, so the panel can sit beside it instead of in a fixed corner.
+  // Null on a handset, where the panel stays a bottom sheet: anchoring a 320px card to
+  // a tile on a 390px screen puts it half off the edge, and a phone has nowhere better
+  // for it to be than the bottom.
+  const [anchorRect, setAnchorRect] = useState(null);
+  // The group whose students are being shown inside the panel, and the roster itself.
+  // Fetched on demand rather than with the timetable: a week holds thirty classes and
+  // nobody opens thirty rosters.
+  const [rosterFor, setRosterFor] = useState(null);
+  const [roster, setRoster] = useState(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
@@ -259,7 +269,8 @@ export default function MyTimetable({ onBack }) {
             ) : (
               <TimetableCalendar
                 events={events} settings={effectiveSettings} view={view} anchor={anchor} today={today}
-                onSelectEvent={setSelected} selectedId={selected?.id}
+                onSelectEvent={(e, rect) => { setSelected(e); setAnchorRect(rect || null); setRosterFor(null); setRoster(null); }}
+                selectedId={selected?.id}
               />
             )}
           </div>
@@ -269,21 +280,114 @@ export default function MyTimetable({ onBack }) {
       {/* Event detail. A panel rather than a tooltip: a tile is too small for the
           room, the group and the staff at once, and a lecturer checking where to be
           needs all three. */}
-      {selected && (
-        <div className="fixed inset-x-0 bottom-0 z-40 rounded-t-2xl bg-white p-4 shadow-2xl ring-1 ring-slate-200 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-80 sm:rounded-2xl">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <p className="text-base font-extrabold text-slate-800">{selected.title}</p>
-            <button onClick={() => setSelected(null)} aria-label="Close" className="rounded-full p-1 text-slate-400 hover:bg-slate-100"><X size={16} /></button>
-          </div>
-          <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-500"><Clock3 size={14} /> {selected.date} · {selected.start}–{selected.end}</p>
-          {selected.room && <p className="flex items-center gap-1.5 py-0.5 text-sm text-slate-600"><MapPin size={14} className="text-slate-400" /> {selected.room}</p>}
-          {selected.unitCode && <p className="flex items-center gap-1.5 py-0.5 text-sm text-slate-600"><BookOpen size={14} className="text-slate-400" /> {selected.unitCode}{selected.unitName ? ` — ${selected.unitName}` : ""}</p>}
-          {!!selected.staff?.length && <p className="flex items-center gap-1.5 py-0.5 text-sm text-slate-600"><Users size={14} className="text-slate-400" /> {selected.staff.map((s) => s.name).join(", ")}</p>}
-          {!!selected.groups?.length && <p className="flex items-center gap-1.5 py-0.5 text-sm text-slate-600"><Users size={14} className="text-slate-400" /> {selected.groups.map((g) => g.name).join(", ")}</p>}
-          {selected.notes && <p className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 p-2 text-xs text-slate-600">{selected.notes}</p>}
-          {selected.category && <p className="mt-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: alpha(selected.categoryColour || NAVY, 14), color: selected.categoryColour || NAVY }}>{selected.category}</p>}
-        </div>
-      )}
+      {selected && (() => {
+        // ANCHORED TO THE TILE, and flipped rather than clipped.
+        //
+        // The panel is ~320 wide and ~340 tall. Placed naively to the right of and below
+        // the tile it would fall off the screen for anything on Friday or after lunch, so
+        // each axis independently chooses the side with room. Clamped as well, because a
+        // tile near a corner can leave neither side comfortable.
+        const W = 320, H = 340, GAP = 10;
+        let style = { position: "fixed", left: 16, right: 16, bottom: 0 };   // handset default
+        if (anchorRect) {
+          const vw = window.innerWidth, vh = window.innerHeight;
+          const left = anchorRect.right + GAP + W < vw ? anchorRect.right + GAP
+                     : anchorRect.left - GAP - W > 0 ? anchorRect.left - GAP - W
+                     : Math.max(8, Math.min(vw - W - 8, anchorRect.left));
+          const top = Math.max(8, Math.min(vh - H - 8, anchorRect.top));
+          style = { position: "fixed", left, top, width: W };
+        }
+        const colour = selected.categoryColour || NAVY;
+        const Row = ({ icon: I, children }) => (
+          <p className="flex items-start gap-2 py-1 text-sm text-slate-700">
+            <I size={14} className="mt-0.5 shrink-0" style={{ color: colour }} /> <span className="min-w-0">{children}</span>
+          </p>
+        );
+        return (
+          <>
+            {/* Click anywhere else to dismiss. Without this the panel could only be
+                closed by its own X, which on a grid you are scanning is a click you
+                should not have to aim for. */}
+            <div className="fixed inset-0 z-30" onClick={() => { setSelected(null); setAnchorRect(null); }} />
+            <div style={style}
+              className="z-40 max-h-[80vh] overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 max-sm:rounded-b-none">
+              {/* The header carries the class's OWN colour, so the panel and the tile it
+                  came from are visibly the same thing. A white card beside a coloured
+                  grid reads as a different screen. */}
+              <div className="flex items-start justify-between gap-2 rounded-t-2xl px-4 py-3 max-sm:rounded-t-2xl" style={{ background: colour }}>
+                <div className="min-w-0">
+                  <p className="truncate text-base font-extrabold text-white">{selected.title}</p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold text-white/85">
+                    <Clock3 size={12} /> {selected.date} · {selected.start}–{selected.end}
+                  </p>
+                </div>
+                <button onClick={() => { setSelected(null); setAnchorRect(null); }} aria-label="Close"
+                  className="shrink-0 rounded-full p-1 text-white/80 transition hover:bg-white/20 hover:text-white"><X size={16} /></button>
+              </div>
+
+              <div className="px-4 py-3">
+                {selected.room && <Row icon={MapPin}>{selected.room}</Row>}
+                {selected.unitCode && <Row icon={BookOpen}>{selected.unitCode}{selected.unitName ? ` — ${selected.unitName}` : ""}</Row>}
+                {!!selected.staff?.length && <Row icon={Users}>{selected.staff.map((s) => s.name).join(", ")}</Row>}
+
+                {!!selected.groups?.length && (
+                  <div className="py-1">
+                    <p className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide" style={{ color: colour }}>
+                      <Users size={13} /> Groups
+                    </p>
+                    {/* EACH GROUP OPENS ITS OWN REGISTER LIST. The question a lecturer
+                        actually has in front of a class is "who is in this", and the
+                        group name was previously just text. Fetched on click. */}
+                    <div className="flex flex-wrap gap-1">
+                      {selected.groups.map((g) => (
+                        <button key={g.id} type="button"
+                          onClick={async () => {
+                            if (rosterFor === g.id) { setRosterFor(null); setRoster(null); return; }
+                            setRosterFor(g.id); setRoster(null);
+                            try { setRoster(await api.ttGroupStudents(g.id)); }
+                            catch (e) { setRoster({ error: e?.message || "Could not load that group." }); }
+                          }}
+                          className="rounded-full px-2.5 py-1 text-xs font-bold transition hover:brightness-95"
+                          style={{ background: alpha(colour, rosterFor === g.id ? 26 : 14), color: colour }}>
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                    {rosterFor && (
+                      <div className="mt-2 rounded-lg p-2" style={{ background: alpha(colour, 8) }}>
+                        {roster === null && <p className="text-xs text-slate-500">Loading…</p>}
+                        {roster?.error && <p className="text-xs font-semibold text-amber-700">{roster.error}</p>}
+                        {Array.isArray(roster) && !roster.length && (
+                          <p className="text-xs text-slate-500">Nobody is in this group yet.</p>
+                        )}
+                        {Array.isArray(roster) && !!roster.length && (
+                          <>
+                            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">{roster.length} student{roster.length === 1 ? "" : "s"}</p>
+                            <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+                              {roster.map((st) => (
+                                <li key={st.id} className="flex items-center justify-between gap-2 text-xs text-slate-700">
+                                  <span className="truncate">{`${st.firstName || ""} ${st.lastName || ""}`.trim()}</span>
+                                  <span className="shrink-0 text-slate-400">{st.studentRef}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selected.notes && <p className="mt-2 whitespace-pre-wrap rounded-lg p-2 text-xs text-slate-600" style={{ background: alpha(colour, 8) }}>{selected.notes}</p>}
+                {selected.category && (
+                  <p className="mt-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    style={{ background: alpha(colour, 16), color: colour }}>{selected.category}</p>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       <SelectTimetablesModal
         open={picker} initialType={scope.type} initialSelected={scope.labels}

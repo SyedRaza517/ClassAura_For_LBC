@@ -32,7 +32,17 @@ function EventTile({ event, settings, today, onSelect, selected, style, compact 
   return (
     <button
       type="button"
-      onClick={() => onSelect?.(event)}
+      // THE TILE'S POSITION TRAVELS WITH THE EVENT, as a second argument.
+      //
+      // A reader needs the detail panel beside the thing they pressed. Without the
+      // rect the only place a container can put it is a fixed corner of the screen,
+      // which is what My Timetable was doing: click Monday morning, read the answer
+      // in the bottom right, look back up to check you had the right class.
+      //
+      // Passed rather than looked up by id afterwards, because the tile is the only
+      // thing that knows where it was drawn — layoutDay may have put it in any lane.
+      // Callers that do not want it (the planner opens a modal) simply ignore it.
+      onClick={(domEvent) => onSelect?.(event, domEvent.currentTarget.getBoundingClientRect())}
       style={{
         ...style,
         background: light ? alpha(colour, 14) : colour,

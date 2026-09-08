@@ -150,6 +150,13 @@ async function seed() {
       [3, 2, 1, [["10:00", "13:00"]], 2, 1],                        // Tue, other school
       [5, 3, 3, [["14:00", "17:00"]], 3, 0],                        // Thu, third school
     ];
+    // The first active real staff account, if the college has one. Read once, not per
+    // event, and null is handled: a brand-new install has nobody, and the demo should
+    // still produce a calendar rather than refusing.
+    const teacher = await prisma.staff.findFirst({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+    if (teacher) log(`  · classes will be taught by ${teacher.name} (a real account, so they appear on My Timetable)`);
+    else log("  · no staff account found, so these classes will have no lecturer");
+
     const seriesId = `demo-${Date.now()}`;
     for (const [ui, gi, dayOffset, sessions, ri, ci] of seriesPlan) {
       const u = madeUnits[ui]; const g = madeGroups[gi];
@@ -170,6 +177,16 @@ async function seed() {
             },
           });
           await prisma.timetableEventGroup.create({ data: { eventId: ev.id, cohortId: g.cohort.id } });
+
+          // TEACHING STAFF ARE BORROWED, NEVER INVENTED.
+          //
+          // "My Timetable" shows a member of staff the classes THEY teach — it filters on
+          // TimetableEventStaff. A demo with no lecturer on it is therefore invisible on
+          // that screen for everybody, which is exactly the screen somebody wants to look
+          // at. But manufacturing a lecturer would create a login, so these are attached
+          // to REAL accounts that already exist: the demo appears on their timetable, and
+          // removing it detaches them again without touching the account itself.
+          if (teacher) await prisma.timetableEventStaff.create({ data: { eventId: ev.id, staffId: teacher.id } });
           made++;
         }
       }
