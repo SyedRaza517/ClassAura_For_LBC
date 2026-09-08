@@ -31,7 +31,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp,
   Menu, Info, Settings as SettingsIcon, Share2, Printer, Search, MoreVertical,
-  List, LayoutGrid, Loader2, AlertTriangle, X, MapPin, Users, BookOpen, Clock3, CalendarDays,
+  List, LayoutGrid, Loader2, AlertTriangle, X, MapPin, Users, BookOpen, Clock3, CalendarDays, Building2,
 } from "lucide-react";
 import { api } from "./api";
 import TimetableCalendar from "./TimetableCalendar";
@@ -591,6 +591,11 @@ export default function MyTimetable({ onBack }) {
 
               <div className="px-4 py-3">
                 {selected.room && <Row icon={MapPin}>{selected.room}</Row>}
+                {/* The campus on its own line. It is already inside the room label, in
+                    square brackets at the very end — the least prominent position in the
+                    string — and "which site is this on" is the question somebody works
+                    out whether they can walk there in ten minutes. */}
+                {selected.campus && <Row icon={Building2}>{selected.campus}</Row>}
                 {selected.unitCode && <Row icon={BookOpen}>{selected.unitCode}{selected.unitName ? ` — ${selected.unitName}` : ""}</Row>}
                 {!!selected.staff?.length && <Row icon={Users}>{selected.staff.map((s) => s.name).join(", ")}</Row>}
 

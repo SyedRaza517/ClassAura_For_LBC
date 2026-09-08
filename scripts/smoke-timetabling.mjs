@@ -136,6 +136,29 @@ const titles = (minePub.data?.events || []).map((e) => e.title);
 check("once published, the lecturer sees the events naming them", titles.includes(`First ${TAG}`), titles.join(" | "));
 check("and NOT the ones that do not name them", !titles.includes(`Back to back ${TAG}`), titles.join(" | "));
 
+console.log("\n--- the campus reaches My Timetable, from the RELATION not the legacy string ---");
+//
+// The bug this pins: roomLabel() reads campusRef first and falls back to the legacy
+// `campus` string, and this router's include selected only the string. Every room made
+// since campuses became rows has campusId set and that string EMPTY, so the campus
+// vanished here while the planner — whose include always had campusRef — showed it. The
+// fixture below is built that way deliberately: campusId set, legacy string blank. A
+// room carrying both would pass through the broken code on the fallback and prove
+// nothing.
+const campusRow = (await call("/timetabling/campuses", { method: "POST", token: admin.token, body: { name: `Site ${TAG}` } })).data;
+const relRoom = (await call("/timetabling/rooms", { method: "POST", token: admin.token, body: { name: `R2-${TAG}`, floor: "Second floor", campusId: campusRow?.id } })).data;
+check("the fixture room has NO legacy campus string, so only the relation can answer",
+  !(await db.room.findUnique({ where: { id: relRoom.id }, select: { campus: true } }))?.campus,
+  JSON.stringify((await db.room.findUnique({ where: { id: relRoom.id }, select: { campus: true } }))?.campus));
+
+const campusEv = (await call("/timetabling/events", { method: "POST", token: admin.token,
+  body: { title: `Campus ${TAG}`, date: D, start: "07:00", end: "07:30", roomId: relRoom.id, staffIds: [lecturer.id], published: true } })).data;
+check("an event was placed in it", !!campusEv?.event?.id);
+const seen = ((await call(`/my-timetable?from=${D}&to=${D}`, { token: lecturerToken })).data?.events || [])
+  .find((e) => e.title === `Campus ${TAG}`);
+check("MY TIMETABLE REPORTS THE CAMPUS AS ITS OWN FIELD", seen?.campus === `Site ${TAG}`, JSON.stringify(seen?.campus));
+check("and the room label still carries it in brackets", (seen?.room || "").includes(`[Site ${TAG}]`), seen?.room);
+
 console.log("\n--- type=all shows every published class, and still only published ones ---");
 //
 // The scope an ADMINISTRATOR needs: whoever builds a term is usually teaching none of

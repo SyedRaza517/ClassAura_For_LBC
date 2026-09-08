@@ -10354,26 +10354,59 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
     // way the course is actually delivered.
     .sort((a, b) => placeKey(a) - placeKey(b) || (Number(a.unitNumber) || 999) - (Number(b.unitNumber) || 999) || a.code.localeCompare(b.code));
 
-  // The course filter pills: All, each course, then "No course" if needed.
-  const chips = [{ id: "", label: "All courses" },
-    ...store.courses.map(p => ({ id: p.id, label: p.name, colour: p.colour })),
-    ...(hasUnassigned ? [{ id: "none", label: "No course" }] : [])];
+  // A SELECT, NOT PILLS, AND THE LENGTH OF THE LABELS IS THE WHOLE REASON.
+  //
+  // These were pills, which is right for the Year and Term filters below — "Year 1",
+  // "Term 2", four characters each. A course is named "HND Business – September 2026 |
+  // Pearson BTEC Level 5 Higher National Diploma in Business": sixty-odd characters, and
+  // nine of them wrapped into six rows of chips that pushed the units themselves off the
+  // screen. A filter taller than the thing it filters is not a filter.
+  //
+  // shortCourse trims at the pipe because that is where the redundancy is: every one of
+  // these repeats its own qualification title after it, so the half before the pipe is
+  // the part that distinguishes one course from another. The FULL name stays as the
+  // option's title attribute, so nothing is actually hidden.
+  const shortCourse = (name) => {
+    const head = String(name || "").split("|")[0].trim();
+    return head || String(name || "");
+  };
+  const courseOpts = [{ id: "", label: "All courses", full: "All courses" },
+    ...store.courses.map(p => ({ id: p.id, label: shortCourse(p.name), full: p.name, colour: p.colour })),
+    ...(hasUnassigned ? [{ id: "none", label: "No course", full: "Units with no course" }] : [])];
+  const chosenCourse = courseOpts.find(c => c.id === courseFilter);
 
   return (
     <>
-      {chips.length > 1 && (
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          {chips.map(c => {
-            const active = courseFilter === c.id;
-            return (
-              <button key={c.id || "all"} onClick={() => { setCourseFilter?.(c.id); setYearFilter(""); setTermFilter(""); setStatusFilter(""); }}
-                className={`press flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold shadow-sm ring-1 transition-all ${active ? "text-white ring-transparent" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"}`}
-                style={active ? { background: c.colour || NAVY } : {}}>
-                {c.colour && !active && <span className="h-2 w-2 rounded-full" style={{ background: c.colour }} />}
-                {c.label}
-              </button>
-            );
-          })}
+      {courseOpts.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Course</span>
+          <div className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200">
+            {/* The colour dot survives the change from pills. It is how the unit cards
+                below are grouped visually, so dropping it would leave the gallery's
+                colours unexplained. A neutral ring stands in for "all courses", which
+                has no colour of its own rather than a missing one. */}
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-300"
+              style={chosenCourse?.colour ? { background: chosenCourse.colour, boxShadow: "none" } : { background: "transparent" }} />
+            <select
+              value={courseFilter || ""}
+              onChange={e => { setCourseFilter?.(e.target.value); setYearFilter(""); setTermFilter(""); setStatusFilter(""); }}
+              className="max-w-[22rem] bg-transparent text-sm font-semibold text-slate-700 outline-none"
+              title={chosenCourse?.full || ""}
+            >
+              {courseOpts.map(c => <option key={c.id || "all"} value={c.id} title={c.full}>{c.label}</option>)}
+            </select>
+          </div>
+          {/* Only when one is chosen, and only the half the select dropped. Saying "All
+              courses" again beside a box that already reads "All courses" is noise. */}
+          {chosenCourse?.id && chosenCourse.full !== chosenCourse.label && (
+            <span className="truncate text-xs text-slate-400" title={chosenCourse.full}>
+              {chosenCourse.full.split("|").slice(1).join("|").trim()}
+            </span>
+          )}
+          {courseFilter && (
+            <button onClick={() => { setCourseFilter?.(""); setYearFilter(""); setTermFilter(""); setStatusFilter(""); }}
+              className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100">Clear</button>
+          )}
         </div>
       )}
 

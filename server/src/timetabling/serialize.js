@@ -80,6 +80,18 @@ const sEvent = (e) => ({
   courseName: e.course?.name ?? null,
   roomId: e.roomId ?? null,
   room: e.room ? roomLabel(e.room) : null,
+  // THE CAMPUS ON ITS OWN, beside the label that already embeds it.
+  //
+  // Not redundant: a reader deciding whether they can get to a class in ten minutes is
+  // asking which SITE it is on, and that answer arrives buried in square brackets at the
+  // end of "101 - First floor [Harrow]" — the least prominent position in the string.
+  // Given separately, a screen can give it its own line and its own icon.
+  //
+  // Same precedence as roomLabel and for the same reason: the related campus wins so a
+  // rename propagates, and the legacy free-text column is the fallback for rooms the
+  // migration's fold could not place. Null rather than "" when there is no campus at
+  // all, so a screen can leave the row out instead of printing an empty one.
+  campus: e.room ? (e.room.campusRef?.name || e.room.campus || null) : null,
   categoryId: e.categoryId ?? null,
   category: e.category?.name ?? null,
   categoryColour: e.category?.colour ?? null,

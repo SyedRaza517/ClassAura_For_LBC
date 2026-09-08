@@ -113,7 +113,13 @@ const timetableSettings = require("../timetabling/settings");
 const EVENT_INCLUDE = {
   unit: { select: { code: true, name: true } },
   course: { select: { name: true } },
-  room: { select: { id: true, name: true, floor: true, campus: true } },
+  // campusRef IS REQUIRED HERE, not optional detail. roomLabel() reads the related
+  // campus first and falls back to the legacy `campus` string, so selecting only the
+  // string silently drops the campus for every room created since campuses became rows
+  // — those have campusId set and the string left empty. The planner's copy of this
+  // include has always had it, which is why the same class read "101 [Harrow]" there and
+  // a bare "101" here. Reported as: there is no campus in the timetable popup.
+  room: { select: { id: true, name: true, floor: true, campus: true, campusRef: { select: { name: true } } } },
   category: { select: { name: true, colour: true } },
   staff: { include: { staff: { select: { name: true } } } },
   groups: { include: { cohort: { select: { name: true } } } },
