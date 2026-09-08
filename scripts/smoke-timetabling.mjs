@@ -136,6 +136,32 @@ const titles = (minePub.data?.events || []).map((e) => e.title);
 check("once published, the lecturer sees the events naming them", titles.includes(`First ${TAG}`), titles.join(" | "));
 check("and NOT the ones that do not name them", !titles.includes(`Back to back ${TAG}`), titles.join(" | "));
 
+console.log("\n--- type=all shows every published class, and still only published ones ---");
+//
+// The scope an ADMINISTRATOR needs: whoever builds a term is usually teaching none of
+// it, so their own timetable is empty and the screen reads as broken. The two
+// assertions that matter here pull in opposite directions -- it must show a class that
+// does NOT name the reader, and it must still refuse a draft. A `where` that dropped
+// the scope predicate by dropping the whole clause would pass the first and fail the
+// second, which is the mistake worth catching.
+const all = await call(`/my-timetable?from=${D}&to=${D}&type=all`, { token: lecturerToken });
+check("type=all answers 200", all.status === 200, String(all.status));
+check("its scope comes back as 'all' rather than falling through to 'me'",
+  all.data?.scope?.type === "all", JSON.stringify(all.data?.scope));
+const allTitles = (all.data?.events || []).map((e) => e.title);
+check("IT SHOWS A CLASS THAT DOES NOT NAME THE READER — otherwise it is just 'me' again",
+  allTitles.includes(`Back to back ${TAG}`), allTitles.join(" | "));
+check("and it still shows the reader's own", allTitles.includes(`First ${TAG}`), allTitles.join(" | "));
+
+// A draft, created and left unpublished, must not appear in the college-wide view.
+const draft = await call("/timetabling/events", { method: "POST", token: admin.token,
+  body: { title: `Draft all ${TAG}`, date: D, start: "08:00", end: "08:30", published: false } });
+check("a draft was created to test against", draft.status === 201 || draft.status === 200, String(draft.status));
+const all2 = await call(`/my-timetable?from=${D}&to=${D}&type=all`, { token: lecturerToken });
+check("A DRAFT IS STILL INVISIBLE UNDER type=all — the scope widened, the publish rule did not",
+  !(all2.data?.events || []).some((e) => e.title === `Draft all ${TAG}`),
+  (all2.data?.events || []).map((e) => e.title).join(" | "));
+
 console.log("\n--- my timetable is found by id, not by name ---");
 // THE ASSERTION THIS WHOLE MODULE EXISTS FOR, and it only discriminates in this
 // direction. "Zed <tag>" IS a substring of "Zed <tag> Junior", so a match of the

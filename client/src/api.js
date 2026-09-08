@@ -227,10 +227,14 @@ export const api = {
   // developer testing it as an admin and 403 for every real user of that screen.
   myTimetable: (from, to, type, ids) => {
     const q = new URLSearchParams({ from, to });
-    // Sent only together. `type` without `ids` means "my own", which is the default
-    // the server already applies — sending a bare type would be a no-op that reads
+    // "all" is the one scope with no ids — it is the absence of a filter rather than a
+    // filter over a list — so it has to be sent on its own or it would fall through to
+    // the rule below and be dropped as a bare type.
+    if (type === "all") q.set("type", "all");
+    // Otherwise sent only together. `type` without `ids` means "my own", which is the
+    // default the server already applies — a bare type would be a no-op that reads
     // like a filter.
-    if (type && ids?.length) { q.set("type", type); q.set("ids", ids.join(",")); }
+    else if (type && ids?.length) { q.set("type", type); q.set("ids", ids.join(",")); }
     return request(`/my-timetable?${q.toString()}`);
   },
   myTimetableResources: (type, q = "", limit = 25) =>

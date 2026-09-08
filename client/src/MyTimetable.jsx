@@ -248,7 +248,12 @@ export default function MyTimetable({ onBack }) {
   };
 
   const { from, to } = windowFor(view, anchor);
-  const scopeLabel = scope.type ? scope.labels.map((l) => l.label).join(", ") : "My timetable";
+  // "all" carries no labels — it is the absence of a filter — so it needs its own
+  // wording. Falling through to the join would print "Viewing:" followed by nothing,
+  // which reads as a fault rather than as a college-wide view.
+  const scopeLabel = scope.type === "all" ? "Every class in the college"
+    : scope.type ? scope.labels.map((l) => l.label).join(", ")
+    : "My timetable";
   // The grid draws with the reader's chosen layout unless they have set one in My
   // Settings, which wins — the toggle is a quick override, not a second setting.
   const effectiveSettings = settings ? { ...settings, layout } : null;
@@ -283,8 +288,26 @@ export default function MyTimetable({ onBack }) {
         onToggle={() => setOpenSections((s) => ({ ...s, timetables: !s.timetables }))}
         icon={<button onClick={() => setPicker(true)} aria-label="Select timetables" className="rounded p-1 text-slate-500 hover:bg-slate-100"><Search size={18} /></button>}
       >
-        {!scope.ids.length ? (
-          <p className="text-sm text-slate-400">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
+        {scope.type === "all" ? (
+          <div className="space-y-1">
+            <p className="truncate rounded bg-slate-100 px-2 py-1 text-sm font-semibold text-slate-700">Every class in the college</p>
+            <button onClick={() => setScope({ type: null, ids: [], labels: [] })} className="pt-1 text-xs font-semibold text-slate-500 hover:text-slate-700">Back to my timetable</button>
+          </div>
+        ) : !scope.ids.length ? (
+          <>
+            <p className="text-sm text-slate-400">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
+            {/* THE ONE-CLICK ANSWER TO AN EMPTY OWN-TIMETABLE. Whoever builds the term
+                is usually not teaching any of it, so their own view is blank and the
+                screen reads as broken. Offering "every class" right where that
+                explanation sits turns a dead end into the view they actually wanted,
+                without making it the default — a lecturer opening this wants their own
+                day first, and a college-wide grid is not that. */}
+            <button onClick={() => setScope({ type: "all", ids: [], labels: [] })}
+              className="mt-2 w-full rounded-lg px-2.5 py-1.5 text-xs font-bold text-white"
+              style={{ background: NAVY }}>
+              Show every class in the college
+            </button>
+          </>
         ) : (
           <div className="space-y-1">
             {scope.labels.map((l) => <p key={l.id} className="truncate rounded bg-slate-100 px-2 py-1 text-sm text-slate-700">{l.label}</p>)}

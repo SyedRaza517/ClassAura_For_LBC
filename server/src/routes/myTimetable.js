@@ -150,7 +150,24 @@ router.get("/", async (req, res) => {
   const wanted = str(req.query.ids).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
 
   let scope, where = { published: true, date: { gte: from, lte: to } };
-  if (!type || !wanted.length) {
+  // EVERY PUBLISHED CLASS, and unlike the other scopes it takes no ids -- so it is
+  // checked before the `wanted.length` test below, which would otherwise fall it through
+  // to "me" and silently answer a different question than the one asked.
+  //
+  // This grants NO disclosure that was not already available. Any signed-in member of
+  // staff can already ask for any room's, group's, module's, colleague's or named
+  // student's week one at a time, deliberately, and /resources will enumerate them to
+  // find the ids. "all" is a convenience over that, not a new permission, which is why
+  // it carries no requirePage of its own -- adding one would imply the pieces were
+  // protected when they are not.
+  //
+  // It exists because "my teaching" is the wrong default for the person who BUILT the
+  // timetable. An administrator who has just scheduled a term is not teaching any of it,
+  // so their own timetable is empty and the screen looked broken. Asked for in exactly
+  // those words: the events in Scheduling need to be here as well.
+  if (type === "all") {
+    scope = { type: "all", ids: [] };
+  } else if (!type || !wanted.length) {
     scope = { type: "me", ids: [req.user.id] };
     where.staff = { some: { staffId: req.user.id } };
   } else {
