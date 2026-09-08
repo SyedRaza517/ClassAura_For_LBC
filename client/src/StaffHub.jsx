@@ -6637,6 +6637,9 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
   if (!store.units.length) {
     return <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200/70"><EmptyState Icon={BookOpen} title="No units yet" msg="Add a unit on the Units tab, then you can timetable sessions and take registers." /></div>;
   }
+  // Courses by id, for the picker's labels. Unit codes are unique within a course, not
+  // globally, so the course is what separates six units all called "UNIT 1".
+  const courseById = Object.fromEntries(store.courses.map(c => [c.id, c]));
   const pickInCourse = store.units.filter(u => {
     if (pickCourse === "none" && u.courseId) return false;
     if (pickCourse && pickCourse !== "none" && u.courseId !== pickCourse) return false;
@@ -6665,25 +6668,44 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
         on={{ course: setPickCourse, year: setPickYear, term: setPickTerm, status: setPickStatus,
               tutor: setPickTutor, cover: setPickCover, sortBy: setPickSort, query: setPickQuery }}
       />
-      {/* BOUNDED, AND SCROLLED. Even filtered, a college with four hundred units can
-          produce more cards than a screen holds, and the registers are what this page is
-          for — the picker must not be able to push them below the fold again. */}
-      <div className="mb-4 flex max-h-60 flex-wrap gap-1.5 overflow-y-auto rounded-xl p-0.5">
-        {!pickShown.length && (
-          <p className="px-2 py-3 text-sm text-slate-400">No unit matches those filters.</p>
-        )}
-        {pickShown.map(m => {
+      {/* A DROPDOWN, NOT CARDS. Eighty-seven units is not a set you choose from by
+          scanning tiles, however the tiles are bounded — a scroll box full of cards is
+          still a wall, just one with a smaller window. The filters above narrow it and
+          this picks from what is left, which is the same shape as every other control on
+          the page rather than a second way of choosing things.
+
+          THE COURSE IS PART OF THE LABEL because it has to be. Unit codes are unique
+          WITHIN a course, not globally, so this college has six units called "UNIT 1"
+          and a list of bare codes cannot tell them apart. The counts move beside the
+          picker, where they describe the one unit being looked at instead of repeating
+          on every tile. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300 sm:flex-none">
+          <BookOpen size={15} className="shrink-0 text-slate-400" />
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Unit</span>
+          <select value={unitId || ""} onChange={e => setUnitId(e.target.value)}
+            className="min-w-0 max-w-[26rem] flex-1 bg-transparent text-sm font-bold text-slate-700 outline-none">
+            {!unitId && <option value="">Choose a unit…</option>}
+            {!pickShown.length && <option value="" disabled>No unit matches those filters</option>}
+            {pickShown.map(m => {
+              const course = courseById[m.courseId]?.name;
+              return (
+                <option key={m.id} value={m.id}>
+                  {m.code}{m.name && m.name !== m.code ? ` — ${m.name}` : ""}{course ? ` · ${course.split("|")[0].trim()}` : ""}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        {selected && (() => {
           // Session count for the semester in view, not the unit's all-time total.
-          const count = store.attendance?.unitTotals?.[m.id]?.sessionCount ?? m.sessionCount;
+          const count = store.attendance?.unitTotals?.[selected.id]?.sessionCount ?? selected.sessionCount;
           return (
-            <button key={m.id} onClick={() => setUnitId(m.id)}
-              className={`press rounded-xl px-3.5 py-2 text-left text-xs font-bold shadow-sm ring-1 transition-all ${unitId === m.id ? "text-white ring-transparent" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
-              style={unitId === m.id ? { background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` } : {}}>
-              <span className="block">{m.code}</span>
-              <span className={`block text-[10px] font-medium ${unitId === m.id ? "text-white/60" : "text-slate-400"}`}>{m.studentCount} students · {count} session{count === 1 ? "" : "s"}</span>
-            </button>
+            <span className="text-xs font-semibold text-slate-500">
+              {selected.studentCount} student{selected.studentCount === 1 ? "" : "s"} · {count} session{count === 1 ? "" : "s"}
+            </span>
           );
-        })}
+        })()}
       </div>
 
       {selected && (
