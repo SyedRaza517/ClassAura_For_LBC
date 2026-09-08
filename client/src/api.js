@@ -267,6 +267,8 @@ export const api = {
   // editor, not beside the room list.
   ttDepartments: () => request("/timetabling/departments"),
   ttCreateDepartment: (d) => request("/timetabling/departments", { method: "POST", body: d }),
+  ttUpdateDepartment: (id, d) => request(`/timetabling/departments/${id}`, { method: "PUT", body: d }),
+  ttDeleteDepartment: (id) => request(`/timetabling/departments/${id}`, { method: "DELETE" }),
 
   // Group membership. On /hnd rather than /timetabling because moving a student
   // between groups rewrites which department can see them — see the comment on the

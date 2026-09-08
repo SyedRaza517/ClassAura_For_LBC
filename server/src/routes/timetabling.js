@@ -316,14 +316,20 @@ router.get("/departments", async (_req, res) => {
   // withoutAcademicScope() wrapper — the department LIST is a college-wide fact, and a
   // scoped account that could not read it could not be shown the name of its own school.
   //
-  // Active only, unlike the settings route. That one deliberately shows retired
-  // departments because managing them is the job; this is a picker, and offering a
-  // retired school as a destination for next term's classes is how a retired school
-  // stops being retired.
+  // RETIRED ONES ARE RETURNED TOO, CARRYING `active`, and the caller filters.
+  //
+  // This started as active-only, on the reasoning that offering a retired school as a
+  // destination for next term's classes is how a retired school stops being retired.
+  // That is still true of the PICKER — which now filters on `active` itself, exactly as
+  // the room and campus pickers already do.
+  //
+  // But the Schools tab has to manage them, and a management screen that cannot see a
+  // retired row cannot restore one: retiring a school by mistake would be irreversible
+  // from the only screen that offers the button. One endpoint returning the honest set
+  // beats a second endpoint differing by one WHERE clause.
   const rows = await prisma.academicDepartment.findMany({
-    where: { active: true },
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, colour: true },
+    orderBy: [{ active: "desc" }, { name: "asc" }],
+    select: { id: true, name: true, colour: true, active: true },
   });
   res.json(rows);
 });
@@ -466,6 +472,100 @@ router.post("/departments", async (req, res) => {
   });
 
   res.status(201).json({ id: row.id, name: row.name, colour: row.colour });
+});
+
+/**
+ * Rename a school, or change its colour. NOT its key.
+ *
+ * `key` is the stable identifier — it is what `departments.cleanOne` validates, what the
+ * Settings screen matches rows on, and what a college's own configuration refers to.
+ * Renaming the DISPLAY name is cosmetic and safe; changing the key underneath it is a
+ * different act with a different blast radius, and it stays on Settings.
+ */
+router.put("/departments/:id", async (req, res) => {
+  const existing = await prisma.academicDepartment.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: "School not found" });
+
+  const data = {};
+  if (req.body?.name !== undefined) {
+    const name = str(req.body.name);
+    if (!name) return res.status(400).json({ error: "A school name is required" });
+    // Same case-insensitive clash rule the create path uses, so a rename cannot produce
+    // the near-duplicate a create would have been refused for.
+    const clash = (await prisma.academicDepartment.findMany({ select: { id: true, name: true } }))
+      .find((d) => d.id !== existing.id && d.name.trim().toLowerCase() === name.toLowerCase());
+    if (clash) return res.status(409).json({ error: `A school called "${clash.name}" already exists.` });
+    data.name = name.slice(0, 60);
+  }
+  if (req.body?.active !== undefined) data.active = !!req.body.active;
+  if (!Object.keys(data).length) return res.status(400).json({ error: "Nothing to change" });
+
+  const row = await prisma.academicDepartment.update({ where: { id: existing.id }, data });
+  departments.invalidate();
+  audit.record(req, {
+    action: "academicDepartments.updated", entity: "AcademicDepartment", entityId: row.id,
+    summary: `School "${existing.name}" was ` +
+      (data.name && data.name !== existing.name ? `renamed to "${row.name}"` : (row.active ? "restored" : "retired")) +
+      ` from the timetable planner by ${req.user?.name || "an administrator"}`,
+    before: { name: existing.name, active: existing.active },
+    after: { name: row.name, active: row.active },
+  });
+  res.json({ id: row.id, name: row.name, colour: row.colour, active: row.active });
+});
+
+/**
+ * Retire a school, or delete it outright if nothing has ever belonged to it.
+ *
+ * A HARD DELETE OF A SCHOOL IN USE WOULD HIDE PEOPLE FROM THEIR OWN TUTORS, and that is
+ * why this counts first. Every relation to AcademicDepartment is SetNull, so deleting one
+ * does not remove its courses, students or classes — it sets their department to NULL.
+ * And a row with no department is visible ONLY to college-wide accounts, by design. So
+ * deleting a school in use would silently take every student in it out of the sight of
+ * every member of staff scoped to it, with nothing on any screen to say why.
+ *
+ * Retiring keeps every link intact and takes the school out of the pickers, which is what
+ * "delete this school" actually means to the person asking. A hard delete is allowed only
+ * when there is genuinely nothing to orphan — a school added by mistake a minute ago.
+ */
+router.delete("/departments/:id", async (req, res) => {
+  const id = req.params.id;
+  const existing = await prisma.academicDepartment.findUnique({ where: { id } });
+  if (!existing) return res.status(404).json({ error: "School not found" });
+
+  const [courses, students, cohorts, units, events, slots, staff] = await Promise.all([
+    prisma.course.count({ where: { academicDepartmentId: id } }),
+    prisma.student.count({ where: { academicDepartmentId: id } }),
+    prisma.cohort.count({ where: { academicDepartmentId: id } }),
+    prisma.unit.count({ where: { academicDepartmentId: id } }),
+    prisma.timetableEvent.count({ where: { academicDepartmentId: id } }),
+    prisma.timetableSlot.count({ where: { academicDepartmentId: id } }),
+    prisma.staffAcademicDepartment.count({ where: { academicDepartmentId: id } }),
+  ]);
+  const inUse = courses + students + cohorts + units + events + slots + staff;
+
+  if (inUse > 0) {
+    const row = await prisma.academicDepartment.update({ where: { id }, data: { active: false } });
+    departments.invalidate();
+    audit.record(req, {
+      action: "academicDepartments.retired", entity: "AcademicDepartment", entityId: id,
+      summary: `School "${existing.name}" was retired from the timetable planner by ${req.user?.name || "an administrator"} — ${inUse} record(s) still belong to it`,
+      before: { active: true }, after: { active: false },
+    });
+    return res.json({
+      ok: true, retired: true, inUse,
+      counts: { courses, students, cohorts, units, events, staff },
+      department: { id: row.id, name: row.name, colour: row.colour, active: row.active },
+    });
+  }
+
+  await prisma.academicDepartment.delete({ where: { id } });
+  departments.invalidate();
+  audit.record(req, {
+    action: "academicDepartments.deleted", entity: "AcademicDepartment", entityId: id,
+    summary: `Empty school "${existing.name}" was deleted from the timetable planner by ${req.user?.name || "an administrator"}`,
+    before: { key: existing.key, name: existing.name }, after: null,
+  });
+  res.json({ ok: true, retired: false, inUse: 0 });
 });
 
 /* ----------------------------------------------------------------- events -- */

@@ -17,6 +17,7 @@ import { api } from "./api";
 import { NAVY, alpha } from "./branding";
 import TimetableCalendar from "./TimetableCalendar";
 import TimetableSettingsModal from "./TimetableSettingsModal";
+import ConfirmDialog from "./ConfirmDialog";
 import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates, mondayOf } from "./timetableView";
 import { ukBankHolidaysRange } from "./bankHolidays";
 
@@ -350,7 +351,13 @@ function SchoolsTab() {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
   const [name, setName] = useState("");
+  // Which row is being renamed, and to what. One at a time: an inline editor per row all
+  // open at once is a form nobody can tell has unsaved changes in it.
+  const [editId, setEditId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [ask, setAsk] = useState(null);
 
   const load = useCallback(async () => {
     setBusy(true); setErr("");
@@ -361,24 +368,34 @@ function SchoolsTab() {
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
-    setErr("");
+    setErr(""); setNote("");
     try { await api.ttCreateDepartment({ name }); setName(""); load(); }
     catch (e) {
       // THE SERVER'S OWN WORDS ARE SHOWN, not a message reworded here. Its 409 already
       // tells the two cases apart — a school that exists, and one that exists but has
-      // been RETIRED and is therefore absent from the list below — and the second needs
-      // "restore it on Settings" rather than "add it again". A friendlier sentence
-      // written on this side would have to guess which of the two happened, and would
-      // send somebody to add a duplicate of a school the college already has.
+      // been RETIRED — and the second needs restoring rather than adding again.
       setErr(e?.message || "Could not add the school.");
     }
+  };
+
+  const rename = async () => {
+    setErr(""); setNote("");
+    try { await api.ttUpdateDepartment(editId, { name: editName }); setEditId(""); load(); }
+    catch (e) { setErr(e?.message || "Could not rename the school."); }
+  };
+
+  const setActive = async (d, active) => {
+    setErr(""); setNote("");
+    try { await api.ttUpdateDepartment(d.id, { active }); load(); }
+    catch (e) { setErr(e?.message || "Could not update the school."); }
   };
 
   return (
     <div>
       {err && <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 ring-1 ring-amber-200"><AlertTriangle size={15} /> {err}</div>}
+      {note && <div className="mb-3 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200"><Check size={15} /> {note}</div>}
       <p className="mb-3 text-xs text-slate-500">
-        Your schools. A class belongs to one, and the school you pick when you create an event narrows the module and group lists to that school’s courses. <strong>Renaming, retiring and choosing who belongs to a school are done on Settings</strong> — a school decides which staff can see which students, so it is edited beside that membership rather than here.
+        Your schools. A class belongs to one, and the school you pick when you create an event narrows the module and group lists to that school’s courses. A school also decides which staff can see which students — so <strong>who belongs to a school</strong>, and each school’s colour, are set on Settings.
       </p>
       <div className="mb-4 flex flex-wrap items-end gap-2 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
         <Field label="School name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="School of Computing" /></Field>
@@ -390,13 +407,25 @@ function SchoolsTab() {
         <div className="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
-              <th className="px-3 py-2">School</th><th className="px-3 py-2">Colour</th>
+              <th className="px-3 py-2">School</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Status</th><th className="px-3 py-2" />
             </tr></thead>
             <tbody>
-              {!rows.length && <tr><td colSpan={2} className="px-3 py-8 text-center text-slate-400">No schools yet. Add the first one above.</td></tr>}
+              {!rows.length && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-400">No schools yet. Add the first one above.</td></tr>}
               {rows.map((d) => (
-                <tr key={d.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-3 py-2 font-semibold text-slate-700">{d.name}</td>
+                <tr key={d.id} className={`border-b border-slate-100 last:border-0 ${d.active === false ? "opacity-60" : ""}`}>
+                  <td className="px-3 py-2 font-semibold text-slate-700">
+                    {editId === d.id ? (
+                      <div className="flex items-center gap-1">
+                        <input autoFocus className={inputCls} value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter" && editName.trim()) rename(); if (e.key === "Escape") setEditId(""); }} />
+                        <button onClick={rename} disabled={!editName.trim()} aria-label="Save name"
+                          className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"><Check size={15} /></button>
+                        <button onClick={() => setEditId("")} aria-label="Cancel rename"
+                          className="rounded p-1.5 text-slate-400 hover:bg-slate-100"><X size={15} /></button>
+                      </div>
+                    ) : d.name}
+                  </td>
                   {/* The colour is set on Settings, so it is shown and not edited. It is
                       the same swatch a reader sees elsewhere, which is the only way to
                       tell two similarly named schools apart at a glance. */}
@@ -406,12 +435,53 @@ function SchoolsTab() {
                       {d.colour || "—"}
                     </span>
                   </td>
+                  <td className="px-3 py-2 text-slate-500">{d.active === false ? "Retired" : "In use"}</td>
+                  <td className="px-3 py-2 text-right">
+                    {editId !== d.id && (
+                      <>
+                        {d.active === false ? (
+                          <button onClick={() => setActive(d, true)}
+                            className="mr-1 rounded px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100">Restore</button>
+                        ) : (
+                          <button onClick={() => { setEditId(d.id); setEditName(d.name); }} aria-label={`Rename ${d.name}`}
+                            className="mr-1 rounded px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100">Rename</button>
+                        )}
+                        <button onClick={() => setAsk(d)} aria-label={`Delete ${d.name}`}
+                          className="rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                      </>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {/* DELETING A SCHOOL IN USE RETIRES IT INSTEAD, and the wording says so before the
+          click rather than reporting it afterwards. Every relation to a school is
+          SetNull, so a hard delete would not remove its courses and students — it would
+          set their school to NULL, and a row with no school is visible only to
+          college-wide accounts. That would take every student in it out of the sight of
+          every member of staff scoped to it, with nothing on screen to explain why. */}
+      <ConfirmDialog
+        open={!!ask}
+        title="Delete this school?"
+        message={`If anything still belongs to “${ask?.name || ""}” it will be retired instead of deleted — its courses, students and classes keep their school, and it stops appearing in the pickers. It is only removed outright if nothing has ever used it.`}
+        confirmLabel="Delete" cancelLabel="Keep it" danger
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => {
+          const d = ask;
+          setAsk(null); setErr(""); setNote("");
+          try {
+            const r = await api.ttDeleteDepartment(d.id);
+            setNote(r.retired
+              ? `“${d.name}” was retired — ${r.inUse} record(s) still belong to it, so it was not deleted.`
+              : `“${d.name}” was deleted. Nothing belonged to it.`);
+            load();
+          } catch (e) { setErr(e?.message || "Could not delete the school."); }
+        }}
+      />
     </div>
   );
 }
@@ -820,6 +890,21 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
   const [warnings, setWarnings] = useState([]);
   const [editing, setEditing] = useState(null);
   const [prefs, setPrefs] = useState(false);
+
+  // WHAT THE SCREEN IS ASKING, instead of window.confirm and window.prompt.
+  //
+  // Three of them were browser dialogs: publish-the-period, delete-this-event and
+  // repeat-until. A native dialog announces itself as "edtech-hub-tan.vercel.app says",
+  // which reads as the browser interrupting rather than the app asking — and it is the
+  // same chrome a phishing page produces, so it is exactly the prompt a careful person
+  // has been taught to dismiss without reading. It also cannot be styled, cannot be
+  // dismissed by Android's back button the way ConfirmDialog handles, and on a packaged
+  // Capacitor build renders as a system alert bearing the WebView's own hostname.
+  //
+  // `null`, or { kind: "publish" | "delete" | "repeat", … }. One piece of state rather
+  // than three booleans: they are mutually exclusive, and three flags invite the state
+  // where two are true.
+  const [ask, setAsk] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [cats, setCats] = useState([]);
   const [depts, setDepts] = useState([]);
@@ -1115,12 +1200,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
         <div className="ml-auto flex items-center gap-1">
           <button onClick={() => setEditing(blank())} className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}><Plus size={14} /> New event</button>
           <button
-            onClick={async () => {
-              if (!window.confirm(`Publish every event from ${from} to ${to}? Staff will see them immediately.`)) return;
-              setErr(""); setNote("");
-              try { const r = await api.ttPublish({ from, to, published: true }); setNote(`${r.updated} event(s) published.`); load(); }
-              catch (e) { setErr(e?.message || "Could not publish."); }
-            }}
+            onClick={() => setAsk({ kind: "publish" })}
             className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"><Send size={14} /> Publish this period</button>
           <button onClick={() => setPrefs(true)} aria-label="Display settings" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><SettingsIcon size={16} /></button>
         </div>
@@ -1227,7 +1307,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                 {"academicDepartmentId" in editing && depts.length > 0 && (
                   <Field label="School" hint="Which school this class belongs to">
                     <SearchOne value={editing.academicDepartmentId || ""} placeholder="No school" noneLabel="No school"
-                      options={depts.map((d) => ({ id: d.id, label: d.name }))}
+                      options={depts.filter((d) => d.active !== false).map((d) => ({ id: d.id, label: d.name }))}
                       onChange={(id) => setEditing({ ...editing, academicDepartmentId: id })} />
                   </Field>
                 )}
@@ -1296,7 +1376,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     <Field label="School" hint="Pick this first — it narrows the modules and groups below">
                       <SearchOne value={editing.academicDepartmentId || ""} noneLabel="No school"
                         placeholder={depts.length ? "Choose a school…" : "No schools yet — add one on the Schools tab"}
-                        options={depts.map((d) => ({ id: d.id, label: d.name }))}
+                        options={depts.filter((d) => d.active !== false).map((d) => ({ id: d.id, label: d.name }))}
                         onChange={(id) => setEditing({ ...editing, academicDepartmentId: id })} />
                     </Field>
                     {/* THE ESCAPE, AND IT IS NOT OPTIONAL POLISH.
@@ -1522,26 +1602,10 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
               {editing.id && (
                 <>
                   <button
-                    onClick={async () => {
-                      const until = window.prompt("Repeat weekly until (YYYY-MM-DD)?");
-                      if (!until) return;
-                      setErr(""); setNote("");
-                      try {
-                        const r = await api.ttRepeatEvent(editing.id, { until });
-                        // Per-date, because "week 4 clashes" is actionable and "there
-                        // were clashes" is not.
-                        setWarnings(r.warnings || []);
-                        setNote(`${r.created} weekly copies created.`);
-                        setEditing(null); load();
-                      } catch (e) { setErr(e?.message || "Could not repeat the event."); }
-                    }}
+                    onClick={() => setAsk({ kind: "repeat", id: editing.id, until: "" })}
                     className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"><Repeat size={14} /> Repeat weekly</button>
                   <button
-                    onClick={async () => {
-                      if (!window.confirm("Delete this event?")) return;
-                      try { await api.ttDeleteEvent(editing.id); setEditing(null); load(); }
-                      catch (e) { setErr(e?.message || "Could not delete."); }
-                    }}
+                    onClick={() => setAsk({ kind: "delete", id: editing.id, title: editing.title })}
                     className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-bold text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Delete</button>
                 </>
               )}
@@ -1564,6 +1628,72 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
       {settings && (
         <TimetableSettingsModal open={prefs} settings={settings} scope="college" onClose={() => setPrefs(false)}
           onSave={async (patch) => { const r = await api.ttSaveSettings(patch); setSettings((s) => ({ ...s, ...r.institution })); setPrefs(false); }} />
+      )}
+
+      {/* The app's own confirmation, the same component the sign-out prompt uses. */}
+      <ConfirmDialog
+        open={ask?.kind === "delete"}
+        title="Delete this class?"
+        // NAMED, because the modal behind it is covered and "this event" is whichever one
+        // the reader believes is open. Deleting a class does NOT delete a register that
+        // has marks in it — the register survives, unlinked — and saying so here is what
+        // stops somebody hesitating over a safe action or expecting attendance to vanish.
+        message={`“${ask?.title || "Untitled"}” will be removed from the calendar. Any register already taken for it is kept.`}
+        confirmLabel="Delete" cancelLabel="Keep it" danger
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => {
+          const id = ask.id;
+          setAsk(null);
+          try { await api.ttDeleteEvent(id); setEditing(null); load(); }
+          catch (e) { setErr(e?.message || "Could not delete."); }
+        }}
+      />
+
+      <ConfirmDialog
+        open={ask?.kind === "publish"}
+        title="Publish this period?"
+        message={`Every class from ${from} to ${to} becomes visible to staff, and their registers are created. Drafts you are still working on will go out too.`}
+        confirmLabel="Publish" cancelLabel="Not yet"
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => {
+          setAsk(null); setErr(""); setNote("");
+          try { const r = await api.ttPublish({ from, to, published: true }); setNote(`${r.updated} event(s) published.`); load(); }
+          catch (e) { setErr(e?.message || "Could not publish."); }
+        }}
+      />
+
+      {/* REPEAT NEEDS A DATE, WHICH ConfirmDialog CANNOT CARRY, so this one is its own —
+          built to match rather than reaching for window.prompt, which returns a free
+          string a reader can typo into "next tuesday" and which offers no date picker at
+          all on a phone. */}
+      {ask?.kind === "repeat" && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
+          <div className="w-full max-w-xs rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-base font-extrabold text-slate-800">Repeat weekly</p>
+            <p className="mt-1 text-sm leading-relaxed text-slate-500">A copy of this class on the same weekday, every week, up to and including the date you choose.</p>
+            <input type="date" autoFocus className={`${inputCls} mt-3`} value={ask.until}
+              min={editing?.date || undefined}
+              onChange={(e) => setAsk({ ...ask, until: e.target.value })} />
+            <p className="mt-1 text-[11px] text-slate-400">UK bank holidays are skipped.</p>
+            <div className="mt-5 flex gap-2">
+              <button onClick={() => setAsk(null)} className="flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">Cancel</button>
+              <button disabled={!ask.until}
+                onClick={async () => {
+                  const { id, until } = ask;
+                  setAsk(null); setErr(""); setNote("");
+                  try {
+                    const r = await api.ttRepeatEvent(id, { until });
+                    // Per-date, because "week 4 clashes" is actionable and "there
+                    // were clashes" is not.
+                    setWarnings(r.warnings || []);
+                    setNote(`${r.created} weekly copies created.`);
+                    setEditing(null); load();
+                  } catch (e) { setErr(e?.message || "Could not repeat the event."); }
+                }}
+                className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: NAVY }}>Repeat</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
