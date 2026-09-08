@@ -408,12 +408,226 @@ check("THE MARKED REGISTER SURVIVED", !!survivor);
 check("unlinked from the event it came from", survivor?.timetableEventId === null, String(survivor?.timetableEventId));
 check("and the mark is still there", (await db.attendanceMark.count({ where: { sessionId: regA.id } })) === 1);
 
+console.log("\n--- groups and courses: what the planner picks a class FOR ---");
+//
+// The planner needs three lists before it can place anything: the schools, the courses
+// inside one, and the named groups inside those. The schools half is above; this is the
+// other two. A group is a Cohort — "SEP 25 A" — and the screen has to be able to rename
+// one and delete one it created by mistake, without either action being able to reach
+// the students standing in it.
+//
+// The fixture course is put into the school created above, because a group's school is
+// what the planner filters the whole picker by, and a course belonging to nobody proves
+// nothing about resolution. BOTH columns are set: Cohort.academicDepartmentId is
+// denormalised from the course (see the schema comment on it), so a server reading
+// either one is answering honestly, and this assertion should not be a bet on which hop
+// it happened to take.
+const schoolId = school.data?.id;
+await db.course.update({ where: { id: course.id }, data: { academicDepartmentId: schoolId } });
+await db.cohort.updateMany({ where: { courseId: course.id }, data: { academicDepartmentId: schoolId } });
+
+// A second course in NO school, with a group on it. It is the control for two separate
+// assertions: the course filter must exclude it, and renaming its group to a name group A
+// already holds must be ALLOWED, because the uniqueness is per course.
+const otherCourse = await db.course.create({ data: { name: `Other Course ${TAG}` } });
+const otherGroup = await db.cohort.create({ data: { name: `Rename ${TAG}`, courseId: otherCourse.id } });
+// An empty group on the fixture course — the only kind that may be deleted.
+const emptyGroup = await db.cohort.create({ data: { name: `Empty ${TAG}`, courseId: course.id, academicDepartmentId: schoolId } });
+
+const groups = await call("/timetabling/groups", { token: admin.token });
+const gRows = Array.isArray(groups.data) ? groups.data : [];
+const gA = gRows.find((g) => g.id === cohortA.id);
+const gEmpty = gRows.find((g) => g.id === emptyGroup.id);
+check("the group list came back and holds the fixture groups", groups.status === 200 && !!gA && !!gEmpty,
+  `${groups.status} ${String(JSON.stringify(groups.data)).slice(0, 160)}`);
+
+// A GROUP CARRIES ITS SCHOOL'S NAME. An id alone makes the planner fetch the schools list
+// and join it in the browser, and a screen that joins in the browser shows a blank wherever
+// the two requests disagree — a school renamed between them, or one the second request
+// filtered out. The name is the thing being asserted; the id is asserted beside it so that
+// a handler returning the right name against the wrong school cannot pass.
+check("A GROUP RESOLVES ITS SCHOOL TO A NAME, NOT JUST AN ID",
+  !!schoolId && gA?.academicDepartmentId === schoolId && gA?.schoolName === schoolName,
+  `${gA?.academicDepartmentId} / ${gA?.schoolName}`);
+check("and names its course the same way", gA?.courseId === course.id && gA?.courseName === `Course ${TAG}`,
+  `${gA?.courseId} / ${gA?.courseName}`);
+
+// COUNTED FROM THE DATABASE, never compared against the API's own arithmetic. A full group
+// and an empty one are both asserted, deliberately: a handler that hardcodes 0, or returns
+// the course's total, or the enrolment count, passes exactly one of these two lines. Either
+// on its own is a number that merely looks plausible.
+const realA = await db.student.count({ where: { cohortId: cohortA.id } });
+check("the fixture group really does hold two students", realA === 2, `${realA}`);
+check("studentCount IS THE REAL COUNT, taken from the database rather than the response",
+  realA === 2 && gA?.studentCount === realA, `api ${gA?.studentCount} vs db ${realA}`);
+check("and an empty group counts zero rather than inheriting its course's total",
+  gEmpty?.studentCount === 0, `${gEmpty?.studentCount}`);
+
+console.log("\n--- renaming a group: unique PER COURSE, not globally ---");
+const renamed = await call(`/timetabling/groups/${emptyGroup.id}`, { method: "PUT", token: admin.token, body: { name: `Empty ${TAG} B` } });
+check("a group can be renamed", renamed.status === 200, `${renamed.status} ${renamed.data?.error || ""}`);
+check("and the new name is IN THE DATABASE, not merely echoed back",
+  (await db.cohort.findUnique({ where: { id: emptyGroup.id } }))?.name === `Empty ${TAG} B`);
+
+// THE ASSERTION THAT SEPARATES "unique per course" FROM "unique globally". Every college
+// names its intakes the same way — "SEP 25", "JAN 26" — so the same label on two different
+// courses is the NORMAL case, not a collision, and the schema says so with
+// @@unique([courseId, name]). A handler that checks the name across the whole table
+// refuses the second course's September intake, and nobody finds out until the second
+// course tries to have one.
+const crossCourse = await call(`/timetabling/groups/${otherGroup.id}`, { method: "PUT", token: admin.token, body: { name: `SEP ${TAG} A` } });
+check("THE SAME GROUP NAME ON A DIFFERENT COURSE IS ACCEPTED",
+  crossCourse.status === 200, `${crossCourse.status} ${crossCourse.data?.error || ""}`);
+const bothNamed = await db.cohort.count({ where: { name: `SEP ${TAG} A` } });
+check("and both groups now carry that name, each on its own course", bothNamed === 2, `${bothNamed}`);
+
+// The mirror of it. Two groups on ONE course called "SEP 25 A" is a lecturer picking a
+// register by name and getting a coin toss.
+const sameCourse = await call(`/timetabling/groups/${cohortB.id}`, { method: "PUT", token: admin.token, body: { name: `SEP ${TAG} A` } });
+check("RENAMING TO A NAME ALREADY USED ON THE SAME COURSE IS REFUSED", sameCourse.status === 409,
+  `${sameCourse.status} ${sameCourse.data?.error || ""}`);
+check("and group B kept the name it had",
+  (await db.cohort.findUnique({ where: { id: cohortB.id } }))?.name === `SEP ${TAG} B`);
+
+console.log("\n--- deleting a group: never out from under the students ---");
+//
+// THE ASSERTION IN THIS SECTION THAT MATTERS MOST. Student.cohortId is onDelete: SetNull,
+// so a delete that got through does not fail loudly — it SUCCEEDS, and a whole class
+// quietly stops belonging to any group. Nothing afterwards records which group they were
+// in, so it is not recoverable from the data; it has to be reconstructed from somebody's
+// memory. The 409 is checked, and then the students are counted again through the bare
+// client, because "the refusal was reported" and "the rows survived" are not the same
+// fact — a handler that deletes and then answers 409 passes the first and fails the
+// second, and that is precisely the bug worth catching.
+const delFull = await call(`/timetabling/groups/${cohortA.id}`, { method: "DELETE", token: admin.token });
+check("DELETING A GROUP THAT HAS STUDENTS IN IT IS REFUSED", delFull.status === 409,
+  `${delFull.status} ${JSON.stringify(delFull.data)}`);
+// The count, not just "some students". An administrator seeing "this group is not empty"
+// has to open another screen to find out how many; the number is what tells them whether
+// they mistyped or are about to strand thirty people.
+check("and the refusal NAMES how many students are in the way",
+  new RegExp(`(^|\\D)${realA}(\\D|$)`).test(delFull.data?.error || ""), JSON.stringify(delFull.data?.error));
+const stillIn = await db.student.count({ where: { cohortId: cohortA.id } });
+check("THE STUDENTS STILL HAVE THEIR GROUP — a delete that slipped through would detach a whole class silently",
+  stillIn === realA, `${stillIn} of ${realA}`);
+check("and the group row itself is still there",
+  !!(await db.cohort.findUnique({ where: { id: cohortA.id } })));
+
+// The other half, and it has to be here: a group created by mistake, with nobody in it,
+// must be removable. Otherwise the screen grows a permanent list of typos and the safe
+// refusal above becomes a reason to empty a group first and delete it afterwards — which
+// is the detachment, done by hand.
+const delEmpty = await call(`/timetabling/groups/${emptyGroup.id}`, { method: "DELETE", token: admin.token });
+check("AN EMPTY GROUP IS DELETED", delEmpty.status === 200, `${delEmpty.status} ${delEmpty.data?.error || ""}`);
+check("and the row is gone from the database, not merely reported gone",
+  (await db.cohort.findUnique({ where: { id: emptyGroup.id } })) === null);
+
+console.log("\n--- courses, filtered by school ---");
+const filtered = await call(`/timetabling/courses?academicDepartmentId=${schoolId}`, { token: admin.token });
+const fRows = Array.isArray(filtered.data) ? filtered.data : [];
+const allCourses = await call("/timetabling/courses", { token: admin.token });
+const aRows = Array.isArray(allCourses.data) ? allCourses.data : [];
+check("the filtered list holds the course that belongs to this school",
+  filtered.status === 200 && fRows.some((c) => c.id === course.id), `${filtered.status} ${fRows.length} rows`);
+// The negative half, and the one that carries the weight. A filter that is parsed and then
+// ignored returns EVERYTHING, and everything contains the right answer — so "the course is
+// in the list" passes against a build with no filtering in it at all.
+// `fRows.length > 0` is carried here rather than left to the next line: "the schoolless
+// course is absent" is true of an EMPTY list, so on a build with no route at all this
+// passed green off a 404 — a line reporting coverage of the exact filter that does not
+// exist. Requiring the list to be non-empty is what makes the absence mean something.
+check("AND NOT THE COURSE THAT BELONGS TO NO SCHOOL",
+  fRows.length > 0 && !fRows.some((c) => c.id === otherCourse.id),
+  JSON.stringify(fRows.map((c) => c.name)));
+check("every row it returned really carries the school asked for",
+  fRows.length > 0 && fRows.every((c) => c.academicDepartmentId === schoolId),
+  JSON.stringify(fRows.map((c) => c.academicDepartmentId)));
+check("while the UNFILTERED call returns more, the schoolless course among them",
+  aRows.length > fRows.length && aRows.some((c) => c.id === otherCourse.id),
+  `${aRows.length} unfiltered vs ${fRows.length} filtered`);
+
+console.log("\n--- approving a sign-up INTO a school ---");
+//
+// A member of staff is scoped by the schools they belong to, and the moment that belonging
+// is decided is the approval: the admin reading the request is the only person who knows
+// which school the applicant is joining. Doing it afterwards leaves an account existing
+// for a while scoped to nothing, which — depending on which way the scope guard fails —
+// is either an account that can see nothing or one that can see the whole college.
+const SIGNUP_PW = "Password123";
+const pendingByEmail = async (email) =>
+  ((await call("/signup?status=pending", { token: admin.token })).data || []).find((r) => r.email === email);
+
+const staffEmail = `${TAG}.staff@example.invalid`;
+await call("/signup", { method: "POST", body: {
+  name: `Staffer ${TAG}`, email: staffEmail, password: SIGNUP_PW, confirmPassword: SIGNUP_PW,
+  position: "Lecturer", dept: "Teaching",
+} });
+const staffReq = await pendingByEmail(staffEmail);
+check("a staff sign-up request is waiting", !!staffReq?.id, JSON.stringify(staffReq));
+const approved = await call(`/signup/${staffReq?.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved", academicDepartmentId: schoolId } });
+check("approving it with a school on the decision succeeds", approved.status === 201,
+  `${approved.status} ${approved.data?.error || ""}`);
+// Looked up by email through the bare client rather than read out of the response: the
+// link is a row in a second table, and a handler that accepts the field and never writes
+// it is indistinguishable from a working one at the API boundary.
+const newStaff = await db.staff.findFirst({ where: { email: staffEmail } });
+check("the staff account was created", !!newStaff?.id);
+const links = newStaff ? await db.staffAcademicDepartment.findMany({ where: { staffId: newStaff.id } }) : [];
+check("APPROVING WITH A SCHOOL CREATES THE StaffAcademicDepartment LINK",
+  links.length === 1 && links[0].academicDepartmentId === schoolId,
+  JSON.stringify(links.map((l) => l.academicDepartmentId)));
+
+// Not mandatory, and that is a decision rather than an oversight. Most colleges scope
+// nobody at all; a required field here would stop every one of them approving anybody, and
+// the ones that do scope have staff — finance, admissions, the registry — who legitimately
+// belong to no school and must not be given one to get an account made.
+const staffEmail2 = `${TAG}.staff2@example.invalid`;
+await call("/signup", { method: "POST", body: {
+  name: `Staffer2 ${TAG}`, email: staffEmail2, password: SIGNUP_PW, confirmPassword: SIGNUP_PW,
+  position: "Registrar", dept: "Registry",
+} });
+const staffReq2 = await pendingByEmail(staffEmail2);
+const approved2 = await call(`/signup/${staffReq2?.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved" } });
+check("APPROVING WITHOUT A SCHOOL STILL SUCCEEDS — the field is not mandatory",
+  approved2.status === 201, `${approved2.status} ${approved2.data?.error || ""}`);
+const newStaff2 = await db.staff.findFirst({ where: { email: staffEmail2 } });
+check("that account exists too", !!newStaff2?.id);
+check("and it is scoped to no school at all, rather than to a default one",
+  !!newStaff2 && (await db.staffAcademicDepartment.count({ where: { staffId: newStaff2.id } })) === 0);
+
+// A student request has no school to belong to — students are scoped through their cohort,
+// not through StaffAcademicDepartment — so the field must be inert on that path rather
+// than fatal to it. The admin screen sends one body shape for both kinds, and a validator
+// that rejects an unexpected field would break student approval for a reason no message
+// on the screen could explain.
+const linksBefore = await db.staffAcademicDepartment.count({ where: { academicDepartmentId: schoolId } });
+const studentEmail = `${TAG}.learner@example.invalid`;
+await call("/signup", { method: "POST", body: {
+  kind: "student", name: `Learner ${TAG}`, email: studentEmail, collegeId: `${TAG}-su`,
+  password: SIGNUP_PW, confirmPassword: SIGNUP_PW,
+} });
+const stuReq = await pendingByEmail(studentEmail);
+check("a student sign-up request is waiting", !!stuReq?.id, JSON.stringify(stuReq));
+const stuApproved = await call(`/signup/${stuReq?.id}/decision`, { method: "PUT", token: admin.token, body: { status: "approved", academicDepartmentId: schoolId } });
+check("A STUDENT SIGN-UP IS UNAFFECTED BY THE SCHOOL FIELD — it still approves",
+  stuApproved.status === 201, `${stuApproved.status} ${stuApproved.data?.error || ""}`);
+check("and it created a student account", !!(await db.student.findFirst({ where: { email: studentEmail } })));
+check("with no staff-school link invented for them",
+  (await db.staffAcademicDepartment.count({ where: { academicDepartmentId: schoolId } })) === linksBefore,
+  `${await db.staffAcademicDepartment.count({ where: { academicDepartmentId: schoolId } })} vs ${linksBefore}`);
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
 await db.hndSession.deleteMany({ where: { unitId: unit.id } });
 await db.enrolment.deleteMany({ where: { unitId: unit.id } });
 await db.student.deleteMany({ where: { lastName: TAG } });
 await db.timetableEvent.deleteMany({ where: { title: { contains: TAG } } });
+// The sign-up section's leavings. The links go first: they are cascaded by BOTH parents,
+// but the department delete below is the guard-dependent one, and a run that failed before
+// the accounts were created must still be able to drop the school.
+await db.staffAcademicDepartment.deleteMany({ where: { staff: { email: { contains: TAG } } } });
+await db.staff.deleteMany({ where: { email: { contains: TAG } } });
+await db.signupRequest.deleteMany({ where: { email: { contains: TAG } } });
 // After the events, which point at it. Matched case-insensitively because the duplicate
 // the 409 assertion sends is the same name uppercased — if that guard ever regresses and
 // the row IS created, this is what stops it outliving the run.
@@ -423,6 +637,11 @@ await db.cohort.deleteMany({ where: { courseId: course.id } });
 await db.room.deleteMany({ where: { name: `R-${TAG}` } });
 await db.campus.deleteMany({ where: { name: `Campus ${TAG}` } });
 await db.course.delete({ where: { id: course.id } }).catch(() => {});
+// The second course exists only to prove the group-name uniqueness is per course and that
+// the course filter excludes what it should. Deleted by id and not by name, because one of
+// the assertions above RENAMES its group and a name-matched cleanup would leave the row.
+await db.cohort.deleteMany({ where: { courseId: otherCourse.id } }).catch(() => {});
+await db.course.delete({ where: { id: otherCourse.id } }).catch(() => {});
 await db.$disconnect();
 
 console.log(`\n${pass} passed, ${fail} failed`);

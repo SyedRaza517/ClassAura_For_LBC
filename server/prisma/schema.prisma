@@ -482,8 +482,35 @@ model SignupRequest {
   decidedAt    String?
   createdAt    DateTime @default(now())
 
+  /// Which school (AcademicDepartment) this applicant will be filed under when approved.
+  ///
+  /// NULLABLE, AND NULL IS THE ONLY HONEST DEFAULT FOR AN EXISTING ROW. Every request
+  /// already in the queue when this column shipped was made without anyone being asked
+  /// the question, and backfilling a school onto them would be inventing an answer —
+  /// the same silent fail-open academicDepartments.js refuses to ship a "General"
+  /// department for. It stays null until an administrator says otherwise, and approval
+  /// works exactly as before when it does.
+  ///
+  /// A SUGGESTION, NOT A GRANT. Nothing reads this column for access control. It is
+  /// carried on the request so an administrator triaging the queue can record the answer
+  /// before deciding; the grant itself is the StaffAcademicDepartment row that approval
+  /// writes, which is the same row routes/academicDepartments.js writes and the only
+  /// place membership lives.
+  ///
+  /// A REAL FOREIGN KEY WITH SetNull, matching every other academicDepartmentId in this
+  /// schema, rather than the bare string it could have been. Deleting a school then
+  /// clears the suggestion instead of leaving a dangling id that approval would have to
+  /// decide what to do about — and "the school was deleted, so approve without one" is
+  /// exactly what SetNull already means. Deliberately NOT counted by DELETE
+  /// /api/timetabling/departments/:id when it decides retire-versus-delete: a pending
+  /// request losing its suggested school costs an administrator one dropdown, where a
+  /// course or a student losing theirs hides people from their own tutors.
+  academicDepartment   AcademicDepartment? @relation(fields: [academicDepartmentId], references: [id], onDelete: SetNull)
+  academicDepartmentId String?
+
   @@unique([email])
   @@index([status])
+  @@index([academicDepartmentId])
 }
 
 // A persisted, per-user notification (survives reload, unlike the in-memory toasts).
@@ -3646,6 +3673,10 @@ model AcademicDepartment {
   courses        Course[]
   students       Student[]
   staff          StaffAcademicDepartment[]
+  /// The pending sign-up requests suggesting this school. NOT a membership: see
+  /// SignupRequest.academicDepartmentId, which is a suggestion an admin recorded, where
+  /// `staff` above is the grant itself.
+  signupRequests SignupRequest[]
   TimetableSlot  TimetableSlot[]
   Cohort         Cohort[]
   Unit           Unit[]

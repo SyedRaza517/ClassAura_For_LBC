@@ -270,6 +270,34 @@ export const api = {
   ttUpdateDepartment: (id, d) => request(`/timetabling/departments/${id}`, { method: "PUT", body: d }),
   ttDeleteDepartment: (id) => request(`/timetabling/departments/${id}`, { method: "DELETE" }),
 
+  // The group (Cohort) list AS THE SCHEDULING PAGE NEEDS IT, which is not what
+  // /hnd/cohorts returns. sCohort ships `courseId` and nothing else, so a screen listing
+  // groups would have to join the course name and then the school name out of two other
+  // lazily-loaded lists, and count the students itself out of a student list it does not
+  // have. This route answers all four — name, course, school, headcount — from the
+  // database that already knows them.
+  //
+  // On /timetabling rather than /hnd for the same reason ttDepartments is: /hnd/cohorts
+  // is gated on "registers", and a timetabler holds scheduling and not registers. They
+  // would get a 403 and an empty tab on the one screen they are meant to use.
+  ttGroups: () => request("/timetabling/groups"),
+  // Renaming a group is safe here in a way that renaming a SCHOOL is not: a cohort is a
+  // label on a class list, not an access-control boundary, so nothing anybody can see
+  // changes hands when it is renamed. Delete is refused with a 409 while the group still
+  // holds students — the count is in the message, and every caller shows it verbatim,
+  // because "12 students are still in it" is the only version of the refusal that says
+  // what to do next.
+  ttUpdateGroup: (id, d) => request(`/timetabling/groups/${id}`, { method: "PUT", body: d }),
+  ttDeleteGroup: (id) => request(`/timetabling/groups/${id}`, { method: "DELETE" }),
+
+  // The course list, optionally narrowed to one school. NARROWING ON THE SERVER rather
+  // than filtering /hnd/courses in the browser: the join from a course to its school is
+  // the server's to answer, and a second copy of it here is one more thing to drift the
+  // first time a course moves. No argument returns every course.
+  ttCourses: (academicDepartmentId) => request(
+    `/timetabling/courses${academicDepartmentId ? `?${new URLSearchParams({ academicDepartmentId })}` : ""}`,
+  ),
+
   // Group membership. On /hnd rather than /timetabling because moving a student
   // between groups rewrites which department can see them — see the comment on the
   // routes themselves. A scheduling-only account gets 403 here, by design.

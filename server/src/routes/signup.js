@@ -23,6 +23,22 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const today = () => localDate();
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 
+/**
+ * A sign-up request as the admin queue reads it, plus the school it names.
+ *
+ * WRAPPED HERE RATHER THAN ADDED TO sSignup, and the wrapper is still an ALLOWLIST: it
+ * spreads a serialiser that names every field it emits and adds exactly one more by name.
+ * A column added to SignupRequest tomorrow reaches neither, which is the whole property
+ * sAdmission lost by stripping a fixed list of secrets instead.
+ *
+ * serializers.js is imported by thirty files that have no interest in this field, and
+ * SignupRequest.academicDepartmentId is meaningful only on the two screens served from
+ * this router — the queue and the decision. Without it the column would be write-only: an
+ * administrator could record a school while triaging and the queue would never show it
+ * back, which reads as "it did not save".
+ */
+const sSignupWithSchool = (r) => ({ ...sSignup(r), academicDepartmentId: r.academicDepartmentId ?? null });
+
 // POST /api/signup — public. Creates a pending request and tells the admins.
 // `kind` is "staff" (default) or "student". Student requests carry only name/email/
 // password; they match an existing Student by email when one exists, and always
@@ -190,7 +206,7 @@ router.get("/", requireAuth, requirePage("signups"), async (req, res) => {
   }
   const where = status ? { status } : {};
   const rows = await prisma.signupRequest.findMany({ where, orderBy: { createdAt: "desc" } });
-  res.json(rows.map(sSignup));
+  res.json(rows.map(sSignupWithSchool));
 });
 
 // PUT /api/signup/:id/decision — admin approves or declines.
@@ -204,6 +220,49 @@ router.get("/", requireAuth, requirePage("signups"), async (req, res) => {
 // be shown or edited, and the applicant must still be able to sign in with what they
 // chose.
 const EDITABLE = ["name", "email", "jobTitle", "dept", "site", "collegeId"];
+
+// `academicDepartmentId` is deliberately NOT in that list, and this is the note that stops
+// somebody adding it. readEdits() compares `str(body[k])` against `row[k] || ""` and
+// stores the string it read — which is right for a name and wrong for a foreign key in two
+// ways at once. Clearing the field would store "" rather than NULL (an empty string is not
+// a valid cuid and is not "no school"), and an unknown id would be written unvalidated, so
+// approval would later try to grant membership of a department that does not exist. It is
+// read straight off req.body by readSchoolId() below instead.
+
+/**
+ * The SCHOOL an approved staff account will be filed under, from a submitted value.
+ *
+ * Three answers, and the difference between the first two is the whole point:
+ *
+ *   undefined  -> { id: undefined }  the caller did not mention it; change nothing
+ *   null or "" -> { id: null }       the caller cleared it, on purpose
+ *   an id      -> { id }             validated against a real AcademicDepartment
+ *
+ * routes/hnd.js sets this convention (`resolveAcademicDepartment`) and routes/staff.js
+ * states it generally: undefined means "not being changed", so an ABSENT field is never
+ * guessed at. A client that PATCHes only `status` must not silently un-assign the school
+ * an administrator recorded ten minutes earlier.
+ *
+ * AN UNKNOWN ID IS REFUSED RATHER THAN DROPPED, matching hnd.js word for word: silently
+ * ignoring it leaves the screen showing an assignment that was never made, and here the
+ * assignment is department ACCESS, so the person would appear filed under a school they
+ * cannot see. A non-string that is not null is refused rather than coerced — coercion is
+ * what turned a numeric id into a silent un-assign on the VLE mapping route.
+ *
+ * RETIRED SCHOOLS ARE ACCEPTED. `active` decides whether a school is OFFERED as a
+ * destination, not whether the rows already filed under it are legitimate; a request made
+ * last week naming a school retired yesterday still describes where that person works, and
+ * refusing the approval over it would strand the applicant for a configuration change
+ * nobody asked them about.
+ */
+async function readSchoolId(raw) {
+  if (raw === undefined) return { id: undefined };
+  if (raw === null || raw === "") return { id: null };
+  if (typeof raw !== "string") return { error: "academicDepartmentId must be a school id, or null" };
+  const found = await prisma.academicDepartment.findUnique({ where: { id: raw.trim() } });
+  if (!found) return { error: "No such school" };
+  return { id: found.id, name: found.name };
+}
 
 async function readEdits(body, row) {
   const patch = {};
@@ -240,10 +299,27 @@ router.put("/:id", requireAuth, requirePage("signups"), async (req, res) => {
 
   const edits = await readEdits(req.body, row);
   if (edits.error) return res.status(400).json({ error: edits.error });
-  if (!Object.keys(edits.patch).length) return res.json(sSignup(row));
+  const patch = edits.patch;
 
-  const updated = await prisma.signupRequest.update({ where: { id: row.id }, data: edits.patch });
-  res.json(sSignup(updated));
+  // The school, read straight off the body rather than through readEdits — see the note
+  // above EDITABLE for why a foreign key cannot travel through a helper that compares and
+  // stores strings.
+  //
+  // RECORDED HERE, GRANTED NOWHERE. Writing this column changes no access: an applicant
+  // has no account yet, so there is nothing to scope. The grant is the
+  // StaffAcademicDepartment row the decision endpoint writes, which is why the school can
+  // be triaged from this endpoint by anyone holding "signups" while the grant itself still
+  // happens at the single moment somebody decides to create the account.
+  const school = await readSchoolId(req.body?.academicDepartmentId);
+  if (school.error) return res.status(400).json({ error: school.error });
+  if (school.id !== undefined && school.id !== (row.academicDepartmentId ?? null)) {
+    patch.academicDepartmentId = school.id;
+  }
+
+  if (!Object.keys(patch).length) return res.json(sSignupWithSchool(row));
+
+  const updated = await prisma.signupRequest.update({ where: { id: row.id }, data: patch });
+  res.json(sSignupWithSchool(updated));
 });
 
 router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res) => {
@@ -263,6 +339,25 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
   if (edits.error) return res.status(400).json({ error: edits.error });
   const patch = edits.patch;
 
+  // THE SCHOOL ARRIVES AS A TOP-LEVEL KEY ON THIS BODY, beside status/note/allowance, and
+  // it is read here rather than through readEdits — see the note above EDITABLE.
+  //
+  // ABSENT MEANS "NO SCHOOL WAS CHOSEN", NOT "CLEAR IT", and absent is the ordinary case:
+  // the client omits the key entirely unless this is a staff request being approved and
+  // somebody actually picked one. So an omitted key falls back to whatever the request
+  // already carries, and a decision made without touching the field cannot silently
+  // discard a school an administrator recorded while triaging the queue.
+  const school = await readSchoolId(req.body?.academicDepartmentId);
+  if (school.error) return res.status(400).json({ error: school.error });
+  if (school.id !== undefined && school.id !== (reqRow.academicDepartmentId ?? null)) {
+    patch.academicDepartmentId = school.id;
+  }
+  // What this decision will actually act on: the submitted value when one was submitted,
+  // the stored suggestion otherwise. Null is a real and expected answer — a college
+  // mid-setup has no schools at all, and an approval flow that cannot complete is worse
+  // than a member of staff who has to be assigned to one later.
+  const schoolId = school.id !== undefined ? school.id : (reqRow.academicDepartmentId ?? null);
+
   const decided = { ...patch, status, note: str(note) || null, decidedBy: req.user.name, decidedAt: today() };
   // Keep the in-memory copy in step, since the rest of this handler reads reqRow.
   reqRow = { ...reqRow, ...patch };
@@ -275,7 +370,7 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
       before: { status: "pending" },
       after: { status: "rejected", kind: reqRow.kind, note: updated.note },
     });
-    return res.json({ request: sSignup(updated), staff: null });
+    return res.json({ request: sSignupWithSchool(updated), staff: null });
   }
 
   // Approving a STUDENT request: activate the matched student record (or create a
@@ -325,7 +420,7 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
         before: { status: "pending", existingRecord: !!student },
         after: { status: "approved", studentRef: savedStudent.studentRef, email: savedStudent.email, active: true, allSessionsEnded: !!student },
       });
-      return res.status(201).json({ request: sSignup(updatedReq), student: sStudent(savedStudent) });
+      return res.status(201).json({ request: sSignupWithSchool(updatedReq), student: sStudent(savedStudent) });
     } catch (e) {
       // P2002 can fire on either unique key, so name both rather than guessing email.
       if (e.code === "P2002") return res.status(409).json({ error: "A student record already exists with that email or college ID" });
@@ -347,6 +442,16 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
     days = Number(allowance);
   }
 
+  // The school's NAME, for the audit line and the reply. The stored id cannot dangle —
+  // SignupRequest.academicDepartmentId is a real foreign key with ON DELETE SET NULL, so a
+  // deleted school clears itself out of the queue rather than surviving as an id nothing
+  // resolves. The `?? null` is there for the race in which it is deleted between that read
+  // and this one, and the answer to that race is to approve without a school rather than to
+  // fail an approval over somebody else's configuration change.
+  const schoolRow = schoolId
+    ? await prisma.academicDepartment.findUnique({ where: { id: schoolId }, select: { id: true, name: true } })
+    : null;
+
   try {
     // One transaction: never create the account without closing the request, and
     // never close the request without creating the account.
@@ -362,6 +467,40 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
           // Authenticator (2FA) temporarily DISABLED — new staff are NOT required to
           // enrol on first sign-in. Restore `true` to make it compulsory again.
           mustSetupTotp: false,
+          // THE SCHOOL, WRITTEN AS THE ONE MEMBERSHIP ROW THERE IS.
+          //
+          // This is a nested create of StaffAcademicDepartment — the same table, the same
+          // two columns, that PUT /api/academic-departments/staff/:staffId writes. Nested
+          // rather than issued separately so it shares the transaction above: the promise
+          // there is that an account is never created without its request being closed,
+          // and an account created without the department it was approved into is the same
+          // kind of half-done. There is no second way to record membership, and inventing
+          // one — a column on Staff, a JSON array beside supportDepartments — is what the
+          // join table exists to prevent.
+          //
+          // `collegeWide` IS DELIBERATELY LEFT ALONE, and this is the surprising half.
+          // Staff.collegeWide defaults to TRUE, so the account this creates can see every
+          // department whether or not a school was picked — the membership row records
+          // WHICH school they belong to without yet narrowing them to it. Three reasons
+          // not to clear it here:
+          //
+          //   * Narrowing an account is Super-Admin-only, on that other endpoint, because
+          //     it is the decision that hands somebody a view of the college or takes it
+          //     away. This route is reachable by anyone holding the "signups" page. Letting
+          //     an approval confine an account would move that authority onto a page it was
+          //     never granted with.
+          //   * The schema says fail-open is the safe direction here on purpose, and that
+          //     it is not silent: the Departments screen carries a permanent "N of M staff
+          //     have college-wide access" line, which is the college's own list of people
+          //     to narrow deliberately. A new starter appears on it, which is correct.
+          //   * A narrowed account whose single school is later deleted matches
+          //     `{ in: [] }` on every scoped model — every student list, register and
+          //     prediction comes back empty, and the screen that would explain it is the
+          //     empty one. Approving somebody into that on their first day, from a screen
+          //     that never mentioned scoping, is the worse failure.
+          //
+          // So this ASSIGNS rather than CONFINES, and the report of the approval says so.
+          ...(schoolRow ? { academicDepartments: { create: [{ academicDepartmentId: schoolRow.id }] } } : {}),
         },
       }),
       prisma.signupRequest.update({ where: { id: reqRow.id }, data: decided }),
@@ -378,12 +517,22 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
     // rather than against the request that asked for it.
     audit.record(req, {
       action: "signup.approved", entity: "Staff", entityId: staff.id,
-      summary: `Staff sign-up from ${staff.name} (${staff.email}) approved by ${req.user.name} — account created with ${days} days' allowance`,
+      summary: `Staff sign-up from ${staff.name} (${staff.email}) approved by ${req.user.name} — account created with ${days} days' allowance` +
+        // NAMED IN THE SUMMARY, because this is the line that says the approval also
+        // filed somebody into a school — and "assigned to" rather than "scoped to",
+        // since collegeWide is untouched and the account can still see the college.
+        (schoolRow ? `, assigned to ${schoolRow.name}` : ""),
       before: { status: "pending" },
-      after: { status: "approved", name: staff.name, email: staff.email, jobTitle: staff.jobTitle, dept: staff.dept, site: staff.site, allowance: days, accountRole: staff.accountRole },
+      after: { status: "approved", name: staff.name, email: staff.email, jobTitle: staff.jobTitle, dept: staff.dept, site: staff.site, allowance: days, accountRole: staff.accountRole, academicDepartmentId: schoolRow?.id ?? null, collegeWide: staff.collegeWide },
     });
 
-    res.status(201).json({ request: sSignup(updated), staff: sStaff(staff) });
+    // The school comes back beside the account so the screen can say what it did without a
+    // second request. Null when none was chosen, which is the ordinary case at a college
+    // that has not set its schools up yet.
+    res.status(201).json({
+      request: sSignupWithSchool(updated), staff: sStaff(staff),
+      academicDepartment: schoolRow ? { id: schoolRow.id, name: schoolRow.name } : null,
+    });
   } catch (e) {
     if (e.code === "P2002") return res.status(409).json({ error: "A staff account with that email already exists" });
     res.status(500).json({ error: "Could not create the staff account" });

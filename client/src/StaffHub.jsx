@@ -5789,6 +5789,38 @@ function AdminSignups({ store }) {
   // name, department and college ID, and the only remedy used to be approving and
   // then correcting the account — or rejecting and making them start over.
   const [edit, setEdit] = useState(null);
+  // The schools (academic departments) this college runs, and the one chosen for the
+  // staff account this approval is about to create.
+  //
+  // Fetched once for the whole screen rather than once per approval. The list is short,
+  // it only changes when an administrator edits it on Settings, and a fetch fired from
+  // inside the modal would leave the picker empty for the first paint of every single
+  // approval — the exact moment somebody is looking straight at it and deciding whether
+  // this college has any schools at all.
+  //
+  // A failure is deliberately silent and leaves the list empty. Approving is the
+  // decision that matters; a college that has not set its schools up yet has a
+  // legitimately empty list (academicDepartments.all() ships NO defaults on purpose, to
+  // avoid a "General" school that would contain the whole institution), so a picker that
+  // cannot be populated simply does not appear rather than holding the sign-up queue
+  // hostage to a screen nobody standing here can fix.
+  const [schools, setSchools] = useState([]);
+  const [schoolId, setSchoolId] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    api.ttDepartments()
+      // Retired schools are filtered out rather than shown greyed: this picker only ever
+      // WRITES, so listing one would let an approval bind a brand-new member of staff to
+      // a school the college has stopped running — a state nothing else in the product
+      // can produce. `active !== false` rather than `active === true` so that a server
+      // which has not yet shipped the flag lists everything instead of nothing; an
+      // undefined flag is "we were not told", and reading that as retired would empty the
+      // picker at every college mid-deploy.
+      .then(rows => { if (live) setSchools((rows || []).filter(d => d.active !== false)); })
+      .catch(() => { if (live) setSchools([]); });
+    return () => { live = false; };
+  }, []);
 
   const rows = store.signups || [];
   const pending = rows.filter(r => r.status === "pending");
@@ -5798,6 +5830,10 @@ function AdminSignups({ store }) {
     setModal({ req, action });
     setNote("");
     setAllowance(28);
+    // Blank on every open, never sticky. Carrying the last applicant's school over would
+    // quietly file the next person into it, and a blank has to keep meaning "nobody has
+    // decided yet" — which is the only reading under which leaving it blank is safe.
+    setSchoolId("");
     setEdit({
       name: req.name || "", email: req.email || "",
       jobTitle: req.role || "", dept: req.dept || "",
@@ -5833,10 +5869,26 @@ function AdminSignups({ store }) {
         const was = k === "jobTitle" ? (modal.req.role || "") : (modal.req[k] || "");
         if (v.trim() !== was) changed[k] = v.trim();
       }
+      // The school travels in the same object as the corrections because
+      // `api.decideSignup` spreads that argument straight into the PUT body, so it
+      // arrives as a sibling of `status`, `note` and `allowance` — which is where the
+      // server reads `academicDepartmentId` from. It is deliberately NOT one of the
+      // server's EDITABLE fields and is not written to the request row: it binds the
+      // Staff account the approval creates, and before that account exists there is
+      // nothing to bind. That is also why "Save changes without deciding" does not send
+      // it — that path leaves the request pending and creates no account.
+      //
+      // Sent only on an approval, only for staff, and only when one was actually picked.
+      // Schools bind staff (students get theirs through their cohort); a decline creates
+      // no account to bind; and an ABSENT key is how the server is told to leave them
+      // college-wide, rather than an empty string it would have to interpret.
+      const bind = modal.action === "approved" && modal.req.kind !== "student" && schoolId
+        ? { academicDepartmentId: schoolId }
+        : null;
       await store.decideSignup(
         modal.req.id, modal.action, note,
         modal.action === "approved" && modal.req.kind !== "student" ? Number(allowance) : undefined,
-        changed,
+        { ...changed, ...(bind || {}) },
       );
       setModal(null);
     } catch (_) {
@@ -6017,6 +6069,43 @@ function AdminSignups({ store }) {
               <Field label="Holiday allowance (days per year)">
                 <input type="number" min={0} value={allowance} onChange={e => setAllowance(e.target.value)} className={inputCls} />
               </Field>
+              {/* Which school this member of staff belongs to. Optional, and hidden
+                  entirely when the college has none set up: a picker whose only option is
+                  "no school" is a question with one answer, and it would read as a
+                  setting this administrator had failed to fill in rather than one their
+                  college has not reached yet. Nothing about approval depends on it — a
+                  college mid-setup must still be able to let people in, and an approval
+                  flow that cannot complete is worse than a member of staff who has to be
+                  assigned a school afterwards. */}
+              {schools.length > 0 && (
+                <>
+                  <Field label="School (optional)">
+                    <select value={schoolId} onChange={e => setSchoolId(e.target.value)} className={inputCls}>
+                      <option value="">— No school —</option>
+                      {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </Field>
+                  {/* Blank is the WIDER of the two outcomes, and saying so is the whole
+                      point of this line. A member of staff with no school is college-wide
+                      (Staff.collegeWide defaults to true), so an administrator who reads a
+                      blank picker as "not given access yet" has it exactly backwards, and
+                      will leave the broadest account on the system without noticing. This
+                      is the fail-open the academic-departments work chose to make visible
+                      rather than close, so it has to be visible here too — never worded as
+                      a restriction, and never as a to-do that can safely wait. */}
+                  {schoolId ? (
+                    <p className="flex items-start gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-[11px] leading-relaxed text-emerald-700 ring-1 ring-emerald-100">
+                      <ShieldCheck size={13} className="mt-px shrink-0" />
+                      Approving assigns them to {schools.find(s => s.id === schoolId)?.name || "this school"}. You can change it later on Settings.
+                    </p>
+                  ) : (
+                    <p className="flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 ring-1 ring-amber-100">
+                      <Info size={13} className="mt-px shrink-0" />
+                      No school is not a restriction — it is the wider setting. Staff with no school are college-wide and see every school's students until one is assigned to them on Settings.
+                    </p>
+                  )}
+                </>
+              )}
               <p className="flex items-start gap-1.5 rounded-xl bg-blue-50 px-3 py-2 text-[11px] text-blue-700 ring-1 ring-blue-100">
                 <ShieldCheck size={13} className="mt-px shrink-0" />
                 This creates their staff account. They sign in with the password they chose.

@@ -508,55 +508,139 @@ function SchoolsTab() {
 // here takes them out of wherever they were. The screen says so before the click and
 // names who moved after it: an administrator adding forty people has no other way to
 // notice they have just emptied another class.
-function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refreshHnd }) {
-  // Courses, cohorts and students load lazily — the store only fetches them when a
-  // page that needs them is opened, and Scheduling was not one of them. Without this
-  // an administrator who lands here first sees an empty group list and concludes the
-  // feature is broken rather than unloaded.
+//
+// THE LIST IS THE SCREEN, and the picker it replaced was the wrong shape for the job.
+//
+// A SearchOne showed one group at a time, so "what groups does this college have, and
+// which of them is nearly empty" — the question an administrator opens this tab with —
+// could only be answered by opening the dropdown and scrolling it. Rename and delete had
+// nowhere to live at all: a dropdown row is a value, not a thing with actions on it.
+// Every row now carries its own course, its own school and its own headcount, and
+// selecting one is what opens the membership editor below.
+//
+// THE ROWS COME FROM /timetabling/groups, NOT from the store's `cohorts`. The store ships
+// sCohort, which carries `courseId` and nothing else, so the course name would have to be
+// joined here and the SCHOOL joined twice — cohort → course → department — out of two
+// lazily-loaded lists. The endpoint already knows all three, and it is also what counts
+// the students: `studentCount` is a database count, where a client-side one would need
+// every student row in the college in memory to be right.
+//
+// Its failure is NOT swallowed, unlike the school list on the calendar tab. There the
+// list filled one picker among many and an empty one still left a usable screen; here the
+// list IS the screen, and quietly showing "no groups yet" to a college with sixty of them
+// would invite somebody to create the sixty-first.
+function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
+  // Courses and students load lazily — the store only fetches them when a page that
+  // needs them is opened, and Scheduling was not one of them. Without this an
+  // administrator who lands here first finds an empty "Add students" list and concludes
+  // the feature is broken rather than unloaded. The GROUPS no longer depend on it (they
+  // have their own endpoint), but the student list and the cross-school course check
+  // below still do.
   useEffect(() => { if (!hndLoaded && refreshHnd) refreshHnd().catch(() => {}); }, [hndLoaded, refreshHnd]);
 
-  const [groupId, setGroupId] = useState(cohorts[0]?.id || "");
+  const [groups, setGroups] = useState([]);
+  const [listBusy, setListBusy] = useState(true);
+  const [groupId, setGroupId] = useState("");
   const [members, setMembers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
+  const [gq, setGq] = useState("");
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState([]);
   const [making, setMaking] = useState(false);
-  const [draft, setDraft] = useState({ course: "", name: "", startDate: "" });
+  const [draft, setDraft] = useState({ schoolId: "", course: "", name: "", startDate: "" });
+  const [schools, setSchools] = useState([]);
+  // The chosen school's courses, from the server rather than filtered here. The endpoint
+  // is the authority on which courses belong to a school, and a second implementation of
+  // that join in the browser is one more thing to drift.
+  const [schoolCourses, setSchoolCourses] = useState([]);
+  const [coursesBusy, setCoursesBusy] = useState(false);
+  // Which row is being renamed, and to what. One at a time, exactly as SchoolsTab does
+  // it: an inline editor per row all open at once is a form nobody can tell has unsaved
+  // changes in it.
+  const [editId, setEditId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [ask, setAsk] = useState(null);
 
-  const courseName = (id) => courses.find((c) => c.id === id)?.name || "";
+  const loadGroups = useCallback(async () => {
+    setListBusy(true);
+    try { setGroups(await api.ttGroups()); }
+    catch (e) { setErr(e?.message || "Could not load the groups."); }
+    finally { setListBusy(false); }
+  }, []);
+  useEffect(() => { loadGroups(); }, [loadGroups]);
 
-  // The sentinel the course <select> uses for "I am going to type one". A literal rather
-  // than an empty string, because empty already means "nothing chosen yet" and the
-  // Create button has to be able to tell those apart.
+  // The school list fills the first field of the create form and nothing else, so its
+  // failure is swallowed the way the calendar tab swallows the same call: an empty
+  // School picker is a small fault, and letting it blank the group list would be a large
+  // one. The form's own guard — Create stays disabled without a school — is what stops
+  // an empty list turning into a group bound to nothing.
+  useEffect(() => { api.ttDepartments().then((d) => setSchools(d || [])).catch(() => {}); }, []);
+
+  // The course list follows the school, and a stale response must never land on a newer
+  // one. Clicking through three schools quickly issues three requests that can answer in
+  // any order, and without the flag the last list shown could belong to the first school
+  // clicked — which would offer courses from a school nobody chose.
+  useEffect(() => {
+    if (!draft.schoolId) { setSchoolCourses([]); return undefined; }
+    let cancelled = false;
+    setCoursesBusy(true);
+    api.ttCourses(draft.schoolId)
+      .then((rows) => { if (!cancelled) setSchoolCourses(rows || []); })
+      .catch(() => { if (!cancelled) setSchoolCourses([]); })
+      .finally(() => { if (!cancelled) setCoursesBusy(false); });
+    return () => { cancelled = true; };
+  }, [draft.schoolId]);
+
+  const schoolName = (id) => schools.find((s) => s.id === id)?.name || "";
+
   /** Existing course whose name matches what was typed, ignoring case and edge spaces. */
-  const matchCourse = (typed, list = courses) => {
+  const matchCourse = (typed, list) => {
     const want = String(typed || "").trim().toLowerCase();
-    return want ? list.find((c) => (c.name || "").trim().toLowerCase() === want) : undefined;
+    return want ? (list || []).find((c) => (c.name || "").trim().toLowerCase() === want) : undefined;
   };
 
-  // Says which of the two things the button is about to do, WHILE TYPING.
+  // THE SCHOOL BINDS THROUGH THE COURSE, AND IS NOT SENT WITH THE GROUP.
   //
-  // A free text box that silently either reuses or creates is the one thing worth
-  // guarding against here: "BSc Software Engineering" and "BSc Software Engineerng" look
-  // identical at a glance and produce two programmes, and the mistake is only visible
-  // weeks later when half the students are on the wrong one. Naming the matched course
-  // back makes a typo obvious before the click rather than after it.
-  const typedCourse = matchCourse(draft.course);
-  const courseHint = !draft.course.trim()
-    ? "Type it — existing ones will suggest themselves"
-    : typedCourse
-      ? `Existing course — the group joins "${typedCourse.name}"`
-      : "New course — created with the group";
+  // Cohort.academicDepartmentId is DENORMALISED from the cohort's course — it is a copy
+  // kept for querying, not an answer of its own. Posting one alongside the courseId would
+  // make the browser a second source of truth for the same fact, and the first time a
+  // course moved school every group created through this form would still claim the old
+  // one, with nothing on any screen to show which of the two was believed.
+  //
+  // So the school here NARROWS THE COURSE LIST, and the course is what actually carries
+  // it. That is also why the order of the fields is school → course → name and not the
+  // other way round: the answer to "which school" is the one a timetabler already has in
+  // their head, and it is what makes a list of forty courses a list of six.
+  const typedInSchool = matchCourse(draft.course, schoolCourses);
+  // A course of that name that belongs somewhere ELSE. Course.name is unique across the
+  // whole college, so a name already taken by another school's course cannot be created
+  // here — and the failure would otherwise be silent in the worst possible way: addCourse
+  // 409s, the recovery below refetches and finds the existing row, and the group binds to
+  // a school the form never showed. Caught before the click instead, and named.
+  const typedElsewhere = !typedInSchool && draft.schoolId ? matchCourse(draft.course, courses) : undefined;
+  const courseHint = !draft.schoolId
+    ? "Choose a school first"
+    : !draft.course.trim()
+      ? (coursesBusy ? "Loading this school's courses…" : `Type it — ${schoolCourses.length} course(s) in this school will suggest themselves`)
+      : typedInSchool
+        ? `Existing course — the group joins "${typedInSchool.name}"`
+        : typedElsewhere
+          ? (typedElsewhere.academicDepartmentId
+            ? `"${typedElsewhere.name}" belongs to ${schoolName(typedElsewhere.academicDepartmentId) || "another school"}. Choose that school above, or give this course a different name.`
+            : `"${typedElsewhere.name}" belongs to no school. Give it one on the Registers page first, or type a different name.`)
+          : `New course — created in ${schoolName(draft.schoolId) || "this school"} with the group`;
 
   /**
-   * The course this group will belong to, creating it if the name is a new one.
+   * The course this group will belong to, creating it in the chosen school if the name
+   * is a new one.
    *
-   * A FREE TEXT BOX RATHER THAN A DROPDOWN, because most of the time the course is
-   * already known to the person typing and making them hunt for it in a list of forty
-   * is slower than typing it. The existing courses are offered as browser suggestions
-   * (a <datalist>), so picking one is still a keystroke away.
+   * A FREE TEXT BOX RATHER THAN A DROPDOWN, kept from the version before the school
+   * existed: most of the time the course is already known to the person typing, and
+   * making them hunt for it in a list is slower. The school did not cost that — the
+   * existing courses are still offered as browser suggestions (a <datalist>), only now
+   * the suggestions are the chosen school's rather than the whole college's.
    *
    * MATCHED CASE-INSENSITIVELY AGAINST WHAT ALREADY EXISTS FIRST, and that is the part
    * that matters. Course.name is unique, but Postgres compares it case-sensitively, so
@@ -564,22 +648,25 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
    * database and one course to everybody else. A free text box makes that easy to do by
    * accident — which is exactly why the box has to resolve to the existing row rather
    * than create beside it. Otherwise a college accumulates three spellings of one
-   * programme, each holding its own groups and its own share of the students. Same
-   * failure the campus list exists to prevent, reached from the other direction.
+   * programme, each holding its own groups and its own share of the students.
    */
   const resolveCourseId = async () => {
     const wanted = draft.course.trim();
-    const existing = matchCourse(wanted);
+    const existing = matchCourse(wanted, schoolCourses);
     if (existing) return existing.id;
     try {
-      return (await api.addCourse({ name: wanted })).id;
+      // The school is sent HERE, on the course, because this is the row that holds it.
+      return (await api.addCourse({ name: wanted, academicDepartmentId: draft.schoolId })).id;
     } catch (e) {
-      // Someone else created it between the list loading and this click. Refetch and
-      // use theirs rather than failing the group the administrator was actually making.
+      // Someone else created it between the list loading and this click. Refetch and use
+      // theirs rather than failing the group the administrator was actually making — but
+      // only if it is in the school they chose. A course of that name in another school
+      // is not the course they asked for, and binding the group to it would put the class
+      // under a heading nobody on this form ever saw.
       if (!/already exists/i.test(e?.message || "")) throw e;
-      const fresh = await api.listCourses().catch(() => []);
+      const fresh = await api.ttCourses(draft.schoolId).catch(() => []);
       const found = matchCourse(wanted, fresh);
-      if (!found) throw e;
+      if (!found) throw new Error(`A course called "${wanted}" already exists in another school. Choose that school above, or give this one a different name.`);
       return found.id;
     }
   };
@@ -601,21 +688,46 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
         name: draft.name.trim(),
         ...(draft.startDate ? { startDate: draft.startDate } : {}),
       });
-      // The store owns both lists, so they have to be refetched before the new group can
-      // be selected — selecting an id the <select> has no <option> for silently shows
-      // nothing, and a course created a moment ago would not be in the picker either.
+      // Both lists have to be refetched: this tab's own, so the new row appears and can
+      // be selected, and the store's, because the calendar tab's Groups picker is built
+      // from that one and would not otherwise offer the group just created.
+      await loadGroups();
       if (refreshHnd) await refreshHnd().catch(() => {});
-      setDraft({ course: "", name: "", startDate: "" });
+      setDraft({ schoolId: "", course: "", name: "", startDate: "" });
       setMaking(false);
       setGroupId(made?.id || "");
       setNote(`"${made?.name || draft.name}" created. Add students to it below.`);
     } catch (e) {
       const m = e?.message || "";
+      // MATCHED ON THE COHORT'S 409 SPECIFICALLY — `"SEP 25" already exists on this
+      // course` — and not on "already exists" alone. Two other things in this one
+      // handler can say that: the course clash raised inside resolveCourseId, and the
+      // cross-school refusal it throws in its place. Rewording either of those as "a
+      // group called … already exists" would name the wrong object entirely and send
+      // somebody looking for a group that does not exist. Anything else is shown in the
+      // server's own words.
       setErr(
-        m.includes("already exists") ? `A group called "${draft.name.trim()}" already exists on that course. Names are unique per course.`
+        /already exists on this course/i.test(m) ? `A group called "${draft.name.trim()}" already exists on that course. Names are unique per course.`
         : e?.status === 403 || m.includes("403") ? "You need the Registers page to create a group or a course. You can still add students to an existing group."
         : m || "Could not create the group.",
       );
+    }
+  };
+
+  const rename = async () => {
+    setErr(""); setNote("");
+    try {
+      await api.ttUpdateGroup(editId, { name: editName.trim() });
+      setEditId("");
+      await loadGroups();
+      // The store holds the old name too, and the event form's Groups picker reads it.
+      // Without this a group renamed here keeps its old label on the calendar tab until
+      // the page is reloaded, which reads as the rename not having worked.
+      if (refreshHnd) await refreshHnd().catch(() => {});
+    } catch (e) {
+      // THE SERVER'S OWN WORDS. Its 409 names the course the clash is on, which is the
+      // half a reader needs: the same intake label on a different course is allowed.
+      setErr(e?.message || "Could not rename the group.");
     }
   };
 
@@ -627,6 +739,14 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
     finally { setBusy(false); }
   }, []);
   useEffect(() => { load(groupId); }, [groupId, load]);
+
+  const selected = groups.find((g) => g.id === groupId);
+
+  // The list search covers the COURSE AND THE SCHOOL as well as the name, because the
+  // name on its own is an intake label — "SEP 25" — that repeats across every course in
+  // the college. Typing "computing" has to be able to find them.
+  const gterm = gq.trim().toLowerCase();
+  const shownGroups = groups.filter((g) => !gterm || `${g.name || ""} ${g.courseName || ""} ${g.schoolName || ""}`.toLowerCase().includes(gterm));
 
   const memberIds = new Set(members.map((m) => m.id));
   const term = q.trim().toLowerCase();
@@ -644,6 +764,10 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       // half and it is invisible on this screen otherwise.
       setNote(`${res.changed} student(s) added.` + (res.moved?.length ? ` ${res.moved.length} moved out of another group: ${res.moved.map((m) => m.name || m.studentRef).join(", ")}.` : ""));
       load(groupId);
+      // The headcounts on the rows above have just changed — for the group added to and
+      // for whichever groups the movers came out of. Refetching the list is what keeps
+      // the number beside a group from being a figure that was true when the tab opened.
+      loadGroups();
     } catch (e) {
       setErr(e?.message?.includes("403") || e?.status === 403
         ? "You need the Students page to move students between groups — it changes which department can see them."
@@ -653,7 +777,7 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
 
   const removeOne = async (s) => {
     setErr(""); setNote("");
-    try { await api.ttRemoveFromGroup(groupId, [s.id]); load(groupId); }
+    try { await api.ttRemoveFromGroup(groupId, [s.id]); load(groupId); loadGroups(); }
     catch (e) { setErr(e?.message || "Could not remove that student."); }
   };
 
@@ -667,21 +791,13 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
       </p>
 
       <div className="mb-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-        <div className="flex items-end gap-2">
-          <div className="flex-1">
-            <Field label="Group" hint={cohorts.length > 8 ? "Type to search" : undefined}>
-              {/* Searchable rather than a bare <select>: a college running twenty
-                  programmes has sixty or more intakes, and finding "SEP 25" by
-                  scrolling is the same problem the event form's pickers exist to
-                  solve. */}
-              <SearchOne value={groupId}
-                placeholder={cohorts.length ? "Choose a group…" : "No groups yet — create one"}
-                allowNone={false}
-                options={cohorts.map((c) => ({
-                  id: c.id,
-                  label: courseName(c.courseId) ? `${courseName(c.courseId)} · ${c.name}` : c.name,
-                }))}
-                onChange={(id) => { setGroupId(id); setPicked([]); setNote(""); }} />
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px] flex-1">
+            <Field label="Find a group" hint="Name, course or school">
+              <div className="relative">
+                <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input className={`${inputCls} pl-8`} value={gq} onChange={(e) => setGq(e.target.value)} placeholder="SEP 25, Computing…" />
+              </div>
             </Field>
           </div>
           <button onClick={() => { setMaking((v) => !v); setErr(""); setNote(""); }}
@@ -692,15 +808,27 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
 
         {making && (
           <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-4">
+            {/* THE SCHOOL IS THE FIRST FIELD, and it is the one that makes the rest of
+                the form short. It is asked before the course because it is what narrows
+                the course list — a college running forty programmes across six schools
+                offers six once the school is known. */}
+            <Field label="School" hint="Pick this first — it narrows the courses">
+              <SearchOne value={draft.schoolId} allowNone={false}
+                placeholder={schools.length ? "Choose a school…" : "No schools yet — add one on the Schools tab"}
+                options={schools.filter((d) => d.active !== false).map((d) => ({ id: d.id, label: d.name }))}
+                onChange={(id) => setDraft({ ...draft, schoolId: id, course: "" })} />
+            </Field>
             <Field label="Course" hint={courseHint}>
-              {/* A plain text box, with the college's existing courses offered as
-                  browser suggestions. Typing an existing name reuses that course;
-                  anything new is created with the group. */}
+              {/* A plain text box, with the CHOSEN SCHOOL's courses offered as browser
+                  suggestions. Typing an existing one reuses that course; anything new is
+                  created in that school with the group. The school reaches the group
+                  through this row and only through it. */}
               <input className={inputCls} list="tt-course-options" value={draft.course}
+                disabled={!draft.schoolId}
                 onChange={(e) => setDraft({ ...draft, course: e.target.value })}
                 placeholder="BSc Software Engineering" />
               <datalist id="tt-course-options">
-                {courses.map((c) => <option key={c.id} value={c.name} />)}
+                {schoolCourses.map((c) => <option key={c.id} value={c.name} />)}
               </datalist>
             </Field>
             <Field label="Group name" hint="The intake, e.g. SEP 25">
@@ -709,31 +837,95 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
             <Field label="Starts" hint="Optional">
               <input type="date" className={inputCls} value={draft.startDate} onChange={(e) => setDraft({ ...draft, startDate: e.target.value })} />
             </Field>
-            <div className="flex items-end">
-              {/* Both required: the course because Cohort.courseId is NOT NULL, the name
-                  because it is what anybody picking this group will read. */}
-              {/* When "add a new course" is chosen the typed name is what stands in for
-                  the course, so the button must wait for it — otherwise Create fires with
-                  the sentinel as a courseId and the server rejects it as unknown. */}
+            <div className="flex items-end sm:col-span-4">
+              {/* All three are required, and for three different reasons: the school
+                  because it is what the course is created in, the course because
+                  Cohort.courseId is NOT NULL, and the name because it is what anybody
+                  picking this group will read. A name that belongs to another school's
+                  course blocks it too — see typedElsewhere above; letting that through
+                  would bind the group to a school this form never showed. */}
               <button onClick={createGroup}
-                disabled={!draft.name.trim() || !draft.course.trim()}
-                className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
+                disabled={!draft.schoolId || !draft.name.trim() || !draft.course.trim() || !!typedElsewhere}
+                className="flex items-center justify-center gap-1 rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY }}>
                 <Check size={15} /> Create group
               </button>
             </div>
-
           </div>
         )}
       </div>
 
+      {/* THE LIST. Selecting a row is what opens the membership editor below it, so the
+          selected row is drawn as selected rather than merely remembered — with the
+          editor two screens down on a laptop, an administrator who has scrolled has no
+          other way to tell which group they are editing. */}
+      {listBusy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
+        <ul className="mb-4 divide-y divide-slate-100 overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+          {!groups.length && <li className="px-3 py-8 text-center text-sm text-slate-400">No groups yet. Create the first one above.</li>}
+          {!!groups.length && !shownGroups.length && <li className="px-3 py-8 text-center text-sm text-slate-400">No group matches “{gq.trim()}”.</li>}
+          {shownGroups.map((g) => (
+            <li key={g.id} className={`flex flex-wrap items-center gap-2 px-3 py-2 ${g.id === groupId ? "bg-slate-50" : ""}`}
+              style={g.id === groupId ? { boxShadow: `inset 3px 0 0 ${NAVY}` } : undefined}>
+              {editId === g.id ? (
+                <div className="flex flex-1 items-center gap-1">
+                  <input autoFocus className={inputCls} value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && editName.trim()) rename(); if (e.key === "Escape") setEditId(""); }} />
+                  <button onClick={rename} disabled={!editName.trim()} aria-label="Save name"
+                    className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"><Check size={15} /></button>
+                  <button onClick={() => setEditId("")} aria-label="Cancel rename"
+                    className="rounded p-1.5 text-slate-400 hover:bg-slate-100"><X size={15} /></button>
+                </div>
+              ) : (
+                <>
+                  {/* The whole row is the selector, not a "Select" button beside the
+                      others: the row IS the group, and a button would be a third thing
+                      to aim at next to Rename and Delete — the two that are not
+                      reversible. */}
+                  <button type="button" onClick={() => { setGroupId(g.id); setPicked([]); setNote(""); setErr(""); }}
+                    className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-sm font-bold text-slate-700">{g.name}</span>
+                    {/* THE COURSE AND THE SCHOOL, UNDERNEATH. "SEP 25" is an intake label
+                        that repeats across every course in the college, so the line below
+                        it is what makes the row identify one group rather than twelve.
+                        A missing school prints as "No school" rather than as nothing —
+                        a group whose course has no school is only visible to
+                        college-wide accounts, and a blank would read as an ordinary row. */}
+                    <span className="block truncate text-xs text-slate-400">
+                      {g.courseName || "No course"} · {g.schoolName || "No school"}
+                    </span>
+                  </button>
+                  {/* ZERO IS A REAL ANSWER AND IS PRINTED AS 0 — an empty group is the
+                      thing an administrator comes to this screen looking for, and hiding
+                      it behind an em dash would hide exactly that. A MISSING count is a
+                      different fact and gets the dash instead, the way the rooms table
+                      prints an unrecorded capacity: sGroup emits `studentCount` as null
+                      when the count is absent, and rendering that as "students" with a
+                      blank in front of it would read as zero for a group that may be
+                      full. */}
+                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">
+                    {g.studentCount == null ? "—" : `${g.studentCount} student${g.studentCount === 1 ? "" : "s"}`}
+                  </span>
+                  <button onClick={() => { setEditId(g.id); setEditName(g.name); setErr(""); setNote(""); }} aria-label={`Rename ${g.name}`}
+                    className="shrink-0 rounded px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100">Rename</button>
+                  <button onClick={() => setAsk(g)} aria-label={`Delete ${g.name}`}
+                    className="shrink-0 rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {!groupId ? (
         <p className="py-8 text-center text-sm text-slate-400">
-          {cohorts.length ? "Choose a group to see and edit who is in it." : "Create your first group above, then pick students for it."}
+          {groups.length ? "Choose a group above to see and edit who is in it." : "Create your first group above, then pick students for it."}
         </p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">In this group ({members.length})</h4>
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              In {selected ? `“${selected.name}”` : "this group"} ({members.length})
+            </h4>
             {busy ? <div className="flex justify-center py-8 text-slate-400"><Loader2 className="animate-spin" size={18} /></div> : (
               <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
                 {!members.length && <li className="py-8 text-center text-sm text-slate-400">Nobody yet. Add students from the right.</li>}
@@ -775,6 +967,49 @@ function GroupsTab({ cohorts = [], courses = [], students = [], hndLoaded, refre
           </div>
         </div>
       )}
+
+      {/* ConfirmDialog RATHER THAN window.confirm, for the same reason the calendar tab
+          stopped using it: a native dialog announces itself as "…vercel.app says", which
+          is the chrome a phishing page produces and the prompt a careful person has been
+          taught to dismiss unread. It also cannot be dismissed by Android's back button,
+          which useBackHandler gives this one.
+
+          THE WORDING PROMISES NOTHING ABOUT WHETHER IT WILL WORK. The server refuses a
+          group that still has students, and it is the one that knows how many — so the
+          dialog says what deleting an EMPTY group does, and the refusal, when it comes,
+          is shown in the server's own words. Guessing the count here from `studentCount`
+          would be a second answer to the same question, computed from a list that was
+          fetched at some earlier moment. */}
+      <ConfirmDialog
+        open={!!ask}
+        title="Delete this group?"
+        message={`“${ask?.name || ""}” will be removed. A group that still has students in it cannot be deleted — take them out first, or move them to another group.`}
+        confirmLabel="Delete" cancelLabel="Keep it" danger
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => {
+          const g = ask;
+          setAsk(null); setErr(""); setNote("");
+          try {
+            await api.ttDeleteGroup(g.id);
+            // Clearing the selection FIRST, because the membership editor below is
+            // keyed on it: leaving it set would fire a fetch for a group that no
+            // longer exists and report the 404 as though the delete had failed.
+            if (groupId === g.id) { setGroupId(""); setMembers([]); }
+            setNote(`“${g.name}” was deleted.`);
+            await loadGroups();
+            // The store still lists it, and the event form's Groups picker reads the
+            // store — a deleted group left in that picker is one somebody can still
+            // attach a class to.
+            if (refreshHnd) await refreshHnd().catch(() => {});
+          } catch (e) {
+            // THE SERVER'S OWN WORDS, VERBATIM. Its 409 names how many students would
+            // have been detached, and that number is the whole content of the refusal:
+            // "could not delete" sends somebody looking for a fault, where "12 students
+            // are still in it" tells them what to do next.
+            setErr(e?.message || "Could not delete the group.");
+          }
+        }}
+      />
     </div>
   );
 }
@@ -844,7 +1079,11 @@ export default function AdminTimetablePlanner({ store }) {
           fetched for other pages, and adding an endpoint for them would be a second
           source of truth for the same rows. */}
       {tab === "calendar" && <PlannerCalendarTab staff={store?.staff || []} units={store?.units || []} cohorts={store?.cohorts || []} courses={store?.courses || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
-      {tab === "groups" && <GroupsTab cohorts={store?.cohorts || []} courses={store?.courses || []} students={store?.students || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
+      {/* No `cohorts` here on purpose: the Groups tab reads its list from
+          /timetabling/groups, which already carries each group's course, school and
+          headcount. Passing the store's copy beside it would give the tab two answers to
+          "what groups are there" and no rule for which one wins. */}
+      {tab === "groups" && <GroupsTab courses={store?.courses || []} students={store?.students || []} hndLoaded={store?.hndLoaded} refreshHnd={store?.refreshHnd} />}
       {tab === "schools" && <SchoolsTab />}
       {tab === "rooms" && <RoomsTab />}
       {tab === "campuses" && <CampusesTab />}
@@ -1020,6 +1259,49 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
   const narrow = (rows, chosenIds = []) => (
     narrowing ? rows.filter((r) => schoolOfCourse(r.courseId) === schoolId || chosenIds.includes(r.id)) : rows
   );
+
+  /* ------------------------------------- and then the GROUPS narrow further -- */
+  //
+  // ONCE THE GROUPS ARE CHOSEN, THE MODULE LIST IS THEIR COURSES' MODULES.
+  //
+  // A school is a coarse answer — "Computing" is six programmes and two hundred units —
+  // and the groups are the fine one: the second-year Software Engineering lot are taught
+  // the units on Software Engineering, and every other unit in the school is noise the
+  // timetabler has to read past. Cohort.courseId and Unit.courseId are both already in
+  // the browser (sCohort and sUnit each ship it), so this is one join in memory rather
+  // than an endpoint.
+  //
+  // MODULES AND NOTHING ELSE. Rooms, categories and staff are deliberately untouched:
+  // any room can hold any class, and a lecturer's departments only reach the browser when
+  // the query asks for the relation — filtering staff on what sStaff ships would silently
+  // hide everybody, and lecturers routinely teach across courses anyway. The Groups
+  // picker is obviously not narrowed by its own value either.
+  //
+  // MULTIPLE GROUPS UNION, they do not intersect. Two groups on two courses being taught
+  // one class together is a real thing — a shared induction, a joint lecture — and an
+  // intersection would offer nothing at all for exactly that case.
+  const chosenCohortIds = (!editing?.id && !editing?.showAllSchools && editing?.cohortIds) || [];
+  const groupCourseIds = chosenCohortIds.length
+    ? new Set(cohorts.filter((c) => chosenCohortIds.includes(c.id)).map((c) => c.courseId).filter(Boolean))
+    : null;
+  const groupNarrowing = !!groupCourseIds?.size;
+
+  /**
+   * The module list: narrowed by the school, then by the chosen groups' courses.
+   *
+   * `chosenIds` SURVIVES BOTH FILTERS, and that is the same rule `narrow` above exists
+   * to keep — applied a second time because a second filter is a second chance to break
+   * it. Pick a module, then add a group from another course, and without this SearchOne
+   * would find no option matching the id it holds and quietly render "No module" while
+   * still sending one. The value and what the screen says about it must not be able to
+   * disagree.
+   */
+  const narrowUnits = (rows, chosenIds = []) => {
+    const bySchool = narrow(rows, chosenIds);
+    return groupNarrowing
+      ? bySchool.filter((u) => groupCourseIds.has(u.courseId) || chosenIds.includes(u.id))
+      : bySchool;
+  };
 
   /* ---------------------------------------------------------- what it makes -- */
   //
@@ -1397,20 +1679,27 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                         and no way out, the only route to entering one is to pick a school
                         the class does not belong to, and the school column then holds a
                         lie that nobody can see is a lie. A visible override that somebody
-                        chose is a record; a workaround is not. */}
+                        chose is a record; a workaround is not.
+
+                        IT ESCAPES THE GROUP FILTER TOO, not only the school one, and the
+                        label says both. The chosen groups narrow the module list to their
+                        own courses, so that maths unit would be just as unreachable
+                        through the second half — an escape that only lifted the school
+                        would leave the same trap standing behind it, and a checkbox that
+                        lifts more than its label admits is worse than one lifting less. */}
                     <label className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
                       <input type="checkbox" checked={!!editing.showAllSchools}
                         onChange={(e) => setEditing({ ...editing, showAllSchools: e.target.checked })}
                         className="h-3.5 w-3.5 rounded border-slate-300" />
-                      Show all schools — for a class shared between two
+                      Show every school and module — for a class shared between two
                     </label>
                   </div>
-                  <Field label="Groups" hint="Chosen once; every module below is taught to these groups, and each gets its own register">
+                  <Field label="Groups" hint="Chosen once; every module below is taught to these groups, narrowed to their courses, and each gets its own register">
                     <SearchMany value={editing.cohortIds || []} placeholder="Search groups…"
                       options={narrow(cohorts, editing.cohortIds || []).map((c) => ({ id: c.id, label: cohortLabel(c) }))}
                       onChange={(v) => setEditing({ ...editing, cohortIds: v })} />
                     {narrowing && !narrow(cohorts, editing.cohortIds || []).length && (
-                      <span className="mt-1 block text-[11px] font-semibold text-amber-700">No groups belong to that school. Tick “Show all schools” to see the rest.</span>
+                      <span className="mt-1 block text-[11px] font-semibold text-amber-700">No groups belong to that school. Tick “Show every school and module” to see the rest.</span>
                     )}
                   </Field>
                   </div>
@@ -1423,7 +1712,7 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                     a plural label. */}
                 {editing.blocks.map((b, i) => {
                   const pv = previewBlocks[i];
-                  const unitOpts = narrow(units, b.unitId ? [b.unitId] : []);
+                  const unitOpts = narrowUnits(units, b.unitId ? [b.unitId] : []);
                   return (
                     <div key={b.key} className="mt-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                       <div className="mb-2 flex items-center gap-2">
@@ -1441,7 +1730,14 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                             belongs to no module — which is exactly what HndSession.unitId
                             being NOT NULL cannot express, and the reason this feature has
                             its own table. */}
-                        <Field label="Module" hint={narrowing ? "Narrowed to the school above" : "Optional — exams and meetings have none"}>
+                        {/* The hint NAMES WHICH FILTER IS ACTIVE, because with two of
+                            them a shortened list is otherwise an unexplained one: a
+                            timetabler who cannot find a unit needs to know whether it is
+                            the school or the groups that dropped it, since those are two
+                            different things to change. */}
+                        <Field label="Module" hint={groupNarrowing
+                          ? "Narrowed to the courses the groups above are on"
+                          : narrowing ? "Narrowed to the school above" : "Optional — exams and meetings have none"}>
                           <SearchOne value={b.unitId || ""} placeholder="No module" noneLabel="No module"
                             options={unitOpts.map((u) => ({ id: u.id, label: u.code ? `${u.code} — ${u.name}` : u.name, sub: courseName(u.courseId) }))}
                             onChange={(id) => {
@@ -1454,8 +1750,12 @@ function PlannerCalendarTab({ staff = [], units = [], cohorts = [], courses = []
                               const fill = u && !(b.title || "").trim() ? { title: u.code ? `${u.code} — ${u.name}` : u.name } : {};
                               setBlock(i, { unitId: id, ...fill });
                             }} />
-                          {narrowing && !unitOpts.length && (
-                            <span className="mt-1 block text-[11px] font-semibold text-amber-700">No modules belong to that school. Tick “Show all schools” to see the rest.</span>
+                          {(narrowing || groupNarrowing) && !unitOpts.length && (
+                            <span className="mt-1 block text-[11px] font-semibold text-amber-700">
+                              {groupNarrowing
+                                ? "No modules belong to those groups’ courses. Tick “Show every school and module” to see the rest."
+                                : "No modules belong to that school. Tick “Show every school and module” to see the rest."}
+                            </span>
                           )}
                         </Field>
                         <Field label="Title" hint="Taken from the module; change it if the class is called something else">

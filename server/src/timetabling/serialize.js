@@ -105,6 +105,61 @@ const sEvent = (e) => ({
 });
 
 /**
+ * One TEACHING GROUP — a Cohort — as the Groups tab lists it.
+ *
+ * THE SCHOOL COMES FROM THE COURSE, AND THIS SERIALISER IS NOT ALLOWED TO FORGET IT.
+ * Cohort.academicDepartmentId is a DENORMALISED copy of the course's department,
+ * maintained by academicDepartments.assignCourses() — the one implementation of "move a
+ * course and everything hanging off it". The id is therefore read from the cohort's own
+ * column (it is kept in step, and reading it is a single hop the scope guard can also
+ * use), while the NAME is read from the joined row, because a name is what drifts: a
+ * school renamed on Settings must not still print its old name here.
+ *
+ * `schoolName` is deliberately NOT derived from `course.academicDepartment`. Reading the
+ * course's department for the name and the cohort's column for the id would be two
+ * sources of truth in one object, and the day the denormalisation drifts the screen would
+ * show a group filed under one school and labelled with another — the failure mode the
+ * column's own schema comment warns about, rendered.
+ *
+ * NULL IS A REAL ANSWER for both halves. A group whose course has not been assigned to a
+ * school belongs to none, which is a state an administrator has to be able to SEE in
+ * order to fix; coercing it to "" or to a "General" label is the silent fail-open that
+ * academicDepartments.js refuses to ship a default for.
+ *
+ * `studentCount` is a count and a count only. The Groups tab needs to know a group has
+ * eleven people in it before offering to delete it; it does not need their names, and a
+ * list of students is a directory this endpoint has no business serving.
+ */
+const sGroup = (c) => ({
+  id: c.id,
+  name: c.name,
+  courseId: c.courseId,
+  courseName: c.course?.name ?? null,
+  academicDepartmentId: c.academicDepartmentId ?? null,
+  schoolName: c.academicDepartment?.name ?? null,
+  // `_count` is absent when the caller forgot to ask for it, and 0 would then be a lie
+  // about an intake of thirty people — the number the delete guard is read off. Null
+  // says "not counted" in the house convention, and the screen can tell the difference.
+  studentCount: c._count?.students ?? null,
+});
+
+/**
+ * One row in the group form's COURSE picker.
+ *
+ * Three fields, and the third is why this is not sCourse from serializers.js. That
+ * serialiser carries colour, the Moodle id, the VLE category it was imported from and
+ * the unit/cohort counts — everything the Courses screen needs and nothing a dropdown
+ * does. `academicDepartmentId` is here because the form filters by school on the client
+ * as well as on the server, so a picker that has already loaded every course can narrow
+ * itself without a second round trip when the school selection changes.
+ */
+const sCourseOption = (c) => ({
+  id: c.id,
+  name: c.name,
+  academicDepartmentId: c.academicDepartmentId ?? null,
+});
+
+/**
  * One row in the "select timetables" picker, reduced to what a picker needs.
  *
  * A LABEL AND AN ID, AND NOTHING ELSE. This endpoint searches students and staff by
@@ -126,4 +181,4 @@ function sResource(type, row) {
   }
 }
 
-module.exports = { sRoom, sCampus, sCategory, sEvent, sResource, roomLabel };
+module.exports = { sRoom, sCampus, sCategory, sEvent, sGroup, sCourseOption, sResource, roomLabel };

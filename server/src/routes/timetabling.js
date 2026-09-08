@@ -568,6 +568,280 @@ router.delete("/departments/:id", async (req, res) => {
   res.json({ ok: true, retired: false, inUse: 0 });
 });
 
+/* --------------------------------------------- groups (cohorts) + courses -- */
+//
+// A GROUP IS A COHORT. There is no second table and there must never be one: the thing a
+// timetabled class is addressed to — "BSc Software Engineering SEP 25" — is the same
+// intake the registers, the terms and the progression scores hang off, and
+// TimetableEventGroup already points at Cohort. "Group" is only what the planner calls it
+// on screen, because "cohort" is registry vocabulary and a timetabler is not a registrar.
+//
+// WHY THESE LIVE HERE AND NOT ON /api/hnd, which has the same rows.
+//
+// The same reason GET /departments above exists beside /api/academic-departments: the
+// gate. /hnd/cohorts is gated on requireAnyPage(["registers"]) for every write, and a
+// timetabler holds "scheduling" and not "registers" — the grants are separate precisely
+// so the person building next term is not the person who can restructure a course or
+// rewrite a register. Pointed at the /hnd routes they would get a 403 and an empty Groups
+// tab, with nothing on it saying why.
+//
+// WHAT THIS ADDS THAT /hnd/cohorts DOES NOT: the school. sCohort carries id, name,
+// courseId, startDate and createdAt, so a client holding store.cohorts cannot say which
+// school a group is in, cannot group the tab by school and cannot filter the course
+// picker. That is not an oversight there — the Registers screen has a course in hand
+// already — it is simply a different question.
+const { sGroup, sCourseOption } = require("../timetabling/serialize");
+const predictionRunner = require("../prediction/runner");
+
+/**
+ * Flag students whose progression score a change here has invalidated.
+ *
+ * The same helper routes/hnd.js carries, and deliberately the same shape: it swallows its
+ * own failure, because a cache that could not be invalidated must never be reported to an
+ * administrator as a delete that did not happen. Flagging is cheap and does NOT rescore —
+ * a group being deleted must not wait on a cohort's worth of arithmetic.
+ */
+async function flagStale(studentIds, what) {
+  if (!studentIds.length) return;
+  try { await predictionRunner.markStale(studentIds); }
+  catch (e) { console.error(`[prediction] could not flag scores after ${what}:`, e.message); }
+}
+
+/**
+ * Every group, with the school it is in and how many people are in it.
+ *
+ * THE SCHOOL IS READ FROM THE COHORT'S OWN COLUMN, not derived here from the course.
+ * Cohort.academicDepartmentId already exists and is a denormalised copy of the course's
+ * department, maintained by academicDepartments.assignCourses() — the one implementation
+ * of "move a course and everything hanging off it". Computing it here from
+ * `course.academicDepartmentId` would be a second definition of the same fact, which is
+ * exactly the drift that column's schema comment warns about, and the scope guard resolves
+ * a SINGLE hop off that column, so a route disagreeing with it would disagree with the
+ * access boundary too.
+ *
+ * For the same reason there is no writable school on a group anywhere in this file. A
+ * group's school comes from its COURSE; moving it means moving the course, which is
+ * assignCourses()' job. A settable school on Cohort would be a second source of truth for
+ * "which school is this group in", and the first course move would silently contradict it.
+ *
+ * ORDERED BY SCHOOL, THEN COURSE, THEN GROUP — the order the tab reads in, done in SQL
+ * rather than in the client so that two clients cannot disagree about it. Groups with no
+ * school sort LAST, because Postgres puts NULLs last in an ascending order and that is the
+ * right end for them: they are the ones needing attention, and burying them above the
+ * first real school is how nobody notices there are eleven of them.
+ */
+router.get("/groups", async (_req, res) => {
+  const rows = await prisma.cohort.findMany({
+    // A SELECT, not an include, so the allowlist starts at the query. sGroup is the second
+    // half of the same promise; a column added to Cohort tomorrow reaches neither.
+    select: {
+      id: true, name: true, courseId: true, academicDepartmentId: true,
+      course: { select: { name: true } },
+      // The NAME comes from the joined row rather than from the cohort, so a school
+      // renamed on Settings is renamed here too. Only the id is denormalised; a
+      // denormalised name would have to be rewritten on every rename and would be wrong
+      // until it was.
+      academicDepartment: { select: { name: true } },
+      _count: { select: { students: true } },
+    },
+    orderBy: [
+      { academicDepartment: { name: "asc" } },
+      { course: { name: "asc" } },
+      { name: "asc" },
+    ],
+  });
+  res.json(rows.map(sGroup));
+});
+
+/**
+ * The courses the group form may offer, optionally narrowed to one school.
+ *
+ * WHY NOT /hnd/courses: it is gated on "registers" for its writes and lives on a screen
+ * this caller may not hold at all. Same rows, different door — see the section header.
+ *
+ * THREE CASES FOR THE FILTER, copied deliberately from academicDepartmentFilter() in
+ * routes/hnd.js so that two screens narrow by the same rules:
+ *
+ *   omitted   -> every course
+ *   "none"    -> the courses no school has been assigned to yet
+ *   an id     -> that school's courses
+ *
+ * The third case is not decoration. A college mid-setup has courses in no school at all,
+ * and a picker that could only ever show assigned ones would make those courses
+ * unreachable from the screen that has to file their groups. An UNRECOGNISED id is passed
+ * through as itself and simply matches nothing — not ignored, because a filter that
+ * silently dropped a value it did not recognise would show the whole college's courses
+ * under one school's heading, which is the failure worth avoiding.
+ *
+ * A FILTER, NOT A BOUNDARY. Course is scoped by academicDepartmentId in
+ * academicScopeModels.js, so a departmental account already sees only its own courses
+ * whatever it passes here; this narrows a view the caller chose and grants nothing.
+ */
+router.get("/courses", async (req, res) => {
+  const filter = str(req.query.academicDepartmentId);
+  const where = !filter ? {}
+    : filter === "none" ? { academicDepartmentId: null }
+    : { academicDepartmentId: filter };
+
+  const rows = await prisma.course.findMany({
+    where,
+    select: { id: true, name: true, academicDepartmentId: true },
+    orderBy: { name: "asc" },
+  });
+  res.json(rows.map(sCourseOption));
+});
+
+/**
+ * Rename a group. THE NAME AND NOTHING ELSE.
+ *
+ * Not the course: moving a group to another course moves its students' whole curriculum,
+ * its terms and its registers, and is a registry act rather than a timetabling one. Not
+ * the school, for the reason GET /groups states at length — a group's school is its
+ * course's. Not the start date, which is what the term calendar is generated from and
+ * belongs beside the terms on the Registers screen. Each of those is a bigger act wearing
+ * a rename's clothes, and this endpoint is reachable by an account holding "scheduling"
+ * alone.
+ *
+ * CASE-INSENSITIVE CLASH, WITHIN THE COURSE. The uniqueness rule is Cohort's own
+ * @@unique([courseId, name]): a name is unique per COURSE, not per college, because two
+ * courses both running a "SEP 2025" intake is normal and forbidding it would be wrong.
+ *
+ * It is case-INSENSITIVE here where POST and PUT /hnd/cohorts are case-SENSITIVE, and that
+ * difference is deliberate rather than an oversight in either place. Those handlers compare
+ * with `findFirst({ where: { courseId, name } })`, which Postgres answers case-sensitively,
+ * so "SEP 2025" and "Sep 2025" are two accepted rows there. On a screen that lists every
+ * group in the college grouped by school they are indistinguishable, and a class addressed
+ * to the wrong one is a register nobody takes. Refusing the near-duplicate is the same
+ * instinct POST /departments above already follows for school names, and it is strictly
+ * NARROWER than the database constraint — so nothing this accepts can fail the unique, and
+ * no name /hnd already stored becomes unreadable here.
+ */
+router.put("/groups/:id", async (req, res) => {
+  const existing = await prisma.cohort.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, name: true, courseId: true },
+  });
+  if (!existing) return res.status(404).json({ error: "Group not found" });
+
+  const raw = str(req.body?.name);
+  if (!raw) return res.status(400).json({ error: "A group name is required" });
+  // Capped, then clash-checked on the CAPPED value — checking the submitted name and
+  // storing the truncation is how two identical rows get past a cap meant to stop them.
+  const name = raw.slice(0, MAX);
+  if (name === existing.name) return res.json({ ok: true, id: existing.id, name: existing.name, unchanged: true });
+
+  const siblings = await prisma.cohort.findMany({
+    where: { courseId: existing.courseId, id: { not: existing.id } },
+    select: { id: true, name: true },
+  });
+  const clash = siblings.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+  if (clash) return res.status(409).json({ error: `"${clash.name}" already exists on this course` });
+
+  let row;
+  try {
+    row = await prisma.cohort.update({ where: { id: existing.id }, data: { name } });
+  } catch (e) {
+    // The read above cannot close the window between two administrators renaming at once;
+    // @@unique([courseId, name]) can, and the loser is told rather than handed a 500.
+    if (e.code === "P2002") return res.status(409).json({ error: `"${name}" already exists on this course` });
+    if (e.code === "P2025") return res.status(404).json({ error: "Group not found" });
+    throw e;
+  }
+
+  // NO flagStale HERE, and it is worth saying so out loud. A progression score is
+  // calculated over a group's TERM DATES and its members' attendance; a name is a label on
+  // a screen and appears in no window, no denominator and no threshold. routes/hnd.js
+  // flags on a cohort being DELETED and on a term's dates MOVING, and on neither rename —
+  // flagging here would rescore a whole intake for a corrected typo.
+  audit.record(req, {
+    action: "cohort.renamed", entity: "Cohort", entityId: row.id,
+    summary: `Group "${existing.name}" was renamed to "${row.name}" from the timetable planner by ` +
+      (req.user?.name || "an administrator"),
+    before: { name: existing.name },
+    after: { name: row.name },
+  });
+  res.json({ ok: true, id: row.id, name: row.name });
+});
+
+/**
+ * Delete a group — ONLY WHEN IT IS EMPTY.
+ *
+ * A POPULATED GROUP IS REFUSED, and that is the whole reason this is not a one-liner.
+ * Student.cohortId is `onDelete: SetNull`, so deleting a cohort neither fails nor deletes
+ * anybody: it quietly detaches every student in it. Two things then happen at once,
+ * neither of them visible on this screen. The students land in no group — which under
+ * departmental scoping is how they reach their own school at all — and their progression
+ * scores are calculated over their cohort's TERM dates, which the cascade has just deleted
+ * along with the Term rows, so the window every score was measured in is gone. Thirty
+ * people silently un-grouped and un-scored, from a button labelled "delete".
+ *
+ * DELETE /hnd/cohorts does exactly that and flags the detached students afterwards, which
+ * is the right treatment on a registry screen where emptying an intake is a deliberate
+ * act. It is the wrong default for a planner: the person clearing a duplicate group off
+ * the Groups tab is not the person who meant to empty an intake. So the count comes first
+ * and a 409 names it, because "move them first" is an instruction somebody can act on
+ * where a silent success is not.
+ *
+ * Retiring rather than deleting — the answer DELETE /departments/:id gives to the same
+ * problem — was the rejected alternative: Cohort has no `active` column, adding one would
+ * put a second lifecycle on the model every register hangs off, and unlike a school a
+ * group with nobody in it genuinely is disposable.
+ */
+router.delete("/groups/:id", async (req, res) => {
+  const id = req.params.id;
+  const existing = await prisma.cohort.findUnique({
+    where: { id },
+    select: { id: true, name: true, courseId: true, course: { select: { name: true } } },
+  });
+  if (!existing) return res.status(404).json({ error: "Group not found" });
+
+  const studentCount = await prisma.student.count({ where: { cohortId: id } });
+  if (studentCount > 0) {
+    return res.status(409).json({
+      error: `"${existing.name}" still has ${studentCount} student${studentCount === 1 ? "" : "s"} in it. ` +
+        "Move them to another group first — deleting this one would take them out of every " +
+        "group and out of the term dates their attendance is measured against.",
+      studentCount,
+    });
+  }
+
+  // THE AFFECTED SET, READ BEFORE THE DELETE — and it is NOT the group's own students,
+  // because the guard above has just proved there are none.
+  //
+  // Unit.cohortId is SetNull as well, so deleting even an empty group detaches any units
+  // pinned to it, and Unit.termId goes with them because the Terms cascade away. A unit's
+  // term is part of the window its enrolled students are scored over, and those students
+  // belong to OTHER groups, so nothing else in this request would ever reach them.
+  // routes/hnd.js does not flag them either — but there the group's own members dominate
+  // the affected set, and here they cannot exist, so flagging only members would be a call
+  // that discriminates nothing.
+  const strandedUnits = await prisma.unit.findMany({ where: { cohortId: id }, select: { id: true } });
+  const affected = strandedUnits.length
+    ? [...new Set((await prisma.enrolment.findMany({
+        where: { unitId: { in: strandedUnits.map((u) => u.id) } },
+        select: { studentId: true },
+      })).map((e) => e.studentId))]
+    : [];
+
+  try {
+    await prisma.cohort.delete({ where: { id } });
+  } catch (e) {
+    if (e.code === "P2025") return res.status(404).json({ error: "Group not found" });
+    throw e;
+  }
+  await flagStale(affected, "an empty group being deleted");
+
+  audit.record(req, {
+    action: "cohort.deleted", entity: "Cohort", entityId: id,
+    summary: `Empty group "${existing.name}"` +
+      (existing.course?.name ? ` on ${existing.course.name}` : "") +
+      ` was deleted from the timetable planner by ${req.user?.name || "an administrator"}`,
+    before: { name: existing.name, courseId: existing.courseId, studentCount: 0 },
+    after: null,
+  });
+  res.json({ ok: true, unitsDetached: strandedUnits.length, scoresFlagged: affected.length });
+});
+
 /* ----------------------------------------------------------------- events -- */
 
 const { findClashes } = require("../timetabling/overlap");
