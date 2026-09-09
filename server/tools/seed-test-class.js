@@ -79,6 +79,67 @@ const localTime = (offsetMinutes = 0) => {
     console.log(`  room      ${room?.name || "(none)"}`);
     console.log(`  when      ${date}  ${start}–${end}  (running now)`);
 
+    // --term: A TERM OF CLASSES ACROSS THREE MODULES, which is what makes the timetable
+    // screens worth looking at. One class proves the plumbing; three modules on three
+    // weekdays at three times is the first arrangement that shows whether the SHAPE
+    // works — whether colour separates modules, whether a constant room collapses into
+    // the module header and drops its column, whether a day with nothing on reads as a
+    // day with nothing on.
+    const wantTerm = process.argv.includes("--term");
+    const WEEKS = 6;
+    const PLAN = [
+      { dayOffset: 0, start: "09:00", end: "12:00" },   // Monday morning
+      { dayOffset: 2, start: "13:00", end: "16:00" },   // Wednesday afternoon
+      { dayOffset: 4, start: "10:00", end: "13:00" },   // Friday mid-morning
+    ];
+    if (wantTerm) {
+      const units = await bare.unit.findMany({
+        where: { courseId: cohort.courseId }, orderBy: { code: "asc" }, take: 3,
+        select: { id: true, code: true, name: true },
+      });
+      if (units.length < 2) { console.error(`FAILED: ${cohort.name}'s course has fewer than two modules to timetable.`); process.exit(1); }
+      const rooms = await bare.room.findMany({ where: { active: true }, orderBy: { name: "asc" }, take: 3, select: { id: true, name: true } });
+
+      // THIS week's Monday, so the term starts in the week the reader is already looking
+      // at rather than somewhere they have to navigate to.
+      const d0 = new Date(`${date}T00:00:00Z`);
+      const isoDay = d0.getUTCDay() === 0 ? 7 : d0.getUTCDay();
+      d0.setUTCDate(d0.getUTCDate() - (isoDay - 1));
+      const monday = d0.toISOString().slice(0, 10);
+      const plus = (n) => { const x = new Date(`${monday}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+
+      const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+      console.log(`\n  TERM: ${units.length} module(s) x ${WEEKS} weeks from ${monday}`);
+      for (const [i, u] of units.entries()) {
+        const slot = PLAN[i % PLAN.length];
+        console.log(`    ${u.code} - ${u.name}  |  ${DAYS[slot.dayOffset]} ${slot.start}-${slot.end}  |  ${rooms[i % rooms.length]?.name || "no room"}`);
+      }
+      if (!APPLY) { console.log("\nWould create the class above AND that term. Add --apply."); return; }
+
+      let made = 0, regs = 0;
+      for (const [i, u] of units.entries()) {
+        const slot = PLAN[i % PLAN.length];
+        const room2 = rooms[i % rooms.length] || null;
+        for (let w = 0; w < WEEKS; w++) {
+          const when = plus(slot.dayOffset + w * 7);
+          const ev = await bare.timetableEvent.create({
+            data: {
+              title: `${TITLE_PREFIX} - ${u.name}`,
+              date: when, startTime: slot.start, endTime: slot.end,
+              unitId: u.id, courseId: cohort.courseId, roomId: room2?.id ?? null,
+              published: true, publishedAt: new Date(), createRegisters: true,
+            },
+          });
+          await bare.timetableEventStaff.create({ data: { eventId: ev.id, staffId: staff.id } });
+          await bare.timetableEventGroup.create({ data: { eventId: ev.id, cohortId: cohort.id } });
+          const r = await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => syncEventRegisters(ev.id));
+          made++; regs += r.created;
+        }
+      }
+      console.log(`\n  OK ${made} class(es) across ${units.length} module(s), ${regs} register(s)`);
+      console.log(`\nRemove everything with:  node tools/seed-test-class.js --remove --apply`);
+      return;
+    }
     if (!APPLY) { console.log("\nWould create that class, published, with its register."); return; }
 
     const event = await bare.timetableEvent.create({
