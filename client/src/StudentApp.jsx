@@ -425,7 +425,35 @@ function checkInSub(tapContext) {
 // "what have I got today and when" — whether or not the college taps stickers. It also
 // makes the check-in card legible: a row marked NOW is the one the button will mark, and
 // a row already carrying P or L is one nobody needs to think about again.
-function TodaysClasses({ today, loading }) {
+function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
+  // Which class is mid-request, and what the last attempt said. Above the early return
+  // with every other hook: the rule is positional, and a hook below `if (loading)` runs a
+  // different number of times on the render after the data lands.
+  const [marking, setMarking] = useState(null);
+  const [failed, setFailed] = useState("");
+
+  /**
+   * "I'm here" — mark this class without a sticker or a code.
+   *
+   * OPTIMISTIC IS WRONG HERE, and that is the one place this differs from the register
+   * screen a lecturer uses. This writes a mark ON THE STUDENT'S OWN RECORD with nothing
+   * standing behind it, so it must not appear to have succeeded until the server says it
+   * has: a row that reads "Present" and was never written is exactly the claim somebody
+   * brings to an appeal.
+   */
+  const declare = async (c) => {
+    if (!canDeclare || marking) return;
+    setMarking(c.id); setFailed("");
+    try {
+      await api.studentDeclareCheckIn(c.id);
+      await onDeclared?.();
+    } catch (e) {
+      setFailed(e?.message || "Could not mark you in. Try again.");
+    } finally {
+      setMarking(null);
+    }
+  };
+
   if (loading) return null;
 
   // An empty day is a real answer and deserves saying, not an absence to interpret.
@@ -455,6 +483,17 @@ function TodaysClasses({ today, loading }) {
     <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
       <p className="px-5 pb-1 pt-4 text-[11px] font-bold uppercase tracking-wider text-slate-400">
         Today &middot; {today.length} class{today.length === 1 ? "" : "es"}
+      </p>
+      {/* SAID, NOT SWALLOWED. The server refuses a declaration for good reasons — the
+          class is not running, the term is closed, somebody has already marked them —
+          and each is a different next step for the student. A button that simply did
+          nothing would send them to the office to ask why. */}
+      {failed && (
+        <p className="mx-5 mb-2 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-200">
+          {failed}
+        </p>
+      )}
+      <p className="hidden">
       </p>
       <ul className="divide-y divide-slate-100">
         {today.map((c) => {
@@ -492,6 +531,18 @@ function TodaysClasses({ today, loading }) {
                 )}
               </span>
               <span className="flex shrink-0 flex-col items-end gap-1">
+                {/* OFFERED ONLY WHILE THE CLASS IS RUNNING AND ONLY IF NOBODY HAS MARKED
+                    THEM. A class that is over cannot be claimed after the fact, and a
+                    mark that already stands is never overwritten by a student — the same
+                    rule the sticker and the code obey, said here so the button is not
+                    offered for a request the server would refuse. */}
+                {canDeclare && isNow && !mark && (
+                  <button onClick={() => declare(c)} disabled={marking === c.id}
+                    className="press rounded-lg px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                    style={{ background: ACCENT.checkin }}>
+                    {marking === c.id ? "Marking…" : "I'm here"}
+                  </button>
+                )}
                 {mark
                   ? <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ring-1 ${mark.bg} ${mark.text} ${mark.ring}`}>{mark.label}</span>
                   : isNow
@@ -582,7 +633,8 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
 
       {scanning && <QrScanner onScan={onScanned} onClose={closeScanner} />}
 
-      <TodaysClasses today={tapContext?.today} loading={tapContext == null} />
+      <TodaysClasses today={tapContext?.today} loading={tapContext == null}
+        canDeclare={tapContext?.declareEnabled === true} onDeclared={reload} />
 
       {(enabled || qrEnabled) && running === 0 && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">

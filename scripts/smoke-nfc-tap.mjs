@@ -61,6 +61,17 @@ const B_EMAIL = "100122@edtech.co.uk";
 // response cannot be counted.
 const C_ID = "st-100126";
 const C_EMAIL = "100126@edtech.co.uk";
+// A FOURTH seeded student, for the "I'm here" (declared) check-in block at the end, and
+// again the reason is the rate limiter rather than tidiness: the budget is TEN attempts a
+// minute per student ACROSS every capture method, A_ID sits exactly on its ceiling and
+// C_ID has spent most of its own. D_ID starts a fresh budget and spends seven of ten.
+//
+// D_ID is also seeded with no classes of its own today once the seeded timetable is
+// parked, which is what lets that block build an exact fixture: "one class running, one
+// later, one belonging to somebody else" has to mean exactly that, or a refusal cannot be
+// attributed to the guard it was written for.
+const D_ID = "st-100133";
+const D_EMAIL = "100133@edtech.co.uk";
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail = "") => {
@@ -133,6 +144,7 @@ async function cleanup() {
     await db.student.update({ where: { id: A_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
     await db.student.update({ where: { id: B_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
     await db.student.update({ where: { id: C_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
+    await db.student.update({ where: { id: D_ID }, data: { passwordHash: null, tokenVersion: 0 } }).catch(() => {});
   } catch (e) {
     console.error("cleanup problem:", e.message);
   }
@@ -184,6 +196,32 @@ try {
   check("and the staff refusal row says how the tap arrived", offStaffRow?.method === "nfc",
     `method=${offStaffRow?.method ?? "null"}`);
 
+  // THE THIRD SWITCH, ASSERTED WHERE THERE IS NO CONFIG ROW AT ALL.
+  //
+  // Deliberately here rather than in the block at the end of this file: this is the only
+  // point in the suite where the college has NO saved settings, so what is being tested is
+  // the platform DEFAULT rather than a `false` somebody wrote. "I'm here" check-in removes
+  // the room from the evidence — a student can press it from a bus — so a college that has
+  // never opened the settings screen must not have registers writable that way.
+  //
+  // A nonsense sessionId on purpose. The refusal has to come from the switch, BEFORE any
+  // lookup and before the rate limiter, exactly as the NFC route orders its own three
+  // refusals — a guard that only fires once a real class is named is a guard with a hole
+  // in it, and it would also spend a tap from a budget the caller has not been told about.
+  const offDeclare = await call("/student/me/declare-check-in", {
+    method: "POST", token: sToken, body: { sessionId: `no-such-session-${RUN}` },
+  });
+  check("\"I'm here\" check-in is refused BY DEFAULT, with no settings row saved at all",
+    offDeclare.status === 403, `HTTP ${offDeclare.status}`);
+  const offDeclareRow = await db.tagTap.findFirst({
+    where: { studentId: A_ID, method: "declared", outcome: "disabled" },
+    orderBy: { at: "desc" },
+  });
+  if (offDeclareRow) made.taps.push(offDeclareRow.id);
+  check("...and the refusal is logged as a declared attempt, not as a tap",
+    offDeclareRow?.method === "declared" && offDeclareRow?.tagId === null,
+    `method=${offDeclareRow?.method ?? "null"} tagId=${offDeclareRow?.tagId ?? "null"}`);
+
   const offCtx = await call("/student/me/tap-context", { token: sToken });
   // The contract changed deliberately, and this assertion changed with it.
   //
@@ -215,6 +253,12 @@ try {
   check("tap-context reports disabled, with one shape for `now` rather than two",
     offCtx.status === 200 && offCtx.data?.enabled === false && Array.isArray(offCtx.data?.now),
     `HTTP ${offCtx.status} enabled=${offCtx.data?.enabled} now=${JSON.stringify(offCtx.data?.now)}`);
+  // The screen decides whether to draw an "I'm here" button from this field, so a build
+  // that has never heard of the flag and a college that has not switched it on must be
+  // told apart by the KEY existing and being false — not by it being absent.
+  check("...and reports the declared switch as off by default, by name",
+    "declareEnabled" in (offCtx.data || {}) && offCtx.data.declareEnabled === false,
+    `declareEnabled=${JSON.stringify(offCtx.data?.declareEnabled)}`);
 
   // Switch it on THROUGH THE API, not by writing the row directly.
   //
@@ -1220,6 +1264,84 @@ try {
   await db.cohort.deleteMany({ where: { id: { in: [grpCohort.id, otherCohort.id] } } });
   await db.unit.delete({ where: { id: grpUnit.id } }).catch(() => {});
   await db.course.delete({ where: { id: grpCourse.id } }).catch(() => {});
+
+
+  /* ====================================================================== */
+  console.log("\n--- \"I'm here\": switched ON, and every other guard still holding ---");
+  /* ====================================================================== */
+  //
+  // The off-by-default refusals are asserted above. These are the other half: that the
+  // thing works when a college opts in, that it is DISTINGUISHABLE in the record forever,
+  // and that removing the proof of presence removed ONLY that — the window, the term
+  // lock, the roster and the already-marked rule all still refuse exactly as they do for
+  // a sticker and a code.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: true } });
+
+  const dCourse = await db.course.create({ data: { ...stamp(DEPT), name: `Declare Course ${RUN}` } });
+  made.courses.push(dCourse.id);
+  const dCohort = await db.cohort.create({ data: { ...stamp(DEPT), courseId: dCourse.id, name: `Declare Intake ${RUN}` } });
+  made.cohorts.push(dCohort.id);
+  const dUnit = await db.unit.create({ data: { ...stamp(DEPT), code: `DCL${RUN}`.slice(0, 12), name: `Declared Unit ${RUN}`, courseId: dCourse.id, startDate: todayLocal(), endDate: todayLocal() } });
+  made.units.push(dUnit.id);
+  await db.student.update({ where: { id: D_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0, cohortId: dCohort.id } });
+  const dLogin = await login(D_EMAIL, A_PASSWORD);
+  const dToken = dLogin.data?.token;
+  check("the fourth student signed in", !!dToken, `HTTP ${dLogin.status}`);
+
+  // NO ENROLMENT ANYWHERE ON THIS MODULE, deliberately. The student reaches the register
+  // through their GROUP, which is every module a college creates by hand — and an
+  // enrolment-only check would refuse them while they stand in the room.
+  const dNow = await db.hndSession.create({
+    data: { unitId: dUnit.id, cohortId: dCohort.id, date: todayLocal(), startTime: shift(nowHHMM(), -5), endTime: shift(nowHHMM(), 115), description: "declare now" },
+  });
+  made.sessions.push(dNow.id);
+  const dLater = await db.hndSession.create({
+    data: { unitId: dUnit.id, cohortId: dCohort.id, date: todayLocal(), startTime: shift(nowHHMM(), 240), endTime: shift(nowHHMM(), 300), description: "declare later" },
+  });
+  made.sessions.push(dLater.id);
+  check("the fixture module records no enrolments at all",
+    (await db.enrolment.count({ where: { unitId: dUnit.id } })) === 0);
+
+  const dCtx = await call("/student/me/tap-context", { token: dToken });
+  check("the app is told declaring is switched on", dCtx.data?.declareEnabled === true, `declareEnabled=${dCtx.data?.declareEnabled}`);
+  check("and the running class is on their list, reached through their GROUP",
+    (dCtx.data?.today || []).some((c) => c.id === dNow.id), `ids=${(dCtx.data?.today || []).map((c) => c.id).join(",")}`);
+
+  const dLaterTry = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dLater.id } });
+  check("A CLASS THAT IS NOT RUNNING IS REFUSED — removing the proof did not remove the window",
+    dLaterTry.status === 409, `HTTP ${dLaterTry.status} ${dLaterTry.data?.reason || ""}`);
+  check("and nothing was written for it", (await db.attendanceMark.count({ where: { sessionId: dLater.id, studentId: D_ID } })) === 0);
+
+  const dOther = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: cLive1.id } });
+  check("A CLASS THEY ARE NOT ON THE REGISTER FOR IS REFUSED", dOther.status === 403, `HTTP ${dOther.status} ${dOther.data?.reason || ""}`);
+
+  const dOk = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dNow.id } });
+  check("A STUDENT CAN MARK THEMSELVES IN AT A CLASS THAT IS RUNNING", dOk.status === 201, `HTTP ${dOk.status} ${dOk.data?.reason || ""}`);
+  const dMark = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: D_ID } });
+  check("the mark is in the database with an arrival time", !!dMark && !!dMark.checkedInAt, JSON.stringify({ status: dMark?.status, at: dMark?.checkedInAt }));
+  // THE ASSERTION THIS WHOLE FEATURE TURNS ON. A declaration recorded as a tap answers
+  // "what evidence stands behind this mark" wrongly, permanently, on the one row somebody
+  // brings to an appeal.
+  check("IT IS STAMPED AS A DECLARATION, not as a tap or a scan",
+    dMark?.takenBy === "Self check-in (declared)", `takenBy=${dMark?.takenBy}`);
+
+  const dAgain = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dNow.id } });
+  check("pressing it twice does not write a second mark", dAgain.data?.alreadyMarked === true, `HTTP ${dAgain.status}`);
+  check("and there is still exactly one", (await db.attendanceMark.count({ where: { sessionId: dNow.id, studentId: D_ID } })) === 1);
+
+  // A mark a LECTURER set is never overwritten by a student, exactly as with a sticker.
+  await db.attendanceMark.delete({ where: { id: dMark.id } }).catch(() => {});
+  const planted = await db.attendanceMark.create({ data: { sessionId: dNow.id, studentId: D_ID, status: "A", remark: "", takenBy: "A Lecturer" } });
+  made.marks.push(planted.id);
+  const dOverwrite = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dNow.id } });
+  check("A MARK A LECTURER ALREADY SET IS NOT OVERWRITTEN", dOverwrite.data?.alreadyMarked === true && dOverwrite.data?.status === "A",
+    `status=${dOverwrite.data?.status}`);
+  check("and it is still theirs, with no arrival time invented",
+    (await db.attendanceMark.findUnique({ where: { id: planted.id } }))?.takenBy === "A Lecturer");
+
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
+  const dAfterOff = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dNow.id } });
+  check("switching it back off refuses again immediately", dAfterOff.status === 403, `HTTP ${dAfterOff.status}`);
 
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");

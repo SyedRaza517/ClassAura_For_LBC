@@ -60,6 +60,35 @@ const DEFAULTS = Object.freeze({
   // it is a setting because this is exactly the sort of threshold a college will want to
   // argue about, and it should not need a deploy to say so.
   qrRotateSeconds: 30,
+  // Whether a student can mark themselves present straight from their class list — no
+  // sticker, no code. The app shows what the timetable says is running now and they tap
+  // the one they are in.
+  //
+  // SHIPS OFF, AND UNLIKE qrEnabled ABOVE, THIS DEFAULT IS NOT A PRODUCT DECISION THAT
+  // COULD REASONABLY GO THE OTHER WAY. Read that block first: the argument that made QR
+  // safe to ship ON is that a scan still has to happen in the room — switching it on
+  // "adds a way for an enrolled student to mark THEMSELVES present in the room, and
+  // nothing else". This one removes the room. There is no artefact to be near and no
+  // proximity to establish, so the mark records that a student SAID they were in a class
+  // the timetable says is running. Every other mark in this database is an observation;
+  // this is the only one that is a claim.
+  //
+  // A college may well want it, and refusing to build it would have been the worse
+  // failure: distance and blended delivery are real, a lecturer teaching a practical
+  // cannot also take a register, and a basement room with no signal defeats a camera.
+  // But it changes what this college's own attendance data MEANS at a funding audit, a
+  // visa compliance check or a student's appeal — and a change of that size is one an
+  // institution takes deliberately, on a settings screen, with the trade-off in front of
+  // them. Never one they acquire because somebody deployed. So this default stays false
+  // whatever happens to the other two, and "tidying" it to match qrEnabled is the one
+  // change here that cannot be undone from the data afterwards.
+  //
+  // What it can never do is the SAME list binding the other two, and none of it is
+  // relaxed: it cannot overwrite a mark a member of staff set, cannot record an absence,
+  // cannot land outside the class's own timetabled window, cannot reach a register whose
+  // term is closed, and cannot reach a register the student is not on. The honest
+  // difference is proximity, and only proximity.
+  declareEnabled: false,
 });
 
 const SETTING_FIELDS = Object.freeze(Object.keys(DEFAULTS));
@@ -134,6 +163,14 @@ function merge(stored, base = DEFAULTS) {
   if (arm !== null) out.armSeconds = arm;
 
   if (stored.qrEnabled === true || stored.qrEnabled === false) out.qrEnabled = stored.qrEnabled;
+
+  // Compared identically, exactly like `enabled` and `qrEnabled` above, and for a sharper
+  // version of the same reason. `"false"` and `0` are both mistakes somewhere in a chain
+  // of JSON; reading either as consent would switch a college's attendance record from
+  // observation to declaration by accident. Anything that is not a literal boolean falls
+  // through to the base — which, for a college that has never opened this screen, is
+  // DEFAULTS and therefore off.
+  if (stored.declareEnabled === true || stored.declareEnabled === false) out.declareEnabled = stored.declareEnabled;
 
   // Clamped rather than merely capped, because this field has a meaningful floor. Note
   // `minutes()` is reused for the range check but returns null for anything unusable, so a

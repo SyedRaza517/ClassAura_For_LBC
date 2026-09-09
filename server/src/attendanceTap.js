@@ -36,14 +36,39 @@ const SELF_CHECKIN_STAMP = "Self check-in (NFC)";
 // reclassify every self check-in ever recorded as staff-marked. A test pins it.
 const SELF_CHECKIN_QR_STAMP = "Self check-in (QR)";
 
+// The THIRD stamp, and the only one with nothing standing behind it.
+//
+// A sticker needs a phone held within a few centimetres of a tag that is physically in
+// the room. A code on a projector needs a camera pointed at that screen while it is still
+// the current code. This one needs neither: the student opens the app, sees the class the
+// timetable says is running, and says they are in it. It can be done from a bus, and
+// nothing in the record will ever show that it was.
+//
+// THAT IS PRECISELY WHY IT GETS ITS OWN STAMP RATHER THAN BORROWING THE NFC ONE. Every
+// surface that reads a mark back — the lecturer's live view, the register, a student's own
+// history, the CSV an administrator attaches to an email when a mark is challenged — is
+// eventually asked "what evidence stands behind this". A declaration recorded as a tap
+// answers that question wrongly, permanently, on rows nobody can go back and re-evidence,
+// and it does so in the one document written to settle a dispute. The distinction between
+// the two existing stamps was already justified on exactly this ground (a sticker needs
+// proximity, a screen can be photographed); the gap between either of them and a plain
+// assertion is larger than the gap between them.
+//
+// Frozen on the same terms as its two neighbours: the STAMP is prose written into rows,
+// the TOKEN is the identifier screens switch on. Neither may be reworded.
+const SELF_CHECKIN_DECLARED_STAMP = "Self check-in (declared)";
+
 // Every stamp that means "the student did this, not a member of staff", each beside the
-// short token the API reports it as. A third capture method adds ONE line here and needs
-// no other change anywhere: the frozen list, the predicate and the token all read off
-// this map, so none of them can drift from the others.
+// short token the API reports it as. A NEW capture method adds ONE line here and needs no
+// other change anywhere on the server: the frozen list, the predicate and the token all
+// read off this map, so none of them can drift from the others. (This comment said "a
+// third" until 9 Sep 2026, by which point there was one — which is how somebody comes to
+// believe they are adding the first new one. There are THREE entries below; the entries
+// are the count, not this paragraph.)
 //
 // THE TOKEN IS THE THING CLIENTS SWITCH ON, and the split between it and the stamp is the
 // whole point. The stamp is prose — frozen, English, and written into rows in two live
-// databases — while the token is an identifier: two characters, no wording to change, and
+// databases — while the token is an identifier: lower-case, no wording to change, and
 // nothing a screen ever prints. Both browser screens used to re-derive the method by
 // comparing against the stamp itself, so the exact string lived in three files and a
 // change to the wording here would have relabelled every QR mark as an NFC one, on the
@@ -54,6 +79,7 @@ const SELF_CHECKIN_QR_STAMP = "Self check-in (QR)";
 const SELF_CHECKIN_METHODS = new Map([
   [SELF_CHECKIN_STAMP, "nfc"],
   [SELF_CHECKIN_QR_STAMP, "qr"],
+  [SELF_CHECKIN_DECLARED_STAMP, "declared"],
 ]);
 
 // A Map rather than a plain object on purpose: `takenBy` is a column, so an attacker or an
@@ -66,8 +92,8 @@ const SELF_CHECKIN_METHODS = new Map([
 const SELF_CHECKIN_STAMPS = Object.freeze([...SELF_CHECKIN_METHODS.keys()]);
 
 /**
- * HOW this mark was captured: "nfc", "qr", or null for anything that is not a self
- * check-in — a lecturer's tick, a Moodle import, or a mark whose takenBy was never
+ * HOW this mark was captured: "nfc", "qr", "declared", or null for anything that is not
+ * a self check-in — a lecturer's tick, a Moodle import, or a mark whose takenBy was never
  * recorded at all.
  *
  * NULL IS "NOT A SELF CHECK-IN", never "a member of staff did it". An unmarked student and
@@ -230,5 +256,6 @@ function statusFor(session, now, settings) {
 
 module.exports = {
   addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
-  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn, checkInMethod,
+  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP,
+  SELF_CHECKIN_STAMPS, isSelfCheckIn, checkInMethod,
 };

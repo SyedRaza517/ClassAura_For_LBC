@@ -217,6 +217,12 @@ export const api = {
   studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) }, headers: deviceHeaders() }),
   // Both self check-ins carry the device trail header (deviceId.js).
   studentQrCheckIn: (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code }, headers: deviceHeaders() }),
+  // "I'm here" — a mark with no sticker and no code standing behind it, so the college
+  // has to switch it on. Answers 403 `declare_off` when they have not, which means the
+  // caller must gate on tapContext.declareEnabled rather than offering it and hoping.
+  // deviceHeaders() travels with it like the other two: the device a claim came from is
+  // the only corroboration this method has.
+  studentDeclareCheckIn: (sessionId) => request("/student/me/declare-check-in", { method: "POST", body: { sessionId }, headers: deviceHeaders() }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
 

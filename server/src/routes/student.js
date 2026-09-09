@@ -13,7 +13,7 @@ const tapConfig = require("../attendanceTapConfig");
 const { rosterForSession } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
-const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
+const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP } = require("../attendanceTap");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate } = require("../validate");
@@ -252,6 +252,9 @@ router.get("/me/tap-context", async (req, res) => {
     // not become "some kind of check-in is available".
     enabled: settings.enabled === true,
     qrEnabled: settings.qrEnabled,
+    // Whether to OFFER the "I'm here" action at all. The app cannot work this out for
+    // itself, and a button that always answers 403 is worse than no button.
+    declareEnabled: settings.declareEnabled === true,
     armSeconds: settings.armSeconds,
     date,
     now: decision.kind === "one" ? [sTapSession(decision.session)]
@@ -477,13 +480,17 @@ router.post("/me/qr-check-in", async (req, res) => {
     return res.status(404).json({ error: "That class no longer exists.", reason: "no_session" });
   }
 
-  // Enrolment is what makes a student eligible for a register at all — the NFC path
-  // gets this from building candidates off Enrolment; here it is the explicit check.
-  const enrolled = await prisma.enrolment.findFirst({
-    where: { studentId: req.user.id, unitId: session.unitId },
-    select: { id: true },
-  });
-  if (!enrolled) {
+  // THE ROSTER, NOT THE ENROLMENT LIST — the sixth handler with this defect, and the
+  // last one that could still refuse a student standing in the room.
+  //
+  // The comment this replaces said "the NFC path gets this from building candidates off
+  // Enrolment", and that was true until candidateSessions was fixed: a student reaches a
+  // register EITHER by an enrolment on the module OR by membership of a group the class
+  // was timetabled for. On every module created by hand rather than synced from Moodle
+  // there are no enrolments at all, so this check refused every student of every such
+  // class — scanning the code their lecturer had just put on the screen.
+  const roster = await rosterForSession(session);
+  if (!roster.studentIds.includes(req.user.id)) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "not_enrolled" });
     return res.status(403).json({ error: "You're not on the list for that class.", reason: "not_enrolled" });
   }
@@ -553,6 +560,136 @@ router.post("/me/qr-check-in", async (req, res) => {
     summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) checked themselves in at ${time} on the ${session.date} register for ${shaped.unitCode || "a unit"} — recorded ${status} via the code on screen`,
     before: null,
     after: { sessionId: session.id, status, checkedInAt: time, method: "qr" },
+  });
+
+  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(shaped) });
+});
+
+// POST /api/student/me/declare-check-in  { sessionId }
+//
+// "I'm here." The student opens Check In, sees the classes the timetable says are running
+// for them, taps one, and is marked present. No sticker, no code on a screen.
+//
+// EVERY OTHER MARK IN THIS DATABASE IS AN OBSERVATION; THIS ONE IS A CLAIM. A sticker
+// needs a phone within a few centimetres of a tag that is physically in the room. A code
+// on a projector needs a camera pointed at that screen while the code is still current.
+// This needs neither, and can be done from a bus. Three things follow, and none of them
+// is optional:
+//
+//   IT SHIPS OFF. `declareEnabled` defaults false and a college turns it on deliberately,
+//   with the trade-off in front of them, because it changes what their attendance data
+//   MEANS at a funding audit or a student's appeal.
+//
+//   IT IS DISTINGUISHABLE FOREVER. SELF_CHECKIN_DECLARED_STAMP is its own stamp with its
+//   own token, so the live view, the register, a student's history and the CSV an
+//   administrator attaches to an email all report how this mark was made. Recording a
+//   declaration as a tap would answer "what evidence stands behind this" wrongly, on rows
+//   nobody can go back and re-evidence.
+//
+//   EVERY OTHER GUARD STILL APPLIES. Same rate budget, same session window, same term
+//   lock, same "a mark that already stands wins" rule as the two capture methods beside
+//   it. What is removed is the proof of presence, and nothing else.
+router.post("/me/declare-check-in", async (req, res) => {
+  const settings = await tapConfig.get();
+  if (!settings.declareEnabled) {
+    await logTap(req, { studentId: req.user.id, method: "declared", outcome: "disabled" });
+    return res.status(403).json({ error: "Marking yourself in isn't switched on. Your lecturer will mark you in.", reason: "declare_off" });
+  }
+
+  const rawSessionId = req.body?.sessionId;
+  if (!isString(rawSessionId) || !rawSessionId.trim()) {
+    return res.status(400).json({ error: "A class is required", reason: "declare_missing" });
+  }
+  const sessionId = rawSessionId.trim();
+
+  // The SAME budget as the other two, deliberately: one student gets ten check-in
+  // attempts a minute ACROSS every capture method, not ten of each.
+  if (!tapAllowed(req.user.id)) {
+    await logTap(req, { studentId: req.user.id, method: "declared", outcome: "rate_limited" });
+    return res.status(429).json({ error: "Too many attempts. Wait a moment and try again.", reason: "too_many" });
+  }
+
+  const session = await prisma.hndSession.findUnique({
+    where: { id: sessionId },
+    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+  });
+  if (!session) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "declared", outcome: "session_unknown" });
+    return res.status(404).json({ error: "That class no longer exists.", reason: "no_session" });
+  }
+
+  // THE ROSTER, NOT THE ENROLMENT LIST. A student reaches a register by two routes — an
+  // enrolment on the module, or membership of a group the class was timetabled for — and
+  // rosterForSession is the one place that decides between them. An enrolment-only check
+  // here would refuse every student of every hand-made module, which is the defect this
+  // codebase has now closed in six other handlers.
+  const roster = await rosterForSession(session);
+  if (!roster.studentIds.includes(req.user.id)) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "declared", outcome: "not_enrolled" });
+    return res.status(403).json({ error: "You're not on the list for that class.", reason: "not_enrolled" });
+  }
+
+  const date = localDate();
+  const time = localTime();
+
+  // Window before term, mirroring the other two routes: a student who tapped at the wrong
+  // time of day must not be told their term is closed.
+  if (!withinSessionWindow(session, { date, time }, settings)) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "declared", outcome: "no_session_now" });
+    return res.status(409).json({ error: "That class isn't running right now.", reason: "no_session_now" });
+  }
+  if (!termOpenOn(session.unit?.term, date)) {
+    await logTap(req, { studentId: req.user.id, sessionId, method: "declared", outcome: "term_locked" });
+    return res.status(423).json({ error: "That class is outside term dates, so check-in is closed.", reason: "term_locked" });
+  }
+
+  const shaped = {
+    id: session.id,
+    unitCode: session.unit?.code || "",
+    unitName: session.unit?.name || "",
+    startTime: session.startTime,
+    endTime: session.endTime,
+  };
+  const status = statusFor(session, { date, time }, settings);
+
+  const existing = await prisma.attendanceMark.findUnique({
+    where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
+  });
+  if (existing) {
+    await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "declared", outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: existing.status, checkedInAt: existing.checkedInAt ?? null, session: sTapSession(shaped) });
+  }
+
+  let mark;
+  try {
+    mark = await prisma.attendanceMark.create({
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_DECLARED_STAMP, checkedInAt: time },
+    });
+  } catch (e) {
+    // P2002 on @@unique([sessionId, studentId]): two presses raced past the check above,
+    // or a lecturer saved the register in between. A mark now stands and this request
+    // must not have written it — report what stands rather than a 500.
+    const standing = await prisma.attendanceMark.findUnique({
+      where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
+    });
+    if (!standing) throw e;
+    await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "declared", outcome: "already_marked" });
+    return res.json({ ok: true, alreadyMarked: true, status: standing.status, checkedInAt: standing.checkedInAt ?? null, session: sTapSession(shaped) });
+  }
+
+  await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "declared", outcome: "marked", status });
+
+  // Flag, never rescore: a check-in must not wait on arithmetic.
+  try { await predictionRunner.markStale([req.user.id]); }
+  catch (e) { console.error("[prediction] could not flag a score after a declared check-in:", e.message); }
+
+  // The audit line says HOW, in words, because this is the mark somebody will question.
+  audit.record(req, {
+    action: "attendance.declared.marked",
+    entity: "AttendanceMark", entityId: mark.id,
+    summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) declared themselves present at ${time} on the ${session.date} register for ${shaped.unitCode || "a unit"} — recorded ${status}, with no sticker or code`,
+    before: null,
+    after: { status, checkedInAt: time },
   });
 
   res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(shaped) });
