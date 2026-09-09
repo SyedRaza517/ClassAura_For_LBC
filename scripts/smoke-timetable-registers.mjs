@@ -860,10 +860,94 @@ check("and it agrees with the unit list on the no-enrolment module",
 check("and on the enrolled one",
   mUnit(unit.id)?.studentCount === 3, `studentCount=${JSON.stringify(mUnit(unit.id)?.studentCount)}`);
 
+
+console.log("\n--- CLOSING A REGISTER REACHES ONLY THE PEOPLE ON IT ---");
+//
+// Four defects an adversarial sweep found, all in write or disclosure paths, all
+// regressions of the same root cause the read paths were fixed for.
+//
+// mark-remaining-absent read enrolment.findMany({ unitId }) -- every student on the
+// MODULE. On a merged class that is the other group, so closing group A's register wrote
+// a permanent A against students who were in another room, dropped their percentage and
+// rescored them. GET /register and GET /live refuse to list those rows, so the marks were
+// invisible on the screen that made them and present in every figure.
+const mergedUnit = await db.unit.create({ data: { code: `MG-${TAG}`, name: `Merged unit ${TAG}`, courseId: course.id } });
+const gX = await db.cohort.create({ data: { name: `GX ${TAG}`, courseId: course.id } });
+const gY = await db.cohort.create({ data: { name: `GY ${TAG}`, courseId: course.id } });
+const x1 = await mkStudent("x1", gX.id);
+// TWO in group X, and the second one is load-bearing. The defect below is a comparison
+// of the ROSTER SIZE against the REQUEST LENGTH, so it only bites when those two numbers
+// coincide -- with one student in the group they differ and the broken code passes.
+const x2 = await mkStudent("x2", gX.id);
+const y1 = await mkStudent("y1", gY.id);
+// BOTH enrolled on the module — the ordinary Moodle case, and the one that made the
+// close-off route reach across groups.
+for (const st of [x1, x2, y1]) await db.enrolment.create({ data: { studentId: st.id, unitId: mergedUnit.id } });
+
+const mgEvent = (await mkEvent({
+  // PAST, deliberately: mark-remaining-absent refuses a class that has not happened
+  // yet, so a future fixture tests the refusal rather than the roster.
+  date: "2026-06-02", start: "09:00", end: "12:00", title: `Merge ${TAG}`,
+  unitId: mergedUnit.id, cohortIds: [gX.id, gY.id], published: true,
+})).data;
+const mgRegs = await registersFor(mgEvent.event.id);
+check("a merged class built one register per group", mgRegs.length === 2, `${mgRegs.length}`);
+const regX = mgRegs.find((r) => r.cohortId === gX.id);
+
+const closed = await call(`/hnd/sessions/${regX.id}/mark-remaining-absent`, { method: "POST", token: admin.token });
+check("closing group X's register succeeds", closed.status === 200, `${closed.status} ${JSON.stringify(closed.data)}`);
+check("IT MARKS THE GROUP, NOT THE MODULE — group Y was in another room",
+  closed.data?.marked === 2, `marked=${closed.data?.marked}`);
+check("AND NO ABSENCE WAS WRITTEN AGAINST THE OTHER GROUP'S STUDENT",
+  (await db.attendanceMark.count({ where: { sessionId: regX.id, studentId: y1.id } })) === 0,
+  `y1 marks on X's register: ${await db.attendanceMark.count({ where: { sessionId: regX.id, studentId: y1.id } })}`);
+check("the student who WAS on it is marked absent",
+  (await db.attendanceMark.count({ where: { sessionId: regX.id, studentId: x1.id, status: "A" } })) === 1);
+
+// The mirror: on a module with no enrolments the same route found nobody and reported
+// "Everyone on this register already has a mark" having written nothing. Its own past-
+// dated class, for the same reason as above.
+const nePast = (await mkEvent({
+  date: "2026-06-03", start: "09:00", end: "12:00", title: `NoEnrolPast ${TAG}`,
+  unitId: noEnrolUnit.id, cohortIds: [cohortC.id], published: true,
+})).data;
+const nePastReg = (await registersFor(nePast.event.id))[0];
+const closedGroup = await call(`/hnd/sessions/${nePastReg.id}/mark-remaining-absent`, { method: "POST", token: admin.token });
+check("CLOSING A GROUP REGISTER ON AN ENROLMENT-FREE MODULE IS NOT A SILENT NO-OP",
+  closedGroup.data?.marked >= 1, `${closedGroup.status} ${JSON.stringify(closedGroup.data)}`);
+
+console.log("\n--- correcting ONE mark does not depend on how many others you send ---");
+//
+// The escape hatch that keeps an already-marked student editable was gated on
+// `okIds.size !== ids.length` -- the size of the ROSTER against the length of the
+// REQUEST. Unrelated quantities, so whenever they coincided the top-up never ran: the
+// same correction was accepted or refused by how many OTHER rows the client bundled.
+await db.student.update({ where: { id: x1.id }, data: { cohortId: null } });   // x1 leaves the group, keeping their mark
+// Roster is now {x2}: size 1. The request below carries 1 id. Equal, so the broken
+// `okIds.size !== ids.length` skipped the top-up and refused a student on the sheet.
+const aloneFix = await call(`/hnd/sessions/${regX.id}/register`, {
+  method: "PUT", token: admin.token, body: { marks: [{ studentId: x1.id, status: "L" }] },
+});
+check("A LONE CORRECTION FOR A STUDENT WHO HAS LEFT THE GROUP IS ACCEPTED",
+  aloneFix.status === 200, `${aloneFix.status} ${aloneFix.data?.error || ""}`);
+check("and it was actually written", (await db.attendanceMark.count({ where: { sessionId: regX.id, studentId: x1.id, status: "L" } })) === 1);
+await db.student.update({ where: { id: x1.id }, data: { cohortId: gX.id } });
+
+console.log("\n--- the history is this student's, on this group, and only for people on the sheet ---");
+const histOutsider = await call(`/hnd/sessions/${regX.id}/students/${loose.id}/history`, { token: admin.token });
+check("A STUDENT NOT ON THIS REGISTER IS REFUSED — name, email and DOB are not readable through it",
+  histOutsider.status === 404, `${histOutsider.status} ${histOutsider.data?.error || ""}`);
+const histOwn = await call(`/hnd/sessions/${regX.id}/students/${x1.id}/history`, { token: admin.token });
+check("a student on the register IS readable", histOwn.status === 200, String(histOwn.status));
+check("AND THE OTHER GROUP'S REGISTERS ARE NOT COUNTED AS CLASSES THEY MISSED",
+  histOwn.data?.totalSessions === 1, `totalSessions=${histOwn.data?.totalSessions}`);
+check("every row it lists belongs to this student's own group or to no group",
+  (histOwn.data?.rows || []).every((r) => r.sessionId === regX.id), JSON.stringify((histOwn.data?.rows || []).map((r) => r.sessionId)));
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
-await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id] } } });
-await db.enrolment.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id] } } });
+await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id, mergedUnit.id] } } });
+await db.enrolment.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id, mergedUnit.id] } } });
 await db.student.deleteMany({ where: { lastName: TAG } });
 await db.timetableEvent.deleteMany({ where: { title: { contains: TAG } } });
 // The sign-up section's leavings. The links go first: they are cascaded by BOTH parents,

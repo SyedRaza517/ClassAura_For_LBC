@@ -1679,9 +1679,17 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
     // What it stops being is a check that only recognises ONE of the two ways a student
     // legitimately arrives on a register.
     const okIds = new Set((await rosterForSession(session)).studentIds);
-    // Marks already on this register stay editable even if the student has since been
-    // un-enrolled, so historic registers remain correctable.
-    if (okIds.size !== ids.length) {
+    // Marks already on this register stay editable even if the student has since left
+    // the group or been un-enrolled, so historic registers remain correctable.
+    //
+    // ASKED OF THE IDS IN THE REQUEST, not of two unrelated quantities. This read
+    // `okIds.size !== ids.length` — the size of the ROSTER against the length of the
+    // REQUEST — which are measuring different things and coincide by accident. Whenever
+    // they happened to match, the top-up never ran and a student plainly on the sheet was
+    // refused: correcting one mark for a student who had since left the group failed,
+    // while sending that same correction alongside one other row succeeded. The same
+    // edit, accepted or rejected by how many OTHER rows the client bundled with it.
+    if (ids.some((id) => !okIds.has(id))) {
       const existing = await prisma.attendanceMark.findMany({ where: { sessionId: session.id, studentId: { in: ids } }, select: { studentId: true } });
       for (const e of existing) okIds.add(e.studentId);
     }
@@ -2066,11 +2074,34 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
 router.get("/sessions/:id/students/:studentId/history", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: String(req.params.id || "") },
-    select: { unitId: true, unit: { select: { code: true, name: true } } },
+    select: { id: true, unitId: true, cohortId: true, unit: { select: { code: true, name: true } } },
   });
   if (!session) return res.status(404).json({ error: "That class could not be found." });
 
   const studentId = String(req.params.studentId || "");
+
+  // THE STUDENT MUST BE ON THIS REGISTER, and the check was missing.
+  //
+  // The access argument above is "if you can open the register, you can see how the
+  // people ON IT have been attending" -- but nothing enforced the second half, so any
+  // student id reached this route and came back with a name, a student reference, an
+  // email address and a date of birth. lecturerGate still held the outer door and a cuid
+  // is not enumerable, so this was a widening rather than an open directory; it was still
+  // a lecturer holding one class being able to read any student in the college.
+  //
+  // Already-marked students count as on it, matching every other roster question here: a
+  // student who has since left the group still has a mark on this sheet, and their own
+  // history is exactly what somebody looking at that mark needs.
+  const [roster, hasMark] = await Promise.all([
+    rosterForSession(session),
+    prisma.attendanceMark.count({ where: { sessionId: session.id, studentId } }),
+  ]);
+  if (!roster.studentIds.includes(studentId) && !hasMark) {
+    // 404, not 403: whether a given student exists is not something a caller who has no
+    // standing to ask about them should learn from the difference between two codes.
+    return res.status(404).json({ error: "That student is not on this register." });
+  }
+
   const student = await prisma.student.findUnique({ where: { id: studentId }, select: { id: true, firstName: true, lastName: true, studentRef: true, initials: true, colour: true, active: true, email: true, dob: true, cohortId: true, academicDepartmentId: true } });
   if (!student) return res.status(404).json({ error: "That student could not be found." });
 
@@ -2078,9 +2109,22 @@ router.get("/sessions/:id/students/:studentId/history", requireAuth, lecturerGat
   // student was never marked for is the most interesting row on this list — it is the
   // difference between "absent" and "nobody took the register" — and a query driven by
   // AttendanceMark could not produce it at all.
+  // SCOPED TO THE REGISTERS THIS STUDENT COULD BE ON, which on a merged class is not
+  // every register of the module. A merged class keeps one register per GROUP; listing
+  // both told a student on group A that they had missed group B's classes, and the screen
+  // renders this as "marked on 3 of 6 registers" — half a term of absences invented by a
+  // missing filter. The percentage was unaffected (it counts marks), so the number and
+  // the sentence printed beside it disagreed.
+  //
+  // A student's own group is the group of THIS register. Ungrouped registers (cohortId
+  // null — generated from a unit rather than a timetable) belong to everyone on the
+  // module and are always included, which is what they were before groups existed.
   const [sessions, marks] = await Promise.all([
     prisma.hndSession.findMany({
-      where: { unitId: session.unitId },
+      where: {
+        unitId: session.unitId,
+        ...(session.cohortId ? { OR: [{ cohortId: session.cohortId }, { cohortId: null }] } : {}),
+      },
       select: { id: true, date: true, startTime: true, endTime: true, description: true, cohortId: true },
       orderBy: [{ date: "desc" }, { startTime: "desc" }],
     }),
@@ -2510,12 +2554,33 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["r
     return res.status(400).json({ error: "That class hasn't happened yet, so its register can't be closed off." });
   }
 
-  const [enrolments, marks] = await Promise.all([
-    prisma.enrolment.findMany({ where: { unitId: session.unitId }, select: { studentId: true } }),
+  // THE ROSTER, NOT THE ENROLMENT LIST — the fourth handler to have got this wrong, and
+  // the only one of the four that WRITES. The other three showed the wrong people; this
+  // one recorded a permanent A against them.
+  //
+  // Both directions were broken, and each is worse than a plain empty screen:
+  //
+  //   TOO WIDE. On a merged class, `enrolment.findMany({ unitId })` is every student on
+  //   the MODULE, so closing group A's register wrote an absence for group B — students
+  //   who were in another room, whose attendance percentage then fell and who were
+  //   rescored by flagStale. GET /register and GET /live correctly refuse to list them,
+  //   so the marks were invisible on the screen that made them and present in every
+  //   figure. PUT /register refused the identical write: the blunt button reached
+  //   students the precise one could not.
+  //
+  //   TOO NARROW. On a module with no enrolments at all — every unit created by hand
+  //   rather than synced — the list was empty, so the route answered "Everyone on this
+  //   register already has a mark" having written nothing, about a register where nobody
+  //   had been marked. That is the reassuring answer to a question nobody could ask.
+  //
+  // rosterForSession is the same call GET /register, GET /live and PUT /register make,
+  // so all four now answer "who is on this register" identically or none of them do.
+  const [roster, marks] = await Promise.all([
+    rosterForSession(session),
     prisma.attendanceMark.findMany({ where: { sessionId: session.id }, select: { studentId: true } }),
   ]);
   const marked = new Set(marks.map((m) => m.studentId));
-  const missing = enrolments.map((e) => e.studentId).filter((id) => !marked.has(id));
+  const missing = roster.studentIds.filter((id) => !marked.has(id));
 
   if (!missing.length) return res.json({ ok: true, marked: 0, message: "Everyone on this register already has a mark." });
 
