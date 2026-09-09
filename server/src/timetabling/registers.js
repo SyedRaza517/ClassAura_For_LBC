@@ -289,4 +289,76 @@ async function unitStudentCounts() {
   return out;
 }
 
-module.exports = { syncEventRegisters, rosterForSession, unitStudentCounts };
+
+/**
+ * Where and to whom each unit is actually delivered — groups and campuses, per unit.
+ *
+ * A Unit row carries a code, a name and a course. It does NOT carry who is taught it or
+ * where, because both are properties of the TIMETABLE: the same module runs for SEP 25 at
+ * Harrow on Tuesday and for JAN 26 at Ealing on Thursday. The card that lists units had
+ * nothing to say about either, so a college with six modules called "UNIT 1" showed six
+ * identical cards.
+ *
+ * BOTH SOURCES, for the same reason unitStudentCounts reads both: a cohort reaches a unit
+ * through a timetabled event, and separately through a register that outlived its event
+ * (HndSession.timetableEventId is SetNull, so deleting a class leaves its register and
+ * its group behind). Reading only events would lose a term somebody has since tidied up.
+ *
+ * DRAFT EVENTS COUNT. A class scheduled against a group is the college saying those
+ * students take this module, whether or not the timetable has been published yet — and an
+ * unpublished term is exactly when somebody is looking at this screen to check their work.
+ *
+ * Names are RESOLVED IN BULK and returned sorted, so two callers cannot disagree about
+ * the order and a screen can print the first two and a "+2 more" without sorting again.
+ *
+ * @returns {Promise<Map<string, { cohorts: string[], campuses: string[] }>>}
+ */
+async function unitTeachingContext() {
+  const [events, sessions] = await Promise.all([
+    prisma.timetableEvent.findMany({
+      where: { unitId: { not: null } },
+      select: {
+        unitId: true,
+        groups: { select: { cohortId: true } },
+        // The campus, through the room. Same precedence as roomLabel(): the related
+        // Campus wins so a rename propagates, and the legacy free-text column is the
+        // fallback for rooms the migration's fold could not place.
+        room: { select: { campus: true, campusRef: { select: { name: true } } } },
+      },
+    }),
+    prisma.hndSession.findMany({
+      where: { cohortId: { not: null } },
+      select: { unitId: true, cohortId: true },
+    }),
+  ]);
+
+  const cohortsByUnit = new Map();
+  const campusesByUnit = new Map();
+  const add = (map, unitId, value) => {
+    if (!unitId || !value) return;
+    if (!map.has(unitId)) map.set(unitId, new Set());
+    map.get(unitId).add(value);
+  };
+  for (const e of events) {
+    for (const g of e.groups) add(cohortsByUnit, e.unitId, g.cohortId);
+    add(campusesByUnit, e.unitId, e.room?.campusRef?.name || e.room?.campus || null);
+  }
+  for (const s of sessions) add(cohortsByUnit, s.unitId, s.cohortId);
+
+  const cohortIds = [...new Set([...cohortsByUnit.values()].flatMap((set) => [...set]))];
+  const cohorts = cohortIds.length
+    ? await prisma.cohort.findMany({ where: { id: { in: cohortIds } }, select: { id: true, name: true } })
+    : [];
+  const nameOf = new Map(cohorts.map((c) => [c.id, c.name]));
+
+  const out = new Map();
+  for (const unitId of new Set([...cohortsByUnit.keys(), ...campusesByUnit.keys()])) {
+    out.set(unitId, {
+      cohorts: [...(cohortsByUnit.get(unitId) || [])].map((id) => nameOf.get(id)).filter(Boolean).sort((a, b) => a.localeCompare(b)),
+      campuses: [...(campusesByUnit.get(unitId) || [])].sort((a, b) => a.localeCompare(b)),
+    });
+  }
+  return out;
+}
+
+module.exports = { syncEventRegisters, rosterForSession, unitStudentCounts, unitTeachingContext };

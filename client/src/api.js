@@ -631,6 +631,9 @@ export const api = {
   // `override:true` forces deletion of a term-locked register (server replies 423 without it).
   removeSession: (id, override) => request(`/hnd/sessions/${id}`, { method: "DELETE", body: override ? { override: true } : undefined }),
   getRegister: (sessionId) => request(`/hnd/sessions/${sessionId}/register`),
+  // One student's whole attendance on the module this class belongs to. Keyed on the
+  // SESSION so it inherits the same "may you open this class" gate the live view uses.
+  studentUnitHistory: (sessionId, studentId) => request(`/hnd/sessions/${sessionId}/students/${studentId}/history`),
   saveRegister: (sessionId, marks, override) => request(`/hnd/sessions/${sessionId}/register`, { method: "PUT", body: { marks, ...(override ? { override: true } : {}) } }),
   // The lecturer's live view: who is in, who is late, who has not appeared, and the
   // minute each of them tapped. Polled while a class is running.

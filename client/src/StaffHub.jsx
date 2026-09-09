@@ -44,6 +44,7 @@ import PhoneShell, { useIsHandset } from "./PhoneShell";
 import DeleteAccount from "./DeleteAccount";
 import { biometricStatus, biometryLabel, isBiometricEnabled, enableBiometric, disableBiometric, BIOMETRICS_ENABLED } from "./biometric";
 import { api } from "./api";
+import useDismissOnOutside from "./useDismissOnOutside";
 import useReveal from "./RevealButton";
 import IntegrationSettings from "./IntegrationSettings";
 import BrandingSettings from "./BrandingSettings";
@@ -2456,13 +2457,42 @@ const AXIS_TICK = { fontSize: 11, fill: "#94a3b8" };
 // Moodle's own grading date when the row has never been touched here.
 // Who teaches a unit and when its work is due — the two facts people were opening the
 // unit to find. Renders nothing when neither is set, so an unassigned unit stays clean.
+// WHAT A UNIT IS, BEYOND ITS NAME: who teaches it, who it is taught to, and where.
+//
+// This is deliberately the ONE place those facts are assembled, because every screen that
+// lists units renders this component — Registers, Assessments, the pickers. Adding a fact
+// to a card would otherwise mean adding it to each of them and watching them drift.
+//
+// GROUPS AND CAMPUSES COME FROM THE TIMETABLE, not from the Unit row, and cannot come
+// from anywhere else: a Unit has no cohort and no room. The same module runs for SEP 25
+// at Harrow on a Tuesday and for JAN 26 at Ealing on a Thursday, which is why both are
+// LISTS and why a unit taught two ways must say so rather than picking one and being
+// quietly wrong. The server (unitTeachingContext) reads both the events and the registers
+// that outlived them, so a term somebody has since tidied up is not lost.
+//
+// Truncated at two with a "+N" and the full set on hover: three campuses on a card is a
+// paragraph, and the question a card answers is "is this the one I mean", not "list
+// everything about it".
 function UnitFacts({ unit, className = "" }) {
   const tutor = unit?.tutorName || unit?.tutor || "";
   const due = unit?.submissionDate;
-  if (!tutor && !due) return null;
+  const cohorts = Array.isArray(unit?.cohorts) ? unit.cohorts : [];
+  const campuses = Array.isArray(unit?.campuses) ? unit.campuses : [];
+  if (!tutor && !due && !cohorts.length && !campuses.length) return null;
+  const brief = (list) => (list.length <= 2 ? list.join(", ") : `${list.slice(0, 2).join(", ")} +${list.length - 2}`);
   return (
     <p className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 ${className}`}>
       {tutor && <span className="inline-flex items-center gap-1"><UserCheck size={11} className="text-slate-400" /> {tutor}</span>}
+      {!!cohorts.length && (
+        <span className="inline-flex items-center gap-1" title={`Taught to: ${cohorts.join(", ")}`}>
+          <Users size={11} className="text-slate-400" /> {brief(cohorts)}
+        </span>
+      )}
+      {!!campuses.length && (
+        <span className="inline-flex items-center gap-1" title={`Delivered at: ${campuses.join(", ")}`}>
+          <Building2 size={11} className="text-slate-400" /> {brief(campuses)}
+        </span>
+      )}
       {due && <span className="inline-flex items-center gap-1"><CalendarClock size={11} className="text-slate-400" /> Due {fmtDate(due)}</span>}
     </p>
   );
@@ -6835,6 +6865,33 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
 }
 
 /* ----- Taking the register for one session ----- */
+// HOW a self check-in was captured, for a row the SERVER has already said was one.
+//
+// The `selfMarked` half of the question — does this stamp mean the student, rather than a
+// member of staff — is answered on the server by `isSelfCheckIn`, and is deliberately not
+// re-decided here: two screens disagreeing about what counts as a self check-in is how a
+// register reads one way on the live view and another way on the sheet an inspector is
+// holding. This function only chooses the words and the icon for a row already known to be
+// one, which is why every branch of it is safe to get wrong in only one way: an unfamiliar
+// stamp falls through to the stamp's own text rather than claiming a method it cannot see.
+//
+// A sticker and a code on a screen have different failure modes — a tap needs somebody to
+// be within a few centimetres of a tag in the room, a code on a projector can be
+// photographed and sent to a friend — so an administrator arguing about a disputed mark
+// needs to know which one it came from, not merely that it was not a lecturer.
+//
+// The two strings are the frozen stamps from server/src/attendanceTap.js. They are matched
+// exactly, for the same reason the server matches them exactly: a lecturer who typed "self
+// check-in" into the remark box is an observation, not a machine.
+function selfCheckInMethod(takenBy) {
+  if (takenBy === "Self check-in (QR)") return { Icon: QrCode, words: "Scanned the code on screen" };
+  if (takenBy === "Self check-in (NFC)") return { Icon: Nfc, words: "Tapped in on their phone" };
+  // A stamp this build has not been taught about. Still shown, still labelled as a self
+  // check-in — it is one, the server said so — but described in the stamp's own words
+  // rather than illustrated with the wrong icon and an outright false sentence.
+  return { Icon: Nfc, words: `Marked by the student — ${takenBy || "method not recorded"}` };
+}
+
 function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
   const action = liveAction(checkIn);
   const [data, setData] = useState(null);
@@ -7044,9 +7101,26 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span>
                         <div>
                           <p className="font-semibold" style={{ color: NAVY }}>{r.student.name}</p>
-                          <p className="text-[11px] text-slate-400">
+                          <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
                             {r.student.studentRef}
-                            {!r.enrolled && <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NO LONGER ENROLLED</span>}
+                            {/* HOW this mark got here, on the row it belongs to. Icon plus
+                                title plus sr-only, the same three parts the live view uses,
+                                because the icon alone is unreadable to a screen reader and a
+                                title alone is unreachable on a phone.
+                                Only drawn where the SERVER said the student marked
+                                themselves: absence of the badge means "a person recorded
+                                this, or nobody has" — which the footnote below says in
+                                words — and never "the college does not capture this". */}
+                            {r.selfMarked && (() => {
+                              const { Icon, words } = selfCheckInMethod(r.takenBy);
+                              return (
+                                <span className="inline-flex items-center text-slate-500" title={words}>
+                                  <Icon size={12} aria-hidden="true" />
+                                  <span className="sr-only">{words}</span>
+                                </span>
+                              );
+                            })()}
+                            {!r.enrolled && <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NO LONGER ENROLLED</span>}
                           </p>
                         </div>
                       </div>
@@ -7077,7 +7151,29 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-slate-400">
           P = Present (2 pts) · L = Late (1) · E = Excused (1) · A = Absent (0). Click a selected mark again to clear it.
-          {data.taken && rows.some(r => r.takenBy) && ` Last taken by ${rows.find(r => r.takenBy)?.takenBy}.`}
+          {/* WHO TOOK THIS REGISTER, and how much of it the students took themselves.
+              The first half used to read `rows.find(r => r.takenBy)?.takenBy`, which on a
+              register that filled by self check-in printed "Last taken by Self check-in
+              (QR)" — a machine stamp presented as the name of a person, in the sentence an
+              administrator quotes when a mark is challenged. It now names a member of
+              staff or says nobody, and the self check-ins are counted separately.
+              A COUNT, not a list, and deliberately so: the rows above already say WHICH
+              students marked themselves, and a second copy of that list here would be the
+              same caseload written twice. What the count adds is the shape of the
+              register as a whole — "eleven of these are claims, not observations". */}
+          {data.taken && (() => {
+            const staff = rows.find(r => r.takenBy && !r.selfMarked)?.takenBy || null;
+            const self = rows.filter(r => r.selfMarked);
+            const qr = self.filter(r => r.takenBy === "Self check-in (QR)").length;
+            const nfc = self.filter(r => r.takenBy === "Self check-in (NFC)").length;
+            const how = [qr ? `${qr} scanned the code` : "", nfc ? `${nfc} tapped in` : ""].filter(Boolean).join(", ");
+            return (
+              <>
+                {staff ? ` Last taken by ${staff}.` : ""}
+                {self.length ? ` ${self.length} of these mark${self.length === 1 ? " was" : "s were"} made by the student${self.length === 1 ? "" : "s"} themselves${how ? ` (${how})` : ""}.` : ""}
+              </>
+            );
+          })()}
         </p>
         <PrimaryBtn onClick={save} disabled={!dirty || saving} colour={dirty ? NAVY : "#94a3b8"}>{saving ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> Save register</>}</PrimaryBtn>
       </div>
@@ -8286,34 +8382,9 @@ function CoursePattern({ seed, colour }) {
 function CourseMenu({ onEdit, onDelete, onCohorts, onSchedule, editLabel = "Edit course", deleteLabel = "Delete course" }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
-
-  // A DOCUMENT LISTENER, NOT A FULL-SCREEN BACKDROP.
-  //
-  // This used a `fixed inset-0` catcher, which reads as covering the screen and does
-  // not. The admin console animates its views with `.fade-up`, declared `animation: …
-  // both`; the forwards fill holds the final keyframe for ever, and although that
-  // keyframe says `transform: none` the browser computes it as matrix(1,0,0,1,0,0). ANY
-  // computed transform other than the keyword makes an element the containing block for
-  // its fixed-position descendants, so `inset-0` resolved against the view container
-  // rather than the viewport. The menu therefore dismissed when clicked over that box
-  // and ignored everything outside it — reported as "it forces me to click in some
-  // area". The same mechanism put a modal's Save button 159px off-screen earlier in this
-  // codebase; a listener has no position, no z-index and no parent, so none of it
-  // applies.
-  //
-  // `pointerdown` in the CAPTURE phase: it fires before focus moves and before any child
-  // can stopPropagation, so nothing can strand the menu open.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDown, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
+  // The shared hook — see useDismissOnOutside.js for why this is a listener and not a
+  // full-screen div. This menu is the reason that file exists.
+  useDismissOnOutside(box, () => setOpen(false), open);
 
   return (
     <div className="relative" ref={box}>
@@ -11915,6 +11986,7 @@ const nowHM = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", mi
 function StudentCombo({ students, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const box = useRef(null);
   const sel = students.find(s => s.id === value);
   const ql = q.trim().toLowerCase();
   // Guard every field. Students from the review roster deliberately carry NO email
@@ -11922,8 +11994,9 @@ function StudentCombo({ students, value, onChange }) {
   // white-screen-crashed the picker the moment a roster-fed admin typed anything.
   const matches = (ql ? students.filter(s => (s.name || "").toLowerCase().includes(ql) || (s.studentRef || "").includes(ql) || (s.email || "").toLowerCase().includes(ql)) : students);
   const shown = matches.slice(0, 40);
+  useDismissOnOutside(box, () => setOpen(false), open);
   return (
-    <div className="relative">
+    <div className="relative" ref={box}>
       <button type="button" onClick={() => setOpen(o => !o)} className={`${inputCls} flex items-center justify-between text-left`}>
         {sel
           ? <span className="flex min-w-0 items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span><span className="truncate">{sel.name}</span><span className="shrink-0 text-slate-400">{sel.studentRef}</span></span>
@@ -11932,7 +12005,6 @@ function StudentCombo({ students, value, onChange }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute z-40 mt-1 max-h-72 w-full overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-slate-200">
             <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
               <Search size={14} className="text-slate-400" />

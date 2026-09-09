@@ -40,7 +40,7 @@ const prisma = require("../db");
 // Unit.courseId is nullable -- so always joining would quietly change the session counts
 // for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
-const { rosterForSession, unitStudentCounts } = require("../timetabling/registers");
+const { rosterForSession, unitStudentCounts, unitTeachingContext } = require("../timetabling/registers");
 const { deriveRoster } = require("../timetabling/roster");
 const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
@@ -268,8 +268,31 @@ router.put("/units/:id/leader", requireAuth, requireAnyPage(["registers", "asses
 // gate at all, so the page a college could grant "for watching without editing" opened
 // nothing. The bypass fixes that too — the per-route guard was right, the gate above it
 // was not consulted.
-const LECTURER_PATHS = [/^\/my-sessions\/today$/, /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent|check-in-window)$/];
-const isLecturerPath = (req) => LECTURER_PATHS.some((re) => re.test(req.path));
+// `register` and the per-student history joined the list on 9 Sep 2026, and both belong
+// here for the same reason the live view does: they are the register a lecturer is
+// standing in front of. Marking a student from the live screen POSTs to
+// /sessions/:id/register, so leaving it off the list offered a control the router then
+// refused; the history is the same register read one student at a time, scoped to the
+// module that register belongs to. Each still applies lecturerGate of its own — this
+// list decides which doors EXIST for a page-less lecturer, not who may walk through one.
+// METHOD MATTERS ON ONE OF THESE, so the list carries it.
+//
+// /sessions/:id/register is two different doors behind one path. The PUT is a lecturer
+// saving marks from the live view they are already entitled to open — without it the
+// marking dropdown is a control the router refuses. The GET is the PAPER REGISTER: the
+// full admin sheet, with remarks, which smoke-qr-checkin asserts stays shut to a tutor
+// alongside the student directory and the units list. Adding the path methodless opened
+// both, and the suite caught it.
+//
+// Everything else is method-agnostic because it has only one.
+const LECTURER_PATHS = [
+  { re: /^\/my-sessions\/today$/ },
+  { re: /^\/sessions\/[^/]+\/(live|qr-code|mark-remaining-absent|check-in-window)$/ },
+  { re: /^\/sessions\/[^/]+\/students\/[^/]+\/history$/ },
+  { re: /^\/sessions\/[^/]+\/register$/, methods: ["PUT"] },
+];
+const isLecturerPath = (req) =>
+  LECTURER_PATHS.some(({ re, methods }) => re.test(req.path) && (!methods || methods.includes(req.method)));
 const adminGate = requireAnyPage(["registers", "students", "executive"]);
 router.use(requireAuth, (req, res, next) => (isLecturerPath(req) ? next() : adminGate(req, res, next)));
 
@@ -853,10 +876,13 @@ router.get("/units", requireAuth, async (_req, res) => {
   // reaches a register by two routes, not one, and the card only knew about one of
   // them. unitStudentCounts applies the same rule the registers do — see roster.js —
   // and is shared with GET /attendance below so the two cannot drift.
-  const [rows, sessAgg, studentCounts] = await Promise.all([
+  const [rows, sessAgg, studentCounts, teaching] = await Promise.all([
     prisma.unit.findMany({ orderBy: { code: "asc" } }),
     prisma.hndSession.groupBy({ by: ["unitId"], _count: { _all: true }, _max: { date: true } }),
     unitStudentCounts(),
+    // WHO it is taught to and WHERE, which a Unit row does not carry: both are properties
+    // of the timetable, because the same module runs for two intakes on two campuses.
+    unitTeachingContext(),
   ]);
   const sMap = new Map(sessAgg.map((s) => [s.unitId, s._count._all]));
   const endMap = new Map(sessAgg.map((s) => [s.unitId, s._max.date || null]));
@@ -867,7 +893,16 @@ router.get("/units", requireAuth, async (_req, res) => {
   // `?? null` and not `|| 0`: a unit with no enrolments AND no group timetabled against
   // it has no route to a student at all, and "0 students" is the sentence a genuinely
   // empty module says. Null-is-not-zero, excluded rather than counted.
-  res.json(rows.map((m) => ({ ...sUnit(m), studentCount: studentCounts.get(m.id) ?? null, sessionCount: sMap.get(m.id) || 0, lastSessionDate: endMap.get(m.id) || null })));
+  res.json(rows.map((m) => ({
+    ...sUnit(m),
+    studentCount: studentCounts.get(m.id) ?? null,
+    sessionCount: sMap.get(m.id) || 0,
+    lastSessionDate: endMap.get(m.id) || null,
+    // Empty arrays, not null: "this module is timetabled for nobody yet" is an answer,
+    // and a screen can render an empty list without a special case for the absence.
+    cohorts: teaching.get(m.id)?.cohorts || [],
+    campuses: teaching.get(m.id)?.campuses || [],
+  })));
 });
 
 router.post("/units", requireAuth, requireRegisters, async (req, res) => {
@@ -1545,6 +1580,24 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
         student: sStudent(s),
         status: mark?.status || null,
         remark: mark?.remark || "",
+        // Whether the student put themselves on this register or a member of staff did,
+        // decided by the SAME predicate the live view uses. The paper register is where a
+        // disputed mark is actually argued about, and it could not tell a tap from a
+        // lecturer's tick — it shipped `takenBy` and nothing else, so the screen either
+        // ignored provenance or had to re-derive it from a string.
+        //
+        // Answered here rather than on the client on purpose. `isSelfCheckIn` matches an
+        // allowlist of stamps that only this module knows about; a browser comparing
+        // against one of them would report every OTHER capture method as staff-marked,
+        // which is the bug that already had to be fixed once on the live view. Two screens
+        // that disagree about what counts as a self check-in is worse than neither showing
+        // it, because one of them is then quietly wrong on the register an inspector reads.
+        //
+        // FALSE HERE IS NOT "A MEMBER OF STAFF DID IT". An unmarked student, and a mark
+        // whose takenBy was never recorded, both come back `selfMarked: false` with
+        // `takenBy: null` — "not recorded", which the screen must say rather than
+        // attributing the mark to a person who may not have made it.
+        selfMarked: isSelfCheckIn(mark?.takenBy),
         takenBy: mark?.takenBy || null,
         // Still literally 'has an Enrolment row'. A student present through their GROUP
       // is on the register and is NOT enrolled, and a tick here would state something
@@ -1991,6 +2044,83 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
         && withinSessionWindow(s, { date, time }, settings)
         && termOpenOn(s.unit?.term, date),
     })),
+  });
+});
+
+// GET /api/hnd/sessions/:id/students/:studentId/history
+//
+// One student's whole attendance on THE MODULE THIS CLASS BELONGS TO: every register,
+// its date and time, and what they were marked.
+//
+// KEYED ON THE SESSION, NOT THE UNIT, and that is the access decision. lecturerGate
+// answers "may you open THIS class", which is a question about a register somebody is
+// standing in front of. A /units/:unitId/students/:id route would be a different
+// question — "may you read this person's history on a module you are not teaching
+// today" — and would need its own answer. Hanging it off the session means the gate
+// already fits: if you can open the register, you can see how the people ON it have
+// been attending the module it belongs to.
+//
+// Scoped to the unit and nothing wider. A lecturer looking at a row wants "how have they
+// been on MY module"; their attendance elsewhere is somebody else's business and is
+// already on the student's own record for those who hold that page.
+router.get("/sessions/:id/students/:studentId/history", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
+  const session = await prisma.hndSession.findUnique({
+    where: { id: String(req.params.id || "") },
+    select: { unitId: true, unit: { select: { code: true, name: true } } },
+  });
+  if (!session) return res.status(404).json({ error: "That class could not be found." });
+
+  const studentId = String(req.params.studentId || "");
+  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { id: true, firstName: true, lastName: true, studentRef: true, initials: true, colour: true, active: true, email: true, dob: true, cohortId: true, academicDepartmentId: true } });
+  if (!student) return res.status(404).json({ error: "That student could not be found." });
+
+  // EVERY REGISTER ON THE MODULE, not only the ones they were marked on. A class the
+  // student was never marked for is the most interesting row on this list — it is the
+  // difference between "absent" and "nobody took the register" — and a query driven by
+  // AttendanceMark could not produce it at all.
+  const [sessions, marks] = await Promise.all([
+    prisma.hndSession.findMany({
+      where: { unitId: session.unitId },
+      select: { id: true, date: true, startTime: true, endTime: true, description: true, cohortId: true },
+      orderBy: [{ date: "desc" }, { startTime: "desc" }],
+    }),
+    prisma.attendanceMark.findMany({
+      where: { studentId, session: { unitId: session.unitId } },
+      select: { sessionId: true, status: true, takenBy: true, checkedInAt: true, remark: true },
+    }),
+  ]);
+  const bySession = new Map(marks.map((m) => [m.sessionId, m]));
+
+  const rows = sessions.map((s) => {
+    const m = bySession.get(s.id);
+    return {
+      sessionId: s.id,
+      date: s.date,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      description: s.description || "",
+      // null means NOBODY MARKED THEM, which is not the same as absent and must never be
+      // rendered as one. The screen prints it as "not marked".
+      status: m?.status || null,
+      selfMarked: isSelfCheckIn(m?.takenBy),
+      takenBy: m?.takenBy || null,
+      checkedInAt: m?.checkedInAt ?? null,
+      remark: m?.remark || "",
+    };
+  });
+
+  // The same points model as every other attendance figure on the platform, so this
+  // total and the percentage on the register row cannot disagree.
+  const summary = summarise(rows.filter((r) => r.status).map((r) => ({ status: r.status })));
+
+  res.json({
+    student: sStudent(student),
+    unit: { id: session.unitId, code: session.unit?.code || "", name: session.unit?.name || "" },
+    // How many registers exist on this module at all, beside how many they were marked
+    // on. "Marked on 4 of 20" is the sentence that explains a percentage nobody expected.
+    totalSessions: rows.length,
+    summary,
+    rows,
   });
 });
 

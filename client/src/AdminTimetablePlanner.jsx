@@ -20,6 +20,7 @@ import TimetableSettingsModal from "./TimetableSettingsModal";
 import ConfirmDialog from "./ConfirmDialog";
 import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates, mondayOf } from "./timetableView";
 import { ukBankHolidaysRange } from "./bankHolidays";
+import useDismissOnOutside from "./useDismissOnOutside";
 
 // A DIV, NOT A LABEL, AND THAT IS THE FIX FOR AN UNDISMISSABLE DROPDOWN.
 //
@@ -52,37 +53,6 @@ function Field({ label, children, hint }) {
   );
 }
 
-/**
- * Close `onOutside` when a pointer goes down anywhere outside `ref`, while `active`.
- *
- * A LISTENER RATHER THAN A FULL-SCREEN DIV, and that is deliberate. The backdrop this
- * replaces had to be a viewport-covering element in the middle of the form, which made
- * it hostage to whatever it happened to be nested inside — a <label> that re-fired the
- * toggle, a transformed ancestor that shrank `fixed` to something smaller than the
- * screen, a stacking context that painted it under the thing it was meant to cover. A
- * document listener has no position, no z-index and no parent, so none of those can
- * reach it, and it works the same from inside the portalled modal as from the tab
- * behind it.
- *
- * `pointerdown`, not `click`: it fires before focus moves, so a picker closes on the
- * way down rather than waiting for a mouseup that may land somewhere else entirely.
- * Capture phase, so a child calling stopPropagation cannot strand a panel open.
- */
-function useDismissOnOutside(ref, onOutside, active) {
-  useEffect(() => {
-    if (!active) return undefined;
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) onOutside(); };
-    // Escape belongs with it: the two are one behaviour ("let me out"), and splitting
-    // them across components is how one of them comes back without the other.
-    const onKey = (e) => { if (e.key === "Escape") onOutside(); };
-    document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDown, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [ref, onOutside, active]);
-}
 const inputCls = "w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm";
 
 // ISO order, Monday first, matching isoDay() and every other weekday list in this

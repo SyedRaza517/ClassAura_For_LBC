@@ -42,6 +42,7 @@ import { windowFor, shiftAnchor, RANGE_LABEL } from "./timetableView";
 import { TT, OUTLINE } from "./timetableTheme";
 import { alpha, NAVY } from "./branding";
 import { useIsHandset } from "./PhoneShell";
+import useDismissOnOutside from "./useDismissOnOutside";
 
 // The app's own idea of today, taken once per mount. Not recomputed on every render:
 // a component that re-reads the clock mid-render can highlight two different days in
@@ -130,6 +131,13 @@ export default function MyTimetable({ onBack }) {
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
   const [picker, setPicker] = useState(false);
+  // Three popovers that dismissed with a `fixed inset-0` catcher. This screen renders
+  // inside the admin console, whose `.fade-up` leaves a computed transform on the view
+  // container — which makes that catcher the size of the view, not the screen. Same
+  // mechanism as the 3-dots menu; see useDismissOnOutside.js.
+  const shareBox = useRef(null);
+  const keyBox = useRef(null);
+  const panelBox = useRef(null);
   const [prefs, setPrefs] = useState(false);
   const [selected, setSelected] = useState(null);
   // WHERE the tile was, so the panel can sit beside it instead of in a fixed corner.
@@ -148,6 +156,13 @@ export default function MyTimetable({ onBack }) {
   const [noticeOpen, setNoticeOpen] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [keyOpen, setKeyOpen] = useState(false);
+  // Placed AFTER the state they read, not beside the refs: these are ordinary
+  // expressions evaluated top to bottom, and `keyOpen` a few lines below would be in
+  // its temporal dead zone. Hook ORDER must be stable across renders; hook POSITION
+  // must still respect declaration order, and those are two different rules.
+  useDismissOnOutside(shareBox, () => setShareOpen(false), shareOpen);
+  useDismissOnOutside(keyBox, () => setKeyOpen(false), keyOpen);
+  useDismissOnOutside(panelBox, () => { setSelected(null); setAnchorRect(null); }, !!selected);
   const [openSections, setOpenSections] = useState({ timetables: false, categories: false });
   const handset = useIsHandset();
   // The box the sidebar and the grid share, measured — see useInlineSidebar.
@@ -341,13 +356,22 @@ export default function MyTimetable({ onBack }) {
         </button>
         <p className="ml-1 text-[15px] font-semibold tracking-wide">My Timetable</p>
         <div className="flex-1" />
-        <button onClick={() => setKeyOpen((v) => !v)} aria-label="Event colour key" className="rounded-full p-1.5 hover:bg-white/15"><Info size={20} /></button>
+        {/* display:contents so the ref can CONTAIN the toggle without creating a box.
+            The popover is positioned against the bar (`absolute right-24 top-12`), so a
+            real wrapper would move it; a contents box generates no layout at all while
+            still being a DOM ancestor, which is exactly what .contains() asks about.
+
+            It has to contain the toggle: the dismiss hook fires on any pointerdown
+            outside the ref, so with the button outside, clicking it while open would
+            close the popover and the button's own onClick would immediately reopen it —
+            the toggle-fights-the-catcher bug this whole change exists to remove. */}
+        <span ref={keyBox} style={{ display: "contents" }}>
+          <button onClick={() => setKeyOpen((v) => !v)} aria-label="Event colour key" className="rounded-full p-1.5 hover:bg-white/15"><Info size={20} /></button>
         <button onClick={() => setPrefs(true)} aria-label="My settings" className="rounded-full p-1.5 hover:bg-white/15"><SettingsIcon size={20} /></button>
-        <div className="relative">
+        <div className="relative" ref={shareBox}>
           <button onClick={() => setShareOpen((v) => !v)} aria-label="Share" className="rounded-full p-1.5 hover:bg-white/15"><Share2 size={20} /></button>
           {shareOpen && (
             <>
-              <div className="fixed inset-0 z-30" onClick={() => setShareOpen(false)} />
               <div className="absolute right-0 z-40 mt-2 w-40 overflow-hidden rounded bg-white py-1 text-slate-700 shadow-xl">
                 <button onClick={() => { setShareOpen(false); window.print(); }}
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-sm hover:bg-slate-50"><Printer size={18} className="text-slate-500" /> Print</button>
@@ -371,7 +395,6 @@ export default function MyTimetable({ onBack }) {
             answers for themselves in My Settings. */}
         {keyOpen && (
           <>
-            <div className="fixed inset-0 z-30" onClick={() => setKeyOpen(false)} />
             <div className="absolute right-24 top-12 z-40 w-64 rounded bg-white p-3 text-slate-700 shadow-xl">
               <p className="mb-2 text-base font-semibold">Event colour key</p>
               {[["Module Offering", "module"], ["Room", "room"], ["Group", "group"], ["Course Offering", "course"], ["Event Category", "category"]].map(([l, k]) => (
@@ -384,6 +407,7 @@ export default function MyTimetable({ onBack }) {
             </div>
           </>
         )}
+        </span>
       </div>
 
       {/* `relative` so the drawer below can be positioned against THIS box rather than
@@ -577,8 +601,7 @@ export default function MyTimetable({ onBack }) {
             {/* Click anywhere else to dismiss. Without this the panel could only be
                 closed by its own X, which on a grid you are scanning is a click you
                 should not have to aim for. */}
-            <div className="fixed inset-0 z-30" onClick={() => { setSelected(null); setAnchorRect(null); }} />
-            <div style={style}
+            <div ref={panelBox} style={style}
               className="z-40 max-h-[80vh] overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 max-sm:rounded-b-none">
               {/* The header carries the class's OWN colour, so the panel and the tile it
                   came from are visibly the same thing. A white card beside a coloured

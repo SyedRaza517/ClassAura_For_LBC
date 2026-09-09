@@ -372,6 +372,123 @@ function Banner({ tone, Icon, children }) {
 // Exported: the Registers page opens this same view for any session (from a session row
 // or from the paper register), so the code, the projector and the close button exist
 // once. `backLabel` names where "back" goes from there.
+/**
+ * One student's attendance on this module — every register, and what they were marked.
+ *
+ * A SHEET RATHER THAN A ROW THAT EXPANDS. An expanding row pushes the rest of the class
+ * down the page, so checking one student loses your place in the list you were calling.
+ * This sits over the table and closes back to exactly where you were.
+ *
+ * NOT MARKED IS ITS OWN ROW STATE, drawn in slate rather than red. "Nobody took this
+ * register" and "this student was absent" are different facts about different people --
+ * one is about the student and the other is about the class -- and a screen that paints
+ * them alike is the reason somebody chases the wrong person.
+ */
+function StudentHistory({ sessionId, studentId, onClose }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let alive = true;
+    setData(null); setErr("");
+    api.studentUnitHistory(sessionId, studentId)
+      .then((d) => { if (alive) setData(d); })
+      .catch((e) => { if (alive) setErr(e?.message || "Could not load that student's attendance."); });
+    return () => { alive = false; };
+  }, [sessionId, studentId]);
+
+  // Escape closes, like every other overlay in this app.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  const s = data?.student;
+  const pct = data?.summary?.pct;
+  return createPortal(
+    <div className="fixed inset-0 z-[120] flex items-end justify-center sm:items-center" style={{ background: "rgba(15,23,42,.45)" }}
+      onClick={onClose} role="presentation">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Attendance history">
+        <div className="flex items-start gap-3 px-4 py-3 text-white" style={{ background: NAVY }}>
+          {s && (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
+              style={{ background: s.colour || "#94a3b8" }}>{s.initials}</span>
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-extrabold">{s?.name || "Attendance"}</p>
+            <p className="truncate text-[12px] text-white/80">
+              {s?.studentRef}{data?.unit ? ` · ${data.unit.code} ${data.unit.name}` : ""}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-white/80 hover:bg-white/20 hover:text-white"><X size={18} /></button>
+        </div>
+
+        {err && <div className="m-4 flex items-center gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"><AlertTriangle size={15} /> {err}</div>}
+        {!data && !err && <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={24} /></div>}
+
+        {data && (
+          <>
+            {/* "Marked on 4 of 20" is the sentence that explains a percentage nobody
+                expected. A figure with no denominator invites the reader to assume the
+                denominator is the whole term, which it usually is not. */}
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3">
+              <span className="text-[22px] font-extrabold tabular-nums" style={{ color: pct == null ? "#94a3b8" : pctColour(pct) }}>
+                {pct == null ? "—" : `${pct}%`}
+              </span>
+              <span className="text-[12px] text-slate-500">
+                on this module · marked on {data.summary.marked} of {data.totalSessions} register{data.totalSessions === 1 ? "" : "s"}
+              </span>
+              <span className="ml-auto flex flex-wrap gap-1.5">
+                {["P", "L", "E", "A"].map((k) => (
+                  <span key={k} className={`rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ${STATUS[k].cls}`}>
+                    {STATUS[k].label} {data.summary[k]}
+                  </span>
+                ))}
+              </span>
+            </div>
+
+            <div className="max-h-[55vh] overflow-y-auto">
+              <table className="w-full border-collapse text-left">
+                <thead className="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  <tr className="shadow-[inset_0_-1px_0_0_#e2e8f0]">
+                    <th scope="col" className="px-4 py-2">Date</th>
+                    <th scope="col" className="px-3 py-2">Time</th>
+                    <th scope="col" className="px-3 py-2">Class</th>
+                    <th scope="col" className="px-3 py-2 text-right">Mark</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {data.rows.map((r) => (
+                    <tr key={r.sessionId} className="hover:bg-slate-50/80">
+                      <td className="whitespace-nowrap px-4 py-2 text-[12px] font-semibold tabular-nums text-slate-700">{r.date}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-[12px] tabular-nums text-slate-500">{r.startTime}–{r.endTime}</td>
+                      <td className="max-w-[14rem] px-3 py-2 text-[12px] text-slate-500">
+                        <span className="block truncate">{r.description || "—"}</span>
+                        {r.checkedInAt && <span className="block text-[11px] text-slate-400">checked in {r.checkedInAt}</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${
+                          r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-400 ring-slate-200"}`}>
+                          {r.status ? STATUS[r.status].label : "Not marked"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {!data.rows.length && (
+                    <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-slate-400">This module has no registers yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", settingsHref = null }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -387,6 +504,9 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   // that blanked this screen once already.
   const [rowFilter, setRowFilter] = useState("");   // "" | "NA" | "A"
   const [rowQuery, setRowQuery] = useState("");
+  // Which student's history is open, or null. A student id rather than a boolean so the
+  // sheet can be opened straight from a row without a second lookup.
+  const [historyFor, setHistoryFor] = useState(null);
   const alive = useRef(true);
   // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
   // and a ref only ever set false leaves every guarded setState skipped for the
@@ -657,7 +777,14 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
               {shownRows.map((r) => (
                 <tr key={r.student.id} className="group align-middle transition-colors hover:bg-slate-50/80">
                   <td className="sticky left-0 z-10 bg-white px-4 py-2.5 transition-colors group-hover:bg-slate-50/80">
-                    <div className="flex items-center gap-2.5">
+                    {/* THE NAME IS THE CONTROL, not the whole row. A row carrying a
+                        <select> cannot itself be a button — clicking the dropdown would
+                        open the sheet underneath it — so the click target is the person,
+                        which is also what somebody reaches for when they mean "tell me
+                        about them". */}
+                    <button type="button" onClick={() => setHistoryFor(r.student.id)}
+                      title={`${r.student.name} — attendance on this module`}
+                      className="flex w-full items-center gap-2.5 rounded-lg text-left transition hover:opacity-80">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
                         style={{ background: r.student.colour || "#94a3b8" }}>{r.student.initials}</span>
                       <div className="min-w-0">
@@ -680,7 +807,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                           )}
                         </p>
                       </div>
-                    </div>
+                    </button>
                   </td>
                   <td className="px-3 py-2.5 text-[12px] tabular-nums text-slate-600">{r.student.studentRef || "—"}</td>
                   <td className="max-w-[16rem] px-3 py-2.5 text-[12px] text-slate-600">
@@ -745,6 +872,10 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
         {/* Offered only to somebody the server will let close it. An administrator
             granted the watching page alone used to see this button and get a 403.
             Undefined (an older server) keeps the old behaviour. */}
+        {historyFor && (
+          <StudentHistory sessionId={sessionId} studentId={historyFor} onClose={() => setHistoryFor(null)} />
+        )}
+
         {counts.notMarked > 0 && data?.canClose !== false && (
           <div className="border-t border-slate-100 bg-slate-50 p-4">
             <button
