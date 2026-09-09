@@ -789,6 +789,30 @@ check("each row still reports enrolled:false, because that is the fact",
 check("and the screen is told it may set a mark, so the dropdown is not offered blind",
   liveSheet.data?.canMark === true, `canMark=${liveSheet.data?.canMark}`);
 
+// --- the columns the register screen renders ---
+//
+// Each is asserted for its CONTENT, not merely its presence: a row that carried the key
+// with null in it would satisfy `in` and render an em dash, which is exactly the "0
+// students" class of bug this suite keeps catching one screen at a time.
+const liveRow = (liveSheet.data?.rows || []).find((r) => r.student?.studentRef === `${TAG}-c1`);
+check("a row carries the student's full name and number", !!liveRow?.student?.name && !!liveRow?.student?.studentRef,
+  `${liveRow?.student?.name} / ${liveRow?.student?.studentRef}`);
+check("THE COURSE COMES THROUGH THE GROUP, so the column is not empty for a group register",
+  liveRow?.course === `Course ${TAG}`, JSON.stringify(liveRow?.course));
+check("and the group is named beside it", liveRow?.group === `SEP ${TAG} C`, JSON.stringify(liveRow?.group));
+// A percentage of NULL is the honest answer for a student nobody has marked on this
+// module; 0 would put them bottom of a list for something never measured. c1 WAS marked
+// present earlier in this suite, so this one has a figure and its sibling does not.
+check("ATTENDANCE % IS A REAL FIGURE where marks exist — 100 for one present, out of one",
+  liveRow?.attendancePct === 100 && liveRow?.attendanceMarked === 1,
+  `pct=${liveRow?.attendancePct} marked=${liveRow?.attendanceMarked}`);
+const unmarkedRow = (liveSheet.data?.rows || []).find((r) => r.student?.studentRef === `${TAG}-c2`);
+check("AND NULL, NOT ZERO, for a student never marked on this module",
+  unmarkedRow?.attendancePct === null && unmarkedRow?.attendanceMarked === 0,
+  `pct=${unmarkedRow?.attendancePct} marked=${unmarkedRow?.attendanceMarked}`);
+check("school is present as a key even when the student has none, so the column renders",
+  "school" in (liveRow || {}), JSON.stringify(Object.keys(liveRow || {})));
+
 console.log("\n--- THE UNIT CARD COUNTS WHAT THE REGISTER SHOWS ---");
 //
 // The same failure one screen further out. Registers → Units read `studentCount` off a

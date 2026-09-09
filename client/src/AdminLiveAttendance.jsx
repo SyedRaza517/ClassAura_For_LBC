@@ -22,7 +22,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   Radio, Loader2, AlertTriangle, RefreshCw, CheckCircle2, Clock3, UserX,
-  Nfc, Lock, CalendarX, ChevronRight, QrCode, X, CalendarDays,
+  Nfc, Lock, CalendarX, ChevronRight, QrCode, X, CalendarDays, Search,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api } from "./api";
@@ -41,6 +41,15 @@ const STATUS = {
   E: { label: "Excused", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
+
+// Attendance banding. The thresholds are the ones the rest of the platform already uses
+// for its RAG bands, restated here rather than imported because this screen colours a
+// number and the band config colours a decision -- a college that moves its intervention
+// threshold has not asked for its register to change colour.
+//
+// Null never reaches this: a student with no marks has no percentage, and the caller
+// renders an em dash instead of asking for a colour for a fact that does not exist.
+const pctColour = (pct) => (pct >= 85 ? "#059669" : pct >= 75 ? "#d97706" : "#e11d48");
 
 // THE REGISTER'S COLUMNS, in the order a lecturer reads them: the good outcome, the
 // qualified ones, the bad one, then the one that means nobody has decided.
@@ -373,6 +382,11 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   // Which row is mid-save, so only that dropdown locks. Locking the whole table would
   // stop a lecturer working down a class of thirty at the speed they call the names.
   const [saving, setSaving] = useState(null);
+  // Filtering the register itself. Above the early return with every other hook -- the
+  // rule is positional, and putting one below `if (!data) return` is exactly the mistake
+  // that blanked this screen once already.
+  const [rowFilter, setRowFilter] = useState("");   // "" | "NA" | "A"
+  const [rowQuery, setRowQuery] = useState("");
   const alive = useRef(true);
   // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
   // and a ref only ever set false leaves every guarded setState skipped for the
@@ -405,6 +419,16 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   const counts = data?.counts || { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
   const rows = data?.rows || [];
   const canMark = data?.canMark === true;
+  // What the table actually draws. Kept separate from `rows` so the counts in the filter
+  // buttons and the "N students" heading describe the WHOLE register -- a filter that
+  // also renumbered its own labels would make it impossible to tell how much is left.
+  const rowQ = rowQuery.trim().toLowerCase();
+  const shownRows = rows.filter((r) => {
+    if (rowFilter === "NA" && r.status) return false;
+    if (rowFilter === "A" && r.status !== "A") return false;
+    if (!rowQ) return true;
+    return `${r.student.name} ${r.student.studentRef || ""}`.toLowerCase().includes(rowQ);
+  });
 
   /**
    * Set (or clear) one student's mark.
@@ -563,83 +587,140 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
         <Tally n={counts.A} label="Absent" colour="#e11d48" />
         <Tally n={counts.notMarked} label="No mark yet" colour="#94a3b8" />
       </div>
+      {/* THE REGISTER.
+          Design notes, because "make it nicer" is not a specification and the next
+          person needs to know which parts are decisions.
 
-      {/* A TABLE, WITH A COLUMN PER OUTCOME.
-          This was a list with one pill on the right saying which of the four a student
-          was. That reads fine for one student and badly for thirty: to answer "who is
-          absent" you read every row's pill instead of running your eye down a column.
-          The reference the college works from is a table, and for a register — which IS
-          a grid of people against outcomes — that is the right shape.
+          A DATA TABLE, not cards or a list. Six facts per person and thirty people is a
+          grid, and the whole value of a grid is that a column can be read down: "who is
+          under 75%" should be one eye movement, not thirty.
 
-          N/A IS A COLUMN, NOT A BLANK. It is where a student sits when nobody has marked
-          them, and it is the column that should be empty by the end of a class. Leaving
-          it implicit made "not marked yet" and "marked absent" look equally like nothing
-          at all, which is the distinction the whole screen turns on.
+          NO ZEBRA STRIPES. They were invented for paper reports read across a metre of
+          desk; on screen a hairline divider plus a hover row does the same work without
+          painting half the table a second colour and fighting the attendance bars for
+          attention.
 
-          Scrolls inside its own box: six columns do not fit a phone, and the page itself
-          must never scroll sideways. */}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[38rem] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                <th scope="col" className="px-4 py-2.5">Student</th>
+          THE NAME COLUMN IS STICKY. Six columns do not fit a laptop half-screen, and a
+          horizontally scrolled register whose names have slid off is unusable — you are
+          reading a row to find a person, so the person must stay.
+
+          NUMBERS ARE TABULAR AND RIGHT-ALIGNED, so 7 and 100 line up on the decimal and
+          a column of percentages can be scanned rather than read.
+
+          The header is sticky within the table's own scroll box, so column meanings
+          survive a long class. */}
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
+          <p className="text-[13px] font-bold text-slate-700">
+            {rows.length} student{rows.length === 1 ? "" : "s"}
+          </p>
+          {/* A FILTER, NOT A SEARCH BOX ONLY. Calling a register of forty is the case
+              this screen exists for, and "show me the ones nobody has marked" is the
+              question at the end of it. Counts live in the labels so the filter says how
+              much work is left before you press it. */}
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            {[
+              { k: "", label: "All", n: rows.length },
+              { k: "NA", label: "Not marked", n: rows.filter((r) => !r.status).length },
+              { k: "A", label: "Absent", n: rows.filter((r) => r.status === "A").length },
+            ].map((f) => (
+              <button key={f.k || "all"} onClick={() => setRowFilter(f.k)}
+                aria-pressed={rowFilter === f.k}
+                className={`press rounded-lg px-2.5 py-1 text-[12px] font-semibold transition-colors ${
+                  rowFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                style={rowFilter === f.k ? { background: NAVY } : undefined}>
+                {f.label} <span className="tabular-nums opacity-70">{f.n}</span>
+              </button>
+            ))}
+            <label className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 focus-within:ring-2 focus-within:ring-blue-300">
+              <Search size={13} className="text-slate-400" />
+              <input value={rowQuery} onChange={(e) => setRowQuery(e.target.value)}
+                placeholder="Find a student…" aria-label="Find a student"
+                className="w-32 bg-transparent text-[12px] outline-none sm:w-44" />
+            </label>
+          </div>
+        </div>
+
+        <div className="max-h-[60vh] overflow-auto">
+          <table className="w-full min-w-[54rem] border-collapse text-left">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500 shadow-[inset_0_-1px_0_0_#e2e8f0]">
+                <th scope="col" className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5">Full name</th>
                 <th scope="col" className="px-3 py-2.5">Student number</th>
+                <th scope="col" className="px-3 py-2.5">Course</th>
+                <th scope="col" className="px-3 py-2.5">School</th>
                 <th scope="col" className="px-3 py-2.5 text-right">Attendance</th>
+                <th scope="col" className="px-3 py-2.5 text-right">Mark</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((r) => (
-                <tr key={r.student.id} className="align-middle">
-                  <td className="px-4 py-2.5">
+              {shownRows.map((r) => (
+                <tr key={r.student.id} className="group align-middle transition-colors hover:bg-slate-50/80">
+                  <td className="sticky left-0 z-10 bg-white px-4 py-2.5 transition-colors group-hover:bg-slate-50/80">
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
                         style={{ background: r.student.colour || "#94a3b8" }}>{r.student.initials}</span>
                       <div className="min-w-0">
                         <p className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</p>
-                        <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
-                          {/* Which way they marked themselves. A sticker and a code on
-                              screen have different failure modes, and an administrator
-                              reading a disputed register needs to see which this was. */}
                           {r.selfMarked && (() => {
                             const viaQr = r.takenBy === "Self check-in (QR)";
                             const words = viaQr ? "Scanned the code on screen" : "Tapped in on their phone";
                             const Icon = viaQr ? QrCode : Nfc;
                             return (
                               <span className="flex items-center" title={words}>
-                                <Icon size={12} aria-hidden="true" className="text-slate-400" />
+                                <Icon size={12} aria-hidden="true" />
                                 <span className="sr-only">{words}</span>
                               </span>
                             );
                           })()}
-                          {!r.enrolled && <span className="text-amber-600" title="On this register through their group, with no enrolment on the module">· via group</span>}
+                          {!r.enrolled && (
+                            <span className="text-amber-600" title="On this register through their group, with no enrolment on the module">via group</span>
+                          )}
                         </p>
                       </div>
                     </div>
                   </td>
                   <td className="px-3 py-2.5 text-[12px] tabular-nums text-slate-600">{r.student.studentRef || "—"}</td>
+                  <td className="max-w-[16rem] px-3 py-2.5 text-[12px] text-slate-600">
+                    <span className="block truncate" title={r.course || ""}>{r.course || "—"}</span>
+                    {r.group && <span className="block truncate text-[11px] text-slate-400">{r.group}</span>}
+                  </td>
+                  <td className="max-w-[14rem] px-3 py-2.5 text-[12px] text-slate-600">
+                    <span className="block truncate" title={r.school || ""}>{r.school || "—"}</span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {/* NULL IS AN EM DASH, NOT 0%. A student nobody has ever marked on
+                        this module has no percentage, and printing 0 would put them at
+                        the bottom of a list for something never measured. The bar is
+                        drawn only where there is a figure to draw. */}
+                    {r.attendancePct == null ? (
+                      <p className="text-right text-[12px] text-slate-400" title="No marks on this module yet">—</p>
+                    ) : (
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+                          <span className="block h-full rounded-full"
+                            style={{ width: `${Math.max(2, Math.min(100, r.attendancePct))}%`, background: pctColour(r.attendancePct) }} />
+                        </span>
+                        <span className="w-12 text-right text-[12px] font-bold tabular-nums"
+                          style={{ color: pctColour(r.attendancePct) }}
+                          title={`${r.attendanceMarked} register${r.attendanceMarked === 1 ? "" : "s"} counted on this module`}>
+                          {r.attendancePct}%
+                        </span>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5 text-right">
-                    {/* ONE COLUMN CARRYING THE CHOICE, rather than five columns showing
-                        it. Five read as a grid you scan; one reads as a decision you
-                        make, which is what this is — and it is the only shape that lets
-                        a lecturer CORRECT a mark from the screen they are already on.
-
-                        Coloured by the value it currently holds, so the column is still
-                        scannable down the page: green all the way down is a full class,
-                        and the greys are the people nobody has decided about yet. */}
                     <select
                       value={r.status || ""}
                       disabled={!canMark || saving === r.student.id}
                       onChange={(e) => setMark(r.student.id, e.target.value)}
                       aria-label={`Attendance for ${r.student.name}`}
                       title={canMark ? undefined : "You can see this register but not change it."}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 outline-none disabled:opacity-60 ${
-                        r.status ? STATUS[r.status].cls : "bg-slate-100 text-slate-500 ring-slate-300"}`}
+                      className={`rounded-lg px-2.5 py-1.5 text-[12px] font-bold ring-1 outline-none transition disabled:opacity-60 ${
+                        r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-500 ring-slate-200"}`}
                     >
-                      {/* "" is not a fifth status — it is the ABSENCE of one, and choosing
-                          it clears the mark rather than storing anything. Named "N/A —
-                          no mark" so it cannot be read as a decision that was taken. */}
                       <option value="">N/A — no mark</option>
                       {["P", "L", "E", "A"].map((k) => (
                         <option key={k} value={k}>{STATUS[k].label}</option>
@@ -648,10 +729,12 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                   </td>
                 </tr>
               ))}
-              {!rows.length && (
+              {!shownRows.length && (
                 <tr>
-                  <td colSpan={3} className="px-5 py-10 text-center text-sm text-slate-400">
-                    Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it.
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-400">
+                    {rows.length
+                      ? "No student matches that filter."
+                      : "Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it."}
                   </td>
                 </tr>
               )}

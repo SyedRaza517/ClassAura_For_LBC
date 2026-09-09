@@ -2045,10 +2045,61 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     : [];
   students.sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
 
+  // WHO EACH STUDENT IS, AND HOW THEY HAVE BEEN ATTENDING — in three bulk queries, not
+  // three per student. A register is thirty people and this screen polls; a query per row
+  // is ninety round trips a minute for a list that changes when somebody taps a sticker.
+  //
+  // The percentage is for THIS MODULE, not the student's whole college career. A lecturer
+  // deciding whether to chase somebody in front of them is asking "how have they been on
+  // MY unit", and a college-wide figure would be dominated by modules this person does
+  // not teach. It uses the same points model as everywhere else (P=2, L/E=1, A=0, over
+  // marked sessions only) via summariseCounts, so it cannot drift from the figure the
+  // attendance screens show.
+  const studentIds = students.map((s) => s.id);
+  const cohortIdsOf = [...new Set(students.map((s) => s.cohortId).filter(Boolean))];
+  const deptIdsOf = [...new Set(students.map((s) => s.academicDepartmentId).filter(Boolean))];
+  const [unitMarkAgg, cohortRows, deptRows] = await Promise.all([
+    studentIds.length
+      ? prisma.attendanceMark.groupBy({
+          by: ["studentId", "status"],
+          where: { studentId: { in: studentIds }, session: { unitId: session.unitId } },
+          _count: { _all: true },
+        })
+      : [],
+    cohortIdsOf.length
+      ? prisma.cohort.findMany({ where: { id: { in: cohortIdsOf } }, select: { id: true, name: true, course: { select: { name: true } } } })
+      : [],
+    deptIdsOf.length
+      ? prisma.academicDepartment.findMany({ where: { id: { in: deptIdsOf } }, select: { id: true, name: true } })
+      : [],
+  ]);
+  const tallies = new Map();
+  for (const r of unitMarkAgg) {
+    if (!isStatus(r.status)) continue;
+    if (!tallies.has(r.studentId)) tallies.set(r.studentId, { P: 0, L: 0, E: 0, A: 0 });
+    tallies.get(r.studentId)[r.status] += r._count._all;
+  }
+  const cohortById = new Map(cohortRows.map((c) => [c.id, c]));
+  const deptById = new Map(deptRows.map((d) => [d.id, d]));
+
   const rows = students.map((s) => {
     const mark = byStudent.get(s.id);
+    const t = tallies.get(s.id) || { P: 0, L: 0, E: 0, A: 0 };
+    const sum = summariseCounts(t.P, t.L, t.E, t.A);
+    const co = s.cohortId ? cohortById.get(s.cohortId) : null;
     return {
       student: sStudent(s),
+      // The COURSE the student is on, through their group. Null rather than the unit's
+      // own course as a fallback: those are different facts, and quietly substituting one
+      // would tell a lecturer this student is on a course nobody has put them on.
+      course: co?.course?.name || null,
+      group: co?.name || null,
+      // NULL means "not assigned to a school", which Settings counts as a real state.
+      school: s.academicDepartmentId ? (deptById.get(s.academicDepartmentId)?.name || null) : null,
+      // Null when they have never been marked on this module — NOT 0%, which would put a
+      // student nobody has taken a register for at the bottom of the class.
+      attendancePct: sum.pct,
+      attendanceMarked: sum.marked,
       status: mark?.status || null,
       remark: mark?.remark || "",
       checkedInAt: mark?.checkedInAt ?? null,
