@@ -1187,6 +1187,15 @@ model HndSession {
   // generator- and Moodle-created registers: HndSession_generated_key applies it
   // WHERE "timetableEventId" IS NULL.
   //
+  // That index carries COALESCE("cohortId", '') as a FOURTH column since
+  // 20260909T120000_merged_register_delete, and the reason is a delete rather than an
+  // insert. timetableEventId is SetNull, so deleting a timetable entry MOVES its
+  // registers from the event index to this one — and a merged class's registers differ
+  // only by cohortId, so without that column they collapsed onto one key and collided
+  // with each other. Deleting any class with two or more groups answered 500. Generated
+  // registers carry no cohortId, so they all coalesce to '' and the duplicate-generation
+  // guarantee binds them exactly as before.
+  //
   // But a MERGED CLASS legitimately needs two registers for one module at one start
   // time, one per group, and the old constraint forbade exactly that. Timetable-created
   // registers are therefore identified by HndSession_event_group_key, on
@@ -1195,7 +1204,8 @@ model HndSession {
   // unlimited duplicate registers for any event with no group — reopening the exact
   // hole the original constraint existed to close.
   //
-  // Both live in prisma/migrations/20260907T120000_timetabling_registers as raw SQL.
+  // Both live in prisma/migrations/20260907T120000_timetabling_registers as raw SQL,
+  // and HndSession_generated_key was widened in 20260909T120000_merged_register_delete.
   // Prisma cannot express a partial unique index, so `prisma migrate dev` sees them as
   // drift and would drop both, and nothing would notice until duplicate registers
   // appeared in production. timetabling/schema-contract.test.js asserts this comment is

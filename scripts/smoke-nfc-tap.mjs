@@ -1110,6 +1110,94 @@ try {
     `enabled=${offCtx2.data?.enabled} today=${(offCtx2.data?.today || []).length}`);
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: true } });
 
+
+  /* ====================================================================== */
+  console.log("\n--- a class scheduled for the student's GROUP reaches their Check In screen ---");
+  /* ====================================================================== */
+  //
+  // candidateSessions read the student's ENROLMENTS and nothing else, so a class
+  // timetabled for their GROUP on a module that records no enrolments — every module
+  // created by hand rather than synced from Moodle — never appeared. The student could
+  // not mark themselves present at a class the college had scheduled for them, and the
+  // screen told them they had nothing on. The fifth handler with this shape.
+  //
+  // The fixture is that case exactly: a unit with NO enrolment for this student, and a
+  // register attached to a cohort they are in. A unit they were enrolled on would be
+  // served by the old code and prove nothing.
+  const grpCourse = await db.course.create({ data: { ...stamp(DEPT), name: `Grp Course ${RUN}` } });
+  const grpCohort = await db.cohort.create({ data: { ...stamp(DEPT), courseId: grpCourse.id, name: `Grp Intake ${RUN}` } });
+  const grpUnit = await db.unit.create({
+    data: { ...stamp(DEPT), code: `GRP${RUN}`.slice(0, 12), name: `Group-only Unit ${RUN}`, courseId: grpCourse.id, startDate: today, endDate: today },
+  });
+  made.units.push(grpUnit.id);
+  // Remember where the student was, and put them back at the end — this suite's other
+  // sections assume their own arrangement.
+  const priorCohort = (await db.student.findUnique({ where: { id: A_ID }, select: { cohortId: true } }))?.cohortId ?? null;
+  await db.student.update({ where: { id: A_ID }, data: { cohortId: grpCohort.id } });
+
+  // Created THROUGH THE API so a real TimetableEvent stands behind it — the timetable
+  // assertions below read events, and a hand-made HndSession has none.
+  const grpEvent = await call("/timetabling/events", { method: "POST", token: adminToken, body: {
+    title: `Group Class ${RUN}`, date: today, start: shift(now, -5), end: shift(now, 115),
+    unitId: grpUnit.id, cohortIds: [grpCohort.id], published: true } });
+  const grpSession = (await db.hndSession.findFirst({ where: { timetableEventId: grpEvent.data?.event?.id } }));
+  check("the class was created with a register behind it", !!grpSession?.id,
+    `${grpEvent.status} ${JSON.stringify(grpEvent.data?.registers || {})}`);
+  if (grpSession?.id) made.sessions.push(grpSession.id);
+
+  check("the fixture module really has no enrolments",
+    (await db.enrolment.count({ where: { unitId: grpUnit.id } })) === 0);
+  check("and the student is in the group the class was scheduled for",
+    (await db.student.findUnique({ where: { id: A_ID }, select: { cohortId: true } }))?.cohortId === grpCohort.id);
+
+  const grpCtx = await call("/student/me/tap-context", { token: sToken });
+  const grpIds = (grpCtx.data?.today || grpCtx.data?.sessions || []).map((x) => x.id);
+  check("THE GROUP'S CLASS IS ON THE STUDENT'S CHECK IN SCREEN",
+    grpIds.includes(grpSession.id), `HTTP ${grpCtx.status} ids=${grpIds.join(",")}`);
+
+  // And the narrowing still holds: a class on a module they ARE enrolled on, but
+  // timetabled for a group they are NOT in, must not appear. Without that, "candidate"
+  // would have quietly become "anything touching a module of mine".
+  const otherCohort = await db.cohort.create({ data: { ...stamp(DEPT), courseId: grpCourse.id, name: `Other Intake ${RUN}` } });
+  const notMine = await db.hndSession.create({
+    data: { unitId: unit.id, cohortId: otherCohort.id, date: today, startTime: shift(now, -5), endTime: shift(now, 115), description: "another group" },
+  });
+  made.sessions.push(notMine.id);
+  // --- and the same class is on their TIMETABLE, from the calendar ---
+  //
+  // /me/timetable read TimetableSlot: the old weekly grid, which nothing writes any more,
+  // so on this college it was empty and every student's timetable screen said "no
+  // timetable yet" while their calendar was full. It now also returns the dated
+  // TimetableEvent rows the staff timetable and the registers are built from.
+  const ttRes = await call("/student/me/timetable", { token: sToken });
+  check("the student timetable answers", ttRes.status === 200, `HTTP ${ttRes.status}`);
+  const ttEv = (ttRes.data?.events || []).find((e) => e.id === grpEvent.data?.event?.id);
+  check("A CLASS FROM THE CALENDAR IS ON THE STUDENT'S TIMETABLE, reached through their group",
+    !!ttEv, `${(ttRes.data?.events || []).length} event(s)`);
+  check("and it carries a register id, so the app can offer a check-in that will not 404",
+    !!ttEv?.sessionId, `sessionId=${ttEv?.sessionId}`);
+  check("with the room and campus a student needs to find it",
+    ttEv?.room !== undefined && ttEv?.campus !== undefined, JSON.stringify({ room: ttEv?.room, campus: ttEv?.campus }));
+
+  const draftEvt = await call("/timetabling/events", { method: "POST", token: adminToken, body: {
+    title: `Draft TT ${RUN}`, date: today, start: shift(now, 200), end: shift(now, 260),
+    unitId: grpUnit.id, cohortIds: [grpCohort.id], published: false } });
+  const ttRes2 = await call("/student/me/timetable", { token: sToken });
+  check("A DRAFT CLASS IS NOT ON IT — an unannounced term must not reach a student's phone",
+    !(ttRes2.data?.events || []).some((e) => e.id === draftEvt.data?.event?.id),
+    `draft=${draftEvt.data?.event?.id}`);
+
+  const grpCtx2 = await call("/student/me/tap-context", { token: sToken });
+  const ids2 = (grpCtx2.data?.today || grpCtx2.data?.sessions || []).map((x) => x.id);
+  check("A CLASS FOR ANOTHER GROUP IS NOT, even on a module they are enrolled on",
+    !ids2.includes(notMine.id), `ids=${ids2.join(",")}`);
+
+  await db.student.update({ where: { id: A_ID }, data: { cohortId: priorCohort } });
+  await db.hndSession.deleteMany({ where: { id: { in: [grpSession.id, notMine.id] } } });
+  await db.cohort.deleteMany({ where: { id: { in: [grpCohort.id, otherCohort.id] } } });
+  await db.unit.delete({ where: { id: grpUnit.id } }).catch(() => {});
+  await db.course.delete({ where: { id: grpCourse.id } }).catch(() => {});
+
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");
   /* ====================================================================== */

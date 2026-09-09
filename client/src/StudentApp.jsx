@@ -307,7 +307,7 @@ export default function StudentApp({ user, logout }) {
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
-          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
+          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} setScreen={setScreen} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
@@ -1186,9 +1186,109 @@ const TT_DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sa
 // The period label the college's own timetable uses ("Evening 18:00 – 21:00").
 const periodOf = (start) => { const h = Number(String(start).slice(0, 2)); return h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening"; };
 
-function TimetableScreen({ timetable, busy, reload }) {
+// One class from the college calendar, as a student reads it.
+//
+// DATE FIRST, THEN TIME, THEN WHERE. That is the order somebody uses the card in: which
+// day, am I late, and which building do I have to get to. The module name is the title
+// because "Financial Analysis and Reporting" is what they call it, not BUS702 — the code
+// is there for when they need to match it against something official.
+function EventCard({ ev, onCheckIn, today }) {
+  const isToday = ev.date === today;
+  const where = [ev.campus, ev.floor, ev.room ? `Room ${ev.room}` : null].filter(Boolean).join(" · ");
+  return (
+    <div className={`rounded-2xl bg-white p-3.5 shadow-sm ring-1 ${isToday ? "ring-2" : "ring-slate-200/70"}`}
+      style={isToday ? { ringColor: ACCENT.timetable, boxShadow: `0 0 0 2px ${ACCENT.timetable}33` } : undefined}>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-extrabold text-slate-800">{ev.title}</p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12px] text-slate-500">
+            <span className="font-semibold tabular-nums">{ev.start}–{ev.end}</span>
+            {ev.unitCode && <span className="tabular-nums">{ev.unitCode}</span>}
+          </p>
+          {where && <p className="mt-0.5 truncate text-[12px] text-slate-500">{where}</p>}
+          {!!ev.staff.length && <p className="mt-0.5 truncate text-[12px] text-slate-400">{ev.staff.join(", ")}</p>}
+        </div>
+        {isToday && (
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold"
+            style={{ background: ACCENT.timetable + "1a", color: ACCENT.timetable }}>Today</span>
+        )}
+      </div>
+
+      {/* CHECK IN IS OFFERED ONLY WHERE THERE IS A REGISTER TO WRITE TO, and only today.
+          A mark cannot be attached to a calendar entry — only to a register — so a class
+          with no register (an exam, a workshop with no module) is shown and not offered.
+          A button that 404s is worse than no button, and a button on next Tuesday's class
+          would plant a mark that stops them checking in when it actually runs. */}
+      {isToday && ev.sessionId && (
+        <button onClick={() => onCheckIn(ev)}
+          className="press mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-[13px] font-bold text-white"
+          style={{ background: ACCENT.timetable }}>
+          <Nfc size={15} /> Check in
+        </button>
+      )}
+    </div>
+  );
+}
+
+// The calendar, grouped by day. A flat list of forty classes is a scroll; a day is the
+// unit a student actually thinks in.
+function EventList({ events, today, onCheckIn }) {
+  const days = [];
+  for (const ev of events) {
+    const last = days[days.length - 1];
+    if (last && last.date === ev.date) last.items.push(ev);
+    else days.push({ date: ev.date, items: [ev] });
+  }
+  // Past days are kept but pushed below the fold: "was I marked for last Tuesday" is a
+  // real question, and it is not the one somebody opens this screen with.
+  const upcoming = days.filter((d) => d.date >= today);
+  const past = days.filter((d) => d.date < today).reverse();
+  const Section = ({ label, list }) => (!list.length ? null : (
+    <>
+      <p className="mt-3 px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+      {list.map((d) => (
+        <div key={d.date} className="mt-2">
+          <p className="mb-1.5 px-1 text-[12px] font-bold text-slate-600">
+            {ttFmtDate(d.date, true)}{d.date === today ? " · Today" : ""}
+          </p>
+          <div className="space-y-2">
+            {d.items.map((ev) => <EventCard key={ev.id} ev={ev} today={today} onCheckIn={onCheckIn} />)}
+          </div>
+        </div>
+      ))}
+    </>
+  ));
+  return (
+    <>
+      <Section label="Coming up" list={upcoming} />
+      <Section label="Earlier" list={past} />
+    </>
+  );
+}
+
+function TimetableScreen({ timetable, busy, reload, setScreen }) {
   if (busy && !timetable) return <LoadingScreen />;
   const stages = timetable?.stages || [];
+  const events = timetable?.events || [];
+  const today = timetable?.today || "";
+
+  // THE CALENDAR WINS WHERE THERE IS ONE. `stages` is the older weekly grid built from
+  // TimetableSlot, which nothing writes any more; `events` are the dated classes the
+  // college actually scheduled. Both are rendered rather than one replacing the other,
+  // because a college with historic TimetableSlot data should keep seeing it — but the
+  // real classes go first, since they are the ones with a room, a date and a register.
+  if (events.length) {
+    return (
+      <Screen>
+        <EventList events={events} today={today} onCheckIn={() => setScreen?.("checkin")} />
+        {stages.map((st, i) => <TimetableBlock key={`${st.courseId}|${st.year}|${st.termNumber}`} stage={st} i={i} />)}
+        <p className="mt-3 px-1 text-center text-[11px] text-slate-400">
+          Times and rooms are set by the college. If something looks wrong, message us from &ldquo;Ask the College&rdquo;.
+        </p>
+      </Screen>
+    );
+  }
+
   if (!stages.length) {
     return (
       <Screen>

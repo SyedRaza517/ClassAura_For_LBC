@@ -251,7 +251,7 @@ try {
   });
 
   await check("an impossible clock time is rejected", async () => {
-    const r = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2031-03-03", start: "25:00", end: "26:00" } });
+    const r = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2021-03-03", start: "25:00", end: "26:00" } });
     assert.equal(r.status, 400, `expected 400, got ${r.status}`);
     return r.body.error;
   });
@@ -259,20 +259,24 @@ try {
   await check("a register cannot end before it starts", async () => {
     // A negative-length session makes "taught hours" nonsense, and taught hours are
     // what funding is claimed against.
-    const r = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2031-03-03", start: "13:00", end: "10:00" } });
+    const r = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2021-03-03", start: "13:00", end: "10:00" } });
     assert.equal(r.status, 400, `expected 400, got ${r.status}`);
     return r.body.error;
   });
 
-  const s1 = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2031-03-03", start: "10:00", end: "13:00", description: "Smoke" } });
+  // 2021, not 2031, and the year is load-bearing. PUT /register refuses a class that has
+  // not happened yet: a mark planted on a future class can never be overwritten by a tap,
+  // so it stops that student checking in when the class actually runs. Every assertion
+  // below marks this register, so it has to be a class that has already taken place.
+  const s1 = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2021-03-03", start: "10:00", end: "13:00", description: "Smoke" } });
   assert.equal(s1.status, 201, `session create: ${s1.status} ${JSON.stringify(s1.body)}`);
 
   await check("one unit cannot hold two registers at the same date and time", async () => {
     // @@unique([unitId, date, startTime]). Two registers for one taught class means two
     // sets of marks, and a percentage that depends on which one a report happens to read.
-    const dup = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2031-03-03", start: "10:00", end: "13:00" } });
+    const dup = await call("/hnd/sessions", { method: "POST", token: admin, body: { unitId: u1.body.id, date: "2021-03-03", start: "10:00", end: "13:00" } });
     assert.equal(dup.status, 409, `expected 409, got ${dup.status} ${JSON.stringify(dup.body)}`);
-    const n = await db.hndSession.count({ where: { unitId: u1.body.id, date: "2031-03-03", startTime: "10:00" } });
+    const n = await db.hndSession.count({ where: { unitId: u1.body.id, date: "2021-03-03", startTime: "10:00" } });
     assert.equal(n, 1, `expected exactly one register, found ${n}`);
     return dup.body.error;
   });

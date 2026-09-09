@@ -10,6 +10,7 @@ const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
+const { rosterForSession } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP } = require("../attendanceTap");
@@ -87,13 +88,40 @@ async function logTap(req, fields) {
 
 /** Today's sessions on units this student is enrolled on, shaped for the resolver. */
 async function candidateSessions(studentId, date) {
+  // A STUDENT REACHES A CLASS BY TWO ROUTES, and this asked about only one of them.
+  //
+  // It read the student's ENROLMENTS and nothing else, so a class timetabled for their
+  // GROUP on a module that records no enrolments — which is every module created by hand
+  // rather than synced from Moodle — did not appear on their Check In screen at all.
+  // They could not mark themselves present at a class the college had scheduled for them,
+  // and the screen said they had nothing on. The fifth handler with this shape; the other
+  // four were the register, the live view, the save path and the close-off.
+  //
+  // `cohortId` is the second route. The candidate set is deliberately WIDE — every
+  // session today on a module they are enrolled on, plus every session today belonging to
+  // their group — and is then narrowed by the shared rule below, so this function cannot
+  // become a sixth opinion about who is on a register.
+  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { cohortId: true } });
   const enrolments = await prisma.enrolment.findMany({ where: { studentId }, select: { unitId: true } });
   const unitIds = enrolments.map((e) => e.unitId);
-  if (!unitIds.length) return [];
-  const sessions = await prisma.hndSession.findMany({
-    where: { date, unitId: { in: unitIds } },
+  if (!unitIds.length && !student?.cohortId) return [];
+
+  const where = { date, OR: [] };
+  if (unitIds.length) where.OR.push({ unitId: { in: unitIds } });
+  if (student?.cohortId) where.OR.push({ cohortId: student.cohortId });
+
+  const found = await prisma.hndSession.findMany({
+    where,
     include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
   });
+
+  // NARROWED BY THE SAME RULE THE REGISTER USES. Being on a module or in a group makes a
+  // session a CANDIDATE; whether this student is actually on that register is
+  // rosterForSession's question, and asking it here is what stops a student appearing on
+  // a class whose group they are not in but whose module they happen to be enrolled on.
+  // A day is a handful of classes, so the per-session call is a handful of queries.
+  const rosters = await Promise.all(found.map((s) => rosterForSession(s)));
+  const sessions = found.filter((_, i) => rosters[i].studentIds.includes(studentId));
   return sessions.map((s) => ({
     id: s.id,
     unitId: s.unitId,
@@ -599,6 +627,92 @@ router.get("/me/assessments", async (req, res) => {
 // timetable is every slot whose (courseId, year, termNumber) matches one of those
 // enrolled units — which includes the workshop/support rows that share the same scope
 // but are not units. Grouped by stage so the app can show one course/year/term block.
+/**
+ * THE STUDENT'S ACTUAL CLASSES, FROM THE CALENDAR.
+ *
+ * `stages` above is the OLD weekly timetable: TimetableSlot rows, a repeating grid of
+ * "Monday, 9am, Room 3" with no dates on it. Nothing writes TimetableSlot any more — the
+ * screen that did was retired on 8 Sep 2026 — so on this college it is empty and every
+ * student's timetable screen said "no timetable yet" while their calendar was full.
+ *
+ * These are TimetableEvent rows: dated, real, the same records the staff timetable and
+ * the registers are built from. Returned ALONGSIDE `stages` rather than instead of it,
+ * because a college that still has TimetableSlot data keeps seeing it, and an app build
+ * older than this server ignores a key it does not know about.
+ *
+ * PUBLISHED ONLY. A draft term an administrator is still arranging must never appear in
+ * a student's app, where it is indistinguishable from a real one and gets somebody to a
+ * room at 9am for a class that was moved before it was announced.
+ *
+ * TWO ROUTES IN, matching every other roster question on this platform: a class
+ * timetabled for a GROUP the student is in, or one on a MODULE they are enrolled on.
+ * Reading only enrolments is the bug this codebase has now fixed in five other handlers.
+ *
+ * sessionId IS THE POINT OF THE JOIN. A mark cannot be written against an event — only
+ * against a register — so the app can offer "check in" on exactly the classes that have
+ * one, and simply display the rest. A published exam with no module has no register and
+ * is not checkable-in, which is correct and is why the field is nullable rather than
+ * absent.
+ */
+async function studentEvents(studentId, cohortId, unitIds, from, to) {
+  const or = [];
+  if (cohortId) or.push({ groups: { some: { cohortId } } });
+  if (unitIds.length) or.push({ unitId: { in: unitIds } });
+  if (!or.length) return [];
+
+  const events = await prisma.timetableEvent.findMany({
+    where: { published: true, date: { gte: from, lte: to }, OR: or },
+    select: {
+      id: true, date: true, startTime: true, endTime: true, title: true,
+      unit: { select: { id: true, code: true, name: true } },
+      // The room, and the campus through it — same precedence as everywhere else: the
+      // related Campus wins so a rename propagates, the legacy string is the fallback.
+      room: { select: { name: true, floor: true, campus: true, campusRef: { select: { name: true } } } },
+      staff: { select: { staff: { select: { name: true } } } },
+      groups: { select: { cohortId: true } },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
+  });
+  if (!events.length) return [];
+
+  // The register for each event that THIS student would be marked on: their own group's,
+  // or the ungrouped one. One query for the whole window rather than one per class.
+  const sessions = await prisma.hndSession.findMany({
+    where: {
+      timetableEventId: { in: events.map((e) => e.id) },
+      OR: [{ cohortId }, { cohortId: null }].filter((c) => c.cohortId !== undefined),
+    },
+    select: { id: true, timetableEventId: true, cohortId: true },
+  });
+  // A cohort register wins over the ungrouped one: on a merged class the student belongs
+  // to their group's sheet, and falling back to a null-cohort register would put them on
+  // a register built for everybody.
+  const sessionFor = new Map();
+  for (const s of sessions) {
+    const cur = sessionFor.get(s.timetableEventId);
+    if (!cur || (cur.cohortId === null && s.cohortId === cohortId)) sessionFor.set(s.timetableEventId, s);
+  }
+
+  return events.map((e) => ({
+    id: e.id,
+    date: e.date,
+    start: e.startTime,
+    end: e.endTime,
+    title: e.title || e.unit?.name || "Class",
+    unitCode: e.unit?.code || null,
+    unitName: e.unit?.name || null,
+    room: e.room?.name || null,
+    floor: e.room?.floor || null,
+    campus: e.room ? (e.room.campusRef?.name || e.room.campus || null) : null,
+    // Names only. A student's timetable needs to say who is teaching; it does not need a
+    // colleague's email address, and sStaff is not used here for exactly that reason.
+    staff: (e.staff || []).map((x) => x.staff?.name).filter(Boolean),
+    // Null where the class has no register — an exam, a workshop with no module. The app
+    // shows the class and offers no check-in, rather than offering one that would 404.
+    sessionId: sessionFor.get(e.id)?.id ?? null,
+  }));
+}
+
 router.get("/me/timetable", async (req, res) => {
   const student = await prisma.student.findUnique({
     where: { id: req.user.id },
@@ -618,7 +732,18 @@ router.get("/me/timetable", async (req, res) => {
     if (u.startDate && (!winStart.has(key) || u.startDate < winStart.get(key))) winStart.set(key, u.startDate);
     if (u.endDate && (!winEnd.has(key) || u.endDate > winEnd.get(key))) winEnd.set(key, u.endDate);
   }
-  if (!stageKeys.size) return res.json({ stages: [] });
+  // THE WINDOW: four weeks back, twelve forward. Back, because "was I marked for last
+  // Tuesday" is a question a student asks; forward, because a term is what they are
+  // planning around. Bounded either way rather than "everything", so a college three
+  // years in does not send a student's phone its whole history.
+  const ttToday = localDate();
+  const shiftDays = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const ttUnitIds = student.enrolments.map((e) => e.unitId);
+  const events = await studentEvents(student.id, student.cohortId ?? null, ttUnitIds, shiftDays(ttToday, -28), shiftDays(ttToday, 84));
+
+  // `stages` may legitimately be empty while `events` is full — that is this college
+  // exactly — so an early return on the old shape would hide the new one.
+  if (!stageKeys.size) return res.json({ stages: [], events, today: ttToday });
 
   const or = [...stageKeys].map((k) => { const [courseId, year, termNumber] = k.split("|"); return { courseId, year: Number(year), termNumber: Number(termNumber) }; });
   // Only PUBLISHED rows/calendars — a draft the admin is still building stays invisible
@@ -654,7 +779,7 @@ router.get("/me/timetable", async (req, res) => {
     if (c.startDate) st.termDates.start = c.startDate;
     if (c.endDate) st.termDates.end = c.endDate;
   }
-  res.json({ stages: [...byStage.values()].sort((a, b) => (a.year - b.year) || (a.termNumber - b.termNumber)) });
+  res.json({ stages: [...byStage.values()].sort((a, b) => (a.year - b.year) || (a.termNumber - b.termNumber)), events, today: ttToday });
 });
 
 // GET /api/student/me/queries — this student's own queries and any admin replies.
