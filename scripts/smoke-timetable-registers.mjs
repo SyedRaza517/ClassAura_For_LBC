@@ -380,6 +380,7 @@ const onCreateDraft = await mkEvent({
 check("A DRAFT SERIES STILL BUILDS NO REGISTERS", onCreateDraft.data?.registers?.created === 0,
   JSON.stringify(onCreateDraft.data?.registers));
 
+
 console.log("\n--- publishing builds one register per group ---");
 const merged = (await mkEvent({
   date: D, start: "14:00", end: "17:00", title: `Merged ${TAG}`,
@@ -756,6 +757,37 @@ check("A STUDENT IN NEITHER THE GROUP NOR THE ENROLMENT IS STILL REFUSED",
   strayMark.status === 400, `${strayMark.status} ${JSON.stringify(strayMark.data)}`);
 check("and no mark was written for them",
   (await db.attendanceMark.count({ where: { sessionId: neReg.id, studentId: loose.id } })) === 0);
+
+console.log("\n--- the LIVE view shows the group too, not just the enrolled ---");
+//
+// The THIRD screen to build its student list from Enrolment alone. The register listed
+// the group and the unit card counted the group, but the live view -- the screen a
+// lecturer stands in front of a class holding -- stayed empty for exactly the classes
+// the other two had just been fixed for. Found on production: BUS702 had 0 enrolments,
+// a group of 7, and a live view reading "Nobody is enrolled on this unit yet".
+//
+// Same fixture as the register section above: a module with NO enrolments and a group
+// with students in it. A unit carrying both would be served correctly by the old code.
+const liveSheet = await call(`/hnd/sessions/${neReg.id}/live`, { token: admin.token });
+check("the live view opens", liveSheet.status === 200, String(liveSheet.status));
+check("IT LISTS THE GROUP'S STUDENTS — the same two the register shows",
+  (liveSheet.data?.rows || []).length === 2, `${(liveSheet.data?.rows || []).length} row(s)`);
+// Asserted as a SUM rather than a fixed notMarked, because an earlier section of this
+// suite already marked one of these two students present. Pinning notMarked to 2 made
+// the check depend on the order of the file rather than on the behaviour, and it failed
+// for that reason on the first run. What must hold is that every student on the roster
+// is accounted for exactly once — marked or not — and that "not marked" is a real
+// number rather than the null a register with no roster reports.
+const lc = liveSheet.data?.counts || {};
+check("its counts size the roster, so 'no mark yet' is a real number and not null",
+  lc.notMarked !== null && lc.notMarked !== undefined, JSON.stringify(lc));
+check("and every student on the roster is counted exactly once, marked or not",
+  (lc.P + lc.L + lc.E + lc.A + lc.notMarked) === 2, JSON.stringify(lc));
+check("each row still reports enrolled:false, because that is the fact",
+  (liveSheet.data?.rows || []).every((r) => r.enrolled === false),
+  JSON.stringify((liveSheet.data?.rows || []).map((r) => r.enrolled)));
+check("and the screen is told it may set a mark, so the dropdown is not offered blind",
+  liveSheet.data?.canMark === true, `canMark=${liveSheet.data?.canMark}`);
 
 console.log("\n--- THE UNIT CARD COUNTS WHAT THE REGISTER SHOWS ---");
 //

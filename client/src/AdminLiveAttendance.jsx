@@ -42,6 +42,21 @@ const STATUS = {
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
+// THE REGISTER'S COLUMNS, in the order a lecturer reads them: the good outcome, the
+// qualified ones, the bad one, then the one that means nobody has decided.
+//
+// Colours come from STATUS above rather than being restated, so a column and the pill
+// for the same outcome can never disagree. "N/A" has no STATUS entry because it is NOT
+// a status — nothing is ever written for it — and giving it one here would be the first
+// step toward somebody storing it.
+const MARK_COLUMNS = [
+  { key: "P", label: "Present", mark: "P", cls: STATUS.P.cls },
+  { key: "L", label: "Late", mark: "L", cls: STATUS.L.cls },
+  { key: "E", label: "Excused", mark: "E", cls: STATUS.E.cls },
+  { key: "A", label: "Absent", mark: "A", cls: STATUS.A.cls },
+  { key: "NA", label: "N/A", mark: "—", cls: "bg-slate-100 text-slate-500 ring-slate-300" },
+];
+
 // The summary panel's tiles, in the order a lecturer reads them.
 //
 // EXCUSED IS HERE even though it is the least interesting of the four, because the four
@@ -88,13 +103,18 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
   // This exists because a screen that can only show today is blank — and looks broken —
   // on every day the college is not teaching, including the whole week before term.
   const [date, setDate] = useState("");
+  // The END of a range, or "" for a single day. Separate from `date` rather than a
+  // {from,to} pair so the common case -- one day -- needs no second field filled in and
+  // the control can stay hidden until asked for.
+  const [to, setTo] = useState("");
+  const [ranged, setRanged] = useState(false);
 
   const loadToday = useCallback(async () => {
     setBusy(true); setErr("");
-    try { setToday(await api.mySessionsToday(scope, date)); }
-    catch (e) { setErr(e?.message || "Could not load that day's classes."); }
+    try { setToday(await api.mySessionsToday(scope, date, ranged ? to : "")); }
+    catch (e) { setErr(e?.message || "Could not load those classes."); }
     finally { setBusy(false); }
-  }, [scope, date]);
+  }, [scope, date, to, ranged]);
   useEffect(() => { loadToday(); }, [loadToday]);
 
   if (busy && !today) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={28} /></div>;
@@ -113,7 +133,9 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Radio size={18} style={{ color: NAVY }} />Live Attendance</h2>
         <p className="mt-0.5 text-[13px] text-slate-500">
           {today?.isToday === false
-            ? (scope === "all" ? "Every class on the day you have chosen." : "Your classes on the day you have chosen.")
+            ? (today?.to
+                ? `${scope === "all" ? "Every class" : "Your classes"} from ${today.date} to ${today.to}.`
+                : (scope === "all" ? "Every class on the day you have chosen." : "Your classes on the day you have chosen."))
             : (scope === "all" ? "Every class running today, and the registers as they fill." : "Your classes today, and the registers as they fill.")}
         </p>
       </header>
@@ -135,8 +157,38 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
           <input type="date" value={date || today?.date || ""} onChange={(e) => setDate(e.target.value)}
             className="bg-transparent text-[13px] font-semibold text-slate-700 outline-none" />
         </label>
-        {today?.isToday === false && (
-          <button onClick={() => setDate("")}
+        {/* The range half, hidden until asked for. A second date box standing open on a
+            screen almost always used for one day is a field people feel obliged to fill
+            in, and a wrong end date silently changes what they are reading. */}
+        {ranged ? (
+          <>
+            <span className="text-[13px] text-slate-400">to</span>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <input type="date" value={to} min={date || today?.date || undefined}
+                onChange={(e) => setTo(e.target.value)}
+                className="bg-transparent text-[13px] font-semibold text-slate-700 outline-none" />
+            </label>
+            <button onClick={() => { setRanged(false); setTo(""); }}
+              className="press rounded-xl px-3 py-2 text-[13px] font-semibold text-slate-500 hover:bg-slate-100">
+              One day
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => {
+              // Seeded to the day already on screen, so pressing this shows the same
+              // classes rather than an empty list the reader then has to explain.
+              const from = date || today?.date || "";
+              setTo(from);
+              setDate(from);
+              setRanged(true);
+            }}
+            className="press rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] font-semibold text-slate-600 hover:bg-slate-50">
+            Date range
+          </button>
+        )}
+        {(today?.isToday === false || ranged) && (
+          <button onClick={() => { setDate(""); setTo(""); setRanged(false); }}
             className="press rounded-xl px-3 py-2 text-[13px] font-semibold text-white" style={{ background: NAVY }}>
             Back to today
           </button>
@@ -208,6 +260,11 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
                     )}
                   </p>
                   <p className="mt-0.5 text-[12px] tabular-nums text-slate-500">
+                    {/* THE DATE, only when the list spans more than one. On a single day
+                        every row shares it and repeating it thirty times is noise; across
+                        a range its absence makes two Tuesdays indistinguishable, which is
+                        the whole reason somebody asked for a range. */}
+                    {today?.to && s.date ? `${s.date} · ` : ""}
                     {s.startTime}–{s.endTime}
                     {s.description ? ` · ${s.description}` : ""}
                     {/* Only in the college-wide view: in your own list every row is
@@ -344,6 +401,43 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
 
   const counts = data?.counts || { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
   const rows = data?.rows || [];
+  const canMark = data?.canMark === true;
+  // Which row is mid-save, so only that dropdown locks. Locking the whole table would
+  // stop a lecturer working down a class of thirty at the speed they call the names.
+  const [saving, setSaving] = useState(null);
+
+  /**
+   * Set (or clear) one student's mark.
+   *
+   * OPTIMISTIC, then reconciled from the server's answer. A register is taken by calling
+   * names down a list, and a control that freezes for a round trip on every name is one
+   * a lecturer stops using by the fourth student. The refetch afterwards is what keeps
+   * the summary tiles honest -- they are computed server-side from the same marks, so
+   * updating the row alone would leave the panel above it stale.
+   *
+   * A 423 is the term lock and is the one refusal worth its own sentence: the mark was
+   * not written because the term is closed, which is a decision somebody made, not a
+   * fault. Anything else reverts the row and says so, because a dropdown that silently
+   * snaps back is indistinguishable from one that did not register the click.
+   */
+  const setMark = async (studentId, next) => {
+    if (!canMark) return;
+    const before = rows.find((r) => r.student.id === studentId)?.status ?? null;
+    setSaving(studentId);
+    setErr("");
+    setData((d) => (d ? { ...d, rows: d.rows.map((r) => (r.student.id === studentId ? { ...r, status: next || null } : r)) } : d));
+    try {
+      await api.saveRegister(sessionId, [{ studentId, status: next || null }]);
+      await load();
+    } catch (e) {
+      setData((d) => (d ? { ...d, rows: d.rows.map((r) => (r.student.id === studentId ? { ...r, status: before } : r)) } : d));
+      setErr(e?.status === 423
+        ? (e.message || "That term is closed, so this register cannot be changed.")
+        : (e?.message || "Could not save that mark."));
+    } finally {
+      setSaving(null);
+    }
+  };
 
   // The lecturer's hand on the window. Both go through one call and one reload, so
   // the badge, the code and the roster all move together. (Its state hook is declared
@@ -470,55 +564,100 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
         <Tally n={counts.notMarked} label="No mark yet" colour="#94a3b8" />
       </div>
 
+      {/* A TABLE, WITH A COLUMN PER OUTCOME.
+          This was a list with one pill on the right saying which of the four a student
+          was. That reads fine for one student and badly for thirty: to answer "who is
+          absent" you read every row's pill instead of running your eye down a column.
+          The reference the college works from is a table, and for a register — which IS
+          a grid of people against outcomes — that is the right shape.
+
+          N/A IS A COLUMN, NOT A BLANK. It is where a student sits when nobody has marked
+          them, and it is the column that should be empty by the end of a class. Leaving
+          it implicit made "not marked yet" and "marked absent" look equally like nothing
+          at all, which is the distinction the whole screen turns on.
+
+          Scrolls inside its own box: six columns do not fit a phone, and the page itself
+          must never scroll sideways. */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <ul className="divide-y divide-slate-100">
-          {rows.map((r) => {
-            const st = r.status ? STATUS[r.status] : null;
-            return (
-              <li key={r.student.id} className="flex flex-wrap items-center gap-2.5 px-5 py-3">
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                  style={{ background: r.student.colour || "#94a3b8" }}
-                >{r.student.initials}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</p>
-                  <p className="text-[11px] text-slate-500">
-                    {r.student.studentRef}
-                    {!r.enrolled && <span className="ml-1.5 text-amber-600">· no longer enrolled</span>}
-                  </p>
-                </div>
-                {r.checkedInAt && (
-                  <span className="shrink-0 text-[12px] tabular-nums text-slate-500" title="When they checked in">{r.checkedInAt}</span>
-                )}
-                {/* A self-marked row is visibly different from one the lecturer took.
-                    takenBy carries that already, so no extra column was needed. */}
-                {/* lucide spreads unknown props onto the <svg>, where `title` is an attribute
-                    and renders neither a tooltip nor an accessible name — so the
-                    tapped-vs-marked distinction was invisible to everybody. A real label
-                    and a visually-hidden word instead. */}
-                {r.selfMarked && (() => {
-                  // Which way they marked themselves. The server's predicate decides
-                  // selfMarked; takenBy just picks the picture — a sticker and a code on
-                  // screen have different failure modes, and an administrator reading a
-                  // disputed register needs to see which one this was.
-                  const viaQr = r.takenBy === "Self check-in (QR)";
-                  const words = viaQr ? "Scanned the code on screen" : "Tapped in on their phone";
-                  const Icon = viaQr ? QrCode : Nfc;
-                  return (
-                    <span className="flex shrink-0 items-center" title={words}>
-                      <Icon size={13} aria-hidden="true" className="text-slate-500" />
-                      <span className="sr-only">{words}</span>
-                    </span>
-                  );
-                })()}
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${st ? st.cls : "bg-slate-100 text-slate-600 ring-slate-300"}`}>
-                  {st ? st.label : "No mark yet"}
-                </span>
-              </li>
-            );
-          })}
-          {!rows.length && <li className="px-5 py-10 text-center text-sm text-slate-400">Nobody is enrolled on this unit yet. An administrator can add students on the Registers page.</li>}
-        </ul>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[38rem] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                <th scope="col" className="px-4 py-2.5">Student</th>
+                <th scope="col" className="px-3 py-2.5">Student number</th>
+                <th scope="col" className="px-3 py-2.5 text-right">Attendance</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => (
+                <tr key={r.student.id} className="align-middle">
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                        style={{ background: r.student.colour || "#94a3b8" }}>{r.student.initials}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</p>
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                          {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
+                          {/* Which way they marked themselves. A sticker and a code on
+                              screen have different failure modes, and an administrator
+                              reading a disputed register needs to see which this was. */}
+                          {r.selfMarked && (() => {
+                            const viaQr = r.takenBy === "Self check-in (QR)";
+                            const words = viaQr ? "Scanned the code on screen" : "Tapped in on their phone";
+                            const Icon = viaQr ? QrCode : Nfc;
+                            return (
+                              <span className="flex items-center" title={words}>
+                                <Icon size={12} aria-hidden="true" className="text-slate-400" />
+                                <span className="sr-only">{words}</span>
+                              </span>
+                            );
+                          })()}
+                          {!r.enrolled && <span className="text-amber-600" title="On this register through their group, with no enrolment on the module">· via group</span>}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-[12px] tabular-nums text-slate-600">{r.student.studentRef || "—"}</td>
+                  <td className="px-3 py-2.5 text-right">
+                    {/* ONE COLUMN CARRYING THE CHOICE, rather than five columns showing
+                        it. Five read as a grid you scan; one reads as a decision you
+                        make, which is what this is — and it is the only shape that lets
+                        a lecturer CORRECT a mark from the screen they are already on.
+
+                        Coloured by the value it currently holds, so the column is still
+                        scannable down the page: green all the way down is a full class,
+                        and the greys are the people nobody has decided about yet. */}
+                    <select
+                      value={r.status || ""}
+                      disabled={!canMark || saving === r.student.id}
+                      onChange={(e) => setMark(r.student.id, e.target.value)}
+                      aria-label={`Attendance for ${r.student.name}`}
+                      title={canMark ? undefined : "You can see this register but not change it."}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 outline-none disabled:opacity-60 ${
+                        r.status ? STATUS[r.status].cls : "bg-slate-100 text-slate-500 ring-slate-300"}`}
+                    >
+                      {/* "" is not a fifth status — it is the ABSENCE of one, and choosing
+                          it clears the mark rather than storing anything. Named "N/A —
+                          no mark" so it cannot be read as a decision that was taken. */}
+                      <option value="">N/A — no mark</option>
+                      {["P", "L", "E", "A"].map((k) => (
+                        <option key={k} value={k}>{STATUS[k].label}</option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+              {!rows.length && (
+                <tr>
+                  <td colSpan={3} className="px-5 py-10 text-center text-sm text-slate-400">
+                    Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
 
         {/* Offered only to somebody the server will let close it. An administrator
             granted the watching page alone used to see this button and get a 403.

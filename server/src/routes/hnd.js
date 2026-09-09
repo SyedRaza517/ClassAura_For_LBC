@@ -1510,6 +1510,11 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
     include: { student: true },
   });
   const byStudent = new Map(session.marks.map((m) => [m.studentId, m]));
+  // Kept as a set of ids rather than asked of `enrolments` row by row, so this handler
+  // and the live view answer `enrolled` the same way — the two rendered the identical
+  // line and one of them had no such set, which is how a stray edit to one silently
+  // 500'd the other.
+  const enrolledIds = new Set(enrolments.map((e) => e.studentId));
 
   // THE ROSTER, NOT THE ENROLMENT LIST. This read only Enrolment, so a register built
   // for a GROUP on a module with no enrolment data listed nobody — while its own
@@ -1541,7 +1546,10 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
         status: mark?.status || null,
         remark: mark?.remark || "",
         takenBy: mark?.takenBy || null,
-        enrolled: enrolments.some((e) => e.studentId === s.id),
+        // Still literally 'has an Enrolment row'. A student present through their GROUP
+      // is on the register and is NOT enrolled, and a tick here would state something
+      // false about their academic record.
+      enrolled: enrolledIds.has(s.id),
       };
     }),
     taken: session.marks.length > 0,
@@ -1551,7 +1559,17 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
 // Save the register. Accepts a partial list — only the students present in the
 // body are written, so a half-finished register can be saved and resumed.
 // A row with status null/"" clears that student's mark.
-router.put("/sessions/:id/register", requireAuth, requireRegisters, async (req, res) => {
+// lecturerGate, NOT requireRegisters, and this REMOVES an asymmetry rather than adding a
+// permission. Whoever teaches a class could already close its register — writing "A"
+// against every unmarked student in one action, through /mark-remaining-absent, which
+// lecturerGate has fronted since 3 Sep 2026. What they could not do was set ONE student
+// present. So the blunter, more damaging action was the more permitted one, and a
+// lecturer correcting a single mark had to ask an administrator.
+//
+// Same predicate as `mayClose` and as the `canMark` flag the live view hands the screen,
+// so the control, the flag and the route cannot disagree — a dropdown that is offered
+// and then 403s is worse than no dropdown.
+router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({ where: { id: req.params.id }, include: { unit: { include: { term: true } } } });
   if (!session) return res.status(404).json({ error: "Session not found" });
 
@@ -1722,7 +1740,31 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
   const asked = str(req.query.date || "");
   if (asked && !isDate(asked)) return res.status(400).json({ error: "date must be a real date, YYYY-MM-DD" });
   const date = asked || localDate();
-  const isToday = date === localDate();
+
+  // ?to=YYYY-MM-DD TURNS THE DAY INTO A RANGE.
+  //
+  // "How did last week go" and "is next week's timetable actually there" are the two
+  // questions this screen could not answer at all, and both are asked far more often
+  // than "what is happening in the next hour". `to` is optional and absent means the
+  // single day, so every existing caller is unaffected.
+  //
+  // CAPPED AT 92 DAYS, and the cap is not arbitrary politeness: this handler reads every
+  // register in the range plus their marks, and with ?scope=all that is the whole
+  // college. A term is thirteen weeks, so a term fits and a year does not — which is the
+  // line between a question about teaching and a report that should be exported.
+  const to = str(req.query.to || "");
+  if (to && !isDate(to)) return res.status(400).json({ error: "to must be a real date, YYYY-MM-DD" });
+  if (to && to < date) return res.status(400).json({ error: "to must not be before the start date" });
+  const MAX_RANGE_DAYS = 92;
+  if (to && Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86400000) > MAX_RANGE_DAYS) {
+    return res.status(400).json({ error: `That range is too wide — ask for ${MAX_RANGE_DAYS} days or fewer.` });
+  }
+  const dateWhere = to ? { gte: date, lte: to } : date;
+
+  // A RANGE IS NEVER "TODAY", even one that contains it. Everything gated on isToday
+  // says "right now" — the running-class highlight, the tap window — and a week that
+  // happens to include today is still not a moment.
+  const isToday = !to && date === localDate();
   const time = localTime();
   const settings = await tapConfig.get();
   // Whether this account teaches anything at all, ever — not today, and not on this
@@ -1755,7 +1797,7 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
   }
 
   const sessions = await prisma.hndSession.findMany({
-    where: { date, ...(wantsAll ? {} : teachesSessionWhere(req.user.id)) },
+    where: { date: dateWhere, ...(wantsAll ? {} : teachesSessionWhere(req.user.id)) },
     include: {
       unit: {
         select: {
@@ -1770,7 +1812,7 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
       },
       _count: { select: { marks: true } },
     },
-    orderBy: { startTime: "asc" },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 
   /* ---- how the day's registers actually stand, per class ------------------- *
@@ -1886,6 +1928,9 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
 
   res.json({
     date,
+    // The end of the range, or null for a single day. Echoed back rather than assumed,
+    // so a screen cannot label a week as a day after a request it half-remembers.
+    to: to || null,
     // Whether `date` is actually today, decided on the SERVER. The client cannot work it
     // out safely: APP_TIMEZONE is the college's, and a lecturer on a laptop in another
     // timezone would compute a different "today" and mislabel the day they are looking
@@ -1907,6 +1952,10 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
     totals,
     sessions: sessions.map((s) => ({
       id: s.id,
+      // The class's OWN date. Redundant on a single day, and the only thing that
+      // distinguishes two rows once `to` makes this a range — without it a fortnight of
+      // the same Tuesday lecture is fourteen identical lines.
+      date: s.date,
       unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
       startTime: s.startTime,
       endTime: s.endTime,
@@ -1968,22 +2017,33 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   });
   if (!session) return res.status(404).json({ error: "That class could not be found." });
 
-  const [enrolments, marks, settings] = await Promise.all([
-    prisma.enrolment.findMany({ where: { unitId: session.unitId }, include: { student: true } }),
+  const [enrolments, marks, settings, roster] = await Promise.all([
+    prisma.enrolment.findMany({ where: { unitId: session.unitId }, select: { studentId: true } }),
     prisma.attendanceMark.findMany({ where: { sessionId: session.id } }),
     tapConfig.get(),
+    // THE ROSTER, NOT THE ENROLMENT LIST — the third screen to have got this wrong.
+    //
+    // This built its list from Enrolment alone, so a class timetabled for a GROUP on a
+    // module that records no enrolments showed nobody: the register listed the group,
+    // the unit card counted the group, and the live view — the screen a lecturer stands
+    // in front of a class holding — was empty. rosterForSession is the same call the
+    // register and the save path make, so all three now answer "who is in this class"
+    // identically or none of them do.
+    rosterForSession(session),
   ]);
 
   const byStudent = new Map(marks.map((m) => [m.studentId, m]));
+  const enrolledIds = new Set(enrolments.map((e) => e.studentId));
+  const rosterIds = new Set(roster.studentIds);
 
-  // A student since un-enrolled who was marked on this register still belongs on it,
-  // matching GET /register — otherwise their mark would silently vanish from the screen
-  // while remaining in the database.
-  const extraIds = marks.filter((m) => !enrolments.some((e) => e.studentId === m.studentId)).map((m) => m.studentId);
-  const extras = extraIds.length ? await prisma.student.findMany({ where: { id: { in: extraIds } } }) : [];
-
-  const students = [...enrolments.map((e) => e.student), ...extras]
-    .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
+  // A student since removed from the group or un-enrolled, but MARKED on this register,
+  // still belongs on it — matching GET /register — otherwise their mark would vanish
+  // from the screen while remaining in the database.
+  const needed = [...new Set([...rosterIds, ...marks.map((m) => m.studentId)])];
+  const students = needed.length
+    ? await prisma.student.findMany({ where: { id: { in: needed } } })
+    : [];
+  students.sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
 
   const rows = students.map((s) => {
     const mark = byStudent.get(s.id);
@@ -2044,6 +2104,10 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     // Whether to OFFER the close button. An administrator granted the watching page
     // alone could see this screen and press a button that only ever answered 403.
     canClose: mayClose(req.user, session),
+    // Whether to OFFER the per-student dropdown at all. Same question as canClose, asked
+    // through the same predicate: the screen must not render a control this caller's next
+    // request would refuse.
+    canMark: mayClose(req.user, session),
     // The minute check-in actually shuts (later than the timetable when held open), so
     // the screen can say "open until 12:20" rather than the end time it already shows.
     closesAt: checkInClosesAt(session),

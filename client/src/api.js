@@ -642,10 +642,13 @@ export const api = {
   // `date` is optional and defaults to today on the SERVER, in the college's timezone —
   // deliberately not filled in here, because a browser in another timezone would send a
   // different day than the one the college is having.
-  mySessionsToday: (scope, date) => {
+  mySessionsToday: (scope, date, to) => {
     const q = new URLSearchParams();
     if (scope === "all") q.set("scope", "all");
     if (date) q.set("date", date);
+    // Only with a start date. `to` alone is meaningless and the server would ignore it,
+    // so sending it would be a parameter that reads like a filter and is not one.
+    if (date && to) q.set("to", to);
     const qs = q.toString();
     return request("/hnd/my-sessions/today" + (qs ? `?${qs}` : ""));
   },

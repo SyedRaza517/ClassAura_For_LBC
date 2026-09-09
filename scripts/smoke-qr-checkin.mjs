@@ -673,6 +673,40 @@ try {
   const todayAgain = await call("/hnd/my-sessions/today", { token: tutorToken });
   check("omitting the date still means today", todayAgain.data?.isToday === true, `isToday=${todayAgain.data?.isToday}`);
 
+  // --- a RANGE, not just a day ---
+  //
+  // "How did last week go" and "is next week's timetable actually there" were both
+  // unanswerable. The range must SPAN — a range that quietly returned only its first day
+  // would look right on a screen showing one class and be wrong on every other.
+  const span = await call(`/hnd/my-sessions/today?date=${todayLocal()}&to=${TOM}`, { token: tutorToken });
+  check("a range answers", span.status === 200, `HTTP ${span.status}`);
+  check("and echoes back its end, so the screen cannot label a week as a day",
+    span.data?.to === TOM && span.data?.date === todayLocal(), `${span.data?.date}..${span.data?.to}`);
+  check("IT SPANS — today's class AND tomorrow's are both on the list",
+    (span.data?.sessions || []).some((x) => x.id === tutorSess.id)
+      && (span.data?.sessions || []).some((x) => x.id === tomSess.id),
+    `n=${(span.data?.sessions || []).length}`);
+  check("every row carries its own date, or a fortnight of one lecture is identical lines",
+    (span.data?.sessions || []).every((x) => typeof x.date === "string" && x.date.length === 10),
+    JSON.stringify((span.data?.sessions || []).map((x) => x.date)));
+  // A RANGE IS NEVER "TODAY", even one containing it: everything gated on isToday says
+  // "right now", and a week is not a moment.
+  check("A RANGE IS NOT 'TODAY', even when it contains today", span.data?.isToday === false, `isToday=${span.data?.isToday}`);
+  check("so nothing in a range is advertised as accepting taps",
+    (span.data?.sessions || []).every((x) => x.acceptingTaps === false),
+    JSON.stringify((span.data?.sessions || []).map((x) => x.acceptingTaps)));
+
+  const backwards = await call(`/hnd/my-sessions/today?date=${TOM}&to=${todayLocal()}`, { token: tutorToken });
+  check("an end before the start is refused", backwards.status === 400, `HTTP ${backwards.status} ${backwards.data?.error || ""}`);
+  const tooWide = await call(`/hnd/my-sessions/today?date=2027-01-01&to=2027-12-31`, { token: tutorToken });
+  check("A YEAR IS REFUSED — this handler reads every register in the range and their marks",
+    tooWide.status === 400, `HTTP ${tooWide.status} ${tooWide.data?.error || ""}`);
+  const termWide = await call(`/hnd/my-sessions/today?date=2027-01-01&to=2027-03-01`, { token: tutorToken });
+  check("but a term-sized range is allowed, so the cap is not merely obstructive",
+    termWide.status === 200, `HTTP ${termWide.status}`);
+  const spanAll = await call(`/hnd/my-sessions/today?date=${todayLocal()}&to=${TOM}&scope=all`, { token: tutorToken });
+  check("A RANGE DOES NOT BECOME A WAY ROUND THE SCOPE GATE EITHER", spanAll.status === 403, `HTTP ${spanAll.status}`);
+
   const tutorMint = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: tutorToken });
   check("the tutor can put their own class's code on the screen",
     tutorMint.status === 200 && typeof tutorMint.data?.code === "string" && tutorMint.data.code.length === CODE_LENGTH,
