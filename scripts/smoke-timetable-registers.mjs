@@ -944,6 +944,73 @@ check("AND THE OTHER GROUP'S REGISTERS ARE NOT COUNTED AS CLASSES THEY MISSED",
 check("every row it lists belongs to this student's own group or to no group",
   (histOwn.data?.rows || []).every((r) => r.sessionId === regX.id), JSON.stringify((histOwn.data?.rows || []).map((r) => r.sessionId)));
 
+
+console.log("\n--- TAKEN ATTENDANCE OUTLIVES THE THINGS IT WAS TAKEN AGAINST ---");
+//
+// Every foreign key in this feature is deliberately SetNull so that a register survives
+// its event, its room and its group. Two paths were the exception and destroyed
+// attendance silently: deleting a UNIT (HndSession.unitId is Cascade, and marks cascade
+// from the session), and deleting a GROUP — which did not delete the register but
+// WIDENED it, because a null cohortId reads as "the module's enrolment is the roster".
+//
+// regX already carries marks from the close-off section above, which is what makes both
+// refusals testable without building a third fixture.
+
+const marksBefore = await db.attendanceMark.count({ where: { session: { unitId: mergedUnit.id } } });
+check("the fixture module has attendance on it", marksBefore > 0, `${marksBefore} mark(s)`);
+
+const delUnit = await call(`/hnd/units/${mergedUnit.id}`, { method: "DELETE", token: admin.token });
+check("DELETING A MODULE WITH ATTENDANCE ON IT IS REFUSED", delUnit.status === 409,
+  `${delUnit.status} ${delUnit.data?.error || ""}`);
+check("and the refusal counts what is in the way, rather than saying 'cannot delete'",
+  delUnit.data?.markCount === marksBefore && delUnit.data?.sessionCount >= 1,
+  JSON.stringify({ markCount: delUnit.data?.markCount, sessionCount: delUnit.data?.sessionCount }));
+check("THE MODULE IS STILL THERE", !!(await db.unit.findUnique({ where: { id: mergedUnit.id } })));
+check("and every mark survived — this is the assertion the whole guard exists for",
+  (await db.attendanceMark.count({ where: { session: { unitId: mergedUnit.id } } })) === marksBefore);
+
+// A module nobody has marked is NOT evidence and must still be deletable, or the guard
+// has quietly become "modules cannot be deleted".
+const throwaway = await db.unit.create({ data: { code: `TW-${TAG}`, name: `Throwaway ${TAG}`, courseId: course.id } });
+await db.hndSession.create({ data: { unitId: throwaway.id, date: "2026-06-09", startTime: "09:00", endTime: "10:00", description: "unmarked" } });
+const delEmptyUnit = await call(`/hnd/units/${throwaway.id}`, { method: "DELETE", token: admin.token });
+check("A MODULE WITH REGISTERS BUT NO MARKS IS STILL DELETABLE", delEmptyUnit.status === 200,
+  `${delEmptyUnit.status} ${delEmptyUnit.data?.error || ""}`);
+
+console.log("\n--- deleting a group never widens its register to the whole module ---");
+// EMPTIED FIRST, and that is the point. The pre-existing guard refuses a group that
+// still has students, so a delete attempted now would be refused for the wrong reason
+// and prove nothing about the register. Emptying it is also precisely what that guard's
+// message tells an administrator to do — "move them to another group first" — which is
+// the workflow that walked into the widening.
+await db.student.updateMany({ where: { cohortId: gX.id }, data: { cohortId: null } });
+check("the group is now empty, so the students guard cannot answer for this one",
+  (await db.student.count({ where: { cohortId: gX.id } })) === 0);
+const delMarkedGroup = await call(`/timetabling/groups/${gX.id}`, { method: "DELETE", token: admin.token });
+check("DELETING A GROUP WHOSE REGISTER HAS MARKS IS REFUSED", delMarkedGroup.status === 409,
+  `${delMarkedGroup.status} ${delMarkedGroup.data?.error || ""}`);
+check("the register is still attached to that group, not loose",
+  (await db.hndSession.findUnique({ where: { id: regX.id }, select: { cohortId: true } }))?.cohortId === gX.id);
+
+// An EMPTY group's register carries no record, so the group may go — but its register
+// must go WITH it rather than being left attached to nobody, which is the widening.
+const gZ = await db.cohort.create({ data: { name: `GZ ${TAG}`, courseId: course.id } });
+const zEvent = (await mkEvent({
+  date: "2026-06-16", start: "09:00", end: "12:00", title: `Zed ${TAG}`,
+  unitId: mergedUnit.id, cohortIds: [gZ.id], published: true,
+})).data;
+const zReg = (await registersFor(zEvent.event.id))[0];
+check("the empty group got a register", !!zReg?.id);
+const delEmptyGroup = await call(`/timetabling/groups/${gZ.id}`, { method: "DELETE", token: admin.token });
+check("an empty group with an UNMARKED register can still be deleted", delEmptyGroup.status === 200,
+  `${delEmptyGroup.status} ${delEmptyGroup.data?.error || ""}`);
+check("ITS REGISTER WENT WITH IT — it was not left attached to nobody",
+  !(await db.hndSession.findUnique({ where: { id: zReg.id } })), "register still present");
+check("and the response says so rather than leaving it to be discovered",
+  delEmptyGroup.data?.registersRemoved === 1, JSON.stringify(delEmptyGroup.data));
+// Put them back so the cleanup below finds them where it expects.
+await db.student.updateMany({ where: { studentRef: { in: [`${TAG}-x1`, `${TAG}-x2`] } }, data: { cohortId: gX.id } }).catch(() => {});
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
 await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id, mergedUnit.id] } } });

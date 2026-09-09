@@ -805,6 +805,31 @@ router.delete("/groups/:id", async (req, res) => {
     });
   }
 
+  // A GROUP WITH REGISTERS IS NOT DELETABLE EITHER, and this is a second guard rather
+  // than an extension of the one above because it fails for a different reason.
+  //
+  // HndSession.cohortId is SetNull. A register whose cohortId becomes null is not
+  // orphaned — it is WIDENED: rosterForSession reads a null cohortId as "the module's
+  // enrolment is the roster", which is correct for a register generated from a unit and
+  // completely wrong for one built for a group. So deleting group B turned its register
+  // into a register for the whole module, and group A's students then appeared on BOTH
+  // registers of a merged class — the exact thing separate registers exist to prevent.
+  //
+  // Worse, the guard above recommends the workflow that walks into it: "move them to
+  // another group first" empties the group, and an empty group deleted cleanly.
+  //
+  // An empty register — one nobody has marked — is not evidence and does not block, for
+  // the same reason it does not block a unit delete: publishing the dates again rebuilds
+  // it. What blocks is a register with marks on it, because widening one silently changes
+  // who a taken register was taken for.
+  const markedRegisters = await prisma.hndSession.count({ where: { cohortId: id, marks: { some: {} } } });
+  if (markedRegisters > 0) {
+    return res.status(409).json({
+      error: `"${existing.name}" has ${markedRegisters} register${markedRegisters === 1 ? "" : "s"} with attendance already taken on ${markedRegisters === 1 ? "it" : "them"}. Deleting the group would leave ${markedRegisters === 1 ? "that register" : "those registers"} attached to no group, which silently turns ${markedRegisters === 1 ? "it" : "them"} into a register for everyone on the module.`,
+      markedRegisters,
+    });
+  }
+
   // THE AFFECTED SET, READ BEFORE THE DELETE — and it is NOT the group's own students,
   // because the guard above has just proved there are none.
   //
@@ -823,7 +848,20 @@ router.delete("/groups/:id", async (req, res) => {
       })).map((e) => e.studentId))]
     : [];
 
+  // THE GROUP'S UNMARKED REGISTERS GO WITH IT, and this is the other half of the guard
+  // above rather than a tidy-up. SetNull would leave them attached to no group, and a
+  // null cohortId means "the module's enrolment is the roster" — so an empty group
+  // register would quietly become a register for everyone on the module, listing
+  // students who were never in that class. The guard refuses when a register carries
+  // marks; this removes the ones that carry none, which is the only remaining way for a
+  // register to be widened by a delete.
+  //
+  // Nothing is lost. A register with no marks is one nobody took, it holds no record of
+  // anybody, and publishing the dates again rebuilds it — the same reasoning that lets
+  // delete-all-events remove them.
+  let removedRegisters = 0;
   try {
+    removedRegisters = (await prisma.hndSession.deleteMany({ where: { cohortId: id, marks: { none: {} } } })).count;
     await prisma.cohort.delete({ where: { id } });
   } catch (e) {
     if (e.code === "P2025") return res.status(404).json({ error: "Group not found" });
@@ -834,12 +872,15 @@ router.delete("/groups/:id", async (req, res) => {
   audit.record(req, {
     action: "cohort.deleted", entity: "Cohort", entityId: id,
     summary: `Empty group "${existing.name}"` +
+      (removedRegisters ? ` — ${removedRegisters} unmarked register(s) removed with it` : "") +
       (existing.course?.name ? ` on ${existing.course.name}` : "") +
       ` was deleted from the timetable planner by ${req.user?.name || "an administrator"}`,
     before: { name: existing.name, courseId: existing.courseId, studentCount: 0 },
     after: null,
   });
-  res.json({ ok: true, unitsDetached: strandedUnits.length, scoresFlagged: affected.length });
+  // registersRemoved is REPORTED, not left to be discovered. A delete that quietly took
+  // registers with it is the same class of surprise as one that quietly widened them.
+  res.json({ ok: true, unitsDetached: strandedUnits.length, scoresFlagged: affected.length, registersRemoved: removedRegisters });
 });
 
 /* ----------------------------------------------------------------- events -- */
