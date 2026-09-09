@@ -1186,82 +1186,111 @@ const TT_DAYS = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sa
 // The period label the college's own timetable uses ("Evening 18:00 – 21:00").
 const periodOf = (start) => { const h = Number(String(start).slice(0, 2)); return h < 12 ? "Morning" : h < 17 ? "Afternoon" : "Evening"; };
 
-// One class from the college calendar, as a student reads it.
+// A STABLE COLOUR PER MODULE, when the college has not chosen one.
 //
-// DATE FIRST, THEN TIME, THEN WHERE. That is the order somebody uses the card in: which
-// day, am I late, and which building do I have to get to. The module name is the title
-// because "Financial Analysis and Reporting" is what they call it, not BUS702 — the code
-// is there for when they need to match it against something official.
-function EventCard({ ev, onCheckIn, today }) {
-  const isToday = ev.date === today;
-  const where = [ev.campus, ev.floor, ev.room ? `Room ${ev.room}` : null].filter(Boolean).join(" · ");
-  return (
-    <div className={`rounded-2xl bg-white p-3.5 shadow-sm ring-1 ${isToday ? "ring-2" : "ring-slate-200/70"}`}
-      style={isToday ? { ringColor: ACCENT.timetable, boxShadow: `0 0 0 2px ${ACCENT.timetable}33` } : undefined}>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-extrabold text-slate-800">{ev.title}</p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12px] text-slate-500">
-            <span className="font-semibold tabular-nums">{ev.start}–{ev.end}</span>
-            {ev.unitCode && <span className="tabular-nums">{ev.unitCode}</span>}
-          </p>
-          {where && <p className="mt-0.5 truncate text-[12px] text-slate-500">{where}</p>}
-          {!!ev.staff.length && <p className="mt-0.5 truncate text-[12px] text-slate-400">{ev.staff.join(", ")}</p>}
-        </div>
-        {isToday && (
-          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold"
-            style={{ background: ACCENT.timetable + "1a", color: ACCENT.timetable }}>Today</span>
-        )}
-      </div>
+// The college's Event Category colour wins where it exists, so a student and their
+// lecturer look at the same coded timetable rather than two unrelated palettes. This is
+// the fallback, hashed from the module CODE rather than assigned in order, so a module
+// keeps its colour when a class is added and between the phone and the web.
+const TT_COLOURS = ["#1a3a8f", "#0d7a5f", "#9e1b32", "#6d28d9", "#b45309", "#0e7490", "#be123c", "#4338ca"];
+const ttColour = (ev) =>
+  ev.colour || TT_COLOURS[Math.abs(String(ev.unitCode || ev.title || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % TT_COLOURS.length];
 
-      {/* CHECK IN IS OFFERED ONLY WHERE THERE IS A REGISTER TO WRITE TO, and only today.
-          A mark cannot be attached to a calendar entry — only to a register — so a class
-          with no register (an exam, a workshop with no module) is shown and not offered.
-          A button that 404s is worse than no button, and a button on next Tuesday's class
-          would plant a mark that stops them checking in when it actually runs. */}
-      {isToday && ev.sessionId && (
-        <button onClick={() => onCheckIn(ev)}
-          className="press mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-[13px] font-bold text-white"
-          style={{ background: ACCENT.timetable }}>
-          <Nfc size={15} /> Check in
-        </button>
-      )}
-    </div>
-  );
-}
+// "2026-09-14" → "14/09/2026", the form the college's own week-structure sheet uses.
+const ttDMY = (d) => { const [y, m, dd] = String(d || "").split("-"); return y ? `${dd}/${m}/${y}` : ""; };
 
-// The calendar, grouped by day. A flat list of forty classes is a scroll; a day is the
-// unit a student actually thinks in.
-function EventList({ events, today, onCheckIn }) {
-  const days = [];
+/**
+ * The timetable, MODULE BY MODULE.
+ *
+ * Two earlier shapes were rejected against this one, and the reasons are the design.
+ *
+ * A FLAT LIST OF EVERY DATE repeated the module name, room and lecturer on all twelve
+ * copies of a weekly class — the same noise as the college's own sheet writing
+ * "TEACHING" eight times down a column.
+ *
+ * A WEEK AT A TIME fixed the repetition and lost the thing a student opens this for:
+ * "when is Financial Analysis on", which is a question about a module, not about a
+ * Tuesday. It also put a fifth of the screen behind a next-week button.
+ *
+ * So: one block per module, its name and colour said ONCE, then its dates. Constant
+ * facts are hoisted into the header — a module taught by one person in one room says so
+ * at the top and drops both columns entirely, which is most modules and is the whole
+ * reason this reads as a timetable rather than a spreadsheet. What varies stays in the
+ * table, because that is what the table is for.
+ */
+function ModuleTimetable({ events, today, onCheckIn }) {
+  const groups = [];
+  const byKey = new Map();
   for (const ev of events) {
-    const last = days[days.length - 1];
-    if (last && last.date === ev.date) last.items.push(ev);
-    else days.push({ date: ev.date, items: [ev] });
+    const key = ev.unitCode || ev.title;
+    if (!byKey.has(key)) { const g = { key, items: [], colour: ttColour(ev), title: ev.unitName || ev.title, code: ev.unitCode }; byKey.set(key, g); groups.push(g); }
+    byKey.get(key).items.push(ev);
   }
-  // Past days are kept but pushed below the fold: "was I marked for last Tuesday" is a
-  // real question, and it is not the one somebody opens this screen with.
-  const upcoming = days.filter((d) => d.date >= today);
-  const past = days.filter((d) => d.date < today).reverse();
-  const Section = ({ label, list }) => (!list.length ? null : (
-    <>
-      <p className="mt-3 px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-      {list.map((d) => (
-        <div key={d.date} className="mt-2">
-          <p className="mb-1.5 px-1 text-[12px] font-bold text-slate-600">
-            {ttFmtDate(d.date, true)}{d.date === today ? " · Today" : ""}
-          </p>
-          <div className="space-y-2">
-            {d.items.map((ev) => <EventCard key={ev.id} ev={ev} today={today} onCheckIn={onCheckIn} />)}
-          </div>
-        </div>
-      ))}
-    </>
-  ));
+
+  const one = (list, pick) => { const set = new Set(list.map(pick).filter(Boolean)); return set.size === 1 ? [...set][0] : null; };
+
   return (
     <>
-      <Section label="Coming up" list={upcoming} />
-      <Section label="Earlier" list={past} />
+      {groups.map((g) => {
+        // Hoisted only when EVERY class agrees. One room for eleven weeks and a different
+        // room for the twelfth is exactly the week somebody turns up to the wrong door,
+        // so a single exception keeps the column and shows it on every row.
+        const room = one(g.items, (e) => [e.room ? `Room ${e.room}` : null, e.campus].filter(Boolean).join(" · "));
+        const staff = one(g.items, (e) => (e.staff || []).join(", "));
+        const time = one(g.items, (e) => `${e.start}–${e.end}`);
+        return (
+          <div key={g.key} className="mb-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
+            <div className="px-3 py-2.5 text-white" style={{ background: g.colour }}>
+              <p className="truncate text-[14px] font-extrabold">{g.title}</p>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-white/85">
+                {g.code && <span className="tabular-nums">{g.code}</span>}
+                {time && <span className="tabular-nums">{time}</span>}
+                {room && <span className="truncate">{room}</span>}
+                {staff && <span className="truncate">{staff}</span>}
+              </p>
+            </div>
+            <table className="w-full border-collapse text-left">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  <th scope="col" className="px-3 py-1.5">Wk</th>
+                  <th scope="col" className="px-2 py-1.5">Date</th>
+                  {!time && <th scope="col" className="px-2 py-1.5">Time</th>}
+                  {!room && <th scope="col" className="px-2 py-1.5">Room</th>}
+                  {!staff && <th scope="col" className="px-2 py-1.5">Lecturer</th>}
+                  <th scope="col" className="px-2 py-1.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {g.items.map((ev, i) => {
+                  const isToday = ev.date === today;
+                  const past = ev.date < today;
+                  return (
+                    <tr key={ev.id} className={isToday ? "bg-slate-50" : ""}>
+                      {/* Numbered within the MODULE, so "week 3" means the third class of
+                          this module — which is how a student and a brief talk about it —
+                          rather than the third week of a college calendar they do not
+                          have in front of them. */}
+                      <td className={`px-3 py-1.5 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>{i + 1}</td>
+                      <td className={`whitespace-nowrap px-2 py-1.5 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>
+                        {ttDMY(ev.date)}
+                      </td>
+                      {!time && <td className="whitespace-nowrap px-2 py-1.5 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
+                      {!room && <td className="px-2 py-1.5 text-[12px] text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
+                      {!staff && <td className="px-2 py-1.5 text-[12px] text-slate-500">{(ev.staff || []).join(", ") || "—"}</td>}
+                      <td className="px-2 py-1.5 text-right">
+                        {isToday && ev.sessionId
+                          ? <button onClick={() => onCheckIn(ev)}
+                              className="press rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: g.colour }}>Check in</button>
+                          : isToday ? <span className="text-[11px] text-slate-400">Today</span> : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -1278,11 +1307,15 @@ function TimetableScreen({ timetable, busy, reload, setScreen }) {
   // because a college with historic TimetableSlot data should keep seeing it — but the
   // real classes go first, since they are the ones with a room, a date and a register.
   if (events.length) {
+    // `stages` is DELIBERATELY NOT RENDERED HERE. It is the college's week-structure
+    // sheet — "Week 1 TEACHING, Week 2 TEACHING, Week 3 TEACHING" — which says the same
+    // word eight times and carries no room, no time and no lecturer. Printed under the
+    // real timetable it read as the timetable repeating itself, which is what was
+    // reported. Where there are real classes, they ARE the timetable.
     return (
       <Screen>
-        <EventList events={events} today={today} onCheckIn={() => setScreen?.("checkin")} />
-        {stages.map((st, i) => <TimetableBlock key={`${st.courseId}|${st.year}|${st.termNumber}`} stage={st} i={i} />)}
-        <p className="mt-3 px-1 text-center text-[11px] text-slate-400">
+        <ModuleTimetable events={events} today={today} onCheckIn={() => setScreen?.("checkin")} />
+        <p className="mt-1 px-1 text-center text-[11px] text-slate-400">
           Times and rooms are set by the college. If something looks wrong, message us from &ldquo;Ask the College&rdquo;.
         </p>
       </Screen>

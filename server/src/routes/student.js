@@ -665,6 +665,10 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     select: {
       id: true, date: true, startTime: true, endTime: true, title: true,
       unit: { select: { id: true, code: true, name: true } },
+      // The colour the college chose for this KIND of class — Lecture, Seminar, Lab. It
+      // is the same colour the staff timetable paints, so a student and their lecturer
+      // are looking at the same coded grid rather than two unrelated palettes.
+      category: { select: { name: true, colour: true } },
       // The room, and the campus through it — same precedence as everywhere else: the
       // related Campus wins so a rename propagates, the legacy string is the fallback.
       room: { select: { name: true, floor: true, campus: true, campusRef: { select: { name: true } } } },
@@ -701,6 +705,13 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     title: e.title || e.unit?.name || "Class",
     unitCode: e.unit?.code || null,
     unitName: e.unit?.name || null,
+    category: e.category?.name || null,
+    // Null when the college has not categorised this class. The app then derives a
+    // stable colour from the module code rather than painting everything one shade —
+    // a timetable where every block is identical is a list with extra steps. Derived
+    // on the CLIENT because it is presentation, and stored here only when it is a
+    // decision the college actually made.
+    colour: e.category?.colour || null,
     room: e.room?.name || null,
     floor: e.room?.floor || null,
     campus: e.room ? (e.room.campusRef?.name || e.room.campus || null) : null,

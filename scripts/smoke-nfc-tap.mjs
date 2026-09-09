@@ -1178,6 +1178,14 @@ try {
     !!ttEv?.sessionId, `sessionId=${ttEv?.sessionId}`);
   check("with the room and campus a student needs to find it",
     ttEv?.room !== undefined && ttEv?.campus !== undefined, JSON.stringify({ room: ttEv?.room, campus: ttEv?.campus }));
+  // The colour the app groups by. Null is a real answer -- the college has not
+  // categorised this class -- and the app then derives a stable one from the module code
+  // rather than painting every block the same shade, which would make colour carry
+  // nothing. The KEY must exist either way or the client cannot tell "no category" from
+  // "old server".
+  check("and a colour key, so the app can group by module rather than paint one shade",
+    "colour" in (ttEv || {}) && "category" in (ttEv || {}),
+    JSON.stringify({ colour: ttEv?.colour, category: ttEv?.category }));
 
   const draftEvt = await call("/timetabling/events", { method: "POST", token: adminToken, body: {
     title: `Draft TT ${RUN}`, date: today, start: shift(now, 200), end: shift(now, 260),
