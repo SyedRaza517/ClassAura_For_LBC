@@ -792,8 +792,20 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                         <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
                           {r.selfMarked && (() => {
-                            const viaQr = r.takenBy === "Self check-in (QR)";
-                            const words = viaQr ? "Scanned the code on screen" : "Tapped in on their phone";
+                            // WHICH self check-in, from the server's own token. This used
+                            // to compare takenBy against the literal "Self check-in (QR)",
+                            // which put a frozen server string in the browser: reword the
+                            // stamp and every scanned mark quietly draws the sticker icon
+                            // instead, on the screen a lecturer watches fill up.
+                            //
+                            // An unrecognised token (an older API, or a capture method
+                            // this build has not been taught) falls back to the neutral
+                            // wording rather than claiming a method — the server said it
+                            // was a self check-in and that much is still shown.
+                            const viaQr = r.checkInMethod === "qr";
+                            const words = viaQr ? "Scanned the code on screen"
+                              : r.checkInMethod === "nfc" ? "Tapped in on their phone"
+                              : "Marked by the student";
                             const Icon = viaQr ? QrCode : Nfc;
                             return (
                               <span className="flex items-center" title={words}>

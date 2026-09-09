@@ -36,10 +36,47 @@ const SELF_CHECKIN_STAMP = "Self check-in (NFC)";
 // reclassify every self check-in ever recorded as staff-marked. A test pins it.
 const SELF_CHECKIN_QR_STAMP = "Self check-in (QR)";
 
-// Every stamp that means "the student did this, not a member of staff". A third capture
-// method adds its stamp here and needs no other change; a test asserts every member is
-// recognised by the predicate, so the list and the check cannot drift apart.
-const SELF_CHECKIN_STAMPS = Object.freeze([SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP]);
+// Every stamp that means "the student did this, not a member of staff", each beside the
+// short token the API reports it as. A third capture method adds ONE line here and needs
+// no other change anywhere: the frozen list, the predicate and the token all read off
+// this map, so none of them can drift from the others.
+//
+// THE TOKEN IS THE THING CLIENTS SWITCH ON, and the split between it and the stamp is the
+// whole point. The stamp is prose — frozen, English, and written into rows in two live
+// databases — while the token is an identifier: two characters, no wording to change, and
+// nothing a screen ever prints. Both browser screens used to re-derive the method by
+// comparing against the stamp itself, so the exact string lived in three files and a
+// change to the wording here would have relabelled every QR mark as an NFC one, on the
+// screens an administrator reads when a mark is DISPUTED, with nothing failing.
+//
+// Tokens are frozen for the same reason the stamps are, one step further out: they cross
+// the network into builds we are not deploying at the same moment.
+const SELF_CHECKIN_METHODS = new Map([
+  [SELF_CHECKIN_STAMP, "nfc"],
+  [SELF_CHECKIN_QR_STAMP, "qr"],
+]);
+
+// A Map rather than a plain object on purpose: `takenBy` is a column, so an attacker or an
+// importer can put "constructor" or "__proto__" in it, and an object lookup answers those
+// from the prototype chain. A Map has no such keys to inherit.
+
+// Derived, never written twice. The list used to be its own literal beside the two
+// constants, which is the same two-hand-maintained-copies shape this module exists to
+// remove one level down.
+const SELF_CHECKIN_STAMPS = Object.freeze([...SELF_CHECKIN_METHODS.keys()]);
+
+/**
+ * HOW this mark was captured: "nfc", "qr", or null for anything that is not a self
+ * check-in — a lecturer's tick, a Moodle import, or a mark whose takenBy was never
+ * recorded at all.
+ *
+ * NULL IS "NOT A SELF CHECK-IN", never "a member of staff did it". An unmarked student and
+ * a mark with no takenBy both land here, and neither is evidence about a person.
+ */
+function checkInMethod(takenBy) {
+  if (typeof takenBy !== "string") return null;
+  return SELF_CHECKIN_METHODS.get(takenBy) ?? null;
+}
 
 /**
  * Was this mark written by the student themselves?
@@ -47,9 +84,14 @@ const SELF_CHECKIN_STAMPS = Object.freeze([SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_S
  * Exact matching, deliberately. A prefix or case-insensitive test would read a lecturer
  * who typed "self check-in" into the remark box as a machine, and the value of this column
  * is that it distinguishes a claim from an observation.
+ *
+ * Answered through checkInMethod so the two cannot disagree: a stamp that has a token is
+ * a self check-in, and one that does not is not. A separate membership test here would be
+ * a second implementation of the same question, free to say "yes, self-marked" while the
+ * screen beside it could not name a method.
  */
 function isSelfCheckIn(takenBy) {
-  return typeof takenBy === "string" && SELF_CHECKIN_STAMPS.includes(takenBy);
+  return checkInMethod(takenBy) !== null;
 }
 
 /** "HH:MM" → minutes since midnight, or null when the string is not a time. */
@@ -188,5 +230,5 @@ function statusFor(session, now, settings) {
 
 module.exports = {
   addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
-  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn,
+  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_STAMPS, isSelfCheckIn, checkInMethod,
 };

@@ -372,7 +372,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, addMinutes, isSelfCheckIn, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
+const { subMinutes, addMinutes, isSelfCheckIn, checkInMethod, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
 const { windowIndexFor, deriveCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
@@ -1626,6 +1626,21 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
         // `takenBy: null` — "not recorded", which the screen must say rather than
         // attributing the mark to a person who may not have made it.
         selfMarked: isSelfCheckIn(mark?.takenBy),
+        // WHICH self check-in — "qr", "nfc", or null for everything else. Derived from the
+        // same map `isSelfCheckIn` reads, so the two can never disagree about a row.
+        //
+        // Here because the browser was doing it: both screens re-derived the method by
+        // comparing `takenBy` against the literal "Self check-in (QR)", which put a frozen
+        // English string in three files and made a change to its WORDING silently relabel
+        // every QR mark as a tap. A sticker needs somebody in the room; a code on a
+        // projector can be photographed and sent to a friend. Those are different answers
+        // to "how could this mark exist", and this is the field an administrator arguing
+        // about a disputed register is reading. `takenBy` still ships beside it — it is the
+        // human-readable provenance, and other screens print it.
+        //
+        // NULL IS NOT "STAFF". A row with no mark, and a mark whose takenBy was never
+        // recorded, both come back null here, and neither is evidence about a person.
+        checkInMethod: checkInMethod(mark?.takenBy),
         takenBy: mark?.takenBy || null,
         // Still literally 'has an Enrolment row'. A student present through their GROUP
       // is on the register and is NOT enrolled, and a tick here would state something
@@ -1688,6 +1703,32 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
     // that omits the field can't wipe a note somebody left.
     const hasRemark = typeof m?.remark === "string";
     rows.push({ studentId, status, remark: hasRemark ? m.remark.slice(0, 500) : "", hasRemark });
+  }
+
+  // A CLASS THAT HAS NOT HAPPENED YET CANNOT BE MARKED, and mark-remaining-absent's
+  // comment has named this hole since it grew its own guard: "PUT /register has the same
+  // hole".
+  //
+  // AFTER the body is parsed, not before it. Placed first, this answered "that class
+  // hasn't happened yet" to a request with a malformed status or a duplicate student —
+  // describing the wrong fault, and quietly turning two existing assertions green for a
+  // reason that had nothing to do with what they test. A caller gets told what THEY got
+  // wrong before being told what the calendar says.
+  //
+  // A mark on a future class is not merely premature, it is DISQUALIFYING. A tap can
+  // never overwrite an existing mark — deliberately, so a lecturer's decision is not
+  // undone by a student's phone — so an A planted on next Tuesday means that student
+  // cannot check in when next Tuesday arrives. The register looks taken and the student
+  // looks absent, and nothing on either screen explains why their tap did nothing.
+  //
+  // `override: true` still passes, exactly as it does for the term lock above: recording
+  // an authorised absence in advance is a real thing an administrator does, and this
+  // stops it being something anybody does BY ACCIDENT.
+  if (session.date > localDate() && req.body?.override !== true) {
+    return res.status(400).json({
+      error: "That class hasn't happened yet. Marking it now would stop those students checking in when it runs.",
+      future: true,
+    });
   }
 
   const ids = rows.map((r) => r.studentId);
@@ -2175,6 +2216,10 @@ router.get("/sessions/:id/students/:studentId/history", requireAuth, lecturerGat
       // rendered as one. The screen prints it as "not marked".
       status: m?.status || null,
       selfMarked: isSelfCheckIn(m?.takenBy),
+      // "qr" | "nfc" | null, from the same map as the predicate above. Null on every
+      // session this student was never marked on — a history row with no mark states
+      // nothing about how a mark was captured, because there is no mark.
+      checkInMethod: checkInMethod(m?.takenBy),
       takenBy: m?.takenBy || null,
       checkedInAt: m?.checkedInAt ?? null,
       remark: m?.remark || "",
@@ -2313,6 +2358,10 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
       // just the NFC string would report every QR check-in as staff-marked, which is the
       // exact opposite of the truth on the one screen built to show the difference.
       selfMarked: isSelfCheckIn(mark?.takenBy),
+      // And WHICH — "qr", "nfc", or null. The live view chose its icon by comparing
+      // takenBy against the literal QR stamp, so the frozen wording of a database column
+      // decided what a lecturer saw; a token cannot be reworded.
+      checkInMethod: checkInMethod(mark?.takenBy),
       takenBy: mark?.takenBy || null,
       enrolled: enrolments.some((e) => e.studentId === s.id),
     };
@@ -2576,8 +2625,9 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["r
   // A register for a class that has not happened yet cannot be closed off. Nothing
   // stopped this before, so one press marked a whole cohort absent for next Tuesday —
   // and because a tap can never overwrite a mark, those students would then be unable to
-  // check in when the class actually ran. PUT /register has the same hole, but this is a
-  // single button and reaches every enrolled student at once.
+  // check in when the class actually ran. PUT /register grew the same guard on 9 Sep
+  // 2026; this one stays because it is a single button that reaches the whole register at
+  // once, and because it refuses outright where PUT admits a deliberate `override`.
   if (session.date > localDate()) {
     return res.status(400).json({ error: "That class hasn't happened yet, so its register can't be closed off." });
   }

@@ -1100,6 +1100,19 @@ try {
   // holding all three cases at once, made by the real routes rather than seeded: QA was
   // scanned and then OVERWRITTEN by an administrator, QC scanned and was never touched,
   // and QE is enrolled on the unit and was never marked on this session at all.
+  // A FOURTH case, and the only one that has to be planted: a mark carrying the NFC
+  // stamp. NFC tap check-in is switched OFF for this entire suite on purpose — that is
+  // half of what it proves — so no route in this run can write one, and yet "qr" and
+  // "nfc" are exactly the two answers that must not be confused with each other. Planted
+  // through the bare client, the same way the lecturer's A is planted above.
+  //
+  // QF is enrolled on this unit and has no mark on this session, so this adds a row
+  // rather than disturbing one an assertion above already reasoned about.
+  const nfcMark = await db.attendanceMark.create({
+    data: { sessionId: live.id, studentId: QF_ID, status: "P", remark: "", takenBy: "Self check-in (NFC)", checkedInAt: now },
+  });
+  made.marks.push(nfcMark.id);
+
   const reg = await call(`/hnd/sessions/${live.id}/register`, { token: adminToken });
   const regRow = (id) => reg.data?.rows?.find((r) => r.student?.id === id);
   const regQa = regRow(QA_ID), regQc = regRow(QC_ID), regQe = regRow(QE_ID);
@@ -1131,6 +1144,72 @@ try {
   check("a student nobody has marked is neither self-marked nor attributed to anyone",
     regQe?.status === null && regQe?.selfMarked === false && regQe?.takenBy === null,
     `status=${regQe?.status} selfMarked=${regQe?.selfMarked} takenBy=${regQe?.takenBy}`);
+
+  /* ====================================================================== */
+  console.log("\n--- and says WHICH self check-in, in a token no wording can move ---");
+  /* ====================================================================== */
+
+  // `takenBy` is prose: frozen English, written into rows in two live databases, and the
+  // thing an administrator reads. Both browser screens used to derive the CAPTURE METHOD
+  // from it by comparing against the literal "Self check-in (QR)" — so the exact string
+  // lived in three files, and rewording it would have relabelled every scanned mark as a
+  // sticker tap on the screens read when a mark is DISPUTED, with nothing failing.
+  //
+  // `checkInMethod` is the fix: "qr" | "nfc" | null, derived on the server from the same
+  // map `isSelfCheckIn` reads. These assertions are about the TOKEN, deliberately never
+  // about the prose beside it — a test that checked both would be the third copy again.
+  //
+  // Four cases, on all three endpoints that carry `selfMarked`, because a register, a live
+  // view and a student's history disagreeing about one mark is worse than none of them
+  // showing it: QC scanned a code, QF's mark carries the sticker stamp, QA's was made by
+  // an administrator, and QE has no mark at all.
+  const regQf = regRow(QF_ID);
+  check("the register reports a scanned mark as the qr method",
+    regQc?.checkInMethod === "qr", `checkInMethod=${regQc?.checkInMethod}`);
+  check("and a tapped mark as the nfc method, so the two capture methods stay apart",
+    regQf?.checkInMethod === "nfc", `checkInMethod=${regQf?.checkInMethod}`);
+
+  // NULL IS NOT "STAFF" AND NOT "NFC". The default-to-nfc failure is the one this whole
+  // change exists to prevent, and it is invisible unless something asserts on a mark that
+  // has no method at all — so both of these are the discriminating half.
+  check("a mark a member of staff made claims no capture method",
+    regQa?.checkInMethod === null && !!regQa?.takenBy,
+    `checkInMethod=${regQa?.checkInMethod} takenBy=${regQa?.takenBy}`);
+  check("and a student nobody has marked claims none either — no mark, no method",
+    regQe?.checkInMethod === null && regQe?.status === null,
+    `checkInMethod=${regQe?.checkInMethod} status=${regQe?.status}`);
+
+  // The live view: the same four marks, the same session, a different serialiser. This is
+  // the screen that chose an icon from the stamp, so it is the one the old bug was on.
+  const methodLive = await call(`/hnd/sessions/${live.id}/live`, { token: adminToken });
+  const liveRow = (id) => methodLive.data?.rows?.find((r) => r.student?.id === id);
+  check("the live view agrees with the register about all four, method by method",
+    methodLive.status === 200
+      && liveRow(QC_ID)?.checkInMethod === "qr" && liveRow(QF_ID)?.checkInMethod === "nfc"
+      && liveRow(QA_ID)?.checkInMethod === null && liveRow(QE_ID)?.checkInMethod === null,
+    `HTTP ${methodLive.status} qc=${liveRow(QC_ID)?.checkInMethod} qf=${liveRow(QF_ID)?.checkInMethod} `
+      + `qa=${liveRow(QA_ID)?.checkInMethod} qe=${liveRow(QE_ID)?.checkInMethod}`);
+
+  // And the per-student history, which is the third row shape carrying `selfMarked` and
+  // the one nothing was reading the method from yet. Asked per student, so each of the
+  // four is its own request; the row for THIS session is the one under test.
+  const historyMethod = async (studentId) => {
+    const h = await call(`/hnd/sessions/${live.id}/students/${studentId}/history`, { token: adminToken });
+    const row = h.data?.rows?.find((r) => r.sessionId === live.id);
+    return { http: h.status, found: !!row, method: row?.checkInMethod ?? null, status: row?.status ?? null };
+  };
+  const [hQc, hQf, hQa, hQe] = await Promise.all([QC_ID, QF_ID, QA_ID, QE_ID].map(historyMethod));
+  check("a student's own history names the method for the session they scanned",
+    hQc.http === 200 && hQc.found && hQc.method === "qr", `HTTP ${hQc.http} found=${hQc.found} method=${hQc.method}`);
+  check("and for the session they tapped",
+    hQf.found && hQf.method === "nfc", `found=${hQf.found} method=${hQf.method}`);
+  check("a staff-made mark in the history claims no method",
+    hQa.found && hQa.method === null && hQa.status === "E", `found=${hQa.found} method=${hQa.method} status=${hQa.status}`);
+  // The history lists every session on the module, marked or not, so the unmarked student
+  // HAS a row here — a row that exists is the one that can wrongly name a method for a
+  // mark that does not, which is why the assertion is on the row rather than its absence.
+  check("and an unmarked session in the history claims none either",
+    hQe.found && hQe.method === null && hQe.status === null, `found=${hQe.found} method=${hQe.method} status=${hQe.status}`);
 
   /* ====================================================================== */
   console.log("\n--- switching the feature on and off while people are using it ---");

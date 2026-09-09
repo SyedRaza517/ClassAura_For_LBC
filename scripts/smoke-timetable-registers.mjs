@@ -718,7 +718,11 @@ check("the fixture module has NO enrolments",
 check("and the group has two students", (await db.student.count({ where: { cohortId: cohortC.id } })) === 2);
 
 const neEvent = (await mkEvent({
-  date: "2027-04-05", start: "09:00", end: "12:00", title: `NoEnrol ${TAG}`,
+  // PAST, deliberately. PUT /register refuses a class that has not happened yet — a mark
+  // planted on a future class stops that student checking in when it runs — so a
+  // future-dated fixture here would test the DATE guard while claiming to test the
+  // roster. It briefly did exactly that.
+  date: "2026-06-04", start: "09:00", end: "12:00", title: `NoEnrol ${TAG}`,
   unitId: noEnrolUnit.id, cohortIds: [cohortC.id], published: true,
 })).data;
 check("the class was created with a register", neEvent?.registers?.created === 1, JSON.stringify(neEvent?.registers));
@@ -943,6 +947,76 @@ check("AND THE OTHER GROUP'S REGISTERS ARE NOT COUNTED AS CLASSES THEY MISSED",
   histOwn.data?.totalSessions === 1, `totalSessions=${histOwn.data?.totalSessions}`);
 check("every row it lists belongs to this student's own group or to no group",
   (histOwn.data?.rows || []).every((r) => r.sessionId === regX.id), JSON.stringify((histOwn.data?.rows || []).map((r) => r.sessionId)));
+
+
+console.log("\n--- a class that has not happened yet cannot be marked ---");
+//
+// Not merely premature: a tap can NEVER overwrite an existing mark, deliberately, so an
+// A planted on next Tuesday means that student cannot check in when next Tuesday comes.
+// The register looks taken, the student looks absent, and nothing on either screen
+// explains why their phone did nothing. mark-remaining-absent has refused future classes
+// for a while and its own comment named this same hole in PUT /register.
+const futureEvt = (await mkEvent({
+  date: "2027-08-03", start: "09:00", end: "12:00", title: `Future ${TAG}`,
+  unitId: mergedUnit.id, cohortIds: [gX.id], published: true,
+})).data;
+const futureReg = (await registersFor(futureEvt.event.id))[0];
+const futureMark = await call(`/hnd/sessions/${futureReg.id}/register`, {
+  method: "PUT", token: admin.token, body: { marks: [{ studentId: x1.id, status: "A" }] },
+});
+check("MARKING A CLASS THAT HAS NOT HAPPENED IS REFUSED", futureMark.status === 400,
+  `${futureMark.status} ${futureMark.data?.error || ""}`);
+check("and the refusal says WHY it matters, not just that it is not allowed",
+  /check.?in/i.test(futureMark.data?.error || ""), futureMark.data?.error);
+check("nothing was written", (await db.attendanceMark.count({ where: { sessionId: futureReg.id } })) === 0);
+// An authorised absence recorded in advance is a real thing an administrator does, so the
+// door is not bolted -- it is only no longer something anybody does by accident.
+const futureOverride = await call(`/hnd/sessions/${futureReg.id}/register`, {
+  method: "PUT", token: admin.token, body: { override: true, marks: [{ studentId: x1.id, status: "E" }] },
+});
+check("BUT A DELIBERATE OVERRIDE STILL PASSES, so a planned absence can be recorded",
+  futureOverride.status === 200, `${futureOverride.status} ${futureOverride.data?.error || ""}`);
+check("and that mark IS written", (await db.attendanceMark.count({ where: { sessionId: futureReg.id, status: "E" } })) === 1);
+
+
+console.log("\n--- DELETING A MERGED CLASS, which used to answer 500 ---");
+//
+// timetableEventId is SetNull, so deleting an event MOVES its registers between the two
+// partial unique indexes. A merged class keeps one register per GROUP — identical in
+// unit, date and start time, differing only by cohortId — so the moment they landed in
+// HndSession_generated_key ("unitId","date","startTime") they collided with each other.
+// Two rows legal a microsecond earlier. 20260909T120000_merged_register_delete gives that
+// index the cohort column its sibling already had.
+//
+// The registers here are deliberately UNMARKED and IDENTICAL in the three old columns —
+// that is the collision. A marked one would be kept by the workaround in
+// delete-all-events and would not exercise the index at all.
+const delEvt = (await mkEvent({
+  date: "2026-07-07", start: "09:00", end: "12:00", title: `DelMerge ${TAG}`,
+  unitId: mergedUnit.id, cohortIds: [gX.id, gY.id], published: true,
+})).data;
+const delRegs = await registersFor(delEvt.event.id);
+check("the merged class built two registers", delRegs.length === 2, `${delRegs.length}`);
+check("and they are identical in unit, date and start time — the collision",
+  new Set(delRegs.map((r) => `${r.date}|${r.startTime}`)).size === 1,
+  JSON.stringify(delRegs.map((r) => `${r.date} ${r.startTime}`)));
+check("differing only by group", new Set(delRegs.map((r) => r.cohortId)).size === 2);
+
+const delMergedRes = await call(`/timetabling/events/${delEvt.event.id}`, { method: "DELETE", token: admin.token });
+check("DELETING IT SUCCEEDS — this answered 500 before the index carried the cohort",
+  delMergedRes.status === 200, `${delMergedRes.status} ${JSON.stringify(delMergedRes.data)}`);
+check("the event is gone", !(await db.timetableEvent.findUnique({ where: { id: delEvt.event.id } })));
+
+// THE GUARANTEE THE INDEX EXISTS FOR MUST STILL BIND. Two generated registers — no
+// event, no group — for one module at one date and time is the duplicate-generation hole
+// the original constraint closed, and widening the index must not reopen it.
+let dupRefused = false;
+await db.hndSession.create({ data: { unitId: mergedUnit.id, date: "2026-07-14", startTime: "09:00", endTime: "12:00", description: `gen1 ${TAG}` } });
+try {
+  await db.hndSession.create({ data: { unitId: mergedUnit.id, date: "2026-07-14", startTime: "09:00", endTime: "12:00", description: `gen2 ${TAG}` } });
+} catch (e) { dupRefused = e.code === "P2002"; }
+check("A SECOND GENERATED REGISTER FOR THE SAME SLOT IS STILL REFUSED — the widening loosened nothing",
+  dupRefused, dupRefused ? "P2002" : "the duplicate was ACCEPTED");
 
 
 console.log("\n--- TAKEN ATTENDANCE OUTLIVES THE THINGS IT WAS TAKEN AGAINST ---");

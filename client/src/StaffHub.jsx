@@ -6880,15 +6880,28 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
 // photographed and sent to a friend — so an administrator arguing about a disputed mark
 // needs to know which one it came from, not merely that it was not a lecturer.
 //
-// The two strings are the frozen stamps from server/src/attendanceTap.js. They are matched
-// exactly, for the same reason the server matches them exactly: a lecturer who typed "self
-// check-in" into the remark box is an observation, not a machine.
-function selfCheckInMethod(takenBy) {
-  if (takenBy === "Self check-in (QR)") return { Icon: QrCode, words: "Scanned the code on screen" };
-  if (takenBy === "Self check-in (NFC)") return { Icon: Nfc, words: "Tapped in on their phone" };
-  // A stamp this build has not been taught about. Still shown, still labelled as a self
-  // check-in — it is one, the server said so — but described in the stamp's own words
-  // rather than illustrated with the wrong icon and an outright false sentence.
+// KEYED ON THE SERVER'S TOKEN, not on the stamp. This used to compare `takenBy` against
+// the literal strings "Self check-in (QR)" and "Self check-in (NFC)" — so a frozen English
+// value from a database column lived in three files at once, and rewording it would have
+// relabelled every scanned mark as a tap here, on the live view and in nothing else. The
+// token ("qr", "nfc") is an identifier with no wording to change; `checkInMethod` on the
+// server derives it from the same map its `isSelfCheckIn` predicate reads.
+//
+// `csv` is the same fact in the exported register's own register of language: the file
+// somebody attaches to an email when a mark is challenged has no icon and no title
+// attribute, so it has to say the whole thing in one cell.
+const CHECK_IN_METHODS = {
+  qr: { Icon: QrCode, words: "Scanned the code on screen", csv: "Student scanned the code on screen (QR)" },
+  nfc: { Icon: Nfc, words: "Tapped in on their phone", csv: "Student tapped in on their phone (NFC)" },
+};
+
+function selfCheckInMethod(method, takenBy) {
+  const known = CHECK_IN_METHODS[method];
+  if (known) return known;
+  // A token this build has not been taught about — a newer API, or an older one that sends
+  // no token at all. Still shown, still labelled as a self check-in — it is one, the server
+  // said so — but described in the stamp's own words rather than illustrated with the wrong
+  // icon and an outright false sentence.
   return { Icon: Nfc, words: `Marked by the student — ${takenBy || "method not recorded"}` };
 }
 
@@ -6975,6 +6988,13 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
 
   // Export this week's register to CSV — every student with their mark and remark,
   // plus the session's own date/time so the file stands alone.
+  //
+  // HOW EACH MARK WAS CAPTURED IS A COLUMN, because the export is the artefact. A mark is
+  // argued about after the fact, from the file somebody attached to an email — not from
+  // this screen, where the icon beside the name says it. Without the column the exported
+  // register flattened a student's own claim and a lecturer's observation into the same
+  // "P", and the distinction that survives the argument is exactly the one a sticker, a
+  // code on a projector and a human in the room do not share.
   const exportRegister = () => {
     const label = Object.fromEntries(ATT_STATUSES.map(s => [s.key, s.label]));
     downloadCSV(
@@ -6982,14 +7002,30 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
       [
         { key: "date", label: "Date" }, { key: "time", label: "Time" }, { key: "unit", label: "Unit" },
         { key: "name", label: "Student" }, { key: "ref", label: "Student number" }, { key: "email", label: "Email" },
-        { key: "status", label: "Status" }, { key: "meaning", label: "Status meaning" }, { key: "remark", label: "Remarks" },
+        { key: "status", label: "Status" }, { key: "meaning", label: "Status meaning" },
+        { key: "captured", label: "How captured" }, { key: "remark", label: "Remarks" },
       ],
       rows.map(r => {
         const st = draft[r.student.id]?.status || "";
         return {
           date: session.date, time: `${session.start}–${session.end}`, unit: mod.code,
           name: r.student.name, ref: r.student.studentRef, email: r.student.email,
-          status: st, meaning: st ? label[st] : "Unmarked", remark: draft[r.student.id]?.remark || "",
+          status: st, meaning: st ? label[st] : "Unmarked",
+          // Four cases, and the last two are the ones worth being careful about.
+          //
+          // A self check-in names its method from the server's token. Anything else prints
+          // `takenBy` VERBATIM rather than the word "staff": takenBy also carries "Moodle"
+          // for an imported mark, and calling that a member of staff would be a false claim
+          // about a person in the one document written to settle a dispute.
+          //
+          // NOT MARKED and NOT RECORDED are different sentences and must stay different. A
+          // row nobody has marked has no capture method because there is no mark; a mark
+          // whose provenance was never written has one and we do not know it. Neither may
+          // fall through to a blank cell, which a reader would take for either.
+          captured: CHECK_IN_METHODS[r.checkInMethod]?.csv
+            || r.takenBy
+            || (st ? "Not recorded" : "Not marked"),
+          remark: draft[r.student.id]?.remark || "",
         };
       }),
     );
@@ -7112,7 +7148,7 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
                                 this, or nobody has" — which the footnote below says in
                                 words — and never "the college does not capture this". */}
                             {r.selfMarked && (() => {
-                              const { Icon, words } = selfCheckInMethod(r.takenBy);
+                              const { Icon, words } = selfCheckInMethod(r.checkInMethod, r.takenBy);
                               return (
                                 <span className="inline-flex items-center text-slate-500" title={words}>
                                   <Icon size={12} aria-hidden="true" />
@@ -7164,8 +7200,8 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
           {data.taken && (() => {
             const staff = rows.find(r => r.takenBy && !r.selfMarked)?.takenBy || null;
             const self = rows.filter(r => r.selfMarked);
-            const qr = self.filter(r => r.takenBy === "Self check-in (QR)").length;
-            const nfc = self.filter(r => r.takenBy === "Self check-in (NFC)").length;
+            const qr = self.filter(r => r.checkInMethod === "qr").length;
+            const nfc = self.filter(r => r.checkInMethod === "nfc").length;
             const how = [qr ? `${qr} scanned the code` : "", nfc ? `${nfc} tapped in` : ""].filter(Boolean).join(", ");
             return (
               <>
