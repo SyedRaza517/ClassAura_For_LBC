@@ -209,6 +209,35 @@ function TapSettings({ settings, onSaved }) {
         </span>
       </label>
 
+      {/* DELIBERATELY NOT STYLED LIKE THE TWO ABOVE. A sticker needs a phone against a tag
+          that is physically in the room; a code needs a camera pointed at the projector
+          while the code is current. This one needs neither, and can be pressed from a bus.
+          Presenting it as a third equivalent switch on a grey card is how an administrator
+          turns it on without registering that they have changed what their attendance data
+          MEANS at a funding audit — so it carries the trade-off in the label rather than in
+          a document nobody reads, and says plainly that the marks stay identifiable. */}
+      <label className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+        <input
+          type="checkbox" checked={draft.declareEnabled} disabled={saving}
+          onChange={(e) => save({ declareEnabled: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="block text-[13px] font-semibold text-amber-900">
+            Marking yourself in without a sticker or code is {draft.declareEnabled ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-amber-800">
+            Students see their running classes on Check In and press a button to be marked present.
+            Nothing proves they are in the room, so this records what the student <em>says</em> rather
+            than what the college observed — useful for online and blended teaching, and for a lecturer
+            who cannot stop to take a register. Every other rule still applies: only while the class is
+            running, only if they are on that register, and never over a mark you have already set.
+            These marks are labelled <em>Self check-in (declared)</em> everywhere they appear, so you can
+            always tell them apart from a tap or a scan.
+          </span>
+        </span>
+      </label>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {num("lateAfterMins", "Late after (minutes)", "A check-in this long after the start records Late instead of Present.")}
         {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts check-ins are accepted. Zero means not before it starts.")}

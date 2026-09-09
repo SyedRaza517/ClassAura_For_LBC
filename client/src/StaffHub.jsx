@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { downloadCSV } from "./csv";
 import { groupNav } from "./navGroups";
+import { CHECK_IN_METHODS, selfCheckInMethod } from "./checkInMethods";
 import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
@@ -6875,46 +6876,15 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
   );
 }
 
-/* ----- Taking the register for one session ----- */
-// HOW a self check-in was captured, for a row the SERVER has already said was one.
+/* ----- Taking the register for one session ----- */// HOW a self check-in was captured — the words, the icon and the CSV cell all live in
+// checkInMethods.js, which the live view imports too. There were two copies of this table
+// and the two screens a lecturer switches between could describe the same mark differently.
 //
 // The `selfMarked` half of the question — does this stamp mean the student, rather than a
 // member of staff — is answered on the server by `isSelfCheckIn`, and is deliberately not
 // re-decided here: two screens disagreeing about what counts as a self check-in is how a
 // register reads one way on the live view and another way on the sheet an inspector is
-// holding. This function only chooses the words and the icon for a row already known to be
-// one, which is why every branch of it is safe to get wrong in only one way: an unfamiliar
-// stamp falls through to the stamp's own text rather than claiming a method it cannot see.
-//
-// A sticker and a code on a screen have different failure modes — a tap needs somebody to
-// be within a few centimetres of a tag in the room, a code on a projector can be
-// photographed and sent to a friend — so an administrator arguing about a disputed mark
-// needs to know which one it came from, not merely that it was not a lecturer.
-//
-// KEYED ON THE SERVER'S TOKEN, not on the stamp. This used to compare `takenBy` against
-// the literal strings "Self check-in (QR)" and "Self check-in (NFC)" — so a frozen English
-// value from a database column lived in three files at once, and rewording it would have
-// relabelled every scanned mark as a tap here, on the live view and in nothing else. The
-// token ("qr", "nfc") is an identifier with no wording to change; `checkInMethod` on the
-// server derives it from the same map its `isSelfCheckIn` predicate reads.
-//
-// `csv` is the same fact in the exported register's own register of language: the file
-// somebody attaches to an email when a mark is challenged has no icon and no title
-// attribute, so it has to say the whole thing in one cell.
-const CHECK_IN_METHODS = {
-  qr: { Icon: QrCode, words: "Scanned the code on screen", csv: "Student scanned the code on screen (QR)" },
-  nfc: { Icon: Nfc, words: "Tapped in on their phone", csv: "Student tapped in on their phone (NFC)" },
-};
-
-function selfCheckInMethod(method, takenBy) {
-  const known = CHECK_IN_METHODS[method];
-  if (known) return known;
-  // A token this build has not been taught about — a newer API, or an older one that sends
-  // no token at all. Still shown, still labelled as a self check-in — it is one, the server
-  // said so — but described in the stamp's own words rather than illustrated with the wrong
-  // icon and an outright false sentence.
-  return { Icon: Nfc, words: `Marked by the student — ${takenBy || "method not recorded"}` };
-}
+// holding.
 
 function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
   const action = liveAction(checkIn);
@@ -7211,9 +7181,16 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
           {data.taken && (() => {
             const staff = rows.find(r => r.takenBy && !r.selfMarked)?.takenBy || null;
             const self = rows.filter(r => r.selfMarked);
-            const qr = self.filter(r => r.checkInMethod === "qr").length;
-            const nfc = self.filter(r => r.checkInMethod === "nfc").length;
-            const how = [qr ? `${qr} scanned the code` : "", nfc ? `${nfc} tapped in` : ""].filter(Boolean).join(", ");
+            // COUNTED OVER THE TABLE, not over a hand-written pair. This listed "qr" and
+            // "nfc" by name, so the declared check-in — the one method whose count an
+            // administrator most needs in front of them, being the only one with nothing
+            // behind it — was silently absent from the summary while its rows sat in the
+            // register above. Any method the server learns now appears here on its own.
+            const how = Object.keys(CHECK_IN_METHODS)
+              .map((m) => ({ n: self.filter(r => r.checkInMethod === m).length, short: CHECK_IN_METHODS[m].short }))
+              .filter(({ n }) => n > 0)
+              .map(({ n, short }) => `${n} ${short}`)
+              .join(", ");
             return (
               <>
                 {staff ? ` Last taken by ${staff}.` : ""}

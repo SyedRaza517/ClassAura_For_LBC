@@ -29,6 +29,7 @@ import { api } from "./api";
 import { scanLinkFor, isLocalOnlyOrigin } from "./scanLink";
 import ConfirmDialog from "./ConfirmDialog";
 import { NAVY } from "./branding";
+import { selfCheckInMethod } from "./checkInMethods";
 
 // How often the live view re-reads while a class is running. Slow enough not to hammer a
 // free-tier API with a lecture theatre's worth of open laptops, fast enough that a
@@ -791,22 +792,17 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                         <p className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</p>
                         <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
-                          {r.selfMarked && (() => {
-                            // WHICH self check-in, from the server's own token. This used
-                            // to compare takenBy against the literal "Self check-in (QR)",
-                            // which put a frozen server string in the browser: reword the
-                            // stamp and every scanned mark quietly draws the sticker icon
-                            // instead, on the screen a lecturer watches fill up.
+                          {r.selfMarked && (() => {                            // WHICH self check-in, in checkInMethods.js's words — the
+                            // same table the register on StaffHub reads, so the two screens
+                            // a lecturer switches between cannot describe one mark two ways
+                            // and a method added on the server appears on both at once.
                             //
-                            // An unrecognised token (an older API, or a capture method
-                            // this build has not been taught) falls back to the neutral
-                            // wording rather than claiming a method — the server said it
-                            // was a self check-in and that much is still shown.
-                            const viaQr = r.checkInMethod === "qr";
-                            const words = viaQr ? "Scanned the code on screen"
-                              : r.checkInMethod === "nfc" ? "Tapped in on their phone"
-                              : "Marked by the student";
-                            const Icon = viaQr ? QrCode : Nfc;
+                            // Keyed on the server's TOKEN. This used to compare takenBy
+                            // against the literal "Self check-in (QR)", which put a frozen
+                            // server string in the browser: reword the stamp and every
+                            // scanned mark quietly draws the sticker icon instead, on the
+                            // screen a lecturer watches fill up.
+                            const { Icon, words } = selfCheckInMethod(r.checkInMethod, r.takenBy);
                             return (
                               <span className="flex items-center" title={words}>
                                 <Icon size={12} aria-hidden="true" />
