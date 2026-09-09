@@ -879,9 +879,18 @@ try {
   // set EXACTLY, rather than the absence of a named field, is what makes a column added
   // to HndSession tomorrow fail here instead of shipping.
   const shape = (ambiguous.data?.sessions || []).map((s) => Object.keys(s).sort().join(","));
-  check("...and each choice carries only the five fields the screen needs",
-    shape.length === 2 && shape.every((k) => k === "endTime,id,startTime,unitCode,unitName"),
+  // Room, campus, floor and staff joined the card on 9 Sep 2026: a student choosing
+  // between two classes running at once needs to know which room and whose class, and
+  // that was the one thing this screen could not tell them. `staff` is NAMES ONLY — the
+  // same rule the staff timetable follows — never an email and never an id.
+  check("...and each choice carries only the fields the screen needs, and no more",
+    shape.length === 2 && shape.every((k) => k === "campus,endTime,floor,id,room,staff,startTime,unitCode,unitName"),
     `keys: ${JSON.stringify(shape)}`);
+  // Asserted for CONTENT as well, or the key list above is satisfied by four nulls and
+  // the screen still has nothing to show.
+  check("and staff arrives as an array of names, not a person record",
+    (ambiguous.data?.sessions || []).every((x) => Array.isArray(x.staff)),
+    JSON.stringify((ambiguous.data?.sessions || []).map((x) => x.staff)));
   const ambigMarks = await db.attendanceMark.count({
     where: { studentId: C_ID, sessionId: { in: [cLive1.id, cLive2.id] } },
   });
@@ -1096,8 +1105,14 @@ try {
 
   // No student data beyond the class itself — this is a timetable, not a record.
   check("a day entry carries only class fields, never anything about other people",
+    // room / floor / campus / staff joined on 9 Sep 2026, so a student can tell which
+    // room and whose class before walking to it. All four are facts about the CLASS;
+    // `staff` is names only, the same rule the staff timetable follows, never an email
+    // or an id. The list stays exact rather than becoming a "does not contain email"
+    // test, because a column added to HndSession tomorrow must fail here.
     dayList.every((c) => Object.keys(c).every((k) =>
-      ["id", "unitCode", "unitName", "startTime", "endTime", "state", "status", "checkedInAt", "termOpen"].includes(k))),
+      ["id", "unitCode", "unitName", "startTime", "endTime", "state", "status", "checkedInAt", "termOpen",
+       "room", "floor", "campus", "staff"].includes(k))),
     `keys: ${[...new Set(dayList.flatMap((c) => Object.keys(c)))].sort().join(",")}`);
 
   // THE POINT OF RETURNING IT EITHER WAY. A college that never switches tap check-in on

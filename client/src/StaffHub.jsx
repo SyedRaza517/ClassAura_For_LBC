@@ -3185,7 +3185,18 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "summaries" && <AdminSummaries store={store} />}
         {activeKey === "registers" && <AdminHndRegisters store={store} />}
         {activeKey === "live-attendance" && <AdminLiveAttendance store={store} settingsHref={canAccessPage(me, "attendance-tags") ? "#/attendance-tags" : null} />}
-        {activeKey === "attendance-tags" && <AdminNfcTags />}
+        {/* `attendance-settings`, NOT `attendance-tags`. The page was renamed on 3 Sep
+            2026 and four of the five places that name it were updated: the server gate in
+            routes/tags.js, both ADMIN_PAGES copies, PAGE_LABELS and the sidebar entry.
+            This render branch was the fifth, so the tab existed, was grantable, was
+            reachable — and drew nothing at all. Reported as "I am unable to see anything
+            in Settings".
+
+            The same rename broke routes/tags.js once before in the opposite direction.
+            warnOnPageListDrift and adminPages-contract.test.js between them cover the
+            grant lists and the routers; neither can see a key typed into a render
+            condition, which is why this one survived both. */}
+        {activeKey === "attendance-settings" && <AdminNfcTags />}
         {activeKey === "students" && <AdminStudents store={store} />}
         {activeKey === "attendance-emails" && <AdminAttendanceEmails store={store} />}
         {activeKey === "assessments" && <AdminAssessments store={store} />}

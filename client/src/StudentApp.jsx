@@ -477,6 +477,19 @@ function TodaysClasses({ today, loading }) {
                   {c.checkedInAt && <> &middot; checked in {c.checkedInAt}</>}
                   {!c.termOpen && <> &middot; term closed</>}
                 </span>
+                {/* WHERE AND WHO, on their own line. A student holding this screen in a
+                    corridor is deciding whether this is the class in front of them, and
+                    with two classes at once the lecturer is what tells them apart. Each
+                    part is omitted rather than dashed when the college has not recorded
+                    it: an online class has no room, and "—" reads as a room nobody
+                    knows. */}
+                {(c.room || c.campus || (c.staff || []).length > 0) && (
+                  <span className="mt-0.5 block truncate text-[11.5px] text-slate-500">
+                    {[c.room ? `Room ${c.room}` : null, c.floor, c.campus].filter(Boolean).join(" · ")}
+                    {(c.staff || []).length > 0 && (c.room || c.campus ? " · " : "")}
+                    {(c.staff || []).join(", ")}
+                  </span>
+                )}
               </span>
               <span className="flex shrink-0 flex-col items-end gap-1">
                 {mark
@@ -1199,6 +1212,38 @@ const ttColour = (ev) =>
 // "2026-09-14" → "14/09/2026", the form the college's own week-structure sheet uses.
 const ttDMY = (d) => { const [y, m, dd] = String(d || "").split("-"); return y ? `${dd}/${m}/${y}` : ""; };
 
+// What the student was marked, as they should read it.
+//
+// "Not marked" is SLATE and is its own state, never red. A class nobody has taken a
+// register for is a fact about the CLASS; being absent is a fact about the STUDENT, and a
+// screen that paints them alike starts a support conversation from a false premise. Only
+// shown once a class has happened — an unmarked future class is not missing anything.
+const TT_MARK = {
+  P: { label: "Present", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  L: { label: "Late", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+  E: { label: "Excused", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
+  A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
+};
+
+// The Monday of a date's week, and the number of whole weeks between two dates.
+//
+// WEEK NUMBER COMES FROM THE CALENDAR, NOT FROM THE ROW INDEX. Numbering rows made two
+// classes on the SAME DAY -- a 09:00-12:00 morning and a 14:00-17:00 afternoon, which is
+// an ordinary shape here -- read as week 1 and week 2, so a module taught twice a day
+// appeared to run for twice as many weeks as it does. Reported exactly that way.
+//
+// Monday-anchored so a Friday and the following Monday are different weeks while a
+// Monday and the Friday after it are the same one, which is what "week 3 of the module"
+// means to everybody who says it.
+const ttWeekStart = (iso) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const day = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (day - 1));
+  return d.toISOString().slice(0, 10);
+};
+const ttWeeksBetween = (a, b) =>
+  Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 604800000);
+
 /**
  * The timetable, MODULE BY MODULE.
  *
@@ -1247,6 +1292,12 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                 {time && <span className="tabular-nums">{time}</span>}
                 {room && <span className="truncate">{room}</span>}
                 {staff && <span className="truncate">{staff}</span>}
+                {/* How much of this module is behind them. A term of dates says when to
+                    turn up; "3 of 12" is the sentence that tells them where they are in
+                    it, which is the question the college's own emails are about. */}
+                <span className="tabular-nums">
+                  {g.items.filter((e) => e.date < today).length} of {g.items.length} so far
+                </span>
               </p>
             </div>
             <table className="w-full border-collapse text-left">
@@ -1264,15 +1315,24 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                 {g.items.map((ev, i) => {
                   const isToday = ev.date === today;
                   const past = ev.date < today;
+                  const firstOfDay = i === 0 || g.items[i - 1].date !== ev.date;
+                  const weekNo = ttWeeksBetween(ttWeekStart(g.items[0].date), ttWeekStart(ev.date)) + 1;
                   return (
                     <tr key={ev.id} className={isToday ? "bg-slate-50" : ""}>
-                      {/* Numbered within the MODULE, so "week 3" means the third class of
-                          this module — which is how a student and a brief talk about it —
-                          rather than the third week of a college calendar they do not
-                          have in front of them. */}
-                      <td className={`px-3 py-1.5 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>{i + 1}</td>
+                      {/* Numbered within the MODULE and FROM THE DATE, so "week 3" is the
+                          third week this module runs — the way a student and a brief both
+                          say it — and two classes on one day share a number instead of
+                          inventing a week.
+
+                          The number and the date are printed only on the FIRST row of a
+                          day. A module with a morning and an afternoon session used to
+                          print the same date twice, one under the other, which is the
+                          repetition this screen was rebuilt to remove. */}
+                      <td className={`px-3 py-1.5 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>
+                        {firstOfDay ? weekNo : ""}
+                      </td>
                       <td className={`whitespace-nowrap px-2 py-1.5 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>
-                        {ttDMY(ev.date)}
+                        {firstOfDay ? ttDMY(ev.date) : ""}
                       </td>
                       {!time && <td className="whitespace-nowrap px-2 py-1.5 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
                       {!room && <td className="px-2 py-1.5 text-[12px] text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
@@ -1281,7 +1341,11 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                         {isToday && ev.sessionId
                           ? <button onClick={() => onCheckIn(ev)}
                               className="press rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: g.colour }}>Check in</button>
-                          : isToday ? <span className="text-[11px] text-slate-400">Today</span> : null}
+                          : ev.status
+                            ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
+                            : past
+                              ? <span className="text-[10px] text-slate-300">Not marked</span>
+                              : null}
                       </td>
                     </tr>
                   );

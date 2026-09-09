@@ -85,6 +85,17 @@ const localTime = (offsetMinutes = 0) => {
     // works — whether colour separates modules, whether a constant room collapses into
     // the module header and drops its column, whether a day with nothing on reads as a
     // day with nothing on.
+    // --today: ONE CLASS PER MODULE, ALL RUNNING NOW. `--term` spreads three modules
+    // across three weekdays, which is what makes the timetable worth reading and means
+    // only one of them is on any given day. To see the Check In screen with a choice on
+    // it — three classes a student picks between and marks themselves present at — all
+    // three have to be in progress at once, which no honest weekly timetable would be.
+    // So it is its own flag rather than a change to --term.
+    //
+    // Windows are staggered and OVERLAPPING (started 30, 20 and 10 minutes ago), so all
+    // three are inside their check-in window simultaneously while still being three
+    // distinguishable classes rather than three copies of one.
+    const wantToday = process.argv.includes("--today");
     const wantTerm = process.argv.includes("--term");
     const WEEKS = 6;
     const PLAN = [
@@ -92,6 +103,41 @@ const localTime = (offsetMinutes = 0) => {
       { dayOffset: 2, start: "13:00", end: "16:00" },   // Wednesday afternoon
       { dayOffset: 4, start: "10:00", end: "13:00" },   // Friday mid-morning
     ];
+    if (wantToday) {
+      const units = await bare.unit.findMany({
+        where: { courseId: cohort.courseId }, orderBy: { code: "asc" }, take: 3,
+        select: { id: true, code: true, name: true },
+      });
+      if (!units.length) { console.error("FAILED: no modules on that group's course."); process.exit(1); }
+      const rooms = await bare.room.findMany({ where: { active: true }, orderBy: { name: "asc" }, take: 3, select: { id: true, name: true } });
+      console.log(`
+  TODAY: ${units.length} module(s), all running now`);
+      const plan = units.map((u, i) => ({ u, room: rooms[i % rooms.length] || null, start: localTime(-30 + i * 10), end: localTime(90 + i * 10) }));
+      for (const x of plan) console.log(`    ${x.u.code} - ${x.u.name}  |  ${x.start}-${x.end}  |  ${x.room?.name || "no room"}`);
+      if (!APPLY) { console.log("\nWould create those. Add --apply."); return; }
+
+      let made = 0, regs = 0;
+      for (const x of plan) {
+        const ev = await bare.timetableEvent.create({
+          data: {
+            title: `${TITLE_PREFIX} - ${x.u.name}`,
+            date, startTime: x.start, endTime: x.end,
+            unitId: x.u.id, courseId: cohort.courseId, roomId: x.room?.id ?? null,
+            published: true, publishedAt: new Date(), createRegisters: true,
+          },
+        });
+        await bare.timetableEventStaff.create({ data: { eventId: ev.id, staffId: staff.id } });
+        await bare.timetableEventGroup.create({ data: { eventId: ev.id, cohortId: cohort.id } });
+        const r = await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => syncEventRegisters(ev.id));
+        made++; regs += r.created;
+      }
+      console.log(`
+  OK ${made} class(es) running now, ${regs} register(s)`);
+      console.log(`
+Remove everything with:  node tools/seed-test-class.js --remove --apply`);
+      return;
+    }
+
     if (wantTerm) {
       const units = await bare.unit.findMany({
         where: { courseId: cohort.courseId }, orderBy: { code: "asc" }, take: 3,

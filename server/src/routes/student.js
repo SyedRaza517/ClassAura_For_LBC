@@ -112,7 +112,16 @@ async function candidateSessions(studentId, date) {
 
   const found = await prisma.hndSession.findMany({
     where,
-    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+    include: {
+      unit: { select: { code: true, name: true, tutorStaff: { select: { name: true } }, tutor: true, term: { select: { name: true, start: true, end: true } } } },
+      // WHERE and WHO, which the check-in card has to show. A student deciding whether
+      // this is the class in front of them needs the room; a student with two classes at
+      // once needs the lecturer to tell them apart. Both come from the TIMETABLE event
+      // where there is one, because that is the per-class truth -- the unit's tutor is
+      // the term-long role and is only the fallback for a register the generator made.
+      room: { select: { name: true, floor: true, campus: true, campusRef: { select: { name: true } } } },
+      timetableEvent: { select: { staff: { select: { staff: { select: { name: true } } } } } },
+    },
   });
 
   // NARROWED BY THE SAME RULE THE REGISTER USES. Being on a module or in a group makes a
@@ -130,6 +139,15 @@ async function candidateSessions(studentId, date) {
     date: s.date,
     startTime: s.startTime,
     endTime: s.endTime,
+    room: s.room?.name || null,
+    floor: s.room?.floor || null,
+    campus: s.room ? (s.room.campusRef?.name || s.room.campus || null) : null,
+    // Names only, and the event's staff win over the unit's tutor: the timetable says who
+    // is in THAT room on THAT day, which is the more specific claim. Free text `tutor` is
+    // the last fallback for a visiting lecturer with no account.
+    staff: (s.timetableEvent?.staff || []).map((x) => x.staff?.name).filter(Boolean).length
+      ? (s.timetableEvent?.staff || []).map((x) => x.staff?.name).filter(Boolean)
+      : [s.unit?.tutorStaff?.name || s.unit?.tutor].filter(Boolean),
     // The lecturer's overrides travel with the candidate, or the shared predicate
     // would judge a closed class open and a held-open one shut.
     checkInClosedAt: s.checkInClosedAt ?? null,
@@ -139,7 +157,13 @@ async function candidateSessions(studentId, date) {
 }
 
 /** What a session looks like on the check-in screen. No other student's data, ever. */
-const sTapSession = (s) => ({ id: s.id, unitCode: s.unitCode, unitName: s.unitName, startTime: s.startTime, endTime: s.endTime });
+const sTapSession = (s) => ({
+  id: s.id, unitCode: s.unitCode, unitName: s.unitName, startTime: s.startTime, endTime: s.endTime,
+  // Room, campus and lecturer travel with every check-in card. Null where the college has
+  // not recorded one -- an online class has no room, and "not recorded" is not "unknown
+  // room", so the card omits the line rather than printing a dash.
+  room: s.room ?? null, floor: s.floor ?? null, campus: s.campus ?? null, staff: s.staff ?? [],
+});
 
 // GET /api/student/me/tap-context — what the check-in screen shows before a tap.
 //
@@ -697,6 +721,24 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     if (!cur || (cur.cohortId === null && s.cohortId === cohortId)) sessionFor.set(s.timetableEventId, s);
   }
 
+  // WHAT THIS STUDENT WAS MARKED, per class. One query for the window, not one per row.
+  //
+  // It is the detail that turns a timetable into something worth opening twice: a term of
+  // dates says when to turn up, and the same term with marks on it answers "am I actually
+  // attending", which is the question behind the emails the college sends them.
+  //
+  // NULL IS NOT ABSENT. A class nobody has taken a register for comes back with no
+  // status, and the app renders that as "not marked" in grey — never as an absence. A
+  // student looking at a red mark for a lecture the lecturer simply never registered is
+  // how a support conversation starts from a false premise.
+  const myMarks = sessions.length
+    ? await prisma.attendanceMark.findMany({
+        where: { studentId, sessionId: { in: [...sessionFor.values()].map((x) => x.id) } },
+        select: { sessionId: true, status: true },
+      })
+    : [];
+  const markFor = new Map(myMarks.map((m) => [m.sessionId, m.status]));
+
   return events.map((e) => ({
     id: e.id,
     date: e.date,
@@ -721,6 +763,9 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     // Null where the class has no register — an exam, a workshop with no module. The app
     // shows the class and offers no check-in, rather than offering one that would 404.
     sessionId: sessionFor.get(e.id)?.id ?? null,
+    // "P" | "L" | "E" | "A", or null for "nobody has marked this" — which is a different
+    // fact from being absent and must never be drawn as one.
+    status: markFor.get(sessionFor.get(e.id)?.id) ?? null,
   }));
 }
 
