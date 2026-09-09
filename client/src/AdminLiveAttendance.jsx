@@ -22,7 +22,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   Radio, Loader2, AlertTriangle, RefreshCw, CheckCircle2, Clock3, UserX,
-  Nfc, Lock, CalendarX, ChevronRight, QrCode, X,
+  Nfc, Lock, CalendarX, ChevronRight, QrCode, X, CalendarDays,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api } from "./api";
@@ -80,13 +80,21 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
   const [chosen, setChosen] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(true);
+  // WHICH DAY IS BEING LOOKED AT. Empty string means "today", and it stays empty rather
+  // than being filled in with a computed date: the college's today is the SERVER's, in
+  // APP_TIMEZONE, and a browser in another timezone that helpfully filled this in would
+  // ask about the wrong day and be answered accurately about it.
+  //
+  // This exists because a screen that can only show today is blank — and looks broken —
+  // on every day the college is not teaching, including the whole week before term.
+  const [date, setDate] = useState("");
 
   const loadToday = useCallback(async () => {
     setBusy(true); setErr("");
-    try { setToday(await api.mySessionsToday(scope)); }
-    catch (e) { setErr(e?.message || "Could not load today's classes."); }
+    try { setToday(await api.mySessionsToday(scope, date)); }
+    catch (e) { setErr(e?.message || "Could not load that day's classes."); }
     finally { setBusy(false); }
-  }, [scope]);
+  }, [scope, date]);
   useEffect(() => { loadToday(); }, [loadToday]);
 
   if (busy && !today) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={28} /></div>;
@@ -104,9 +112,36 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
       <header>
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Radio size={18} style={{ color: NAVY }} />Live Attendance</h2>
         <p className="mt-0.5 text-[13px] text-slate-500">
-          {scope === "all" ? "Every class running today, and the registers as they fill." : "Your classes today, and the registers as they fill."}
+          {today?.isToday === false
+            ? (scope === "all" ? "Every class on the day you have chosen." : "Your classes on the day you have chosen.")
+            : (scope === "all" ? "Every class running today, and the registers as they fill." : "Your classes today, and the registers as they fill.")}
         </p>
       </header>
+
+      {/* THE DAY PICKER. Not a nicety: this screen answers "what is happening" for one
+          date, and before this it could only ever be asked about the current one. On the
+          Wednesday before a term that starts on the Tuesday, an administrator checking
+          that the registers exist saw an empty page and no way to tell a correctly-quiet
+          Wednesday from a term that had failed to save.
+
+          "Today" is a separate button rather than a date typed back in, because the
+          college's today lives on the server: clearing the field asks for "today" and
+          lets the server answer, where filling in the browser's date would ask about
+          whatever day the reader's laptop thinks it is. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <CalendarDays size={15} className="text-slate-400" />
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Day</span>
+          <input type="date" value={date || today?.date || ""} onChange={(e) => setDate(e.target.value)}
+            className="bg-transparent text-[13px] font-semibold text-slate-700 outline-none" />
+        </label>
+        {today?.isToday === false && (
+          <button onClick={() => setDate("")}
+            className="press rounded-xl px-3 py-2 text-[13px] font-semibold text-white" style={{ background: NAVY }}>
+            Back to today
+          </button>
+        )}
+      </div>
 
       {/* Offered only when the server says this account may ask for it. A control that
           always answers 403 is worse than no control. */}

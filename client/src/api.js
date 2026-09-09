@@ -639,7 +639,16 @@ export const api = {
   // scope "all" asks for every class running today rather than only the caller's own.
   // Refused with 403 unless they hold registers/students/executive, so the screen only
   // offers it when the server says it may.
-  mySessionsToday: (scope) => request("/hnd/my-sessions/today" + (scope === "all" ? "?scope=all" : "")),
+  // `date` is optional and defaults to today on the SERVER, in the college's timezone —
+  // deliberately not filled in here, because a browser in another timezone would send a
+  // different day than the one the college is having.
+  mySessionsToday: (scope, date) => {
+    const q = new URLSearchParams();
+    if (scope === "all") q.set("scope", "all");
+    if (date) q.set("date", date);
+    const qs = q.toString();
+    return request("/hnd/my-sessions/today" + (qs ? `?${qs}` : ""));
+  },
   // Which self check-in methods are on, for the Registers page to decide whether a
   // session row offers a "QR code" action at all.
   checkInSettings: () => request("/hnd/check-in-settings"),

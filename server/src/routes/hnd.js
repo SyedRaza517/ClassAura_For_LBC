@@ -1706,7 +1706,23 @@ router.get("/check-in-settings", async (_req, res) => {
 // matching on it would hand one lecturer another's register whenever two people share a
 // surname.
 router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, res) => {
-  const date = localDate();
+  // ?date=YYYY-MM-DD, DEFAULTING TO TODAY.
+  //
+  // A screen that can only ever show today is unusable on the day it matters most: the
+  // afternoon before term starts, an administrator checking that Tuesday's registers
+  // exist sees "no classes today" and cannot tell a correctly-empty Wednesday from a
+  // term that failed to save. Reported exactly that way, on a college whose first class
+  // was six days out.
+  //
+  // It widens no access. The same teachesSessionWhere filter runs whatever the date, so
+  // this lets a lecturer look at their OWN other days and nothing else; ?scope=all is
+  // still gated on the administrative pages. A malformed date is REFUSED rather than
+  // silently falling back to today — a request that asked about Tuesday and was answered
+  // about Wednesday is worse than an error, because nothing on the screen says so.
+  const asked = str(req.query.date || "");
+  if (asked && !isDate(asked)) return res.status(400).json({ error: "date must be a real date, YYYY-MM-DD" });
+  const date = asked || localDate();
+  const isToday = date === localDate();
   const time = localTime();
   const settings = await tapConfig.get();
   // Whether this account teaches anything at all, ever — not today, and not on this
@@ -1870,6 +1886,12 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
 
   res.json({
     date,
+    // Whether `date` is actually today, decided on the SERVER. The client cannot work it
+    // out safely: APP_TIMEZONE is the college's, and a lecturer on a laptop in another
+    // timezone would compute a different "today" and mislabel the day they are looking
+    // at. Everything that says "now" on this screen — the running-class highlight, the
+    // tap window — is only meaningful when this is true.
+    isToday,
     tapEnabled: settings.enabled,
     // Separately, because the list screen's "switched off" warning must only show when
     // BOTH capture methods are off — a QR-only college's registers do fill on their own.
@@ -1909,7 +1931,14 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
       // sense this flag is read for — the badge, and whether the live view keeps polling.
       // The shared predicates, not an inline copy — this test existed four times and the
       // copies had already drifted (one dropped the term; two coerced grace differently).
-      acceptingTaps: (settings.enabled || settings.qrEnabled)
+      // isToday GATES THIS, and it is not belt-and-braces. withinSessionWindow compares
+      // the class's start and end against the WALL CLOCK, so on any other date it is
+      // asking "is 10:04 between 09:00 and 12:00" about a day that is not happening —
+      // which is true, and wrong. A dashboard browsed forward to next Tuesday would badge
+      // every morning class "Open now" and invite a lecturer to wait for taps that cannot
+      // arrive. A class is only accepting taps on the day it runs.
+      acceptingTaps: isToday
+        && (settings.enabled || settings.qrEnabled)
         && withinSessionWindow(s, { date, time }, settings)
         && termOpenOn(s.unit?.term, date),
     })),

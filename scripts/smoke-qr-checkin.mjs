@@ -121,6 +121,10 @@ const login = (email, password) => call("/auth/login", { method: "POST", body: {
 
 const nowHHMM = () => new Date().toLocaleTimeString("en-GB", { timeZone: process.env.APP_TIMEZONE || "Europe/London", hour: "2-digit", minute: "2-digit" });
 const todayLocal = () => new Date().toLocaleDateString("en-CA", { timeZone: process.env.APP_TIMEZONE || "Europe/London" });
+// One day on from the college's today. The date-parameter assertions below do not depend
+// on anything being scheduled tomorrow — only on the ANSWER being about that day rather
+// than this one — so an empty list is a valid result and the checks say so.
+const tomorrowLocal = () => new Date(Date.parse(`${todayLocal()}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
 const shift = (hhmm, mins) => {
   const [h, m] = hhmm.split(":").map(Number);
   const t = Math.max(0, Math.min(23 * 60 + 59, h * 60 + m + mins));
@@ -626,6 +630,48 @@ try {
   check("and is not offered the whole college", tutorToday.data?.canSeeAll === false, `canSeeAll=${tutorToday.data?.canSeeAll}`);
   const tutorAll = await call("/hnd/my-sessions/today?scope=all", { token: tutorToken });
   check("the tutor cannot widen the list to the whole college", tutorAll.status === 403, `HTTP ${tutorAll.status}`);
+
+  // --- asking about a DAY THAT IS NOT TODAY ---
+  //
+  // This screen answers "what is happening" for one date and could only ever be asked
+  // about the current one. On the Wednesday before a term starting on the Tuesday, an
+  // administrator checking the registers exist saw an empty page with no way to tell a
+  // correctly-quiet Wednesday from a term that had failed to save.
+  //
+  // It must widen NOTHING: the same "who teaches this" filter runs whatever the date, so
+  // a lecturer may look at their own other days and nobody else's, and ?scope=all is
+  // still refused. Both are asserted here beside the feature, because a date parameter
+  // that quietly bypassed the scope gate would look identical on the screen.
+  const TOM = tomorrowLocal();
+  // A CLASS TOMORROW, AT THE SAME CLOCK TIME AS ONE RUNNING NOW. Without it the
+  // accepting-taps assertion below runs over an empty array and .every() is vacuously
+  // true — it would pass just as happily against a server that had never heard of the
+  // date parameter. This session is deliberately timed to be "in progress" by the wall
+  // clock, so the ONLY thing stopping it reading as live is the day being wrong.
+  const tomSess = await db.hndSession.create({
+    data: { unitId: unit.id, date: TOM, startTime: shift(now, -13), endTime: shift(now, 107), description: "qr tomorrow" },
+  });
+  made.sessions.push(tomSess.id);
+
+  const otherDay = await call(`/hnd/my-sessions/today?date=${TOM}`, { token: tutorToken });
+  check("a lecturer can ask about another day", otherDay.status === 200, `HTTP ${otherDay.status}`);
+  check("and the server says it is NOT today, so nothing on screen claims to be live",
+    otherDay.data?.isToday === false && otherDay.data?.date === TOM,
+    `isToday=${otherDay.data?.isToday} date=${otherDay.data?.date}`);
+  check("tomorrow's class IS on the list, so the next check is not vacuous",
+    (otherDay.data?.sessions || []).some((x) => x.id === tomSess.id),
+    `n=${(otherDay.data?.sessions || []).length}`);
+  check("NO CLASS ON ANOTHER DAY IS EVER 'ACCEPTING TAPS' — the wall clock is today's",
+    (otherDay.data?.sessions || []).length > 0
+      && (otherDay.data?.sessions || []).every((x) => x.acceptingTaps === false),
+    JSON.stringify((otherDay.data?.sessions || []).map((x) => x.acceptingTaps)));
+  const otherDayAll = await call(`/hnd/my-sessions/today?date=${TOM}&scope=all`, { token: tutorToken });
+  check("A DATE DOES NOT BECOME A WAY ROUND THE SCOPE GATE", otherDayAll.status === 403, `HTTP ${otherDayAll.status}`);
+  const badDay = await call("/hnd/my-sessions/today?date=2026-02-31", { token: tutorToken });
+  check("a date that is not a real day is REFUSED, not quietly answered about today",
+    badDay.status === 400, `HTTP ${badDay.status} ${badDay.data?.error || ""}`);
+  const todayAgain = await call("/hnd/my-sessions/today", { token: tutorToken });
+  check("omitting the date still means today", todayAgain.data?.isToday === true, `isToday=${todayAgain.data?.isToday}`);
 
   const tutorMint = await call(`/hnd/sessions/${tutorSess.id}/qr-code`, { token: tutorToken });
   check("the tutor can put their own class's code on the screen",
