@@ -370,6 +370,9 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   const [note, setNote] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [controlling, setControlling] = useState(false);
+  // Which row is mid-save, so only that dropdown locks. Locking the whole table would
+  // stop a lecturer working down a class of thirty at the speed they call the names.
+  const [saving, setSaving] = useState(null);
   const alive = useRef(true);
   // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
   // and a ref only ever set false leaves every guarded setState skipped for the
@@ -402,9 +405,6 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   const counts = data?.counts || { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
   const rows = data?.rows || [];
   const canMark = data?.canMark === true;
-  // Which row is mid-save, so only that dropdown locks. Locking the whole table would
-  // stop a lecturer working down a class of thirty at the speed they call the names.
-  const [saving, setSaving] = useState(null);
 
   /**
    * Set (or clear) one student's mark.
