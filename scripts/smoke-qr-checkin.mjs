@@ -1085,6 +1085,54 @@ try {
     stillFixed?.status === "E", `status=${stillFixed?.status} (scan answered HTTP ${rescanAfterFix.status})`);
 
   /* ====================================================================== */
+  console.log("\n--- the paper register says HOW each mark got there ---");
+  /* ====================================================================== */
+
+  // The register endpoint is what an administrator reading a DISPUTED register is served,
+  // and it shipped `takenBy` alone — so the screen either ignored provenance entirely or
+  // had to re-derive "is this a self check-in" from a string the browser is not the
+  // authority on. The live view has carried `selfMarked` from the shared predicate for a
+  // while; this asserts the register agrees with it, because the failure that matters is
+  // not "neither screen shows it", it is the two screens saying different things about
+  // the same mark.
+  //
+  // This register is the ideal place to ask, because the corrections above have left it
+  // holding all three cases at once, made by the real routes rather than seeded: QA was
+  // scanned and then OVERWRITTEN by an administrator, QC scanned and was never touched,
+  // and QE is enrolled on the unit and was never marked on this session at all.
+  const reg = await call(`/hnd/sessions/${live.id}/register`, { token: adminToken });
+  const regRow = (id) => reg.data?.rows?.find((r) => r.student?.id === id);
+  const regQa = regRow(QA_ID), regQc = regRow(QC_ID), regQe = regRow(QE_ID);
+  check("the register lists the scanned, the corrected and the unmarked student",
+    reg.status === 200 && !!regQa && !!regQc && !!regQe,
+    `HTTP ${reg.status} rows=${reg.data?.rows?.length ?? "none"}`);
+
+  check("a mark the student scanned is reported as a self check-in on the register too",
+    regQc?.selfMarked === true, `selfMarked=${regQc?.selfMarked} takenBy=${regQc?.takenBy}`);
+
+  // WHICH self check-in, not merely THAT it was one. A sticker in the room and a code on
+  // a projector have different failure modes — one needs physical proximity, the other can
+  // be photographed — so the stamp has to survive to the screen intact, or the register
+  // can say "the student did this" without being able to say how they could have.
+  check("and names the method, so a sticker and a code on screen stay distinguishable",
+    regQc?.takenBy === "Self check-in (QR)", `takenBy=${regQc?.takenBy}`);
+
+  // The discriminating half. If `selfMarked` were hardcoded, copied from `status`, or
+  // derived from anything other than the stamp, this is the assertion that notices: the
+  // administrator's correction is on the SAME register, in the same shape, and differs
+  // only in who made it.
+  check("a mark a member of staff made is NOT reported as a self check-in",
+    regQa?.selfMarked === false && !!regQa?.takenBy && regQa.takenBy !== "Self check-in (QR)",
+    `selfMarked=${regQa?.selfMarked} takenBy=${regQa?.takenBy}`);
+
+  // Null is "not recorded", never "a member of staff did it". A student nobody has marked
+  // must not be attributed to anybody — a register that quietly credits an unmarked row to
+  // staff is the same untruth as one that credits it to the student.
+  check("a student nobody has marked is neither self-marked nor attributed to anyone",
+    regQe?.status === null && regQe?.selfMarked === false && regQe?.takenBy === null,
+    `status=${regQe?.status} selfMarked=${regQe?.selfMarked} takenBy=${regQe?.takenBy}`);
+
+  /* ====================================================================== */
   console.log("\n--- switching the feature on and off while people are using it ---");
   /* ====================================================================== */
 
