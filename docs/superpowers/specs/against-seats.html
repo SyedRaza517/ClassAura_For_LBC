@@ -1,0 +1,527 @@
+<title>Against SEAtS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600&family=Public+Sans:wght@0,400;0,500;0,600;0,700;0,800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+/* ============================================================
+   Third document in the same family — navy #1a3a8f from the
+   platform's own brand token, maroon accent, blue-biased
+   neutrals. This one is an ARGUMENT rather than a sequence, so
+   the spine gives way to a matrix and a ranked list.
+
+   Light palette on bare :root. Dark redefines TOKENS ONLY,
+   once for the OS preference and once for the explicit stamp.
+   ============================================================ */
+:root {
+  --ground:    #f6f7fb;
+  --surface:   #ffffff;
+  --sunk:      #eef0f7;
+  --line:      #d8dcea;
+  --line-soft: #e7eaf3;
+
+  --ink:       #121729;
+  --ink-soft:  #3d465f;
+  --ink-mute:  #5d6784;
+
+  --navy:      #1a3a8f;
+  --navy-ink:  #ffffff;
+  --maroon:    #7d1f35;
+
+  --us:        #1d6b4c;
+  --us-soft:   #e6f2ec;
+  --them:      #8a5312;
+  --them-soft: #fbf0e0;
+  --gap:       #8e2b32;
+  --gap-soft:  #f9e9ea;
+
+  --shadow:    0 1px 2px rgba(18,23,41,.05), 0 10px 28px -18px rgba(18,23,41,.30);
+
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --body:    "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono:    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:    #0c101c;
+    --surface:   #141a2b;
+    --sunk:      #1b2235;
+    --line:      #2c3549;
+    --line-soft: #232b3d;
+    --ink:       #e9ecf6;
+    --ink-soft:  #b6bed4;
+    --ink-mute:  #929bb3;
+    --navy:      #8aa6f0;
+    --navy-ink:  #0c101c;
+    --maroon:    #e393a6;
+    --us:        #63c79b;
+    --us-soft:   #12291f;
+    --them:      #e0a961;
+    --them-soft: #2a1f10;
+    --gap:       #e58d92;
+    --gap-soft:  #2c1518;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 30px -20px rgba(0,0,0,.85);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:    #0c101c;
+  --surface:   #141a2b;
+  --sunk:      #1b2235;
+  --line:      #2c3549;
+  --line-soft: #232b3d;
+  --ink:       #e9ecf6;
+  --ink-soft:  #b6bed4;
+  --ink-mute:  #929bb3;
+  --navy:      #8aa6f0;
+  --navy-ink:  #0c101c;
+  --maroon:    #e393a6;
+  --us:        #63c79b;
+  --us-soft:   #12291f;
+  --them:      #e0a961;
+  --them-soft: #2a1f10;
+  --gap:       #e58d92;
+  --gap-soft:  #2c1518;
+  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 30px -20px rgba(0,0,0,.85);
+}
+
+/* ---------------------------------------------------------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1060px; margin: 0 auto; padding: 0 26px 100px; }
+
+h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(2.5rem, 6vw, 3.9rem); line-height: 1.02; letter-spacing: -.024em; }
+h2 { font-size: clamp(1.55rem, 3vw, 2rem); line-height: 1.14; letter-spacing: -.014em; }
+h3 { font-family: var(--body); font-size: 1rem; font-weight: 700; letter-spacing: -.004em; }
+p { margin: 0; }
+
+.eyebrow { font-size: .7rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute); margin: 0; }
+.sub { font-size: .95rem; color: var(--ink-mute); max-width: 66ch; }
+.prose { display: flex; flex-direction: column; gap: 1em; max-width: 66ch; }
+.prose p { color: var(--ink-soft); font-size: .95rem; }
+.prose strong { color: var(--ink); font-weight: 700; }
+
+code {
+  font-family: var(--mono); font-size: .85em; background: var(--sunk);
+  border: 1px solid var(--line-soft); border-radius: 4px; padding: .08em .34em; color: var(--ink);
+}
+a { color: var(--navy); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--navy); outline-offset: 3px; border-radius: 3px; }
+
+header.top { padding: 76px 0 40px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 18px; }
+header.top .lede {
+  font-family: var(--display); font-size: clamp(1.14rem, 2.1vw, 1.36rem);
+  line-height: 1.5; color: var(--ink-soft); max-width: 60ch;
+}
+
+section { padding-top: 64px; }
+.sec-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+
+/* ---------- their pipeline ---------- */
+
+.pipe { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; margin-top: 8px; }
+.stage {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; display: flex; flex-direction: column; gap: 7px; box-shadow: var(--shadow);
+}
+.stage .n { font-family: var(--mono); font-size: .72rem; font-weight: 600; color: var(--maroon); }
+.stage h3 { font-size: .9rem; }
+.stage p { font-size: .8rem; line-height: 1.5; color: var(--ink-mute); }
+
+/* ---------- matrix ---------- */
+
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: .875rem; }
+th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+thead th {
+  font-size: .68rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-mute); background: var(--sunk); border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td { color: var(--ink-soft); }
+th[scope="row"] { font-weight: 600; color: var(--ink); }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-size: .67rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  padding: .28em .6em; border-radius: 3px; border: 1px solid transparent;
+}
+.t-us   { color: var(--us);   background: var(--us-soft);   border-color: color-mix(in srgb, var(--us) 28%, transparent); }
+.t-them { color: var(--them); background: var(--them-soft); border-color: color-mix(in srgb, var(--them) 28%, transparent); }
+.t-gap  { color: var(--gap);  background: var(--gap-soft);  border-color: color-mix(in srgb, var(--gap) 28%, transparent); }
+
+/* ---------- the argument ---------- */
+
+.claim {
+  border-left: 3px solid var(--maroon); background: var(--surface);
+  border-radius: 0 10px 10px 0; padding: 20px 22px; margin-top: 16px;
+  display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); max-width: 70ch;
+}
+.claim p { font-size: .93rem; line-height: 1.6; color: var(--ink-soft); }
+.claim .eyebrow { color: var(--maroon); }
+
+.evidence { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 14px; }
+.ev {
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--us);
+  border-radius: 0 10px 10px 0; padding: 16px 18px; display: flex; flex-direction: column; gap: 7px;
+}
+.ev h3 { font-size: .88rem; }
+.ev p { font-size: .82rem; line-height: 1.55; color: var(--ink-mute); }
+
+/* ---------- roadmap ---------- */
+
+.plan { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; counter-reset: p; }
+.plan li {
+  list-style: none; display: grid; grid-template-columns: 32px 1fr; gap: 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 17px 20px; box-shadow: var(--shadow);
+}
+.plan li::before {
+  counter-increment: p; content: counter(p);
+  font-family: var(--mono); font-size: .84rem; font-weight: 600; color: var(--navy); padding-top: 2px;
+}
+.plan h3 { font-size: .96rem; }
+.plan p { font-size: .86rem; color: var(--ink-mute); margin-top: 4px; line-height: 1.55; }
+.plan .why { margin-top: 7px; font-size: .82rem; color: var(--ink-soft); }
+.plan .why b { color: var(--ink); }
+
+.not { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.not div { display: grid; grid-template-columns: 150px 1fr; gap: 6px 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.not div:last-child { border-bottom: 0; padding-bottom: 0; }
+.not h3 { font-size: .88rem; }
+.not p { font-size: .85rem; color: var(--ink-mute); line-height: 1.5; }
+
+footer {
+  margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--ink-mute); display: flex; flex-direction: column; gap: 6px; max-width: 68ch;
+}
+
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .wrap { padding: 0 18px 76px; }
+  .not div { grid-template-columns: 1fr; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">EdTech &middot; competitive brief</p>
+  <h1>Against SEAtS</h1>
+  <p class="lede">They have more signals, more connectors and a head start. You are closer than
+    that suggests &mdash; and the place to beat them is not breadth.</p>
+</header>
+
+<!-- ============ THEIR PIPELINE ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">What they actually do</p>
+    <h2>Six stages, end to end</h2>
+    <p class="sub">Assembled from their product pages, Microsoft Marketplace listing and G-Cloud
+      entry. Their own timetabling and attendance pages returned 403, so this is drawn from
+      listings rather than primary documentation.</p>
+  </div>
+
+  <div class="pipe">
+    <div class="stage">
+      <span class="n">01</span><h3>Capture</h3>
+      <p>Four routes: app + Bluetooth beacon, QR shown by the lecturer, card reader at the door,
+        or manual mark-up.</p>
+    </div>
+    <div class="stage">
+      <span class="n">02</span><h3>Schedule</h3>
+      <p>Course catalogue and <strong>teaching patterns</strong> imported from the SIS, or built in
+        their own scheduling product with rooms and constraints.</p>
+    </div>
+    <div class="stage">
+      <span class="n">03</span><h3>Score</h3>
+      <p>~50 signals &mdash; attendance, VLE logins, library visits, lecture capture, submissions,
+        Teams, room bookings &mdash; into one live score per student.</p>
+    </div>
+    <div class="stage">
+      <span class="n">04</span><h3>Trigger</h3>
+      <p>Below a configurable threshold: a nudge to the student, an alert to the personal tutor, a
+        case, or a referral to student services.</p>
+    </div>
+    <div class="stage">
+      <span class="n">05</span><h3>Casework</h3>
+      <p>Early Alert, Case Management and Mitigating Circumstances sold as one family, with notes,
+        tasks and an audit trail.</p>
+    </div>
+    <div class="stage">
+      <span class="n">06</span><h3>Comply</h3>
+      <p>UKVI, SEVIS and Title IV reporting. Sold through G-Cloud, which is how UK colleges
+        actually buy.</p>
+    </div>
+  </div>
+
+  <div class="claim">
+    <p class="eyebrow">The interaction you built is theirs</p>
+    <p>&ldquo;Students open the app when they arrive. If a Bluetooth beacon is installed, the app
+      detects it automatically and a <strong>Check In button appears</strong>.&rdquo; That is
+      exactly the grey-until-tapped button now deployed here. Their radio is Bluetooth, ours is
+      NFC &mdash; and NFC stickers cost pennies against &pound;15&ndash;25 a beacon plus batteries.</p>
+  </div>
+</section>
+
+<!-- ============ MATRIX ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Honestly measured</p>
+    <h2>Where we stand, stage by stage</h2>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th scope="col">Stage</th><th scope="col">SEAtS</th><th scope="col">EdTech today</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Capture</th>
+          <td>Beacon, QR, card, manual</td>
+          <td>NFC tap, manual</td>
+          <td><span class="tag t-gap">Gap: QR</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Schedule</th>
+          <td>Imported teaching patterns, or their own scheduler</td>
+          <td>A CELCAT-style scheduler: dated events, rooms, staff, groups, clash detection</td>
+          <td><span class="tag t-us">Level</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Schedule &rarr; register</th>
+          <td>The schedule <em>is</em> the register list</td>
+          <td>Not joined &mdash; registers still come from a 7-day stepper</td>
+          <td><span class="tag t-gap">Biggest gap</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Score</th>
+          <td>~50 signals, one number</td>
+          <td>Seven weighted components, per-college weights</td>
+          <td><span class="tag t-them">Behind on breadth</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Evidence quality</th>
+          <td>Not advertised</td>
+          <td>Coverage, confidence, renormalisation, LIMITED_EVIDENCE</td>
+          <td><span class="tag t-us">Ahead</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Trigger</th>
+          <td>Threshold &rarr; nudge / tutor / case / referral</td>
+          <td>Banded attendance letters only</td>
+          <td><span class="tag t-gap">Gap</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Casework</th>
+          <td>Cases, tasks, follow-ups</td>
+          <td><code>Intervention</code>, <code>StudentOutcome</code>, follow-up completion</td>
+          <td><span class="tag t-us">Close</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Mitigating circumstances</th>
+          <td>Sold in the Early Alert family</td>
+          <td><code>MitigatingCircumstance</code>, Article&nbsp;9 split, engine sees WHAT not WHY</td>
+          <td><span class="tag t-us">Ahead</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Compliance</th>
+          <td>UKVI, SEVIS, Title&nbsp;IV</td>
+          <td>The data exists; no named report</td>
+          <td><span class="tag t-gap">Gap</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Multi-college</th>
+          <td>Per institution</td>
+          <td>One deployment per college by design</td>
+          <td><span class="tag t-them">Their model</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ THE ARGUMENT ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">The position worth taking</p>
+    <h2>They score the student. We check whether anyone measured.</h2>
+  </div>
+
+  <div class="prose">
+    <p>Fifty signals sounds like an advantage until you ask what happens when a signal is missing
+      &mdash; and for most students, most signals are. A platform that quietly reads
+      &ldquo;no library loans&rdquo; as low engagement is not measuring the student. It is
+      measuring whether the college bought a library connector.</p>
+    <p><strong>This codebase already refuses to do that</strong>, in four places, and none of it is
+      marketed anywhere. That is the product position: not more data, better-founded data.</p>
+  </div>
+
+  <div class="evidence">
+    <div class="ev">
+      <h3>Null is not zero</h3>
+      <p>An unmeasured figure is <code>null</code> and leaves the denominator. It is never scored 0,
+        which would put an unmeasured student top of a risk list.</p>
+    </div>
+    <div class="ev">
+      <h3>Components renormalise</h3>
+      <p>A component with no evidence is dropped from BOTH sides of the division, not counted as a
+        failure the student never had a chance to avoid.</p>
+    </div>
+    <div class="ev">
+      <h3>Register coverage</h3>
+      <p>Three marks out of sixty is a fact about a tutor, not a student. Coverage is measured,
+        stored, and the attendance figure is withheld below the floor.</p>
+    </div>
+    <div class="ev">
+      <h3>Thin evidence is flagged</h3>
+      <p>A score resting on less than half the model is labelled, not published as if it were
+        confident. The weight actually used is reported alongside it.</p>
+    </div>
+  </div>
+
+  <div class="claim">
+    <p class="eyebrow">Why this sells, rather than merely being true</p>
+    <p>At a UKVI or funding audit the question is never &ldquo;what was the score&rdquo;. It is
+      <em>&ldquo;show me the evidence behind this decision&rdquo;</em>. A number that can say which
+      components it rests on, how much of the register was actually taken, and where it declined to
+      judge, survives that conversation. A single opaque engagement score does not.</p>
+  </div>
+</section>
+
+<!-- ============ PLAN ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">What to build, in order</p>
+    <h2>Five moves</h2>
+    <p class="sub">Ranked by what each unlocks, not by effort.</p>
+  </div>
+
+  <ol class="plan">
+    <li>
+      <div>
+        <h3>Registers from the timetable, not typed dates</h3>
+        <p>Turn a published <code>TimetableEvent</code> into its <code>HndSession</code>, the way
+          Canvas, Moodle and Arbor all do it. The CELCAT-style scheduler built on 30 August is
+          already <em>dated</em> and already carries the room &mdash; its design deliberately
+          declared itself self-contained, stating that it "does not modify <code>HndSession</code>
+          &hellip; or the register generator". This is that seam, closed.</p>
+        <p class="why"><b>Unlocks:</b> fixes a real bug &mdash; the current generator steps seven
+          days from one weekday, so a unit taught Monday <em>and</em> Wednesday cannot be expressed
+          at all. Gives real times instead of the fixed 3-hour blocks
+          (<code>10:00&ndash;13:00</code>, <code>14:00&ndash;17:00</code>&hellip;), and carries the
+          room, which is what would later let a tag be bound to a place. It also makes the scheduler
+          <em>earn its keep</em>: today a college can build a full timetable and its registers still
+          ignore it.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>QR as a second check-in method <span class="tag t-us">Shipped 4 Sep</span></h3>
+        <p>A rotating code on the lecturer&rsquo;s screen. Their most-used fallback.</p>
+        <p class="why"><b>Unlocks:</b> every phone with a camera, including the ones with no NFC.
+          And a rotating code is genuinely harder to abuse than a static sticker, which closes the
+          one hole we have documented rather than fixed.</p>
+        <p class="why"><b>Done.</b> Merged and deployed to staging and production on 4 September:
+          rotating signed codes (HMAC over session and window, keyed off the mandatory session
+          secret, so no new configuration to deploy), projector mode, lecturer end-early and
+          hold-open controls, a scanner in the student app, and <code>method</code> on every tap
+          row so a disputed register can say <em>which way</em> the mark arrived. 107 assertions
+          across 15 sections. It ships switched <strong>on</strong>.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Missing registers, as a named screen</h3>
+        <p>Bromcom ships &ldquo;Today&rsquo;s Missing Registers&rdquo;. The figure already exists as
+          <code>registersDue</code>, buried in one profile.</p>
+        <p class="why"><b>Unlocks:</b> the coverage story above stops being a number in an engine and
+          becomes something a manager acts on. Smallest build on this list.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>A small rules engine</h3>
+        <p>Threshold &rarr; notify tutor &rarr; open an <code>Intervention</code>. Every piece exists;
+          nothing joins them automatically.</p>
+        <p class="why"><b>Unlocks:</b> the one stage where they are genuinely ahead. Banded letters
+          already prove the pattern &mdash; this generalises it beyond attendance.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>A UKVI report</h3>
+        <p>A named, exportable return rather than a screen someone reads figures off.</p>
+        <p class="why"><b>Unlocks:</b> the thing colleges with sponsored students actually buy on,
+          and where the evidence-quality argument lands hardest.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ============ NOT DOING ============ -->
+<section>
+  <div class="sec-head">
+    <p class="eyebrow">Deliberately not</p>
+    <h2>Where not to fight</h2>
+  </div>
+
+  <div class="not">
+    <div>
+      <h3>Fifty signals</h3>
+      <p>They have LTI connectors to seventy campus systems and years of integration work. Racing
+        that is losing slowly, and each thin signal weakens the evidence argument that is the
+        actual differentiator.</p>
+    </div>
+    <div>
+      <h3>Library, room booking, lecture capture, Teams</h3>
+      <p>Low value until the five above exist. A signal nobody can act on is a column, not a
+        capability.</p>
+    </div>
+    <div>
+      <h3>Beacons</h3>
+      <p>&pound;15&ndash;25 per room plus batteries, for an interaction identical to a sticker
+        costing pennies. Their &ldquo;no risk of proxy attendance&rdquo; claim is overstated: a BLE
+        beacon broadcasts a fixed ID that can be cloned, exactly as ours can.</p>
+    </div>
+    <div>
+      <h3>A constraint-solving scheduler</h3>
+      <p><b>Corrected 5 September.</b> This entry used to read "our own timetabling product &mdash;
+        do not become a scheduler". That advice arrived too late: the CELCAT-style scheduler was
+        designed and built on 30 August, and it is good &mdash; dated events, rooms, staff, groups,
+        categories, draft/publish, and clash detection reported per date rather than as one lump.</p>
+      <p>So the line moves rather than disappears. What we still should <em>not</em> build is the
+        half CELCAT actually sells: automatic timetable <em>generation</em> &mdash; constraint
+        solving, room optimisation, "fit 300 modules into 40 rooms". Detecting a clash a human
+        created is a feature. Solving the assignment problem is a product, and a hard one.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Written 5 September 2026. SEAtS detail drawn from their product pages, Microsoft Marketplace
+    and G-Cloud listings; their timetabling and attendance pages returned 403, so nothing here rests
+    on primary documentation and specifics should be re-checked before anything is quoted publicly.</p>
+  <p>EdTech capabilities were verified by reading this repository, not from memory.</p>
+  <p><b>Revised 5 September 2026, and two claims were wrong.</b> QR check-in is listed below as a
+    move to make; it was merged and deployed to staging and production that afternoon, so it is
+    done. And the Schedule row read "dates typed per unit, weekly step only &mdash; biggest gap",
+    which missed the CELCAT-style scheduler built on 30 August: <code>TimetableEvent</code> with
+    rooms, staff, groups, categories, draft/publish and clash detection, across 16 endpoints. The
+    gap is not that the college cannot build a timetable. It is that nothing reads it &mdash; the
+    scheduler's own design declared it would not touch the register generator, and it did not. The
+    table now separates those two things, and move 1 is written against the scheduler that exists
+    rather than against <code>TimetableSlot</code>.</p>
+</footer>
+
+</div>

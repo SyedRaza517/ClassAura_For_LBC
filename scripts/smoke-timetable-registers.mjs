@@ -757,6 +757,53 @@ check("A STUDENT IN NEITHER THE GROUP NOR THE ENROLMENT IS STILL REFUSED",
 check("and no mark was written for them",
   (await db.attendanceMark.count({ where: { sessionId: neReg.id, studentId: loose.id } })) === 0);
 
+console.log("\n--- THE UNIT CARD COUNTS WHAT THE REGISTER SHOWS ---");
+//
+// The same failure one screen further out. Registers → Units read `studentCount` off a
+// count of Enrolment rows, so BUS701–BUS705 — hand-created modules Moodle never synced —
+// printed "0 students · 20 sessions" while the registers for those very classes listed
+// the twenty students of the group scheduled against them. One module, two answers, on
+// two screens a lecturer reads in the same minute.
+//
+// Both branches are asserted, because a fix that simply added the group would break the
+// other half: a module that HAS enrolments must still report the intersection, or
+// `loose` — enrolled but in neither group, and refused a mark above for exactly that
+// reason — would be counted as somebody this module teaches.
+const unitCards = await call("/hnd/units", { token: admin.token });
+check("the unit list opens", unitCards.status === 200, String(unitCards.status));
+const cardFor = (id) => (unitCards.data || []).find((u) => u.id === id);
+
+// The premise, restated at the API boundary so a failure below is unambiguous.
+check("the no-enrolment module still records no enrolments",
+  (await db.enrolment.count({ where: { unitId: noEnrolUnit.id } })) === 0);
+check("and no register of it is ungrouped — every one belongs to the group",
+  (await db.hndSession.count({ where: { unitId: noEnrolUnit.id, cohortId: null } })) === 0);
+check("ITS CARD REPORTS THE GROUP'S SIZE, NOT ZERO — the card and the register agree",
+  cardFor(noEnrolUnit.id)?.studentCount === 2, `studentCount=${JSON.stringify(cardFor(noEnrolUnit.id)?.studentCount)}`);
+
+check("the enrolled module has four enrolment rows",
+  (await db.enrolment.count({ where: { unitId: unit.id } })) === 4);
+check("AND ITS CARD STILL REPORTS THE INTERSECTION (3), not the enrolment count (4)",
+  cardFor(unit.id)?.studentCount === 3, `studentCount=${JSON.stringify(cardFor(unit.id)?.studentCount)}`);
+
+// A module with neither route to a student. Not zero: there is nothing to measure, and
+// "0 students" is the sentence a genuinely empty module says.
+const orphanUnit = await db.unit.create({ data: { code: `OR-${TAG}`, name: `Orphan unit ${TAG}`, courseId: course.id } });
+const orphanCards = await call("/hnd/units", { token: admin.token });
+const orphanCard = (orphanCards.data || []).find((u) => u.id === orphanUnit.id);
+check("a module with no enrolments AND no group reports NULL, not 0",
+  orphanCard?.studentCount === null, `studentCount=${JSON.stringify(orphanCard?.studentCount)}`);
+
+// The second call site. Two handlers emitting one field is how the two screens came to
+// disagree in the first place, so the attendance matrix must give the same answers.
+const matrix = await call("/hnd/attendance", { token: admin.token });
+check("the attendance matrix opens", matrix.status === 200, String(matrix.status));
+const mUnit = (id) => (matrix.data?.units || []).find((u) => u.id === id);
+check("and it agrees with the unit list on the no-enrolment module",
+  mUnit(noEnrolUnit.id)?.studentCount === 2, `studentCount=${JSON.stringify(mUnit(noEnrolUnit.id)?.studentCount)}`);
+check("and on the enrolled one",
+  mUnit(unit.id)?.studentCount === 3, `studentCount=${JSON.stringify(mUnit(unit.id)?.studentCount)}`);
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
 await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id] } } });
@@ -773,7 +820,9 @@ await db.signupRequest.deleteMany({ where: { email: { contains: TAG } } });
 // the 409 assertion sends is the same name uppercased — if that guard ever regresses and
 // the row IS created, this is what stops it outliving the run.
 await db.academicDepartment.deleteMany({ where: { name: { contains: TAG, mode: "insensitive" } } });
-await db.unit.delete({ where: { id: unit.id } }).catch(() => {});
+// Unit.courseId is SetNull, not Cascade, so deleting the course below does NOT take
+// these with it — they have to go by id or the run leaks a module a time.
+await db.unit.deleteMany({ where: { id: { in: [unit.id, noEnrolUnit.id, orphanUnit.id] } } }).catch(() => {});
 await db.cohort.deleteMany({ where: { courseId: course.id } });
 await db.room.deleteMany({ where: { name: `R-${TAG}` } });
 await db.campus.deleteMany({ where: { name: `Campus ${TAG}` } });

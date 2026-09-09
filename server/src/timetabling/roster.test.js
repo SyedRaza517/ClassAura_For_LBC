@@ -1,7 +1,7 @@
 // Run with: node --test src/timetabling/roster.test.js   (from server/)
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { deriveRoster } = require("./roster");
+const { deriveRoster, deriveUnitRoster } = require("./roster");
 
 test("the roster is the intersection of cohort and enrolment", () => {
   const r = deriveRoster({
@@ -67,4 +67,100 @@ test("missing arguments do not throw", () => {
   const r = deriveRoster({});
   assert.deepEqual(r.studentIds, []);
   assert.equal(r.rule, "cohort-only");
+});
+
+// --------------------------------------------------- the whole-unit count ---
+
+test("a unit with NO enrolments counts the whole group scheduled against it", () => {
+  // The reported bug exactly: BUS701 printed "0 students · 20 sessions" beside a
+  // register that correctly listed the group.
+  const r = deriveUnitRoster({
+    enrolledStudentIds: [],
+    scheduledStudentIds: ["a", "b", "c"],
+    hasScheduledGroup: true,
+  });
+  assert.deepEqual(r.studentIds, ["a", "b", "c"]);
+  assert.equal(r.rule, "cohort-only");
+});
+
+test("a unit WITH enrolments still counts the intersection, not the enrolment", () => {
+  // "d" is enrolled but in no scheduled group, so no register of this unit lists them.
+  const r = deriveUnitRoster({
+    enrolledStudentIds: ["b", "c", "d"],
+    scheduledStudentIds: ["a", "b", "c"],
+    hasScheduledGroup: true,
+  });
+  assert.deepEqual(r.studentIds, ["b", "c"]);
+  assert.equal(r.rule, "cohort-and-enrolment");
+});
+
+test("somebody both enrolled and in a scheduled group is counted ONCE", () => {
+  const r = deriveUnitRoster({
+    enrolledStudentIds: ["a", "a", "b"],
+    scheduledStudentIds: ["a", "b", "b"],
+    hasScheduledGroup: true,
+  });
+  assert.equal(r.studentIds.length, 2);
+});
+
+test("two groups on one unit are unioned, not summed twice", () => {
+  // A merged class keeps two registers; the module is still one module's worth of
+  // people, and a student appearing on both would be double-counted by a sum.
+  const r = deriveUnitRoster({
+    enrolledStudentIds: ["a", "b", "c"],
+    scheduledStudentIds: ["a", "b", "b", "c"],
+    hasScheduledGroup: true,
+  });
+  assert.deepEqual(r.studentIds, ["a", "b", "c"]);
+});
+
+test("no enrolments AND no group is NULL, not zero", () => {
+  // Nothing to measure: the enrolment branch has nothing to intersect and the cohort
+  // branch has no cohort. Reporting 0 would say the same thing an empty module says.
+  const r = deriveUnitRoster({ enrolledStudentIds: [], scheduledStudentIds: [], hasScheduledGroup: false });
+  assert.equal(r.studentIds, null);
+  assert.equal(r.rule, "unmeasurable");
+});
+
+test("enrolments but no group at all falls back to the enrolment", () => {
+  // A Moodle-synced module nobody has timetabled yet. There is no group to intersect
+  // with, and reporting 0 here would be the original bug in the other direction.
+  const r = deriveUnitRoster({ enrolledStudentIds: ["a", "b"], scheduledStudentIds: [], hasScheduledGroup: false });
+  assert.deepEqual(r.studentIds, ["a", "b"]);
+  assert.equal(r.rule, "enrolment-only");
+});
+
+test("an UNGROUPED register widens the count back to the whole enrolment", () => {
+  // Generator- and Moodle-created registers carry no cohortId, and rosterForSession
+  // gives those the module's whole enrolment. Intersecting would under-count the very
+  // students one of this unit's own registers lists.
+  const r = deriveUnitRoster({
+    enrolledStudentIds: ["a", "b", "d"],
+    scheduledStudentIds: ["a", "b", "c"],
+    hasScheduledGroup: true,
+    hasUngroupedRegister: true,
+  });
+  assert.deepEqual(r.studentIds, ["a", "b", "d"]);
+  assert.equal(r.rule, "enrolment-only");
+});
+
+test("a group that is scheduled but EMPTY is zero, not null", () => {
+  // An answer, not missing data: a group exists and nobody is in it yet.
+  const r = deriveUnitRoster({ enrolledStudentIds: [], scheduledStudentIds: [], hasScheduledGroup: true });
+  assert.deepEqual(r.studentIds, []);
+  assert.equal(r.rule, "cohort-only");
+});
+
+test("a unit that HAS enrolments, none of them in the scheduled group, is zero", () => {
+  // The mirror of deriveRoster's third test. Enrolment data exists and says nobody in
+  // the timetabled group takes this module; widening to the group would put students on
+  // a count for a module they are not taking.
+  const r = deriveUnitRoster({ enrolledStudentIds: ["z"], scheduledStudentIds: ["a"], hasScheduledGroup: true });
+  assert.deepEqual(r.studentIds, []);
+  assert.equal(r.rule, "cohort-and-enrolment");
+});
+
+test("missing arguments do not throw", () => {
+  const r = deriveUnitRoster({});
+  assert.equal(r.studentIds, null);
 });

@@ -42,6 +42,29 @@ const STATUS = {
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
+// The summary panel's tiles, in the order a lecturer reads them.
+//
+// EXCUSED IS HERE even though it is the least interesting of the four, because the four
+// letters plus "not marked" are the whole register and a tile missing from the row is a
+// column of students who silently stop adding up. `notMarked` reuses the slate ring the
+// rest of this file gives to "nothing has happened yet" rather than borrowing the rose
+// one: it is not an absence, it looks nothing like one, and colouring it as one is the
+// first step to somebody treating it as one.
+const TILES = [
+  { key: "P", label: "Present", cls: STATUS.P.cls },
+  { key: "L", label: "Late", cls: STATUS.L.cls },
+  { key: "E", label: "Excused", cls: STATUS.E.cls },
+  { key: "A", label: "Absent", cls: STATUS.A.cls },
+  { key: "notMarked", label: "Not marked", cls: "bg-slate-50 text-slate-600 ring-slate-200" },
+];
+
+// NULL IS NOT ZERO, on the screen as much as in the database. `notMarked` is null when
+// the register has no roster to measure against — a Moodle import that never synced
+// enrolments — and printing 0 there would tell a lecturer everybody is accounted for on
+// a class nobody can size. An em dash, with the reason on hover.
+const NOT_MEASURED = "Not recorded — this class has no roster to count against.";
+const shown = (v) => (v === null || v === undefined ? "—" : v);
+
 // `settingsHref` is where "switch it on" should send an administrator who holds the
 // settings page, or null for everyone else (the staff app, a watch-only admin), who are
 // told to ask instead. The link is a fragment because the console routes on the hash.
@@ -115,6 +138,11 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
         </Banner>
       )}
 
+      {/* The day, added up — but only when there is a day to add up. On an empty list the
+          panel would be five zeroes above a "no classes today" card, which reads as data
+          rather than as the absence of any. */}
+      {sessions.length > 0 && <TodayTotals totals={today?.totals} classes={sessions.length} />}
+
       {!sessions.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
           <CalendarX size={26} className="mx-auto mb-3 text-slate-300" />
@@ -127,7 +155,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
           <p className="mx-auto mt-1 max-w-sm text-[13px] leading-relaxed text-slate-500">
             {scope === "all"
               ? "Nothing is timetabled for today at all. Registers are generated from a unit's teaching dates on the Registers page."
-              : "This lists sessions on units where you are recorded as the tutor. If you teach a unit that is not here, ask an administrator to set you as its tutor on the Registers page."}
+              : "This lists the classes you are recorded as teaching — either as the tutor of the unit, or by being named on the timetabled class itself. If you teach something that is not here, ask an administrator to add you to it."}
           </p>
         </div>
       ) : (
@@ -150,8 +178,11 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
                     {/* Only in the college-wide view: in your own list every row is
                         yours, and repeating your name on each one is noise. */}
                     {scope === "all" && s.tutor ? ` · ${s.tutor}` : ""}
-                    {` · ${s.marked} marked`}
                   </p>
+                  {/* The class's own register, broken out. It replaces the bare "N
+                      marked" that used to sit on the line above — the same fact, said in
+                      the terms a lecturer glancing at a phone actually wants. */}
+                  <CountPills counts={s.counts} />
                 </div>
                 <ChevronRight size={17} className="shrink-0 text-slate-300" />
               </button>
@@ -159,6 +190,58 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// Where the day's registers stand, across every class on the list beneath it.
+//
+// A COUNT OF MARKS, not of people: a student on two registers today is counted twice,
+// and should be, because the question this answers is "how much of today's attendance is
+// taken" rather than "how many students are in the building". Said on the card, because
+// the other reading is the one an inspector will otherwise take.
+function TodayTotals({ totals, classes }) {
+  if (!totals) return null;
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Today so far</p>
+      <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {TILES.map((t) => (
+          <div
+            key={t.key}
+            title={totals[t.key] === null && t.key === "notMarked" ? NOT_MEASURED : undefined}
+            className={`rounded-xl px-3 py-2.5 text-center ring-1 ${t.cls}`}
+          >
+            <p className="text-xl font-bold tabular-nums leading-none">{shown(totals[t.key])}</p>
+            <p className="mt-1 text-[11px] font-semibold opacity-80">{t.label}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2.5 text-[12px] leading-relaxed text-slate-500">
+        Across {classes} class{classes === 1 ? "" : "es"}, counting each register separately.{" "}
+        <strong className="font-semibold text-slate-600">Not marked</strong> is students on a register
+        who have no mark yet. It is not an absence, and nothing on this screen writes one.
+      </p>
+    </div>
+  );
+}
+
+// The same five figures beside one class. Rendered inside the button that opens the
+// register, so it is a plain span row rather than anything focusable — a control inside
+// a control is not reachable by keyboard and lies to a screen reader about both.
+function CountPills({ counts }) {
+  if (!counts) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {TILES.map((t) => (
+        <span
+          key={t.key}
+          title={counts[t.key] === null && t.key === "notMarked" ? NOT_MEASURED : undefined}
+          className={`rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ring-1 ${t.cls}`}
+        >
+          {shown(counts[t.key])} <span className="font-semibold opacity-80">{t.label}</span>
+        </span>
+      ))}
     </div>
   );
 }

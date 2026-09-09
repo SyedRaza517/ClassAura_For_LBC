@@ -8285,15 +8285,44 @@ function CoursePattern({ seed, colour }) {
 // three-dot control in the reference design. Closes on outside click.
 function CourseMenu({ onEdit, onDelete, onCohorts, onSchedule, editLabel = "Edit course", deleteLabel = "Delete course" }) {
   const [open, setOpen] = useState(false);
+  const box = useRef(null);
+
+  // A DOCUMENT LISTENER, NOT A FULL-SCREEN BACKDROP.
+  //
+  // This used a `fixed inset-0` catcher, which reads as covering the screen and does
+  // not. The admin console animates its views with `.fade-up`, declared `animation: …
+  // both`; the forwards fill holds the final keyframe for ever, and although that
+  // keyframe says `transform: none` the browser computes it as matrix(1,0,0,1,0,0). ANY
+  // computed transform other than the keyword makes an element the containing block for
+  // its fixed-position descendants, so `inset-0` resolved against the view container
+  // rather than the viewport. The menu therefore dismissed when clicked over that box
+  // and ignored everything outside it — reported as "it forces me to click in some
+  // area". The same mechanism put a modal's Save button 159px off-screen earlier in this
+  // codebase; a listener has no position, no z-index and no parent, so none of it
+  // applies.
+  //
+  // `pointerdown` in the CAPTURE phase: it fires before focus moves and before any child
+  // can stopPropagation, so nothing can strand the menu open.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div className="relative" ref={box}>
       <button onClick={() => setOpen(o => !o)} aria-label="Course options" aria-haspopup="menu" aria-expanded={open}
         className="press flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-slate-600 shadow-sm ring-1 ring-black/5 transition hover:bg-white">
         <MoreHorizontal size={16} />
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div role="menu" className="pop absolute right-0 top-10 z-40 w-44 overflow-hidden rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-200">
             {onCohorts && (
               <button role="menuitem" onClick={() => { setOpen(false); onCohorts(); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-600 transition hover:bg-slate-50">
@@ -10692,7 +10721,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
 
                 {/* Attendance figures kept — this is a register system, after all */}
                 <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
-                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{m.studentCount}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Students</p></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{m.studentCount ?? "—"}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Students</p></div>
                   <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{sessionCount}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Sessions</p></div>
                   <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(pct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Attend.</p></div>
                 </div>
@@ -11195,7 +11224,7 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
                   <UnitFacts unit={u} className="mt-1" />
                   <p className="truncate text-[11px] text-slate-400">
                     {isPlaced(u) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: `${alpha(NAVY, 8)}`, color: NAVY }}>{placeShort(u)}</span>}
-                    {u.unitNumber ? `Unit ${u.unitNumber} · ` : ""}{course ? course.name : "No course"} · {u.studentCount ?? 0} students
+                    {u.unitNumber ? `Unit ${u.unitNumber} · ` : ""}{course ? course.name : "No course"} · {u.studentCount == null ? "students not recorded" : `${u.studentCount} student${u.studentCount === 1 ? "" : "s"}`}
                   </p>
                 </div>
               </div>
@@ -11329,7 +11358,7 @@ function AssessmentsManage({ store, onGrade, unitId, setUnitId, courseFilter = "
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-lg font-extrabold" style={{ color: NAVY_DARK }}>{selected.name}</p>
-            <p className="text-xs text-slate-400">{selected.unitNumber ? `Unit ${selected.unitNumber} · ` : ""}{selected.code}{courseOf ? ` · ${courseOf.name}` : ""} · {selected.studentCount ?? 0} students</p>
+            <p className="text-xs text-slate-400">{selected.unitNumber ? `Unit ${selected.unitNumber} · ` : ""}{selected.code}{courseOf ? ` · ${courseOf.name}` : ""} · {selected.studentCount == null ? "students not recorded" : `${selected.studentCount} student${selected.studentCount === 1 ? "" : "s"}`}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {/* Switchable views for the same unit. */}
@@ -11354,7 +11383,7 @@ function AssessmentsManage({ store, onGrade, unitId, setUnitId, courseFilter = "
                 <div className="flex gap-1"><button onClick={() => openEdit(a)} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><Edit3 size={14} /></button><button onClick={() => remove(a)} className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-1.5 text-center">
-                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{a.gradedCount || 0}<span className="text-[10px] font-medium text-slate-400">/{selected?.studentCount ?? 0}</span></p><p className="text-[9px] uppercase tracking-wide text-slate-400">Graded</p></div>
+                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{a.gradedCount || 0}<span className="text-[10px] font-medium text-slate-400">/{selected?.studentCount ?? "—"}</span></p><p className="text-[9px] uppercase tracking-wide text-slate-400">Graded</p></div>
                 <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(a.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Average</p></div>
               </div>
               <button onClick={() => onGrade(a)} className="press mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 py-2 text-xs font-bold transition hover:border-indigo-300 hover:bg-indigo-50" style={{ color: NAVY }}><ClipboardList size={14} /> Enter grades</button>
@@ -13553,7 +13582,7 @@ function StaffKpiDetail({ k, store }) {
               return (
                 <div key={m.id} className={`flex items-center gap-3 px-3.5 py-2.5 ${i ? "border-t border-slate-100" : ""}`}>
                   <span className="flex h-8 w-11 shrink-0 items-center justify-center rounded-lg text-[10px] font-extrabold text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>{m.code.slice(0, 5)}</span>
-                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-700" title={m.name}>{m.name}</p><p className="text-[10px] text-slate-400">{m.studentCount} students · {taken}/{due.length} registers taken</p></div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-700" title={m.name}>{m.name}</p><p className="text-[10px] text-slate-400">{m.studentCount ?? "—"} students · {taken}/{due.length} registers taken</p></div>
                   <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold tabular-nums ${pctTone(subPct).bg} ${pctTone(subPct).text}`}>{fmtPct(subPct)}</span>
                   <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold tabular-nums ${pctTone(mt?.pct ?? null).bg} ${pctTone(mt?.pct ?? null).text}`}>{fmtPct(mt?.pct ?? null)}</span>
                 </div>

@@ -61,8 +61,8 @@ export default function MiniMonth({ anchor, today, weekFrom, weekTo, onPick }) {
               className={`relative py-1.5 text-[13px] transition ${inMonth ? "" : "opacity-0 pointer-events-none"} ${inWeek && !isToday ? "bg-slate-200/70" : ""} ${weekend && inWeek && !isToday ? "bg-slate-300/60" : ""} hover:bg-slate-100`}
             >
               {isToday ? (
-                <span className="mx-auto flex h-6 w-6 items-center justify-center rounded-full font-bold text-white"
-                  style={{ background: TT.todayRing }}>{utc(d).getUTCDate()}</span>
+                <span className="mx-auto flex h-6 w-6 items-center justify-center rounded-full font-bold"
+                  style={{ background: TT.todayRing, color: TT.greenText }}>{utc(d).getUTCDate()}</span>
               ) : (
                 <span className={inMonth ? "text-slate-700" : "text-slate-300"}>{utc(d).getUTCDate()}</span>
               )}

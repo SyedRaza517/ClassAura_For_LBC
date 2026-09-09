@@ -62,7 +62,7 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: TT.green }}>
+        <div className="flex items-center justify-between px-4 py-3" style={{ background: TT.green, color: TT.greenText }}>
           <p className="text-base font-extrabold">Select timetables</p>
           <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
         </div>
@@ -132,7 +132,7 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
           </button>
           <button disabled={!selected.length}
             onClick={() => onApply?.({ type, ids: selected.map((s) => s.id), labels: selected })}
-            className="rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40" style={{ background: TT.green }}>
+            className="rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-40" style={{ background: TT.green, color: TT.greenText }}>
             Apply
           </button>
         </div>

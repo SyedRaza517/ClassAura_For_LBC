@@ -40,7 +40,8 @@ const prisma = require("../db");
 // Unit.courseId is nullable -- so always joining would quietly change the session counts
 // for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
-const { rosterForSession } = require("../timetabling/registers");
+const { rosterForSession, unitStudentCounts } = require("../timetabling/registers");
+const { deriveRoster } = require("../timetabling/roster");
 const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
@@ -272,8 +273,49 @@ const isLecturerPath = (req) => LECTURER_PATHS.some((re) => re.test(req.path));
 const adminGate = requireAnyPage(["registers", "students", "executive"]);
 router.use(requireAuth, (req, res, next) => (isLecturerPath(req) ? next() : adminGate(req, res, next)));
 
-// Page holders as before, OR the tutor of the session named in the URL. Async because the
-// second answer needs the session's unit. A session that does not exist answers 403 for a
+// WHO TEACHES A CLASS — and there are TWO answers, because there are two systems that
+// record it and they answer different questions.
+//
+//   Unit.tutorStaffId          the term-long role: whoever owns the module. This is what
+//                              a Moodle-synced unit carries, and it was the only answer
+//                              until the timetabling module existed.
+//   TimetableEventStaff        the per-EVENT assignment: whoever the timetable says is
+//                              in the room for THIS class on THIS day. Registers built
+//                              from the timetable carry HndSession.timetableEventId back
+//                              to it (routes/timetabling.js).
+//
+// Both are identities (a staff id), never the free-text `Unit.tutor` or
+// `TimetableSlot.lecturer` — a name typed into a box is not an identity, and matching on
+// it hands one lecturer another's register the moment two people share a surname.
+//
+// The second answer is the MORE specific one: a visiting lecturer, a cover, or the
+// second of two staff on a merged class is named on the event and tutors nothing, and
+// before this they saw an empty dashboard and were refused their own register. Neither
+// answer subsumes the other, so it is an OR and not a replacement.
+const teachesSession = (user, session) => Boolean(
+  user?.id && (
+    (session?.unit?.tutorStaffId && session.unit.tutorStaffId === user.id)
+    || (session?.timetableEvent?.staff || []).some((a) => a.staffId === user.id)
+  ),
+);
+// The same question as a Prisma `where`, for the list route, which cannot load sessions
+// before deciding which ones are the caller's. One `findMany` with this OR returns each
+// session exactly once — a row matching both halves is still one row, so no `distinct`
+// is needed and none is used.
+const teachesSessionWhere = (staffId) => ({
+  OR: [
+    { unit: { tutorStaffId: staffId } },
+    { timetableEvent: { staff: { some: { staffId } } } },
+  ],
+});
+// Everything the two halves of `teachesSession` need, for any handler that has to ask.
+// A `select` rather than a bare include so the event's staff list arrives as ids and
+// nothing else: this is a guard, not a screen, and a colleague's name or email has no
+// business travelling with it.
+const TEACHES_SELECT = { unit: { select: { tutorStaffId: true } }, timetableEvent: { select: { staff: { select: { staffId: true } } } } };
+
+// Page holders as before, OR whoever teaches the session named in the URL. Async because
+// the second answer needs the session. A session that does not exist answers 403 for a
 // non-page-holder rather than 404: whether a register exists is itself something the
 // directory-less caller has no standing to learn.
 function lecturerGate(pages) {
@@ -281,19 +323,20 @@ function lecturerGate(pages) {
     try {
       if (hasPage(req.user, pages)) return next();
       if (isStudent(req.user)) return res.status(403).json({ error: "Student accounts cannot open a register." });
-      const s = await prisma.hndSession.findUnique({ where: { id: String(req.params.id || "") }, select: { unit: { select: { tutorStaffId: true } } } });
-      if (s?.unit?.tutorStaffId && s.unit.tutorStaffId === req.user.id) return next();
+      const s = await prisma.hndSession.findUnique({ where: { id: String(req.params.id || "") }, select: TEACHES_SELECT });
+      if (teachesSession(req.user, s)) return next();
       return res.status(403).json({ error: "You can only open the classes you teach." });
     } catch (e) { next(e); }
   };
 }
 // The today list has no session in its URL: any signed-in member of staff may ask, and
-// gets back only the classes on units they tutor (or nothing, plus `teaches: false`).
+// gets back only the classes they teach (or nothing, plus `teaches: false`).
 const requireStaffAccount = (req, res, next) => (isStudent(req.user) ? res.status(403).json({ error: "Student accounts cannot open a register." }) : next());
 // Whether THIS caller may close THIS session's register: the page that always could, or
-// the tutor of the unit. Computed once here so the guard and the `canClose` flag the live
-// view hands the screen cannot disagree.
-const mayClose = (user, session) => hasPage(user, ["registers"]) || Boolean(session?.unit?.tutorStaffId && session.unit.tutorStaffId === user?.id);
+// whoever teaches it. Computed once here so the guard and the `canClose` flag the live
+// view hands the screen cannot disagree — which is why it goes through the same
+// `teachesSession` the gate above does rather than repeating half of it.
+const mayClose = (user, session) => hasPage(user, ["registers"]) || teachesSession(user, session);
 
 const PALETTE = ["#1a3a8f", "#9e1b32", "#0d7a5f", "#b45309", "#6d28d9", "#0e7490", "#be123c"];
 const colourFor = (seed) => PALETTE[Math.abs(String(seed).split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % PALETTE.length];
@@ -801,20 +844,30 @@ router.delete("/terms/:id", requireAuth, requireRegisters, async (req, res) => {
 /* ============================== units ============================== */
 
 router.get("/units", requireAuth, async (_req, res) => {
-  // Two grouped aggregations instead of a per-unit _count (which issues a
-  // correlated subquery per row and collapsed at scale). Same response shape.
-  const [rows, enrolAgg, sessAgg] = await Promise.all([
+  // Grouped aggregations instead of a per-unit _count (which issues a correlated
+  // subquery per row and collapsed at scale). Same response shape.
+  //
+  // studentCount is NOT a count of Enrolment rows any more, and that was the bug:
+  // BUS701–BUS705 read "0 students · 20 sessions" while the register for those very
+  // classes listed the twenty students of the group scheduled against them. A student
+  // reaches a register by two routes, not one, and the card only knew about one of
+  // them. unitStudentCounts applies the same rule the registers do — see roster.js —
+  // and is shared with GET /attendance below so the two cannot drift.
+  const [rows, sessAgg, studentCounts] = await Promise.all([
     prisma.unit.findMany({ orderBy: { code: "asc" } }),
-    prisma.enrolment.groupBy({ by: ["unitId"], _count: { _all: true } }),
     prisma.hndSession.groupBy({ by: ["unitId"], _count: { _all: true }, _max: { date: true } }),
+    unitStudentCounts(),
   ]);
-  const eMap = new Map(enrolAgg.map((e) => [e.unitId, e._count._all]));
   const sMap = new Map(sessAgg.map((s) => [s.unitId, s._count._all]));
   const endMap = new Map(sessAgg.map((s) => [s.unitId, s._max.date || null]));
   // lastSessionDate is DERIVED (the newest register on this unit) and must not be
   // called endDate — that is the unit's own, admin-set teaching end date, and
   // spreading a derived value over it silently replaced the real one.
-  res.json(rows.map((m) => ({ ...sUnit(m), studentCount: eMap.get(m.id) || 0, sessionCount: sMap.get(m.id) || 0, lastSessionDate: endMap.get(m.id) || null })));
+  //
+  // `?? null` and not `|| 0`: a unit with no enrolments AND no group timetabled against
+  // it has no route to a student at all, and "0 students" is the sentence a genuinely
+  // empty module says. Null-is-not-zero, excluded rather than counted.
+  res.json(rows.map((m) => ({ ...sUnit(m), studentCount: studentCounts.get(m.id) ?? null, sessionCount: sMap.get(m.id) || 0, lastSessionDate: endMap.get(m.id) || null })));
 });
 
 router.post("/units", requireAuth, requireRegisters, async (req, res) => {
@@ -1643,26 +1696,38 @@ router.get("/check-in-settings", async (_req, res) => {
 // screen is narrower than "the lecturer's dashboard" would suggest: a college
 // wanting every tutor to watch their own register has to grant them the page.
 //
-// Via Unit.tutorStaffId, so the dashboard opens on the right register without hunting
-// through a term's worth of sessions. `tutor` (free text) is deliberately NOT matched
-// on: a name typed into a box is not an identity, and matching on it would hand one
-// lecturer another's register whenever two people share a surname.
+// "Mine" means BOTH answers `teachesSession` knows about — the tutor of the unit, and
+// the staff the TIMETABLE names on the event this register was built from. It was only
+// the first for as long as Unit.tutorStaffId was the only identity the platform held,
+// and the consequence was a lecturer who genuinely had three classes today being shown
+// "No classes of yours today" and told to ask an administrator to make them the tutor of
+// a module somebody else owns. Free text (`Unit.tutor`, `TimetableSlot.lecturer`) is
+// still deliberately NOT matched on: a name typed into a box is not an identity, and
+// matching on it would hand one lecturer another's register whenever two people share a
+// surname.
 router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, res) => {
   const date = localDate();
   const time = localTime();
   const settings = await tapConfig.get();
-  // Whether this account tutors anything at all. The staff app shows its "My classes"
-  // tile on this, not on the day's list being non-empty: a lecturer with no class today
-  // still teaches, and a tile that vanishes on quiet days reads as the feature breaking.
-  const teaches = (await prisma.unit.count({ where: { tutorStaffId: req.user.id } })) > 0;
+  // Whether this account teaches anything at all, ever — not today, and not on this
+  // list. The staff app shows its "My classes" tile on this, not on the day's list being
+  // non-empty: a lecturer with no class today still teaches, and a tile that vanishes on
+  // quiet days reads as the feature breaking. Both halves of "teaches", for the same
+  // reason the list has both: somebody named only on timetable events tutors no unit,
+  // and counting units alone told them they teach nothing.
+  const [tutorsUnits, namedOnEvents] = await Promise.all([
+    prisma.unit.count({ where: { tutorStaffId: req.user.id } }),
+    prisma.timetableEventStaff.count({ where: { staffId: req.user.id } }),
+  ]);
+  const teaches = tutorsUnits > 0 || namedOnEvents > 0;
 
   // ?scope=all — every session running today, not only the caller's own.
   //
-  // Without this the screen was empty for almost everybody who can reach it. It filters
-  // on Unit.tutorStaffId, and an administrator, a head of department or anyone covering a
-  // colleague's class tutors nothing — so a page they had been deliberately granted
-  // showed "no classes of yours today" and looked broken. Watching a register fill is
-  // exactly what a manager wants during an inspection or a funding visit.
+  // Without this the screen was empty for almost everybody who can reach it. The default
+  // filters on who TEACHES the class, and an administrator, a head of department or an
+  // inspector teaches nothing — so a page they had been deliberately granted showed "no
+  // classes of yours today" and looked broken. Watching a register fill is exactly what a
+  // manager wants during an inspection or a funding visit.
   //
   // Gated harder than the default view: seeing YOUR OWN classes follows from teaching
   // them, but seeing the whole college's is an administrative act, so it needs one of the
@@ -1674,7 +1739,7 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
   }
 
   const sessions = await prisma.hndSession.findMany({
-    where: { date, ...(wantsAll ? {} : { unit: { tutorStaffId: req.user.id } }) },
+    where: { date, ...(wantsAll ? {} : teachesSessionWhere(req.user.id)) },
     include: {
       unit: {
         select: {
@@ -1692,6 +1757,117 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
     orderBy: { startTime: "asc" },
   });
 
+  /* ---- how the day's registers actually stand, per class ------------------- *
+   *
+   * P / L / E / A are the four statuses this codebase has (see src/attendance.js);
+   * there is no fifth. "N/A" is therefore NOT a status and is never written anywhere:
+   * it is the count of students ON the register who have no mark yet — UNMEASURED,
+   * which this codebase represents as null and never as zero and never as an absence.
+   * Nothing on this route writes a mark. The only path from this screen to an A is
+   * POST /mark-remaining-absent, with a named human on the end of it.
+   *
+   * WHO IS "ON THE REGISTER" is the enrolment list UNION the students already marked,
+   * which is exactly the roster GET /sessions/:id/live builds — a student since
+   * un-enrolled who was marked on this register still belongs on it. Built the same way
+   * here so the summary on the list and the roll inside it cannot disagree by one.
+   *
+   * `notMarked` is NULL, not 0, when that roster is empty. A register with no enrolment
+   * rows and no marks is one nobody can size — a Moodle import that never synced
+   * enrolments is the ordinary cause — and "0 not marked" there reads as "everybody is
+   * accounted for", which is a reassuring answer to a question nobody was able to ask.
+   *
+   * Two queries for the whole day rather than two per class: a lecturer's day is a
+   * handful of sessions, but ?scope=all is every register the college is running, and a
+   * pair of round trips each is how a dashboard that polls becomes the slowest thing on
+   * the server. */
+  const sessionIds = sessions.map((s) => s.id);
+  const unitIds = [...new Set(sessions.map((s) => s.unitId))];
+  // THE GROUPS TOO, NOT JUST THE ENROLMENTS. A student reaches a register by two routes
+  // -- an enrolment on the module, or membership of a group the class was timetabled for
+  // -- and roster.js is the one place that decides between them. Counting only enrolments
+  // here would make this panel report "nobody to mark" for exactly the classes whose
+  // register lists a full group: every module created by hand rather than synced from
+  // Moodle. That is the same contradiction the register screen itself had, one screen
+  // further along, and it is worth one extra query to not ship it twice.
+  const cohortIds = [...new Set(sessions.map((s) => s.cohortId).filter(Boolean))];
+  const [enrolments, dayMarks, cohortStudents] = sessionIds.length
+    ? await Promise.all([
+        prisma.enrolment.findMany({ where: { unitId: { in: unitIds } }, select: { unitId: true, studentId: true } }),
+        // Ids and the letter, nothing else. This is a counting query, and a remark on an
+        // attendance mark is pastoral text that has no business on a list screen.
+        prisma.attendanceMark.findMany({ where: { sessionId: { in: sessionIds } }, select: { sessionId: true, studentId: true, status: true } }),
+        // One query for the whole day's groups, not one per class. A day is a handful of
+        // classes; `?scope=all` is every register in the college, which is exactly when a
+        // per-session query would matter.
+        cohortIds.length
+          ? prisma.student.findMany({ where: { cohortId: { in: cohortIds } }, select: { id: true, cohortId: true } })
+          : [],
+      ])
+    : [[], [], []];
+
+  const studentsByCohort = new Map();
+  for (const st of cohortStudents) {
+    if (!studentsByCohort.has(st.cohortId)) studentsByCohort.set(st.cohortId, []);
+    studentsByCohort.get(st.cohortId).push(st.id);
+  }
+
+  const enrolledByUnit = new Map();
+  for (const e of enrolments) {
+    if (!enrolledByUnit.has(e.unitId)) enrolledByUnit.set(e.unitId, new Set());
+    enrolledByUnit.get(e.unitId).add(e.studentId);
+  }
+  const marksBySession = new Map();
+  for (const m of dayMarks) {
+    if (!marksBySession.has(m.sessionId)) marksBySession.set(m.sessionId, []);
+    marksBySession.get(m.sessionId).push(m);
+  }
+  const countsFor = (s) => {
+    const mine = marksBySession.get(s.id) || [];
+    const counts = { P: 0, L: 0, E: 0, A: 0 };
+    // Guarded by isStatus rather than trusting the column, so a letter this codebase
+    // does not know about is left out of every figure instead of inventing a fifth key
+    // on the object the screen renders.
+    for (const m of mine) if (isStatus(m.status)) counts[m.status] += 1;
+    // deriveRoster, not a second opinion: enrolments where the module records them, the
+    // whole group where it records none. A student already MARKED is added afterwards
+    // regardless -- they may have left the group since, and dropping them would shrink
+    // the denominator under a mark that still exists.
+    const enrolledIds = [...(enrolledByUnit.get(s.unitId) || [])];
+    const roster = new Set(
+      s.cohortId
+        ? deriveRoster({
+            cohortStudentIds: studentsByCohort.get(s.cohortId) || [],
+            enrolledStudentIds: enrolledIds,
+            unitHasEnrolments: enrolledIds.length > 0,
+          }).studentIds
+        : enrolledIds,
+    );
+    for (const m of mine) roster.add(m.studentId);
+    const marked = counts.P + counts.L + counts.E + counts.A;
+    return {
+      ...counts,
+      marked,
+      // The size of the register, or null where there is no way to know it — the same
+      // distinction notMarked turns on, published so the screen can say "not recorded"
+      // rather than printing a dash it cannot explain.
+      roster: roster.size || null,
+      notMarked: roster.size ? Math.max(0, roster.size - marked) : null,
+    };
+  };
+  const perSession = new Map(sessions.map((s) => [s.id, countsFor(s)]));
+
+  // The day added up. A count of MARKS, not of people: a student on two registers today
+  // is two rows here and should be, because the question this answers is "how much of
+  // today's attendance is taken", not "how many students are in". `notMarked` sums only
+  // the classes where it could be measured and is null when NONE of them could — an
+  // institution-wide "we cannot tell", not a day on which everybody was marked.
+  const totals = { P: 0, L: 0, E: 0, A: 0, marked: 0, roster: null, notMarked: null };
+  for (const c of perSession.values()) {
+    for (const k of ["P", "L", "E", "A", "marked"]) totals[k] += c[k];
+    if (c.roster !== null) totals.roster = (totals.roster || 0) + c.roster;
+    if (c.notMarked !== null) totals.notMarked = (totals.notMarked || 0) + c.notMarked;
+  }
+
   res.json({
     date,
     tapEnabled: settings.enabled,
@@ -1704,6 +1880,9 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
     // control at all.
     canSeeAll: maySeeAll,
     teaches,
+    // Today added up across the classes on this list — so the panel at the top of the
+    // dashboard is the sum of exactly the rows underneath it and cannot drift from them.
+    totals,
     sessions: sessions.map((s) => ({
       id: s.id,
       unit: s.unit ? { id: s.unit.id, code: s.unit.code, name: s.unit.name } : null,
@@ -1716,6 +1895,10 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
       // not an empty string pretending otherwise.
       tutor: s.unit?.tutorStaff?.name || s.unit?.tutor || null,
       marked: s._count.marks,
+      // { P, L, E, A, marked, roster, notMarked } — see the block above the response.
+      // notMarked and roster are null where the register's size is unknowable, and that
+      // null must reach the screen as "not recorded" rather than as a zero.
+      counts: perSession.get(s.id),
       // Whether self check-ins are being accepted for this class RIGHT NOW. Derived at
       // read time rather than stored: "is it running" changes every minute, and a column
       // holding it would be wrong within one and have nothing to correct it.
@@ -1745,7 +1928,14 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
 router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
-    include: { unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } } },
+    include: {
+      unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } },
+      // Ids only, and only so `mayClose` below can ask the same question `lecturerGate`
+      // already asked at the door. Without it the lecturer the TIMETABLE names walks
+      // through the gate and is then told `canClose: false` about a route that would
+      // have let them close it — the exact disagreement mayClose exists to prevent.
+      timetableEvent: { select: { staff: { select: { staffId: true } } } },
+    },
   });
   if (!session) return res.status(404).json({ error: "That class could not be found." });
 
@@ -2192,7 +2382,7 @@ router.get("/attendance", requireAuth, async (req, res) => {
   // our own semester rows), so both offsets are 0.
   const pDept = scopedStudentJoin('am."studentId"');
   const sessDept = scopedUnitJoin('hs."unitId"');
-  const [units, students, perSM, sessAgg, enrolAgg] = await Promise.all([
+  const [units, students, perSM, sessAgg, studentCounts] = await Promise.all([
     prisma.unit.findMany({ orderBy: { code: "asc" } }),
     prisma.student.findMany({
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
@@ -2215,7 +2405,12 @@ router.get("/attendance", requireAuth, async (req, res) => {
       FROM "HndSession" hs${sessDept.join}
       ${sessDept.sql ? `WHERE TRUE${sessDept.sql}` : ""}
       GROUP BY hs."unitId"`, ...sessDept.params),
-    prisma.enrolment.groupBy({ by: ["unitId"], _count: { _all: true } }),
+    // The SAME definition of "students on this unit" GET /units emits, and for the same
+    // reason: a count of Enrolment rows reads 0 for every module Moodle never synced,
+    // while its registers list the group scheduled against it. Shared rather than
+    // repeated — two handlers each holding their own copy is how the two screens came
+    // to disagree in the first place.
+    unitStudentCounts(),
   ]);
 
   // studentId -> Map(unitId -> {P,L,E,A}); plus per-unit and global totals.
@@ -2266,7 +2461,6 @@ router.get("/attendance", requireAuth, async (req, res) => {
 
   const scopedSess = new Map(), allSess = new Map();
   for (const r of sessAgg) { scopedSess.set(r.mid, r.scoped_c); allSess.set(r.mid, r.all_c); }
-  const enrolCount = new Map(enrolAgg.map((e) => [e.unitId, e._count._all]));
   const scopedSessionTotal = sessAgg.reduce((n, r) => n + r.scoped_c, 0);
 
   const unitTotals = {};
@@ -2276,7 +2470,9 @@ router.get("/attendance", requireAuth, async (req, res) => {
   }
 
   res.json({
-    units: units.map((m) => ({ ...sUnit(m), studentCount: enrolCount.get(m.id) || 0, sessionCount: allSess.get(m.id) || 0 })),
+    // `?? null`, not `|| 0` — a unit with neither enrolments nor a timetabled group has
+    // no route to a student, and that is unmeasurable rather than empty.
+    units: units.map((m) => ({ ...sUnit(m), studentCount: studentCounts.get(m.id) ?? null, sessionCount: allSess.get(m.id) || 0 })),
     rows,
     unitTotals,
     overall: summariseCounts(gTot.P, gTot.L, gTot.E, gTot.A),

@@ -359,7 +359,12 @@ export default function MyTimetable({ onBack }) {
             </>
           )}
         </div>
-        <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-sm font-semibold">S</div>
+        {/* There WAS an avatar bubble here, and it was a literal "S" — the same initial
+            for every person who signed in, which is a lie rather than a decoration. It
+            is not replaced with a real one: the outer shell already renders the signed-in
+            user's initials and name in the top-right, directly above this bar, so a
+            second avatar an inch below the first would be duplication at best and, if
+            they ever disagreed, a bug the user has no way to interpret. */}
 
         {/* Event colour key — the reference shows it as a popover from the bar. It
             names the dimension colour is CARRYING, which is a question the reader

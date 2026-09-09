@@ -10,7 +10,7 @@
 // single register with a null cohortId, which HndSession_event_group_key permits
 // exactly once through its COALESCE — see the comment on HndSession in schema.prisma.
 const prisma = require("../db");
-const { deriveRoster } = require("./roster");
+const { deriveRoster, deriveUnitRoster } = require("./roster");
 const { registerAction } = require("./registerRules");
 
 /**
@@ -202,4 +202,91 @@ async function rosterForSession(session) {
   });
 }
 
-module.exports = { syncEventRegisters, rosterForSession };
+/**
+ * How many students each unit concerns, under the SAME rule its registers use.
+ *
+ * ONE PLACE, BECAUSE THERE WERE TWO CALLERS AND THERE WILL BE A THIRD. GET /hnd/units
+ * and GET /hnd/attendance both emit `studentCount` on a unit, and both used to count
+ * Enrolment rows — so both showed "0 students" for every hand-created module while the
+ * register beside them listed the group. A rule copied into two route handlers is a rule
+ * that drifts; this is the same reason rosterForSession exists above.
+ *
+ * FOUR QUERIES, NOT ONE PER UNIT. These endpoints return every unit in the college —
+ * 87 on the test data, hundreds on a real install — so a per-unit roster lookup is an
+ * N+1 that collapses at exactly the scale the screen is for. The shape here is the one
+ * GET /hnd/units already uses for its enrolment and session counts: aggregate over the
+ * whole table once, index it in Node, then read it per unit. The student query is the
+ * only one issued second, and only so it can be narrowed to the cohorts that actually
+ * reach a unit rather than pulling the college's whole roll.
+ *
+ * A unit ABSENT from the returned map has no enrolments, no scheduled group and no
+ * register: it is the `unmeasurable` case and callers must read it as null, not 0.
+ *
+ * @returns {Promise<Map<string, number|null>>} unitId -> distinct student count, or null.
+ */
+async function unitStudentCounts() {
+  const [enrolments, eventGroups, sessionGroups] = await Promise.all([
+    prisma.enrolment.findMany({ select: { unitId: true, studentId: true } }),
+    // A cohort reaches a unit through the timetable: TimetableEvent -> TimetableEventGroup.
+    // DRAFT events count. A class scheduled against a group is the college saying those
+    // students take this module, and a module whose timetable is still unpublished is
+    // precisely the one most likely to have no enrolments either — reporting it as
+    // unmeasurable while an administrator is looking at the group they just attached
+    // would be the old bug wearing a different number.
+    prisma.timetableEventGroup.findMany({
+      where: { event: { unitId: { not: null } } },
+      select: { cohortId: true, event: { select: { unitId: true } } },
+    }),
+    // And through the registers themselves, which is not the same set: a register
+    // survives its event being deleted (HndSession.timetableEventId is SetNull), and the
+    // students on it are still the ones this module concerns. A null cohortId here is
+    // the ungrouped register deriveUnitRoster asks about.
+    prisma.hndSession.groupBy({ by: ["unitId", "cohortId"] }),
+  ]);
+
+  const enrolledByUnit = new Map();
+  for (const e of enrolments) {
+    if (!enrolledByUnit.has(e.unitId)) enrolledByUnit.set(e.unitId, []);
+    enrolledByUnit.get(e.unitId).push(e.studentId);
+  }
+
+  const cohortsByUnit = new Map();
+  const ungrouped = new Set();
+  const addCohort = (unitId, cohortId) => {
+    if (!unitId) return;
+    if (!cohortsByUnit.has(unitId)) cohortsByUnit.set(unitId, new Set());
+    cohortsByUnit.get(unitId).add(cohortId);
+  };
+  for (const g of eventGroups) addCohort(g.event?.unitId, g.cohortId);
+  for (const s of sessionGroups) {
+    if (s.cohortId) addCohort(s.unitId, s.cohortId);
+    else ungrouped.add(s.unitId);
+  }
+
+  const cohortIds = [...new Set([...cohortsByUnit.values()].flatMap((set) => [...set]))];
+  const students = cohortIds.length
+    ? await prisma.student.findMany({ where: { cohortId: { in: cohortIds } }, select: { id: true, cohortId: true } })
+    : [];
+  const studentsByCohort = new Map();
+  for (const s of students) {
+    if (!studentsByCohort.has(s.cohortId)) studentsByCohort.set(s.cohortId, []);
+    studentsByCohort.get(s.cohortId).push(s.id);
+  }
+
+  const out = new Map();
+  for (const unitId of new Set([...enrolledByUnit.keys(), ...cohortsByUnit.keys(), ...ungrouped])) {
+    const cohorts = cohortsByUnit.get(unitId);
+    const roster = deriveUnitRoster({
+      enrolledStudentIds: enrolledByUnit.get(unitId) || [],
+      scheduledStudentIds: cohorts ? [...cohorts].flatMap((c) => studentsByCohort.get(c) || []) : [],
+      // The question is whether a GROUP reaches the unit, not whether the students it
+      // produced are any. A group nobody is in yet is an answer; no group is not.
+      hasScheduledGroup: !!cohorts && cohorts.size > 0,
+      hasUngroupedRegister: ungrouped.has(unitId),
+    });
+    out.set(unitId, roster.studentIds ? roster.studentIds.length : null);
+  }
+  return out;
+}
+
+module.exports = { syncEventRegisters, rosterForSession, unitStudentCounts };

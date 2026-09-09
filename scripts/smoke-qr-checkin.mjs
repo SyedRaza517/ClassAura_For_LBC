@@ -129,7 +129,7 @@ const shift = (hhmm, mins) => {
 
 // Everything this run creates, so the finally block puts the database back exactly as
 // the seed left it — the suites share one seeded database.
-const made = { sessions: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [], staff: [], departments: [] };
+const made = { sessions: [], events: [], units: [], enrolments: [], marks: [], terms: [], cohorts: [], courses: [], staff: [], departments: [] };
 let configExisted = false, priorConfig = null;
 
 async function cleanup() {
@@ -140,6 +140,10 @@ async function cleanup() {
     await db.tagTap.deleteMany({ where: { studentId: { in: [QA_ID, QB_ID, QC_ID, QD_ID, QE_ID, QF_ID] }, method: "qr" } }).catch(() => {});
     for (const id of made.marks) await db.attendanceMark.delete({ where: { id } }).catch(() => {});
     for (const id of made.sessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
+    // After the sessions: HndSession.timetableEventId is SetNull, so deleting an event
+    // first would leave orphaned registers behind rather than failing loudly.
+    // TimetableEventStaff cascades from the event, so the join rows go with it.
+    for (const id of made.events) await db.timetableEvent.delete({ where: { id } }).catch(() => {});
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
     for (const id of made.units) await db.unit.delete({ where: { id } }).catch(() => {});
     for (const id of made.terms) await db.term.delete({ where: { id } }).catch(() => {});
@@ -671,6 +675,106 @@ try {
   check("an administrator granted only the watching page sees the register but is told not to offer the close button",
     watcherLive.status === 200 && watcherLive.data?.canClose === false && watcherClose.status === 403,
     `live ${watcherLive.status} canClose=${watcherLive.data?.canClose} close ${watcherClose.status}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the OTHER answer to \"who teaches this class\" ---");
+  /* ====================================================================== */
+
+  // Unit.tutorStaffId is the term-long role. TimetableEventStaff is the per-EVENT
+  // assignment, and registers built from the timetable carry HndSession.timetableEventId
+  // back to it. A visiting lecturer, a cover, or the second of two staff on a merged
+  // class is named on the event and tutors nothing — and until 9 Sep 2026 they opened
+  // this dashboard, were told "No classes of yours today", and were advised to ask an
+  // administrator to make them the tutor of somebody else's module.
+  //
+  // The fixture is deliberately the SAME account the block above proved sees nothing:
+  // s2 tutors no unit and holds no admin page, this unit's tutor is s1, and the only
+  // thing that changes is one row in TimetableEventStaff.
+  const ttEvent = await db.timetableEvent.create({ data: {
+    date: today, startTime: shift(now, -20), endTime: shift(now, 100),
+    title: `Timetabled ${RUN}`, unitId: unit.id, published: true,
+    staff: { create: [{ staffId: OTHER_ID }] },
+  } });
+  made.events.push(ttEvent.id);
+  const ttSess = await db.hndSession.create({ data: {
+    unitId: unit.id, date: today, startTime: shift(now, -20), endTime: shift(now, 100),
+    description: "qr timetabled", timetableEventId: ttEvent.id,
+  } });
+  made.sessions.push(ttSess.id);
+
+  const namedToday = await call("/hnd/my-sessions/today", { token: otherToken });
+  const namedIds = (namedToday.data?.sessions || []).map((x) => x.id);
+  check("A LECTURER NAMED ON THE TIMETABLED CLASS SEES IT, THOUGH THEY TUTOR NO UNIT",
+    namedToday.status === 200 && namedToday.data?.teaches === true && namedIds.includes(ttSess.id),
+    `HTTP ${namedToday.status} teaches=${namedToday.data?.teaches} ids=${namedIds.join(",")}`);
+  // The tightening half. Being named on ONE event is not being given the unit: the
+  // tutor's other registers on the very same unit must stay out of this list, or the
+  // fix has quietly turned a per-class assignment into a per-module grant.
+  check("and only THAT class — the tutor's other registers on the same unit stay theirs",
+    !namedIds.includes(tutorSess.id) && !namedIds.includes(live.id),
+    `ids=${namedIds.join(",")}`);
+  check("being named on one class does not offer them the whole college",
+    namedToday.data?.canSeeAll === false && (await call("/hnd/my-sessions/today?scope=all", { token: otherToken })).status === 403,
+    `canSeeAll=${namedToday.data?.canSeeAll}`);
+
+  // A member of staff who is NEITHER the unit's tutor NOR named on the event. s3 is a
+  // seeded STAFF account with no admin pages; whatever else they may teach, this class
+  // is not theirs and neither is the tutor's.
+  const strangerToken = (await login("d.okoye@edtech.co.uk", SEED_PASSWORD)).data?.token;
+  const strangerToday = await call("/hnd/my-sessions/today", { token: strangerToken });
+  const strangerIds = (strangerToday.data?.sessions || []).map((x) => x.id);
+  check("a lecturer who is neither the tutor nor named on the class sees neither register",
+    strangerToday.status === 200 && !strangerIds.includes(ttSess.id) && !strangerIds.includes(tutorSess.id),
+    `HTTP ${strangerToday.status} ids=${strangerIds.join(",")}`);
+
+  // The door has to open too, or the list is a row of classes that all answer 403.
+  const namedLive = await call(`/hnd/sessions/${ttSess.id}/live`, { token: otherToken });
+  const namedOtherLive = await call(`/hnd/sessions/${tutorSess.id}/live`, { token: otherToken });
+  check("the named lecturer can open THAT register and still not the tutor's",
+    namedLive.status === 200 && namedLive.data?.canClose === true && namedOtherLive.status === 403,
+    `live ${namedLive.status} canClose=${namedLive.data?.canClose} other ${namedOtherLive.status}`);
+  const strangerLive = await call(`/hnd/sessions/${ttSess.id}/live`, { token: strangerToken });
+  check("and a lecturer named on nothing is still refused the register itself",
+    strangerLive.status === 403, `HTTP ${strangerLive.status}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the day's counts, and what N/A is not ---");
+  /* ====================================================================== */
+
+  // P / L / E / A are marks somebody made. "Not marked" is the roster minus them, and it
+  // is UNMEASURED rather than absent — the dashboard's whole reason for existing is that
+  // nothing turns an unmarked student into an A without a named human pressing a button.
+  const countsToday = await call("/hnd/my-sessions/today", { token: tutorToken });
+  const rowFor = (id) => (countsToday.data?.sessions || []).find((x) => x.id === id);
+  const closedRow = rowFor(tutorSess.id);
+  check("each class on the list carries its own P/L/E/A breakdown",
+    closedRow?.counts?.A === 2 && closedRow.counts.P === 0 && closedRow.counts.L === 0 && closedRow.counts.E === 0,
+    JSON.stringify(closedRow?.counts));
+  check("a register just closed has nobody left unmarked",
+    closedRow?.counts?.notMarked === 0 && closedRow?.counts?.roster === 2, JSON.stringify(closedRow?.counts));
+  const ttRow = rowFor(ttSess.id);
+  check("AN UNTOUCHED REGISTER'S STUDENTS ARE NOT MARKED, NOT ABSENT",
+    ttRow?.counts?.notMarked === 2 && ttRow.counts.A === 0 && ttRow.counts.P === 0,
+    JSON.stringify(ttRow?.counts));
+
+  // NULL IS NOT ZERO. A unit with no enrolment rows is a register nobody can size — a
+  // Moodle import that never synced enrolments is the ordinary cause — and "0 not
+  // marked" there tells a lecturer everybody is accounted for on a class that has no
+  // roster at all.
+  const emptyUnit = await db.unit.create({ data: { ...stamp(DEPT), code: `QRE${RUN}`.slice(0, 12), name: `QR Empty Unit ${RUN}`, startDate: today, endDate: today, tutorStaffId: TUTOR_ID } });
+  made.units.push(emptyUnit.id);
+  const emptySess = await db.hndSession.create({ data: { unitId: emptyUnit.id, date: today, startTime: shift(now, -25), endTime: shift(now, 95), description: "qr no roster" } });
+  made.sessions.push(emptySess.id);
+  const withEmpty = await call("/hnd/my-sessions/today", { token: tutorToken });
+  const emptyRow = (withEmpty.data?.sessions || []).find((x) => x.id === emptySess.id);
+  check("a register with no roster reports NULL not-marked, never 0",
+    emptyRow?.counts?.notMarked === null && emptyRow?.counts?.roster === null,
+    JSON.stringify(emptyRow?.counts));
+  check("and the day's total is the sum of exactly the rows on the list",
+    withEmpty.data?.totals?.A === (withEmpty.data.sessions || []).reduce((n, x) => n + (x.counts?.A || 0), 0)
+      && withEmpty.data?.totals?.notMarked
+        === (withEmpty.data.sessions || []).reduce((n, x) => n + (x.counts?.notMarked ?? 0), 0),
+    JSON.stringify(withEmpty.data?.totals));
 
   // A register the Moodle importer created is an HndSession like any other, so the
   // screen mints for it without anybody doing anything. Asserted so the claim in the
