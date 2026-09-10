@@ -810,6 +810,18 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                               </span>
                             );
                           })()}
+                          {r.sharedDeviceWith > 0 && (
+                            // The lecturer is watching this screen fill up WHILE the class
+                            // is running, which is the one moment somebody can actually look
+                            // up and check. Deliberately the same words as the register, so
+                            // the two screens describe one observation identically.
+                            <span
+                              className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800"
+                              title={`Checked in from the same phone as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} here. Worth a look — there are innocent reasons, like a borrowed phone.`}
+                            >
+                              SAME PHONE
+                            </span>
+                          )}
                           {!r.enrolled && (
                             <span className="text-amber-600" title="On this register through their group, with no enrolment on the module">via group</span>
                           )}

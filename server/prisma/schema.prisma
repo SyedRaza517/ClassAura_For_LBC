@@ -1245,9 +1245,36 @@ model AttendanceMark {
   // firing at 09:00 through BST because something read the host clock — which is the bug
   // a stored instant re-zoned at every render invites back.
   checkedInAt String? // "HH:MM", London
+  // WHICH HANDSET this mark was made from, when the student made it themselves.
+  //
+  // NULL for every mark a member of staff set, and that is the common case rather than an
+  // omission — a lecturer taking a register is not checking in from a device, and writing
+  // their browser's id here would make "no device" indistinguishable from "the lecturer's
+  // laptop" in exactly the comparison this column exists for.
+  //
+  // NOT AN IDENTITY, and never treated as one. It is a random value the app made up once
+  // and kept; clearing site data mints a new one, so it can be shed by anybody who wants
+  // to and it can never be the thing a refusal rests on. What it CAN do is answer the
+  // question the brief actually asks -- "no other student should be able to log in with
+  // another student's credentials and mark them present" -- because the detectable shape
+  // of that is not a login at all. It is TWO STUDENT ACCOUNTS MARKED FROM ONE HANDSET IN
+  // ONE CLASS, which is visible here and nowhere else.
+  //
+  // Written once, at check-in, and never by a register save. A lecturer correcting a mark
+  // at four o'clock must not overwrite the record of which handset made it — the same rule
+  // as checkedInAt above, and for the same reason.
+  //
+  // It NEVER leaves the building. No serialiser publishes it; the screens receive only the
+  // derived "shares a handset with these other students on this register". A random
+  // tracking identifier handed to a browser is a tracking identifier, whatever it was
+  // collected for.
+  deviceId    String?
 
   @@unique([sessionId, studentId])
   @@index([studentId])
+  // The collision query: every mark on one register, grouped by handset. Without it that
+  // is a sequential scan on a table with a row per student per class per week.
+  @@index([sessionId, deviceId])
 }
 
 // A registered NFC sticker. One per room, and the SAME sticker serves students and

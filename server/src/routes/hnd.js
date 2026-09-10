@@ -373,6 +373,7 @@ const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
 const { subMinutes, addMinutes, isSelfCheckIn, checkInMethod, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
+const { sharedDeviceGroups } = require("../sharedDevice");
 const { windowIndexFor, deriveCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const isDate = (v) => isRealDate(v);
@@ -1573,6 +1574,18 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
     include: { student: true },
   });
   const byStudent = new Map(session.marks.map((m) => [m.studentId, m]));
+  // WHO ON THIS REGISTER SHARED A HANDSET WITH WHOM.
+  //
+  // Computed here, from the marks already loaded, rather than sent to the browser as raw
+  // device ids for it to compare. The ids never leave the building: a random tracking
+  // identifier handed to a browser is a tracking identifier whatever it was collected for,
+  // and the screen has no use for the value — only for the fact of a collision.
+  //
+  // A FLAG, NEVER A VERDICT. Two accounts marked from one phone is what proxy attendance
+  // looks like from here, and it is also what a flat battery and a ten-second loan look
+  // like. It goes in front of the member of staff who knows the room.
+  const sharedDevices = sharedDeviceGroups(session.marks);
+
   // Kept as a set of ids rather than asked of `enrolments` row by row, so this handler
   // and the live view answer `enrolled` the same way — the two rendered the identical
   // line and one of them had no such set, which is how a stray edit to one silently
@@ -1642,6 +1655,22 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
         // recorded, both come back null here, and neither is evidence about a person.
         checkInMethod: checkInMethod(mark?.takenBy),
         takenBy: mark?.takenBy || null,
+        // Whether this mark and another student's on the SAME register came from the same
+        // handset — as a count of the others, never their names.
+        //
+        // A NUMBER RATHER THAN A LIST, deliberately. The names are already on the screen:
+        // a lecturer looking at a flagged row is looking at a register of thirty students
+        // and can see which other row carries the same flag. Shipping the names would put
+        // "checked in on the same phone as Jane Smith" into a payload about Tom Brown,
+        // which is a statement about Jane in Tom's record, reachable by anybody who can
+        // read Tom's row.
+        //
+        // 0 IS A REAL ANSWER HERE, unlike almost everywhere else in this codebase: it
+        // means "we recorded a handset and it was theirs alone". A hand-marked row has no
+        // handset to compare and is also 0, which is the right reading — nothing was
+        // observed, so nothing is claimed.
+        sharedDeviceWith: sharedDevices.get(s.id)?.length || 0,
+
         // Still literally 'has an Enrolment row'. A student present through their GROUP
       // is on the register and is NOT enrolled, and a tick here would state something
       // false about their academic record.
@@ -2280,6 +2309,18 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   ]);
 
   const byStudent = new Map(marks.map((m) => [m.studentId, m]));
+  // WHO ON THIS REGISTER SHARED A HANDSET WITH WHOM.
+  //
+  // Computed here, from the marks already loaded, rather than sent to the browser as raw
+  // device ids for it to compare. The ids never leave the building: a random tracking
+  // identifier handed to a browser is a tracking identifier whatever it was collected for,
+  // and the screen has no use for the value — only for the fact of a collision.
+  //
+  // A FLAG, NEVER A VERDICT. Two accounts marked from one phone is what proxy attendance
+  // looks like from here, and it is also what a flat battery and a ten-second loan look
+  // like. It goes in front of the member of staff who knows the room.
+  const sharedDevices = sharedDeviceGroups(marks);
+
   const enrolledIds = new Set(enrolments.map((e) => e.studentId));
   const rosterIds = new Set(roster.studentIds);
 
@@ -2363,6 +2404,22 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
       // decided what a lecturer saw; a token cannot be reworded.
       checkInMethod: checkInMethod(mark?.takenBy),
       takenBy: mark?.takenBy || null,
+      // Whether this mark and another student's on the SAME register came from the same
+      // handset — as a count of the others, never their names.
+      //
+      // A NUMBER RATHER THAN A LIST, deliberately. The names are already on the screen:
+      // a lecturer looking at a flagged row is looking at a register of thirty students
+      // and can see which other row carries the same flag. Shipping the names would put
+      // "checked in on the same phone as Jane Smith" into a payload about Tom Brown,
+      // which is a statement about Jane in Tom's record, reachable by anybody who can
+      // read Tom's row.
+      //
+      // 0 IS A REAL ANSWER HERE, unlike almost everywhere else in this codebase: it
+      // means "we recorded a handset and it was theirs alone". A hand-marked row has no
+      // handset to compare and is also 0, which is the right reading — nothing was
+      // observed, so nothing is claimed.
+      sharedDeviceWith: sharedDevices.get(s.id)?.length || 0,
+
       enrolled: enrolments.some((e) => e.studentId === s.id),
     };
   });

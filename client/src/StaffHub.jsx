@@ -7137,6 +7137,21 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
                                 </span>
                               );
                             })()}
+                            {r.sharedDeviceWith > 0 && (
+                              // FLAGGED, NOT ACCUSED. Two accounts marked from one phone is
+                              // what proxy attendance looks like from the server — and it is
+                              // also what a flat battery and a ten-second loan look like.
+                              // This puts the pattern in front of the person who knows the
+                              // room; it does not decide anything, and the wording must not
+                              // either. "Same phone as" is what we observed; "marked someone
+                              // else in" is a conclusion only a human can reach.
+                              <span
+                                className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800"
+                                title={`Checked in from the same phone as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} on this register. Worth a look — there are innocent reasons, like a borrowed phone.`}
+                              >
+                                SAME PHONE AS {r.sharedDeviceWith} OTHER{r.sharedDeviceWith === 1 ? "" : "S"}
+                              </span>
+                            )}
                             {!r.enrolled && <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NO LONGER ENROLLED</span>}
                           </p>
                         </div>

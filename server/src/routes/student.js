@@ -489,7 +489,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time },
+      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two taps raced past the existence check
@@ -667,7 +667,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_QR_STAMP, checkedInAt: time },
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_QR_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two scans raced past the existence
@@ -799,7 +799,7 @@ router.post("/me/declare-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_DECLARED_STAMP, checkedInAt: time },
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_DECLARED_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two presses raced past the check above,

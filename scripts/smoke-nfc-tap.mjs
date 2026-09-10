@@ -92,7 +92,7 @@ const check = (name, ok, detail = "") => {
   ok ? pass++ : fail++;
 };
 
-async function call(path, { method = "GET", body, token, from } = {}) {
+async function call(path, { method = "GET", body, token, from, device } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   // `from` PRETENDS TO BE A PHONE ON A PARTICULAR NETWORK, and it works here for exactly
@@ -103,6 +103,11 @@ async function call(path, { method = "GET", body, token, from } = {}) {
   // is the one used. That asymmetry is what makes the network check meaningful, and it is
   // also what lets this suite drive both sides of it from one machine.
   if (from) headers["X-Forwarded-For"] = from;
+  // `device` is the handset a check-in came from — the same header the app sends from
+  // localStorage. Spoofable by anybody, and that is exactly why nothing is ever REFUSED on
+  // it: it is a trail, not an identity, and the suite drives it directly for the same
+  // reason a phone could.
+  if (device) headers["X-Device-Id"] = device;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await res.json(); } catch (_) { /* empty body */ }
@@ -1567,6 +1572,104 @@ try {
   const cleared = await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: adminToken, body: { latitude: null, longitude: null } });
   check("a campus can be unpinned when it was pinned in the wrong place",
     cleared.data?.latitude === null && cleared.data?.locatedAt === null, JSON.stringify(cleared.data));
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
+
+
+  /* ====================================================================== */
+  console.log("\n--- One handset, two students: seen, and never blocked ---");
+  /* ====================================================================== */
+  //
+  // "No other student should be able to log in with another student's credentials and mark
+  // that other student present." The tempting reading is a LOGIN problem — bind an account
+  // to a phone, refuse the second. That was rejected: a student whose phone was lost,
+  // broken, replaced or borrowed is then refused at the door mid-lecture by a rule they
+  // cannot argue with, while the person proxying clears site data and carries on.
+  //
+  // What proxy attendance actually looks like from the server is ONE HANDSET, TWO STUDENT
+  // ACCOUNTS, THE SAME REGISTER. That is what these assert: it is recorded, it is shown to
+  // the member of staff who knows the room, and it never refuses anybody.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: true } });
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  const ONE_PHONE = `phone-${RUN}`.slice(0, 60);
+
+  const devFirst = await call("/student/me/declare-check-in", { method: "POST", token: eToken, body: { sessionId: dNow.id }, device: ONE_PHONE });
+  check("a student checks in on their phone", devFirst.status === 201, `HTTP ${devFirst.status} ${devFirst.data?.reason || ""}`);
+
+  // THE SECOND ACCOUNT IS NOT REFUSED. This is the decision, asserted: flag, never block.
+  const devSecond = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id }, device: ONE_PHONE });
+  check("A SECOND STUDENT ON THE SAME PHONE IS STILL MARKED PRESENT — this flags, it never blocks",
+    devSecond.status === 201, `HTTP ${devSecond.status} ${devSecond.data?.reason || ""}`);
+
+  const stored = await db.attendanceMark.findMany({ where: { sessionId: dNow.id }, select: { studentId: true, deviceId: true } });
+  check("both marks recorded the handset they were made from",
+    stored.length === 2 && stored.every((m) => m.deviceId === ONE_PHONE), JSON.stringify(stored));
+
+  const reg = await call(`/hnd/sessions/${dNow.id}/register`, { token: adminToken });
+  const rowE = (reg.data?.rows || []).find((r) => r.student?.id === E_ID);
+  const rowF = (reg.data?.rows || []).find((r) => r.student?.id === F_ID);
+  check("THE REGISTER FLAGS BOTH STUDENTS, not just the second one",
+    rowE?.sharedDeviceWith === 1 && rowF?.sharedDeviceWith === 1,
+    JSON.stringify({ e: rowE?.sharedDeviceWith, f: rowF?.sharedDeviceWith }));
+
+  // THE RAW IDENTIFIER NEVER LEAVES THE BUILDING. It is a random tracking identifier, and
+  // it is one whatever it was collected for — the screens are told THAT there was a
+  // collision, never the value. This is the assertion that stops a later "just send the
+  // ids and let the client compare".
+  // Guarded against being vacuous: a register that came back empty or refused would
+  // "not contain the id" while proving nothing at all, which is how a test passes for
+  // years while discriminating nothing.
+  check("...and the handset's own id is never sent to the browser",
+    (reg.data?.rows || []).length >= 2 && !JSON.stringify(reg.data).includes(ONE_PHONE),
+    `${(reg.data?.rows || []).length} row(s); id present: ${JSON.stringify(reg.data).includes(ONE_PHONE)}`);
+
+  const devLive = await call(`/hnd/sessions/${dNow.id}/live`, { token: adminToken });
+  const liveE = (devLive.data?.rows || []).find((r) => r.student?.id === E_ID);
+  check("the live view flags it too, while the lecturer can still look up",
+    liveE?.sharedDeviceWith === 1, JSON.stringify({ shared: liveE?.sharedDeviceWith }));
+  check("...and does not leak the id either",
+    (devLive.data?.rows || []).length >= 2 && !JSON.stringify(devLive.data).includes(ONE_PHONE),
+    `${(devLive.data?.rows || []).length} row(s)`);
+
+  // A REGISTER TAKEN BY A LECTURER IS NOT MASS PROXY ATTENDANCE. Every hand-set mark has a
+  // null handset, which is the COMMON case — reading null as a value would collect a whole
+  // class into one group and flag thirty students for sharing one phone.
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+  await db.attendanceMark.createMany({
+    data: [
+      { sessionId: dNow.id, studentId: E_ID, status: "P", remark: "", takenBy: "A Lecturer" },
+      { sessionId: dNow.id, studentId: F_ID, status: "P", remark: "", takenBy: "A Lecturer" },
+    ],
+  });
+  const handMarked = await call(`/hnd/sessions/${dNow.id}/register`, { token: adminToken });
+  check("A REGISTER THE LECTURER TOOK BY HAND FLAGS NOBODY",
+    (handMarked.data?.rows || []).every((r) => !r.sharedDeviceWith),
+    JSON.stringify((handMarked.data?.rows || []).map((r) => r.sharedDeviceWith)));
+
+  // Two students on two phones is the ordinary case and must stay silent, or the flag
+  // becomes noise and nobody reads it.
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+  await call("/student/me/declare-check-in", { method: "POST", token: eToken, body: { sessionId: dNow.id }, device: `phone-a-${RUN}` });
+  await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id }, device: `phone-b-${RUN}` });
+  const separate = await call(`/hnd/sessions/${dNow.id}/register`, { token: adminToken });
+  check("two students on two phones flag nobody",
+    (separate.data?.rows || []).every((r) => !r.sharedDeviceWith),
+    JSON.stringify((separate.data?.rows || []).map((r) => r.sharedDeviceWith)));
+
+  // A LECTURER CORRECTING THE REGISTER MUST NOT ERASE THE TRAIL. The save path rewrites
+  // status, remark and takenAt; if it also wrote deviceId, an edit at four o'clock would
+  // destroy the only record of which handset made the mark — the same rule as checkedInAt.
+  const beforeEdit = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: E_ID }, select: { deviceId: true } });
+  await call(`/hnd/sessions/${dNow.id}/register`, {
+    method: "PUT", token: adminToken,
+    body: { marks: [{ studentId: E_ID, status: "L", remark: "arrived late" }] },
+  });
+  const afterEdit = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: E_ID }, select: { deviceId: true, status: true } });
+  check("A LECTURER EDITING THE MARK DOES NOT WIPE THE HANDSET IT CAME FROM",
+    afterEdit?.status === "L" && afterEdit?.deviceId === beforeEdit?.deviceId && !!afterEdit?.deviceId,
+    JSON.stringify({ before: beforeEdit?.deviceId, after: afterEdit?.deviceId, status: afterEdit?.status }));
+
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
 
   /* ====================================================================== */
