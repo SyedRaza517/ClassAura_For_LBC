@@ -9,8 +9,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
-  DEFAULTS, SETTING_FIELDS, merge, MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS,
+  DEFAULTS, SETTING_FIELDS, merge, MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, MAX_NETWORKS,
 } = require("./attendanceTapSettings");
+const { MAX_RADIUS_METRES } = require("./presence");
 
 test("an unconfigured college gets the defaults, and the feature is OFF", () => {
   // Shipping enabled would switch this on at every college on the next deploy.
@@ -159,5 +160,88 @@ test("a FALSY non-boolean does not switch the stickers off either", () => {
   for (const bad of [0, "", null, undefined, NaN]) {
     assert.equal(merge({ enabled: bad }, current).enabled, true, `${JSON.stringify(bad)} must not disable tap check-in`);
     assert.equal(merge({ staffTapEnabled: bad }, current).staffTapEnabled, true, `${JSON.stringify(bad)} must not disable staff taps`);
+  }
+});
+
+/* ----- is the phone in the building: what the college is allowed to configure ----- */
+
+test("an unconfigured college has BOTH presence checks off and no networks", () => {
+  // The same reasoning as `enabled` above. A college that has never opened this screen
+  // must behave exactly as it did before these checks existed — and, crucially, must not
+  // acquire a rule that refuses its students because a deploy shipped one.
+  const s = merge(null);
+  assert.equal(s.networkCheck, false);
+  assert.equal(s.geofenceCheck, false);
+  assert.deepEqual(s.allowedNetworks, []);
+  assert.equal(s.geofenceRadiusM, 250);
+});
+
+test("a FALSY non-boolean does not switch a presence check off", () => {
+  // These two now protect a college's attendance rules, so the failure is the opposite
+  // shape from the others: a stray null must not QUIETLY REMOVE a control an
+  // administrator switched on, while answering 200 OK.
+  const current = { ...DEFAULTS, networkCheck: true, geofenceCheck: true };
+  for (const bad of [0, "", null, undefined, NaN, "false"]) {
+    assert.equal(merge({ networkCheck: bad }, current).networkCheck, true, `${JSON.stringify(bad)}`);
+    assert.equal(merge({ geofenceCheck: bad }, current).geofenceCheck, true, `${JSON.stringify(bad)}`);
+  }
+  assert.equal(merge({ networkCheck: false }, current).networkCheck, false, "an explicit false still works");
+});
+
+test("a college's ranges are kept as typed, so the screen shows what they wrote", () => {
+  const s = merge({ allowedNetworks: ["203.0.113.0/24", " 198.51.100.7 "] });
+  assert.deepEqual(s.allowedNetworks, ["203.0.113.0/24", "198.51.100.7"]);
+});
+
+test("ONE BAD LINE DOES NOT THROW AWAY THE GOOD ONES", () => {
+  // A college pasting four ranges off a network diagram will get one wrong. Refusing the
+  // whole save, or keeping none, punishes the typo by taking check-in down for everybody.
+  const s = merge({ allowedNetworks: ["203.0.113.0/24", "nonsense", "198.51.100.7", null, 42] });
+  assert.deepEqual(s.allowedNetworks, ["203.0.113.0/24", "198.51.100.7"]);
+});
+
+test("...but a list where EVERY line is bad comes back empty, not ignored", () => {
+  // And empty-with-the-check-on refuses everybody by name in presence.js, which is the
+  // point: a college whose whole list is nonsense finds out on the first check-in rather
+  // than running unprotected while the screen says the network is enforced.
+  assert.deepEqual(merge({ allowedNetworks: ["nonsense", "1.2.3.4/99"] }).allowedNetworks, []);
+});
+
+test("the same network typed twice is stored once", () => {
+  // Deduplicated on the parsed form: these are three ways of writing one network.
+  const s = merge({ allowedNetworks: ["203.0.113.0/24", "203.0.113.7/24", "203.0.113.0/24"] });
+  assert.equal(s.allowedNetworks.length, 1);
+});
+
+test("a paste accident is capped rather than walked on every check-in", () => {
+  const many = Array.from({ length: MAX_NETWORKS + 20 }, (_, i) => `10.${i}.0.0/24`);
+  assert.equal(merge({ allowedNetworks: many }).allowedNetworks.length, MAX_NETWORKS);
+});
+
+test("something that is not an array at all leaves the college's list alone", () => {
+  // A shape error rather than a content one, so the PATCH contract applies: ignored, not
+  // reset. Sending `allowedNetworks: null` must not silently empty a configured list and
+  // — with the check on — lock the college out.
+  const current = { ...DEFAULTS, allowedNetworks: ["203.0.113.0/24"] };
+  for (const bad of [null, undefined, "203.0.113.0/24", {}, 42]) {
+    assert.deepEqual(merge({ allowedNetworks: bad }, current).allowedNetworks, ["203.0.113.0/24"], `${JSON.stringify(bad)}`);
+  }
+});
+
+test("an unusable radius is ignored rather than resetting a chosen one", () => {
+  const current = { ...DEFAULTS, geofenceRadiusM: 400 };
+  for (const bad of [null, undefined, "200", NaN, -5, {}]) {
+    assert.equal(merge({ geofenceRadiusM: bad }, current).geofenceRadiusM, 400, `${JSON.stringify(bad)}`);
+  }
+  assert.equal(merge({ geofenceRadiusM: 150 }, current).geofenceRadiusM, 150);
+  assert.equal(merge({ geofenceRadiusM: 9e9 }, current).geofenceRadiusM, MAX_RADIUS_METRES, "capped");
+});
+
+test("every new field is in the allowlist that leaves the building", () => {
+  // SETTING_FIELDS is derived from DEFAULTS, so this is really asserting that the field
+  // was added to DEFAULTS rather than only to merge() — which would produce a setting a
+  // college could save and never see again.
+  for (const key of ["networkCheck", "allowedNetworks", "geofenceCheck", "geofenceRadiusM"]) {
+    assert.ok(SETTING_FIELDS.includes(key), `${key} is missing from SETTING_FIELDS`);
   }
 });

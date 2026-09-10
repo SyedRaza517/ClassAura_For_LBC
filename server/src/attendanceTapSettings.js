@@ -8,6 +8,12 @@
 // platform defaults in code, one JSON column merged over them, an allowlist on the way
 // out, and a short cache invalidated on save.
 
+// The CIDR parser lives in presence.js beside the check that uses it, and is imported
+// here rather than reimplemented: a settings screen that accepts a range the check will
+// not match is worse than one that rejects it, because the college is then told their
+// network is configured while every student is refused.
+const { parseCidr, MAX_RADIUS_METRES } = require("./presence");
+
 const DEFAULTS = Object.freeze({
   // Ships OFF. Attendance emails do the same, and for the same reason: a feature that
   // writes to the attendance record must not switch itself on at every college on the
@@ -89,6 +95,58 @@ const DEFAULTS = Object.freeze({
   // term is closed, and cannot reach a register the student is not on. The honest
   // difference is proximity, and only proximity.
   declareEnabled: false,
+
+  /* ------------------------------------------------------------------ *
+   * IS THE PHONE ACTUALLY IN THE BUILDING?
+   *
+   * These apply to ALL THREE student-made methods — the sticker, the code and the
+   * "I'm here" button alike — and that uniformity is deliberate. A presence rule that
+   * applied to two of the three would be a rule with a documented way round it, and
+   * the way round it would be the method with the least evidence behind it.
+   *
+   * They deliberately do NOT apply to a mark a member of staff sets. A lecturer
+   * correcting a register from home in the evening is doing their job, and refusing
+   * that would break the one capture method nobody has ever doubted.
+   *
+   * The decision each one produces lives in presence.js, which is pure and tested
+   * without a database. What lives here is only what the college chose.
+   * ------------------------------------------------------------------ */
+
+  // Whether a check-in must arrive from the college's own network.
+  //
+  // "Connected to the college WiFi" observed from the FAR END, and that is not a
+  // compromise — it is the only portable way to observe it at all. iOS gives a browser
+  // no network name whatsoever; Android gives one only behind a location permission. The
+  // college's public address, by contrast, is already in front of the server on every
+  // request, needs no permission, prompts nobody, and works identically on an iPhone, an
+  // Android and a laptop in a computer room.
+  networkCheck: false,
+  // The college's public IP ranges, as CIDR ("203.0.113.0/24") or bare addresses.
+  //
+  // EMPTY WHILE THE CHECK IS ON MEANS REFUSE EVERYBODY, which is worth stating because
+  // the opposite reading is the tempting one. Treating "no ranges" as "any range" would
+  // mean an administrator ticks the box, saves, sees no error, and believes the college
+  // network is enforced while every check-in on earth passes. A rule that silently stops
+  // applying is worse than one that was never switched on.
+  allowedNetworks: [],
+
+  // Whether a check-in must be near one of the college's campuses.
+  //
+  // A CAMPUS BOUNDARY, NEVER A ROOM ONE, and the settings screen has to say so: indoor
+  // GPS accuracy is 10-50 metres and worse through concrete, so this can prove "on
+  // campus" and can never prove "in room B204". Room resolution is precisely what the
+  // £1 stickers and the beacons are for. "Geofencing" sounds more precise than it is,
+  // and a college describing its attendance controls at a funding audit needs the true
+  // version rather than the impressive one.
+  geofenceCheck: false,
+  // How far from a campus's recorded coordinates still counts as being at it.
+  //
+  // Bounded at both ends in presence.js rather than here, because the floor is doing real
+  // work: a 5-metre radius does not mean "very strict", it means "refuses the student
+  // standing in the room", and that failure presents as "check-in never works" rather
+  // than as a bad setting — so it gets blamed on the feature. Same reasoning as
+  // MIN_QR_ROTATE_SECONDS above.
+  geofenceRadiusM: 250,
 });
 
 const SETTING_FIELDS = Object.freeze(Object.keys(DEFAULTS));
@@ -114,13 +172,21 @@ const MAX_ARM_SECONDS = 600;
 const MIN_QR_ROTATE_SECONDS = 10;
 const MAX_QR_ROTATE_SECONDS = 300;
 
-/** A whole number of minutes within range, or null when the value is unusable. */
-function minutes(v, max) {
+/** A whole non-negative number within range, or null when the value is unusable. */
+function wholeNumber(v, max) {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   const n = Math.round(v);
   if (n < 0) return null;
   return Math.min(n, max);
 }
+
+/** A whole number of minutes within range, or null when the value is unusable. */
+const minutes = wholeNumber;
+
+// How many ranges a college may keep. A public egress is one range, or a handful across
+// campuses; a list in the hundreds is a paste accident, and every entry is walked on every
+// check-in. Generous enough that no real college meets it.
+const MAX_NETWORKS = 32;
 
 /**
  * The settings this college actually runs on: `base`, with any usable value from
@@ -172,6 +238,54 @@ function merge(stored, base = DEFAULTS) {
   // DEFAULTS and therefore off.
   if (stored.declareEnabled === true || stored.declareEnabled === false) out.declareEnabled = stored.declareEnabled;
 
+  if (stored.networkCheck === true || stored.networkCheck === false) out.networkCheck = stored.networkCheck;
+  if (stored.geofenceCheck === true || stored.geofenceCheck === false) out.geofenceCheck = stored.geofenceCheck;
+
+  // THE ONLY ARRAY IN THIS SETTINGS OBJECT, so it is the only field where "unusable" is
+  // not all-or-nothing, and the choice made here needs saying.
+  //
+  // Entries that do not parse are DROPPED, and the rest are kept. A college pasting four
+  // ranges from a network diagram will get one line wrong, and throwing away the other
+  // three — or refusing the save outright — punishes them for the typo by taking down
+  // check-in for everybody. The route that accepts the save is where an administrator is
+  // TOLD which lines were rejected; this is the last line of defence for a blob that was
+  // written before a rule existed or edited by hand in a console.
+  //
+  // Dropping every entry is not the same as sending none: `allowedNetworks: []` with the
+  // check on refuses everybody by name (see presence.js), so a college whose whole list
+  // was nonsense finds out immediately rather than running unprotected.
+  //
+  // Not an array at all — a bare string, an object, null — falls through to the base
+  // untouched, exactly like every other unusable value here, because that is a shape
+  // error rather than a content one and the PATCH contract promises to ignore it.
+  if (Array.isArray(stored.allowedNetworks)) {
+    const seen = new Set();
+    const kept = [];
+    for (const entry of stored.allowedNetworks) {
+      if (kept.length >= MAX_NETWORKS) break;
+      const parsed = parseCidr(entry);
+      if (!parsed) continue;
+      // Deduplicated on the PARSED form, not the typed one: "203.0.113.0/24" and
+      // "203.0.113.7/24" are the same network written two ways, and a college that typed
+      // both should not carry two copies of it forward for ever.
+      const key = `${parsed.base}/${parsed.bits}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // The TYPED text is stored, not the canonical form, so an administrator opening the
+      // screen sees the line they wrote. Only presence.js needs the parsed version, and it
+      // parses again at the point of use.
+      kept.push(parsed.text);
+    }
+    out.allowedNetworks = kept;
+  }
+
+  // Metres, so `minutes()` next door is the wrong helper however similar the arithmetic
+  // looks — reusing it would leave a settings field whose validation is named after a
+  // unit it does not use, which is the sort of thing that survives until somebody changes
+  // the minute cap and silently changes a radius.
+  const radius = wholeNumber(stored.geofenceRadiusM, MAX_RADIUS_METRES);
+  if (radius !== null) out.geofenceRadiusM = radius;
+
   // Clamped rather than merely capped, because this field has a meaningful floor. Note
   // `minutes()` is reused for the range check but returns null for anything unusable, so a
   // bad value still falls through to the base — ignored, not reset, as the PATCH contract
@@ -184,6 +298,6 @@ function merge(stored, base = DEFAULTS) {
 }
 
 module.exports = {
-  DEFAULTS, SETTING_FIELDS, MAX_MINS, MAX_ARM_SECONDS,
+  DEFAULTS, SETTING_FIELDS, MAX_MINS, MAX_ARM_SECONDS, MAX_NETWORKS,
   MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, merge,
 };
