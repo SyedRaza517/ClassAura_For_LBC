@@ -14,6 +14,7 @@ const { rosterForSession } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP } = require("../attendanceTap");
+const { checkPresence } = require("../presence");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate } = require("../validate");
@@ -77,6 +78,89 @@ function deviceIdFrom(req) {
   const clean = raw.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
   return clean || null;
 }
+
+/**
+ * Refuse a check-in from a device that is not where it says it is — or let it through.
+ *
+ * Returns true when it has ALREADY answered the request, so every caller is one line:
+ *   if (await refusedForPlace(req, res, settings, "nfc", session.id)) return;
+ *
+ * ONE FUNCTION FOR ALL THREE CAPTURE METHODS, which is the whole point of the phase that
+ * built presence.js. A network rule written separately in the tap route, the scan route
+ * and the declare route would drift, and the drift would be silent: each route would still
+ * refuse somebody, just not the same somebody. That is not a hypothetical failure in this
+ * codebase — six handlers each grew their own answer to "who is on this register", and it
+ * was fixed six separate times.
+ *
+ * NOT APPLIED TO A MARK A MEMBER OF STAFF SETS. A lecturer correcting a register from home
+ * in the evening is doing their job. These checks exist for the three methods where the
+ * person making the mark is the person the mark is about.
+ *
+ * WHERE THE ADDRESS COMES FROM, because getting this wrong makes the whole check theatre.
+ * `req.ip` is resolved by Express under `trust proxy: 1` (set in index.js), which trusts
+ * exactly ONE hop — Render's. A phone can put anything it likes in X-Forwarded-For, and
+ * with one real proxy in front, its header is pushed to the left and the address Render
+ * observed is the one used. Setting `trust proxy: true` instead would take the leftmost
+ * entry, which IS the phone's own claim, and this entire check would be a value the
+ * student chooses. If another proxy is ever put in front of Render, that number must go up
+ * with it, or req.ip becomes the new proxy's address and the whole college shares one.
+ */
+async function refusedForPlace(req, res, settings, method, sessionId = null) {
+  const verdict = checkPresence({
+    ip: req.ip,
+    // Sent by the app in Phase 3 and ignored entirely while the geofence is off, which is
+    // why it is read here rather than added later: the plumbing is the same and a route
+    // that has to be edited again to switch a setting on is a route that gets missed.
+    position: req.body?.position,
+    campus: null,
+    settings,
+  });
+  if (verdict.ok) return false;
+
+  const first = verdict.failures[0];
+
+  // EVERY failure is logged, not only the one reported. A college switching this on for
+  // the first time wants to see that its IP list is wrong AND its coordinates are, rather
+  // than discovering the second a week after fixing the first.
+  for (const f of verdict.failures) {
+    await logTap(req, { studentId: req.user.id, sessionId, method, outcome: f.reason });
+  }
+
+  // A misconfiguration is the operator's problem, not the student's, and it is invisible
+  // from the outside: every student is refused and the settings screen says the network is
+  // enforced. So it is said out loud in the log where somebody reading the service's
+  // output will meet it.
+  if (first.reason === "network_not_configured") {
+    console.error("[presence] the college network check is ON but no usable IP range is saved — every check-in is being refused");
+  }
+
+  // 403, not 409. The class may well be running and the student may well be on the
+  // register; what is wrong is WHERE they are, and that distinction matters to the app,
+  // which shows a different thing for "not now" than for "not here".
+  res.status(403).json({
+    error: PLACE_REFUSALS[first.reason] || PLACE_REFUSALS.default,
+    reason: first.reason,
+  });
+  return true;
+}
+
+// The student's half of a refusal, in words they can act on.
+//
+// "Check-in didn't work" sends somebody to a lecturer who cannot help them. "You need to
+// be on the college WiFi" is a thing they can fix while standing there. The two
+// configuration failures deliberately read the same to a student as the ordinary one —
+// they cannot tell the difference and there is nothing for them to do about it — while
+// the `reason` code beside it stays distinct for the log and the dashboard.
+const PLACE_REFUSALS = {
+  off_network: "You need to be on the college WiFi to check in.",
+  network_not_configured: "You need to be on the college WiFi to check in.",
+  off_campus: "You're too far from the college to check in.",
+  campus_not_located: "You're too far from the college to check in.",
+  position_missing: "Turn on location so we can check you're at the college, then try again.",
+  accuracy_unknown: "We couldn't tell where you are accurately enough. Try again near a window.",
+  accuracy_too_poor: "We couldn't tell where you are accurately enough. Try again near a window.",
+  default: "You can't check in from here.",
+};
 
 async function logTap(req, fields) {
   try {
@@ -295,6 +379,8 @@ router.post("/me/tap-check-in", async (req, res) => {
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
+  if (await refusedForPlace(req, res, settings, "nfc")) return;
+
   // Every tag in this database belongs to this college, because every row does — so a
   // sticker that is not found is one nobody here registered. This used to be scoped by
   // db.js, and the not-found was the isolation working rather than an absence.
@@ -429,6 +515,8 @@ router.post("/me/qr-check-in", async (req, res) => {
     await logTap(req, { studentId: req.user.id, method: "qr", outcome: "rate_limited" });
     return res.status(429).json({ error: "Too many attempts. Wait a moment and try again.", reason: "too_many" });
   }
+
+  if (await refusedForPlace(req, res, settings, "qr", sessionId)) return;
 
   let secret;
   try {
@@ -608,6 +696,8 @@ router.post("/me/declare-check-in", async (req, res) => {
     await logTap(req, { studentId: req.user.id, method: "declared", outcome: "rate_limited" });
     return res.status(429).json({ error: "Too many attempts. Wait a moment and try again.", reason: "too_many" });
   }
+
+  if (await refusedForPlace(req, res, settings, "declared", sessionId)) return;
 
   const session = await prisma.hndSession.findUnique({
     where: { id: sessionId },

@@ -12,6 +12,7 @@ const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
 const tapConfig = require("../attendanceTapConfig");
+const { describeAddress, parseCidr } = require("../presence");
 
 router.use(requireAuth, requirePage("attendance-settings"));
 
@@ -62,7 +63,49 @@ router.put("/settings", async (req, res) => {
     before, after: settings,
   });
 
-  res.json(settings);
+  // WHICH LINES WE THREW AWAY, so an administrator is told rather than left to notice.
+  //
+  // The settings module drops an unusable range and keeps the rest, which is the right
+  // behaviour — a college pasting four ranges off a network diagram will get one wrong,
+  // and refusing the whole save punishes the typo by leaving check-in unprotected. But
+  // dropping it SILENTLY is how somebody saves a list of four, sees four lines of text go
+  // in, and finds out in a lecture theatre that only three of them work.
+  //
+  // Deliberately not an error: the save has already happened and the good lines are in
+  // force. This is the receipt, not a refusal.
+  const rejectedNetworks = Array.isArray(patch.allowedNetworks)
+    ? patch.allowedNetworks
+        // A blank line is what a textarea produces from a stray Enter. Not a mistake, and
+        // reporting it as one trains an administrator to ignore this list.
+        .filter((e) => !(typeof e === "string" && !e.trim()))
+        // Two ways a line fails to make it: it is not a range at all, or it is one and did
+        // not survive the cap. Both are worth reporting, and testing membership catches
+        // the second without needing to know where the cap is. A duplicate is NOT caught
+        // here, correctly — both copies are present in the saved list.
+        .filter((e) => !parseCidr(e) || !settings.allowedNetworks.includes(e.trim()))
+        .map((e) => String(e).slice(0, 60))
+    : [];
+
+  res.json({ ...settings, rejectedNetworks });
+});
+
+// GET /api/tags/settings/my-address — the address THIS request arrived from.
+//
+// The single most likely way the network check fails at a real college: somebody types
+// the address off a router's label, or the one their provider quoted them years ago, and
+// it is not the address their traffic actually leaves from. Every student is then refused
+// and the settings screen cheerfully reports that the network is configured.
+//
+// The fix is not documentation. It is showing an administrator, standing in their own
+// college on their own WiFi, the address WE see — so they can add that one. `allowlistable`
+// is the honest half: a college whose traffic leaves over IPv6 cannot use this feature,
+// because the ranges are IPv4-only, and they need to know that while they are looking at
+// the screen rather than after a hall of students cannot check in.
+//
+// Declared BEFORE GET /:id/log and PATCH /:id, like GET /settings above, or "settings"
+// is parsed as a tag id. Express matches in declaration order.
+router.get("/settings/my-address", (req, res) => {
+  res.json(describeAddress(req.ip));
 });
 
 // GET /api/tags — every sticker this college has registered. Never the codes.

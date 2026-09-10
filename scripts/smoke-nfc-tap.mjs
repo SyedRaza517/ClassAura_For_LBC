@@ -70,6 +70,13 @@ const C_EMAIL = "100126@edtech.co.uk";
 // parked, which is what lets that block build an exact fixture: "one class running, one
 // later, one belonging to somebody else" has to mean exactly that, or a refusal cannot be
 // attributed to the guard it was written for.
+// A fifth student, for the network block alone. The other four have each spent part of
+// their ten-a-minute check-in budget by the time it runs, and a 429 would satisfy the
+// "is it refused" assertions for entirely the wrong reason — while making the
+// on-the-network ones vacuous, which is the failure that matters.
+const E_ID = "st-100135";
+const E_EMAIL = "100135@edtech.co.uk";
+
 const D_ID = "st-100133";
 const D_EMAIL = "100133@edtech.co.uk";
 
@@ -79,9 +86,17 @@ const check = (name, ok, detail = "") => {
   ok ? pass++ : fail++;
 };
 
-async function call(path, { method = "GET", body, token } = {}) {
+async function call(path, { method = "GET", body, token, from } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
+  // `from` PRETENDS TO BE A PHONE ON A PARTICULAR NETWORK, and it works here for exactly
+  // the reason it cannot work in production. The API runs under `trust proxy: 1`, which
+  // trusts one hop; in this suite there is no proxy at all, so the header IS the first
+  // hop and Express reads it as the caller's address. In front of Render there is a real
+  // proxy, so a phone's own X-Forwarded-For is pushed left and the address Render observed
+  // is the one used. That asymmetry is what makes the network check meaningful, and it is
+  // also what lets this suite drive both sides of it from one machine.
+  if (from) headers["X-Forwarded-For"] = from;
   const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   let data = null;
   try { data = await res.json(); } catch (_) { /* empty body */ }
@@ -1342,6 +1357,112 @@ try {
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
   const dAfterOff = await call("/student/me/declare-check-in", { method: "POST", token: dToken, body: { sessionId: dNow.id } });
   check("switching it back off refuses again immediately", dAfterOff.status === 403, `HTTP ${dAfterOff.status}`);
+
+
+  /* ====================================================================== */
+  console.log("\n--- The college network: a check-in has to arrive from the college ---");
+  /* ====================================================================== */
+  //
+  // "It should be connected with the WiFi of the college." Observed from the FAR END,
+  // because that is the only portable way to observe it at all: iOS gives a browser no
+  // network name whatsoever and Android only behind a location permission, while the
+  // college's public address is already in front of the server on every request.
+  //
+  // Driven through X-Forwarded-For, which is honest here and not a cheat — see the note on
+  // `call()` above. The suite is the one place with no proxy in front, so the header is
+  // the first hop; in production Render is, and a phone's own header is ignored.
+  await db.student.update({ where: { id: E_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0, cohortId: dCohort.id } });
+  const eLogin = await login(E_EMAIL, A_PASSWORD);
+  const eToken = eLogin.data?.token;
+  check("the fifth student signed in, with an untouched check-in budget", !!eToken, `HTTP ${eLogin.status}`);
+  // dNow carries a mark planted by the block above. Cleared, or "already marked" answers
+  // 200 and the on-the-network assertion passes without ever writing anything.
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  const COLLEGE_NET = "203.0.113.0/24";
+  const ON_CAMPUS = "203.0.113.55";
+  const AT_HOME = "198.51.100.9";
+
+  const addr = await call("/tags/settings/my-address", { token: adminToken, from: ON_CAMPUS });
+  check("an administrator is shown the address we actually see them at",
+    addr.data?.ip === ON_CAMPUS && addr.data?.allowlistable === true, JSON.stringify(addr.data));
+  const v6 = await call("/tags/settings/my-address", { token: adminToken, from: "2001:db8::1" });
+  check("...and an IPv6 college is told its address cannot be allowlisted",
+    v6.data?.family === "ipv6" && v6.data?.allowlistable === false, JSON.stringify(v6.data));
+
+  const netSaved = await call("/tags/settings", {
+    method: "PUT", token: adminToken,
+    body: { networkCheck: true, allowedNetworks: [COLLEGE_NET, "not-a-network", "", "10.0.0.0/8"] },
+  });
+  check("a college saves its ranges and the good ones are kept",
+    netSaved.data?.networkCheck === true && netSaved.data?.allowedNetworks?.includes(COLLEGE_NET),
+    JSON.stringify(netSaved.data?.allowedNetworks));
+  // ONE BAD LINE IS REPORTED, NOT SWALLOWED. Dropping it silently is how somebody saves a
+  // list of four, watches four lines of text go in, and finds out in a lecture theatre
+  // that only three of them work.
+  check("...and the line that was not a network is reported back by name",
+    JSON.stringify(netSaved.data?.rejectedNetworks) === JSON.stringify(["not-a-network"]),
+    JSON.stringify(netSaved.data?.rejectedNetworks));
+  check("...while a blank line is not reported as a mistake",
+    !(netSaved.data?.rejectedNetworks || []).includes(""));
+
+  // Each of the three capture methods, from off the network. All three, every time: a rule
+  // that applied to two of them would be a rule with a documented way round it, and the way
+  // round it would be whichever method has the least evidence behind it.
+  const offNet = await call("/student/me/tap-check-in", { method: "POST", token: eToken, from: AT_HOME, body: { tagCode } });
+  check("TAPPING A STICKER FROM OFF THE COLLEGE NETWORK IS REFUSED", offNet.status === 403, `HTTP ${offNet.status}`);
+  check("...and the student is told the thing they can act on", offNet.data?.reason === "off_network", `reason=${offNet.data?.reason}`);
+  check("...in words, not a code", /college WiFi/i.test(offNet.data?.error || ""), offNet.data?.error);
+
+  const offNetQr = await call("/student/me/qr-check-in", { method: "POST", token: eToken, from: AT_HOME, body: { sessionId: dNow.id, code: "anything" } });
+  check("SCANNING A CODE FROM OFF THE NETWORK IS REFUSED, before the code is even checked",
+    offNetQr.status === 403 && offNetQr.data?.reason === "off_network", `HTTP ${offNetQr.status} ${offNetQr.data?.reason}`);
+
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: true } });
+  const offNetDeclare = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: AT_HOME, body: { sessionId: dNow.id } });
+  check("PRESSING THE I'M HERE BUTTON FROM OFF THE NETWORK IS REFUSED",
+    offNetDeclare.status === 403 && offNetDeclare.data?.reason === "off_network",
+    `HTTP ${offNetDeclare.status} ${offNetDeclare.data?.reason}`);
+  check("...and nothing was written for any of the three",
+    (await db.attendanceMark.count({ where: { sessionId: dNow.id, takenBy: { contains: "Self check-in" } } })) === 0);
+
+  // THE REFUSAL IS LOGGED AS A REFUSAL, not lost. A college switching this on wants to see
+  // how many students it is turning away and from where, on the morning it starts.
+  const offNetTaps = await db.tagTap.findMany({ where: { outcome: "off_network" }, select: { ip: true, method: true } });
+  check("every refusal is logged with its method and the address it came from",
+    offNetTaps.length >= 3 && offNetTaps.every((t) => t.ip === AT_HOME), JSON.stringify(offNetTaps));
+  check("...and all three capture methods are represented",
+    ["nfc", "qr", "declared"].every((m) => offNetTaps.some((t) => t.method === m)),
+    offNetTaps.map((t) => t.method).join(","));
+
+  // From ON the network, the same call gets past the network check and is refused (or not)
+  // on its own merits. This is the assertion that stops the check being a blanket refusal
+  // that would pass every test above while breaking the feature entirely.
+  const onNetQr = await call("/student/me/qr-check-in", { method: "POST", token: eToken, from: ON_CAMPUS, body: { sessionId: dNow.id, code: "wrong-code" } });
+  check("ON the college network, the request is judged on its own merits again",
+    onNetQr.data?.reason !== "off_network", `HTTP ${onNetQr.status} ${onNetQr.data?.reason}`);
+
+  const onNetDeclare = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: ON_CAMPUS, body: { sessionId: dNow.id } });
+  check("AND A STUDENT ON THE COLLEGE NETWORK IS MARKED PRESENT", onNetDeclare.status === 201, `HTTP ${onNetDeclare.status} ${onNetDeclare.data?.reason || ""}`);
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  // SWITCHED ON WITH NOTHING USABLE REFUSES EVERYBODY, rather than quietly allowing all.
+  // The tempting reading of an empty list is "no restriction", which would mean an
+  // administrator ticks the box, saves, sees no error, and believes the college network is
+  // enforced while every check-in on earth passes.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { allowedNetworks: [] } });
+  const noList = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: ON_CAMPUS, body: { sessionId: dNow.id } });
+  check("THE CHECK ON WITH AN EMPTY LIST REFUSES EVEN THE COLLEGE ITSELF",
+    noList.status === 403 && noList.data?.reason === "network_not_configured", `HTTP ${noList.status} ${noList.data?.reason}`);
+  check("...and that misconfiguration is logged under its own name, not as 'off network'",
+    (await db.tagTap.count({ where: { outcome: "network_not_configured" } })) >= 1);
+
+  // Switched OFF, nothing is checked — the state every college is in until it opts in.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { networkCheck: false } });
+  const offCheck = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: AT_HOME, body: { sessionId: dNow.id } });
+  check("WITH THE CHECK OFF, a student marks in from anywhere exactly as before",
+    offCheck.status === 201, `HTTP ${offCheck.status} ${offCheck.data?.reason || ""}`);
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
 
   /* ====================================================================== */
   console.log("\n--- the student portal is still sealed ---");

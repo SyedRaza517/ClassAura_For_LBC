@@ -678,6 +678,11 @@ export const api = {
   tagLog: (id) => request(`/tags/${id}/log`),
   tapSettings: () => request("/tags/settings"),
   saveTapSettings: (patch) => request("/tags/settings", { method: "PUT", body: patch }),
+  // The address the SERVER sees this request arrive from, so an administrator standing in
+  // their own college can add the range their traffic actually leaves by — rather than the
+  // one printed on a router, which is the version that refuses every student while the
+  // screen reports the network as configured.
+  myAddress: () => request("/tags/settings/my-address"),
   // semesterId: "" = all semesters, "unassigned" = sessions outside every semester
   getAttendance: (semesterId, termId) => request(`/hnd/attendance${termId ? `?termId=${encodeURIComponent(termId)}` : semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : ""}`),
   // year/termNumber scope to a curriculum stage ("Year 1 · Term 2") by narrowing to

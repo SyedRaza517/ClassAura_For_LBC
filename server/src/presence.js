@@ -158,6 +158,28 @@ function ipInNetworks(ip, networks) {
 }
 
 /**
+ * What we see a caller as, for the settings screen to show them.
+ *
+ * This exists because of the single most likely way this feature fails at a real college:
+ * an administrator types the address off a router's label, or the one their broadband
+ * provider told them years ago, and it is not the address their traffic actually leaves
+ * from. Every student is then refused, and the screen says the network is configured. The
+ * fix is not documentation — it is showing them the address WE see, standing in their
+ * college, so they can add that one.
+ *
+ * `allowlistable` is the honest part. A college whose traffic leaves over IPv6 cannot use
+ * this feature at all, because the ranges are IPv4-only, and that has to be said on the
+ * screen at the moment they would otherwise be typing a range that can never match —
+ * rather than discovered by a hall of students who cannot check in.
+ */
+function describeAddress(ip) {
+  const normalised = normaliseIp(ip);
+  if (!normalised) return { ip: null, family: null, allowlistable: false };
+  if (ipv4ToInt(normalised) !== null) return { ip: normalised, family: "ipv4", allowlistable: true };
+  return { ip: normalised, family: "ipv6", allowlistable: false };
+}
+
+/**
  * Metres between two points on the earth.
  *
  * Haversine, not a flat approximation. The flat one is simpler and its error grows with
@@ -272,6 +294,6 @@ function checkPresence({ ip, position, campus, settings } = {}) {
 
 module.exports = {
   MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES,
-  normaliseIp, parseCidr, parseNetworks, ipInNetworks,
+  normaliseIp, parseCidr, parseNetworks, ipInNetworks, describeAddress,
   distanceMetres, radiusFor, checkPresence,
 };

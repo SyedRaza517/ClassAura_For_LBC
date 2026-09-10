@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const {
   MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES,
   normaliseIp, parseCidr, parseNetworks, ipInNetworks,
-  distanceMetres, radiusFor, checkPresence,
+  distanceMetres, radiusFor, checkPresence, describeAddress,
 } = require("./presence");
 
 const reasons = (r) => r.failures.map((f) => f.reason);
@@ -303,5 +303,31 @@ test("it never throws, whatever it is handed", () => {
     const r = checkPresence(args);
     assert.equal(typeof r.ok, "boolean", JSON.stringify(args));
     assert.ok(Array.isArray(r.failures));
+  }
+});
+
+/* --------------------- what the settings screen shows -------------------- */
+
+test("an administrator is shown the address we ACTUALLY see them at", () => {
+  // The single most likely way this feature fails at a real college: somebody types the
+  // address off a router label, or the one their provider told them years ago, and it is
+  // not what their traffic leaves from. Every student is refused and the screen says the
+  // network is configured.
+  assert.deepEqual(describeAddress("::ffff:203.0.113.9"), { ip: "203.0.113.9", family: "ipv4", allowlistable: true });
+  assert.deepEqual(describeAddress("203.0.113.9:443"), { ip: "203.0.113.9", family: "ipv4", allowlistable: true });
+});
+
+test("AN IPv6 COLLEGE IS TOLD SO, rather than typing a range that can never match", () => {
+  // The ranges are IPv4-only by design. A college whose egress is IPv6 cannot use this
+  // feature at all, and must find that out on the settings screen — not from a hall of
+  // students who cannot check in.
+  const seen = describeAddress("2001:db8::1");
+  assert.equal(seen.family, "ipv6");
+  assert.equal(seen.allowlistable, false, "and the screen must not offer to add it");
+});
+
+test("no address at all is not reported as a usable one", () => {
+  for (const v of [undefined, null, "", 42]) {
+    assert.deepEqual(describeAddress(v), { ip: null, family: null, allowlistable: false });
   }
 });

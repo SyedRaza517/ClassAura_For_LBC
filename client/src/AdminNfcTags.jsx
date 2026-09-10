@@ -18,7 +18,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Nfc, Plus, Loader2, AlertTriangle, CheckCircle2, Copy, Power, RefreshCw,
-  ScanLine, Clock3, ShieldCheck, X,
+  ScanLine, Clock3, ShieldCheck, X, Wifi,
 } from "lucide-react";
 import { api } from "./api";
 import { nfcStatus, scanOnce } from "./nfc";
@@ -45,6 +45,17 @@ const OUTCOMES = {
   tag_unknown: { label: "Tag not recognised", tone: "rose" },
   rate_limited: { label: "Too many attempts", tone: "rose" },
   disabled: { label: "Feature switched off", tone: "slate" },
+  // Where the phone was, rather than what it did. Separated from the refusals above
+  // because they send an administrator somewhere different: "off the college network" is
+  // a student on mobile data, while "no network ranges saved" is the college's own
+  // settings screen refusing everybody and needs to be unmistakable.
+  off_network: { label: "Not on the college network", tone: "amber" },
+  network_not_configured: { label: "No network ranges saved — everyone refused", tone: "rose" },
+  off_campus: { label: "Too far from the campus", tone: "amber" },
+  campus_not_located: { label: "Campus has no coordinates — everyone refused", tone: "rose" },
+  position_missing: { label: "Location not shared", tone: "amber" },
+  accuracy_unknown: { label: "Location sent with no accuracy", tone: "amber" },
+  accuracy_too_poor: { label: "Location too vague to trust", tone: "amber" },
 };
 const TONES = {
   emerald: "bg-emerald-50 text-emerald-700 ring-emerald-200",
@@ -140,13 +151,26 @@ function TapSettings({ settings, onSaved }) {
   const [draft, setDraft] = useState(settings);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  // Lines the server threw away on the last save. It keeps the good ranges and drops the
+  // unusable ones, which is right — a college pasting four ranges off a network diagram
+  // will get one wrong, and refusing the whole save punishes the typo by leaving check-in
+  // unprotected. But dropping one SILENTLY is how somebody saves a list of four, watches
+  // four lines of text go in, and finds out in a lecture theatre that only three work.
+  const [rejected, setRejected] = useState([]);
   useEffect(() => { setDraft(settings); }, [settings]);
+  // EVERY hook is above this line. A useState below an early return renders a different
+  // number of hooks on the pass where `settings` is still loading than on the pass after
+  // it arrives — React error #310, which takes the whole screen down and has been
+  // introduced in this codebase twice.
   if (!draft) return null;
 
   const save = async (patch) => {
     setSaving(true); setErr("");
     try {
       const s = await api.saveTapSettings(patch);
+      // Only replaced when the save actually carried ranges — otherwise switching an
+      // unrelated toggle would clear a warning the administrator has not read yet.
+      if (patch.allowedNetworks) setRejected(s.rejectedNetworks || []);
       setDraft(s); onSaved(s);
     } catch (e) { setErr(e?.message || "Could not save."); }
     finally { setSaving(false); }
@@ -252,7 +276,129 @@ function TapSettings({ settings, onSaved }) {
           A tap always records <em>Onsite</em>, because they are in the building. Working online stays available from the Check-In screen.
         </span>
       </label>
+
+      {/* Its own panel rather than a fourth switch in the stack above, because it is not a
+          fourth way to check in — it is a condition on all three of the others at once.
+          Listed beside them it would read as another capture method, which is precisely
+          the wrong mental model for the thing that decides whether the other three work. */}
+      <NetworkPanel draft={draft} saving={saving} save={save} rejected={rejected} />
     </section>
+  );
+}
+
+/* ------------------- the college network, as a condition ------------------- */
+
+function NetworkPanel({ draft, saving, save, rejected }) {
+  // The textarea is local until it is saved. Saving per keystroke would write a half-typed
+  // range into the college's allowlist — and with the check on, a half-typed range refuses
+  // students for as long as it takes to finish the line.
+  const [text, setText] = useState((draft.allowedNetworks || []).join("\n"));
+  const [seen, setSeen] = useState(null);   // what the SERVER says our address is
+  useEffect(() => { setText((draft.allowedNetworks || []).join("\n")); }, [draft.allowedNetworks]);
+  useEffect(() => { api.myAddress().then(setSeen).catch(() => setSeen(null)); }, []);
+
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const dirty = JSON.stringify(lines) !== JSON.stringify(draft.allowedNetworks || []);
+  const already = seen?.ip && (draft.allowedNetworks || []).some((n) => n === seen.ip || n.startsWith(seen.ip.split(".").slice(0, 3).join(".") + "."));
+
+  return (
+    <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox" checked={draft.networkCheck} disabled={saving}
+          onChange={(e) => save({ networkCheck: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-800">
+            <Wifi size={15} style={{ color: NAVY }} />
+            Check-in must come from the college network — {draft.networkCheck ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            Applies to all three: the stickers, the on-screen code and marking yourself in.
+            A student on mobile data or at home is refused and told why. It does not affect
+            a lecturer taking the register.
+          </span>
+        </span>
+      </label>
+
+      {draft.networkCheck && (
+        <div className="mt-3.5 pl-7">
+          <span className="text-[12px] font-semibold text-slate-700">The college's public IP ranges</span>
+          <textarea
+            value={text} onChange={(e) => setText(e.target.value)} rows={Math.max(3, lines.length + 1)}
+            spellCheck={false} placeholder={"203.0.113.0/24\n198.51.100.7"}
+            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-[12px] tabular-nums"
+          />
+          <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+            One per line. A single address, or a range like <code>203.0.113.0/24</code>. Ask
+            your IT team for the addresses the college's internet connection goes out on —
+            not the ones inside the building, which every college shares.
+          </span>
+
+          {/* THE LINE THAT MAKES THIS SETUP SURVIVABLE. The likeliest failure is an
+              administrator typing the address off a router, or the one a provider quoted
+              years ago — after which every student is refused while this screen says the
+              network is configured. So we show them what we can see from where they are
+              sitting, and let them add it in one click. */}
+          {seen?.allowlistable && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] text-slate-600">
+              <span>You're connecting from <strong className="font-mono">{seen.ip}</strong>.</span>
+              {already ? (
+                <span className="text-emerald-700">Already covered.</span>
+              ) : (
+                <>
+                  <button type="button" onClick={() => setText((t) => (t.trim() ? t.replace(/\s*$/, "\n") : "") + seen.ip)}
+                    className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50">
+                    Add this address
+                  </button>
+                  <span className="text-slate-400">If you're on the college WiFi now, this is the one you want.</span>
+                </>
+              )}
+            </div>
+          )}
+          {/* A college whose traffic leaves over IPv6 cannot use this at all — the ranges
+              are IPv4-only. Said here, while they are looking at the box, rather than
+              discovered by a hall of students who cannot check in. */}
+          {seen && !seen.allowlistable && (
+            <div className="mt-2 text-[11.5px] leading-snug text-amber-800">
+              You're connecting over IPv6 (<span className="font-mono">{seen.ip}</span>), which this
+              check can't match yet. If that's how the whole college connects, leave this switched
+              off and use the sticker or the code instead.
+            </div>
+          )}
+
+          {rejected.length > 0 && (
+            <div className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] leading-snug text-rose-800 ring-1 ring-rose-200">
+              These lines weren't saved because they aren't valid addresses or ranges:{" "}
+              <span className="font-mono">{rejected.join(", ")}</span>. Everything else was saved.
+            </div>
+          )}
+
+          {/* Switched on with nothing usable saved refuses EVERYBODY — that is the
+              server's rule, and the alternative (reading an empty list as "no
+              restriction") would mean this screen claims a control it is not applying.
+              Since it is a real state a college can reach by ticking the box first, it is
+              said here in the words of its consequence. */}
+          {!draft.allowedNetworks?.length && (
+            <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[11.5px] leading-snug text-amber-900 ring-1 ring-amber-200">
+              No ranges saved yet, so <strong>nobody can check in</strong> — not even on the college
+              WiFi. Add at least one, or switch this off.
+            </div>
+          )}
+
+          <div className="mt-2.5">
+            <button
+              type="button" onClick={() => save({ allowedNetworks: lines })} disabled={!dirty || saving}
+              className="rounded-xl px-3.5 py-2 text-[13px] font-semibold text-white disabled:cursor-not-allowed"
+              style={{ background: dirty && !saving ? NAVY : "#94a3b8" }}
+            >
+              {saving ? "Saving…" : "Save ranges"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
