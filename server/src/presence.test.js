@@ -154,7 +154,7 @@ test("with every check switched off, nothing is refused", () => {
 
 test("a switched-off check is not evaluated even when it would fail", () => {
   const r = checkPresence({
-    ip: "198.51.100.1", position: FAR, campus: CAMPUS,
+    ip: "198.51.100.1", position: FAR, campuses: [CAMPUS],
     settings: { networkCheck: false, geofenceCheck: false, allowedNetworks: ["203.0.113.0/24"] },
   });
   assert.equal(r.ok, true);
@@ -183,9 +183,9 @@ test("SWITCHED ON WITH AN EMPTY LIST REFUSES EVERYBODY, and says why", () => {
 
 test("on campus passes, off campus is refused with the distance", () => {
   const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
-  assert.equal(checkPresence({ position: NEARBY, campus: CAMPUS, settings }).ok, true);
+  assert.equal(checkPresence({ position: NEARBY, campuses: [CAMPUS], settings }).ok, true);
 
-  const away = checkPresence({ position: FAR, campus: CAMPUS, settings });
+  const away = checkPresence({ position: FAR, campuses: [CAMPUS], settings });
   assert.equal(away.ok, false);
   assert.deepEqual(reasons(away), ["off_campus"]);
   // The metres are reported so an administrator debugging "my students are all refused"
@@ -199,7 +199,7 @@ test("A POSITION TOO VAGUE TO MEAN ANYTHING IS REFUSED, not accepted", () => {
   // from most of the city. Accepting it means the college believes it has a boundary and
   // has not got one.
   const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
-  const vague = checkPresence({ position: { ...CAMPUS, accuracy: 2000 }, campus: CAMPUS, settings });
+  const vague = checkPresence({ position: { ...CAMPUS, accuracy: 2000 }, campuses: [CAMPUS], settings });
   assert.equal(vague.ok, false, "standing exactly on the campus is not enough if the fix is 2km wide");
   assert.deepEqual(reasons(vague), ["accuracy_too_poor"]);
   assert.equal(vague.failures[0].accuracy, 2000);
@@ -209,7 +209,7 @@ test("accuracy is judged against the college's own radius, not only the ceiling"
   // A 100-metre campus cannot be policed by a fix that is good to 240 metres, even though
   // 240 is inside the hard ceiling.
   const tight = checkPresence({
-    position: { ...CAMPUS, accuracy: 240 }, campus: CAMPUS,
+    position: { ...CAMPUS, accuracy: 240 }, campuses: [CAMPUS],
     settings: { geofenceCheck: true, geofenceRadiusM: 100 },
   });
   assert.equal(tight.ok, false);
@@ -222,7 +222,7 @@ test("a position with no accuracy figure at all is refused", () => {
   // written. Trusting it would be the easiest way around the whole geofence: send the
   // campus coordinates and no accuracy.
   const r = checkPresence({
-    position: { ...CAMPUS }, campus: CAMPUS,
+    position: { ...CAMPUS }, campuses: [CAMPUS],
     settings: { geofenceCheck: true, geofenceRadiusM: 200 },
   });
   assert.equal(r.ok, false);
@@ -235,7 +235,7 @@ test("NO POSITION IS A REFUSAL, not a pass", () => {
   // Passing here would make the geofence optional at the student's discretion.
   const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
   for (const p of [undefined, null, {}, { latitude: 51.5 }, { latitude: "51.5", longitude: -0.12, accuracy: 5 }]) {
-    const r = checkPresence({ position: p, campus: CAMPUS, settings });
+    const r = checkPresence({ position: p, campuses: [CAMPUS], settings });
     assert.equal(r.ok, false, `${JSON.stringify(p)} should refuse`);
     assert.deepEqual(reasons(r), ["position_missing"]);
   }
@@ -246,7 +246,7 @@ test("(0, 0) is not a position", () => {
   // Guinea, and reading it as real would pass any college that typed one zero too many
   // into its radius.
   const r = checkPresence({
-    position: { latitude: 0, longitude: 0, accuracy: 5 }, campus: CAMPUS,
+    position: { latitude: 0, longitude: 0, accuracy: 5 }, campuses: [CAMPUS],
     settings: { geofenceCheck: true, geofenceRadiusM: 200 },
   });
   assert.deepEqual(reasons(r), ["position_missing"]);
@@ -256,7 +256,7 @@ test("an out-of-range coordinate is not a position either", () => {
   const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
   for (const p of [{ latitude: 91, longitude: 0, accuracy: 5 }, { latitude: 0, longitude: 181, accuracy: 5 },
                    { latitude: NaN, longitude: 0, accuracy: 5 }, { latitude: Infinity, longitude: 0, accuracy: 5 }]) {
-    assert.deepEqual(reasons(checkPresence({ position: p, campus: CAMPUS, settings })), ["position_missing"]);
+    assert.deepEqual(reasons(checkPresence({ position: p, campuses: [CAMPUS], settings })), ["position_missing"]);
   }
 });
 
@@ -265,7 +265,7 @@ test("A CAMPUS WITH NO COORDINATES REFUSES, and does not quietly stop checking",
   // compare against, so the boundary the screen claims to enforce would enforce nothing.
   const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
   for (const c of [undefined, null, {}, { latitude: 51.5 }, { latitude: null, longitude: null }]) {
-    const r = checkPresence({ position: NEARBY, campus: c, settings });
+    const r = checkPresence({ position: NEARBY, campuses: [c], settings });
     assert.equal(r.ok, false, `${JSON.stringify(c)} should refuse`);
     assert.deepEqual(reasons(r), ["campus_not_located"]);
   }
@@ -275,7 +275,7 @@ test("both checks failing reports both, in the order they are checked", () => {
   // A college switching this on for the first time needs to see that its IP list is wrong
   // AND its coordinates are — not discover the second one a week after fixing the first.
   const r = checkPresence({
-    ip: "198.51.100.1", position: FAR, campus: CAMPUS,
+    ip: "198.51.100.1", position: FAR, campuses: [CAMPUS],
     settings: { networkCheck: true, allowedNetworks: ["203.0.113.0/24"], geofenceCheck: true, geofenceRadiusM: 200 },
   });
   assert.equal(r.ok, false);
@@ -284,7 +284,7 @@ test("both checks failing reports both, in the order they are checked", () => {
 
 test("both checks passing together is a pass", () => {
   const r = checkPresence({
-    ip: "::ffff:203.0.113.55", position: NEARBY, campus: CAMPUS,
+    ip: "::ffff:203.0.113.55", position: NEARBY, campuses: [CAMPUS],
     settings: { networkCheck: true, allowedNetworks: ["203.0.113.0/24"], geofenceCheck: true, geofenceRadiusM: 200 },
   });
   assert.deepEqual(r, { ok: true, failures: [] });
@@ -295,15 +295,71 @@ test("it never throws, whatever it is handed", () => {
   // lecture, on input that reaches us from a phone.
   const nasty = [
     { ip: {}, settings: { networkCheck: true, allowedNetworks: [{}] } },
-    { position: "here", campus: "there", settings: { geofenceCheck: true } },
+    { position: "here", campuses: ["there"], settings: { geofenceCheck: true } },
     { settings: { networkCheck: true, geofenceCheck: true, allowedNetworks: [[]], geofenceRadiusM: NaN } },
-    { ip: [], position: [], campus: [], settings: [] },
+    { ip: [], position: [], campuses: [], settings: [] },
   ];
   for (const args of nasty) {
     const r = checkPresence(args);
     assert.equal(typeof r.ok, "boolean", JSON.stringify(args));
     assert.ok(Array.isArray(r.failures));
   }
+});
+
+/* ---------------------------- several campuses --------------------------- */
+
+const OTHER_CAMPUS = { latitude: 51.4545, longitude: -2.5879 };   // Bristol, ~170km away
+
+test("near ANY of the college's campuses passes", () => {
+  // Half the classes in a college have no room recorded — a seminar arranged by email, a
+  // register created before rooms were used — so "which campus is this class at" is
+  // frequently unknowable, and the caller passes every located campus instead. Refusing
+  // all of those would make the geofence unusable at the colleges most likely to want it.
+  const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
+  assert.equal(checkPresence({ position: NEARBY, campuses: [OTHER_CAMPUS, CAMPUS], settings }).ok, true);
+  assert.equal(checkPresence({ position: NEARBY, campuses: [CAMPUS, OTHER_CAMPUS], settings }).ok, true,
+    "and the order it is asked in makes no difference");
+});
+
+test("near NONE of them is still refused", () => {
+  const r = checkPresence({
+    position: FAR, campuses: [CAMPUS, OTHER_CAMPUS],
+    settings: { geofenceCheck: true, geofenceRadiusM: 200 },
+  });
+  assert.equal(r.ok, false);
+  assert.deepEqual(reasons(r), ["off_campus"]);
+});
+
+test("the distance reported is to the NEAREST campus, not an arbitrary one", () => {
+  // An administrator told a student is 170 km away, when the campus down the road is 1.4 km
+  // off, goes looking for the wrong problem entirely.
+  const r = checkPresence({
+    position: FAR, campuses: [OTHER_CAMPUS, CAMPUS],
+    settings: { geofenceCheck: true, geofenceRadiusM: 200 },
+  });
+  assert.ok(r.failures[0].metres < 5000, `expected the London distance, got ${r.failures[0].metres}m`);
+});
+
+test("campuses with no coordinates are skipped, not counted as somewhere", () => {
+  // A college part-way through recording its campuses. The located ones must keep working;
+  // an unlocated one must not read as a place the student could be.
+  const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
+  const mixed = [{ latitude: null, longitude: null }, {}, CAMPUS];
+  assert.equal(checkPresence({ position: NEARBY, campuses: mixed, settings }).ok, true);
+  assert.deepEqual(
+    reasons(checkPresence({ position: NEARBY, campuses: [{ latitude: null, longitude: null }, {}], settings })),
+    ["campus_not_located"],
+    "and a college where NONE of them is located refuses, loudly",
+  );
+});
+
+test("a single campus may still be passed on its own", () => {
+  // The caller passes one when the class has a room and the room has a campus. Kept
+  // working rather than forcing every caller to wrap it, because a caller that forgets is
+  // a silent `campus_not_located` refusing a whole building.
+  const settings = { geofenceCheck: true, geofenceRadiusM: 200 };
+  assert.equal(checkPresence({ position: NEARBY, campuses: CAMPUS, settings }).ok, true);
+  assert.deepEqual(reasons(checkPresence({ position: FAR, campuses: CAMPUS, settings })), ["off_campus"]);
 });
 
 /* --------------------- what the settings screen shows -------------------- */

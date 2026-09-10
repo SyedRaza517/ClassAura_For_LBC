@@ -222,6 +222,9 @@ function radiusFor(settings) {
 /**
  * Is this device plausibly in the building?
  *
+ * `campuses` is every campus this check-in could legitimately be at — one when the class
+ * has a room and the room has a campus, all of the located ones when it does not.
+ *
  * Returns `{ ok, failures }` — never throws, and never returns a bare boolean, because the
  * CALLER needs to know WHICH check failed. "Check-in didn't work" sends a student to a
  * lecturer who cannot help; "you need to be on the college WiFi" is a thing they can act
@@ -240,7 +243,7 @@ function radiusFor(settings) {
  * A rule that silently stops applying is worse than one that was never switched on, and
  * each of those cases reports its own reason so an administrator can see WHICH.
  */
-function checkPresence({ ip, position, campus, settings } = {}) {
+function checkPresence({ ip, position, campuses, settings } = {}) {
   const failures = [];
   const s = settings || {};
 
@@ -256,9 +259,21 @@ function checkPresence({ ip, position, campus, settings } = {}) {
   }
 
   if (s.geofenceCheck === true) {
-    const centre = coordsOf(campus);
+    // A LIST, NOT ONE CAMPUS, and near ANY of them passes.
+    //
+    // Half the classes in a college have no room recorded — a seminar arranged by email, a
+    // register created before rooms were used at all — so "the campus this class is at" is
+    // frequently unknowable. Refusing every one of those would make the geofence unusable
+    // at exactly the colleges most likely to want it.
+    //
+    // So the caller passes the session's own campus when it knows it, and every located
+    // campus when it does not. What is being asked is "is this phone at the college",
+    // which is all a geofence can honestly answer anyway: it cannot tell one room from
+    // another, and two campuses in the same city are a far smaller distinction than the
+    // one it already cannot make. What it still refuses is a phone at neither.
+    const centres = (Array.isArray(campuses) ? campuses : [campuses]).map(coordsOf).filter(Boolean);
     const here = coordsOf(position);
-    if (!centre) {
+    if (!centres.length) {
       failures.push({ check: "geofence", reason: "campus_not_located" });
     } else if (!here) {
       // Covers a refused permission, a browser with no geolocation, and a client that
@@ -281,7 +296,10 @@ function checkPresence({ ip, position, campus, settings } = {}) {
       } else if (accuracy > MAX_ACCURACY_METRES || accuracy > radius) {
         failures.push({ check: "geofence", reason: "accuracy_too_poor", accuracy: Math.round(accuracy) });
       } else {
-        const away = distanceMetres(centre, here);
+        // The NEAREST one, so the reported distance is the one an administrator can act
+        // on. Told they are 40 km away when the campus down the road is 300 m off, they
+        // would go looking for the wrong problem.
+        const away = Math.min(...centres.map((c) => distanceMetres(c, here)));
         if (away > radius) {
           failures.push({ check: "geofence", reason: "off_campus", metres: Math.round(away) });
         }

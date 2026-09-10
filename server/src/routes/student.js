@@ -108,11 +108,11 @@ function deviceIdFrom(req) {
 async function refusedForPlace(req, res, settings, method, sessionId = null) {
   const verdict = checkPresence({
     ip: req.ip,
-    // Sent by the app in Phase 3 and ignored entirely while the geofence is off, which is
-    // why it is read here rather than added later: the plumbing is the same and a route
-    // that has to be edited again to switch a setting on is a route that gets missed.
+    // The phone's own reading, and NOT its opinion of whether that is close enough. The
+    // distance is computed on the server against coordinates the college recorded; a
+    // client that reported "I am in range" would be reporting a value anybody can send.
     position: req.body?.position,
-    campus: null,
+    campuses: settings.geofenceCheck === true ? await campusesFor(sessionId) : [],
     settings,
   });
   if (verdict.ok) return false;
@@ -142,6 +142,41 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
     reason: first.reason,
   });
   return true;
+}
+
+/**
+ * The campuses a check-in for this class could legitimately be at.
+ *
+ * A class held in a room is at that room's campus, and that is the tightest answer
+ * available. When there is no room, or the room predates campuses, EVERY located campus is
+ * returned instead — because "which campus" is frequently unknowable and refusing all of
+ * those would make the geofence unusable at exactly the colleges that want it. What it
+ * still refuses is a phone at none of them, which is what the college asked for.
+ *
+ * Only called when the geofence is switched on: this is two queries on the check-in path,
+ * and a college that has not opted in should not pay for them.
+ */
+async function campusesFor(sessionId) {
+  if (sessionId) {
+    // Reached from the id rather than a loaded row, because the check runs BEFORE each
+    // route resolves its session — and it has to. A student off the college network must
+    // be told that, not handed "tag not recognised" or "wrong code" from a check they were
+    // never going to get past. One query, and only when the geofence is switched on.
+    const room = await prisma.hndSession.findUnique({
+      where: { id: sessionId },
+      select: { room: { select: { campusRef: { select: { latitude: true, longitude: true } } } } },
+    }).then((s) => s?.room).catch(() => null);
+    // Only when it actually has coordinates. A room on an unlocated campus falls through
+    // to the college-wide list rather than refusing — the class is somewhere, and the
+    // college's other campuses are a better guess than none. If NOTHING is located, the
+    // list comes back empty and presence.js refuses under `campus_not_located`, which is
+    // the loud failure a misconfiguration deserves.
+    if (room?.campusRef?.latitude != null && room?.campusRef?.longitude != null) return [room.campusRef];
+  }
+  return prisma.campus.findMany({
+    where: { active: true, latitude: { not: null }, longitude: { not: null } },
+    select: { latitude: true, longitude: true },
+  });
 }
 
 // The student's half of a refusal, in words they can act on.
@@ -310,6 +345,7 @@ router.get("/me/tap-context", async (req, res) => {
     return res.json({
       enabled: false,
       qrEnabled: false,
+      needsLocation: settings.geofenceCheck === true,
       armSeconds: settings.armSeconds,
       date,
       now: [],
@@ -339,6 +375,16 @@ router.get("/me/tap-context", async (req, res) => {
     // Whether to OFFER the "I'm here" action at all. The app cannot work this out for
     // itself, and a button that always answers 403 is worse than no button.
     declareEnabled: settings.declareEnabled === true,
+    // Whether the app should ask the phone where it is before checking in.
+    //
+    // TOLD, NOT GUESSED, and only when the college has switched the geofence on. Asking
+    // every student for their location whether or not it is used would be a permission
+    // prompt with no honest answer to "why does this app want that", on the screen where
+    // trust matters most — and both app stores ask precisely that question at review.
+    //
+    // It does NOT say the check will pass. The distance is computed on the server against
+    // coordinates the college recorded; the phone reports a reading, never a verdict.
+    needsLocation: settings.geofenceCheck === true,
     armSeconds: settings.armSeconds,
     date,
     now: decision.kind === "one" ? [sTapSession(decision.session)]

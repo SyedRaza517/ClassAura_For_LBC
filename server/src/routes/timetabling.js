@@ -177,6 +177,32 @@ function parseCampus(body, partial) {
     data.name = name.slice(0, MAX);
   }
   if (body?.active !== undefined) data.active = !!body.active;
+
+  // WHERE THIS CAMPUS IS, for the check-in geofence.
+  //
+  // Both together or neither. Half a coordinate is not a location, and storing one of them
+  // would leave a campus that reads as "pinned" on the screen while presence.js refuses
+  // every check-in there as unlocated.
+  //
+  // Sending null for both is how a campus is UNPINNED, and that has to remain possible: a
+  // coordinate recorded by somebody standing in the wrong building refuses that building's
+  // students until it is cleared, and "delete the campus" is not an acceptable remedy.
+  if (body?.latitude !== undefined || body?.longitude !== undefined) {
+    if (body.latitude === null && body.longitude === null) {
+      data.latitude = null; data.longitude = null; data.locatedAt = null; data.locatedBy = null;
+    } else {
+      const lat = Number(body.latitude);
+      const lon = Number(body.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return { error: "A campus location needs both a latitude and a longitude" };
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return { error: "That is not a point on the earth" };
+      // (0, 0) is in the Gulf of Guinea, and is what an empty form produces once both
+      // fields have been through Number(). Refused by name rather than stored, because a
+      // campus pinned there reads as located and refuses everybody actually standing on it.
+      if (lat === 0 && lon === 0) return { error: "That location looks empty rather than recorded" };
+      data.latitude = lat; data.longitude = lon;
+      data.locatedAt = new Date();
+    }
+  }
   return { data };
 }
 
@@ -195,6 +221,10 @@ router.put("/campuses/:id", async (req, res) => {
   const { data, error } = parseCampus(req.body, true);
   if (error) return res.status(400).json({ error });
   try {
+    // WHO pinned it, stamped here because parseCampus is pure and has no request to read.
+    // A coordinate that turns a building's students away at the door is a decision somebody
+    // made, and this is the only trace of who made it.
+    if (data.locatedAt) data.locatedBy = req.user?.name || null;
     res.json(sCampus(await prisma.campus.update({ where: { id: req.params.id }, data })));
   } catch (e) {
     if (e.code === "P2002") return res.status(409).json({ error: "That campus already exists" });

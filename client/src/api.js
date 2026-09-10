@@ -1,4 +1,5 @@
 import { deviceHeaders } from "./deviceId";
+import { wherePhoneIs } from "./wherePhoneIs";
 // Thin REST client.
 //
 // Where the API lives:
@@ -135,6 +136,30 @@ async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT
   return data;
 }
 
+// Whether this college checks WHERE a check-in came from. Set from every tap-context
+// response; false until one arrives, which is the safe direction — it means no permission
+// prompt appears before the server has said it needs one.
+let needsLocation = false;
+
+/**
+ * `{ position }` to spread into a check-in body, or `{}`.
+ *
+ * Asks the phone ONLY when the college has switched the geofence on. Prompting every
+ * student for their location whether or not it is used would be a permission request with
+ * no honest answer to "why does this app want that" — on the screen where trust matters
+ * most, and the exact question both app stores ask at review.
+ *
+ * A refusal or a timeout sends nothing rather than failing here. What a missing position
+ * MEANS is the server's decision, and it already has one: with the geofence on, it refuses
+ * and says so. A client that turned that into its own error message would be a second
+ * opinion about a rule that belongs to the college.
+ */
+async function positionIfNeeded() {
+  if (!needsLocation) return {};
+  const position = await wherePhoneIs();
+  return position ? { position } : {};
+}
+
 export const api = {
   // auth
   login: (email, password) => request("/auth/login", { method: "POST", body: { email, password } }),
@@ -213,16 +238,29 @@ export const api = {
   // NFC tap check-in. tapContext says whether the feature is on and which of this
   // student's classes are running; tapCheckIn writes the mark. sessionId is sent only
   // after an "ambiguous" reply, when two of their classes overlap.
-  studentTapContext: () => request("/student/me/tap-context"),
-  studentTapCheckIn: (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}) }, headers: deviceHeaders() }),
+  studentTapContext: async () => {
+    const ctx = await request("/student/me/tap-context");
+    // The server says whether this college checks WHERE a check-in came from, and the
+    // answer is remembered here rather than passed down through three screens.
+    //
+    // A side effect on a read, which is unusual enough to justify. The alternative is each
+    // of the three check-in screens remembering to ask for the phone's position and pass
+    // it, and screens forget — this codebase has fixed the same forgotten condition in six
+    // handlers already. Every one of the three flows loads this context before it can
+    // offer a check-in at all, so the flag is never stale, and holding it in one place
+    // means a fourth capture method added later cannot be the one that forgets.
+    needsLocation = ctx?.needsLocation === true;
+    return ctx;
+  },
+  studentTapCheckIn: async (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}), ...(await positionIfNeeded()) }, headers: deviceHeaders() }),
   // Both self check-ins carry the device trail header (deviceId.js).
-  studentQrCheckIn: (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code }, headers: deviceHeaders() }),
+  studentQrCheckIn: async (sessionId, code) => request("/student/me/qr-check-in", { method: "POST", body: { sessionId, code, ...(await positionIfNeeded()) }, headers: deviceHeaders() }),
   // "I'm here" — a mark with no sticker and no code standing behind it, so the college
   // has to switch it on. Answers 403 `declare_off` when they have not, which means the
   // caller must gate on tapContext.declareEnabled rather than offering it and hoping.
   // deviceHeaders() travels with it like the other two: the device a claim came from is
   // the only corroboration this method has.
-  studentDeclareCheckIn: (sessionId) => request("/student/me/declare-check-in", { method: "POST", body: { sessionId }, headers: deviceHeaders() }),
+  studentDeclareCheckIn: async (sessionId) => request("/student/me/declare-check-in", { method: "POST", body: { sessionId, ...(await positionIfNeeded()) }, headers: deviceHeaders() }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
 

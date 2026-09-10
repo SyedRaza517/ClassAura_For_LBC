@@ -3231,6 +3231,28 @@ model Campus {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // WHERE THIS CAMPUS IS, for the check-in geofence. Both null until somebody records it.
+  //
+  // NULLABLE, AND NULL MEANS "WE HAVE NOT RECORDED IT" — never 0. The null-is-not-zero
+  // convention has an unusually sharp edge here: latitude 0, longitude 0 is a real,
+  // valid-looking coordinate in the Gulf of Guinea, so a default of zero would not read as
+  // missing, it would read as a campus 5,000 km away that every student is refused from.
+  // presence.js refuses (0, 0) explicitly for the same reason.
+  //
+  // A campus with no coordinates does not quietly opt out of the geofence — with the check
+  // switched on, a class there is REFUSED and logged as `campus_not_located`. The
+  // alternative is a boundary that silently stops applying wherever somebody forgot to set
+  // it, which is worse than not having one, because the settings screen still says it is
+  // enforced.
+  latitude  Float?
+  longitude Float?
+  // Who pinned it and when. A coordinate that turns students away at the door is a
+  // decision somebody made, and "it has always been like that" is not an answer when a
+  // whole building's students cannot check in. Cheap to record, and the only trace there
+  // would otherwise be.
+  locatedAt DateTime?
+  locatedBy String?
+
   rooms Room[]
 
   @@index([active])

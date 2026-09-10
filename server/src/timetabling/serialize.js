@@ -28,7 +28,20 @@ function roomLabel(r) {
   return campus ? `${head} [${campus}]` : head;
 }
 
-const sCampus = (c) => ({ id: c.id, name: c.name, active: !!c.active });
+// An allowlist, like everything else here. The coordinates are published deliberately:
+// they are not a secret — a college's address is on its website — and the settings screen
+// has to show what is recorded so somebody can tell a campus that has been pinned from one
+// that has not. `null` travels as null and is never coerced to 0, because 0 is a real
+// coordinate in the Gulf of Guinea and would read as a located campus 5,000 km away.
+const sCampus = (c) => ({
+  id: c.id,
+  name: c.name,
+  active: !!c.active,
+  latitude: c.latitude ?? null,
+  longitude: c.longitude ?? null,
+  locatedAt: c.locatedAt ?? null,
+  locatedBy: c.locatedBy ?? null,
+});
 
 const sRoom = (r) => ({
   id: r.id,

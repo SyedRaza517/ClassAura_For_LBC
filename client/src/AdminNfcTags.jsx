@@ -18,11 +18,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Nfc, Plus, Loader2, AlertTriangle, CheckCircle2, Copy, Power, RefreshCw,
-  ScanLine, Clock3, ShieldCheck, X, Wifi,
+  ScanLine, Clock3, ShieldCheck, X, Wifi, MapPin, Crosshair,
 } from "lucide-react";
 import { api } from "./api";
 import { nfcStatus, scanOnce } from "./nfc";
 import { NAVY } from "./branding";
+import { wherePhoneIs } from "./wherePhoneIs";
 
 const fmtWhen = (iso) => {
   if (!iso) return "—";
@@ -282,6 +283,7 @@ function TapSettings({ settings, onSaved }) {
           Listed beside them it would read as another capture method, which is precisely
           the wrong mental model for the thing that decides whether the other three work. */}
       <NetworkPanel draft={draft} saving={saving} save={save} rejected={rejected} />
+      <GeofencePanel draft={draft} saving={saving} save={save} />
     </section>
   );
 }
@@ -395,6 +397,177 @@ function NetworkPanel({ draft, saving, save, rejected }) {
             >
               {saving ? "Saving…" : "Save ranges"}
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------- the campus boundary, as a condition ------------------- */
+
+function GeofencePanel({ draft, saving, save }) {
+  const [campuses, setCampuses] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState("");
+  const [radius, setRadius] = useState(draft.geofenceRadiusM);
+  useEffect(() => { setRadius(draft.geofenceRadiusM); }, [draft.geofenceRadiusM]);
+
+  const load = useCallback(() => {
+    api.ttCampuses().then((rows) => setCampuses(rows.filter((c) => c.active))).catch(() => setCampuses([]));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // Pinned FROM WHERE THE ADMINISTRATOR IS STANDING, rather than typed.
+  //
+  // The alternative is asking somebody to find coordinates on a map and copy two long
+  // decimals into a form, where transposing a digit moves the campus a few hundred metres
+  // and every student there is refused with no clue why. Standing in the building and
+  // pressing a button cannot make that mistake — and it is the one moment when the phone's
+  // own reading IS the answer we want.
+  const pinHere = async (campus) => {
+    setBusyId(campus.id); setErr("");
+    const pos = await wherePhoneIs();
+    if (!pos) {
+      setErr("Couldn't read your location. Allow location for this site, then try again — and do it while you're on the campus.");
+      setBusyId(null);
+      return;
+    }
+    try {
+      await api.ttUpdateCampus(campus.id, { latitude: pos.latitude, longitude: pos.longitude });
+      load();
+    } catch (e) { setErr(e?.message || "Could not save that location."); }
+    finally { setBusyId(null); }
+  };
+
+  const unpin = async (campus) => {
+    setBusyId(campus.id); setErr("");
+    try {
+      await api.ttUpdateCampus(campus.id, { latitude: null, longitude: null });
+      load();
+    } catch (e) { setErr(e?.message || "Could not clear that location."); }
+    finally { setBusyId(null); }
+  };
+
+  const located = (campuses || []).filter((c) => c.latitude != null && c.longitude != null);
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+      <label className="flex items-start gap-3">
+        <input
+          type="checkbox" checked={draft.geofenceCheck} disabled={saving}
+          onChange={(e) => save({ geofenceCheck: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-800">
+            <MapPin size={15} style={{ color: NAVY }} />
+            Check-in must happen at a campus — {draft.geofenceCheck ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            The student's phone tells us where it is, and we check the distance. Applies to all
+            three methods. A student who won't share their location is refused, so this asks
+            something of every student on every check-in.
+          </span>
+        </span>
+      </label>
+
+      {/* SAID PLAINLY, ONCE, WHERE THE DECISION IS MADE. "Geofencing" sounds precise and is
+          not: 10-50 metres indoors, worse through concrete. A college that believes this
+          proves which ROOM a student is in will describe its attendance controls that way
+          to an inspector, and be wrong. It is cheaper to say so here than to correct that
+          conversation later. */}
+      <p className="mt-2.5 pl-7 text-[11px] leading-snug text-slate-500">
+        <strong className="font-semibold text-slate-600">What this can and can't show:</strong>{" "}
+        it proves a phone was near the campus, never which room it was in — phone location is
+        accurate to tens of metres indoors, and worse in a concrete building. Use the stickers
+        for the room.
+      </p>
+
+      {draft.geofenceCheck && (
+        <div className="mt-3.5 space-y-3 pl-7">
+          <div>
+            <span className="text-[12px] font-semibold text-slate-700">How close counts as "at the campus"</span>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="number" min="50" max="5000" step="10" value={radius}
+                onChange={(e) => setRadius(Number(e.target.value))}
+                onBlur={() => { if (radius !== draft.geofenceRadiusM) save({ geofenceRadiusM: radius }); }}
+                className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm tabular-nums"
+              />
+              <span className="text-[12px] text-slate-500">metres from the pin</span>
+            </div>
+            <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+              Big enough to cover the whole site, or students at the far end are turned away.
+              Anything under 50 m is treated as 50 m — smaller isn't stricter, it just refuses
+              the student standing in the room.
+            </span>
+          </div>
+
+          {err && <div className="rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] leading-snug text-rose-800 ring-1 ring-rose-200">{err}</div>}
+
+          {/* NOT LOCATED YET refuses everybody, exactly like an empty network list, and for
+              the same reason: a boundary that quietly stops applying wherever nobody set it
+              is worse than no boundary, because this screen still claims it is enforced. */}
+          {campuses && !located.length && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11.5px] leading-snug text-amber-900 ring-1 ring-amber-200">
+              No campus has a location yet, so <strong>nobody can check in</strong>. Open this page
+              while you're standing on the campus and press <em>Set from where I am</em>.
+            </div>
+          )}
+
+          <div>
+            <span className="text-[12px] font-semibold text-slate-700">Your campuses</span>
+            {!campuses ? (
+              <p className="mt-1 text-[12px] text-slate-400">Loading…</p>
+            ) : !campuses.length ? (
+              <p className="mt-1 text-[12px] text-slate-500">No campuses set up yet — add them under Timetabling → Rooms.</p>
+            ) : (
+              <ul className="mt-1 divide-y divide-slate-200 rounded-xl bg-white ring-1 ring-slate-200">
+                {campuses.map((c) => {
+                  const pinned = c.latitude != null && c.longitude != null;
+                  return (
+                    <li key={c.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-slate-800">{c.name}</p>
+                        <p className="text-[11px] text-slate-500">
+                          {pinned ? (
+                            <>
+                              <span className="font-mono tabular-nums">{c.latitude.toFixed(5)}, {c.longitude.toFixed(5)}</span>
+                              {c.locatedBy && <> · set by {c.locatedBy}</>}
+                              {c.locatedAt && <> {fmtWhen(c.locatedAt)}</>}
+                            </>
+                          ) : (
+                            <span className="text-amber-700">No location — check-in here is refused</span>
+                          )}
+                        </p>
+                      </div>
+                      {pinned && (
+                        <button
+                          type="button" onClick={() => unpin(c)} disabled={busyId === c.id}
+                          className="press rounded-lg border border-slate-200 px-3 py-2 text-[12px] font-semibold text-slate-600"
+                          title="Clear this location — use it if the campus was pinned in the wrong place"
+                        >
+                          Clear
+                        </button>
+                      )}
+                      <button
+                        type="button" onClick={() => pinHere(c)} disabled={busyId === c.id}
+                        className="press flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-60"
+                        style={{ background: NAVY }}
+                      >
+                        {busyId === c.id ? <><Loader2 size={13} className="animate-spin" /> Reading…</> : <><Crosshair size={13} /> Set from where I am</>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+              Press the button while you're on that campus. It reads your phone or laptop's own
+              location — which is why typing coordinates isn't offered: one transposed digit puts
+              the campus a few streets away and every student there is refused.
+            </span>
           </div>
         </div>
       )}

@@ -74,6 +74,12 @@ const C_EMAIL = "100126@edtech.co.uk";
 // their ten-a-minute check-in budget by the time it runs, and a 429 would satisfy the
 // "is it refused" assertions for entirely the wrong reason — while making the
 // on-the-network ones vacuous, which is the failure that matters.
+// And a sixth, for the geofence block. Same reasoning as the fifth: ten check-in
+// attempts a minute is a budget shared across every capture method, and a 429 satisfies
+// "is it refused" for the wrong reason while making every acceptance vacuous.
+const F_ID = "st-100140";
+const F_EMAIL = "100140@edtech.co.uk";
+
 const E_ID = "st-100135";
 const E_EMAIL = "100135@edtech.co.uk";
 
@@ -1462,6 +1468,105 @@ try {
   const offCheck = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: AT_HOME, body: { sessionId: dNow.id } });
   check("WITH THE CHECK OFF, a student marks in from anywhere exactly as before",
     offCheck.status === 201, `HTTP ${offCheck.status} ${offCheck.data?.reason || ""}`);
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
+
+
+  /* ====================================================================== */
+  console.log("\n--- The campus geofence: near the college, or not at all ---");
+  /* ====================================================================== */
+  //
+  // "Geofencing — device should be in range." A CAMPUS boundary and never a room one:
+  // indoor GPS accuracy is 10-50 metres and worse through concrete, so this can prove "at
+  // the college" and can never prove "in room B204". Room resolution is what the stickers
+  // and the beacons are for.
+  //
+  // THE POSITION IS A READING, NEVER A VERDICT. The phone sends latitude, longitude and its
+  // own accuracy estimate; the server does the arithmetic against coordinates the college
+  // recorded. A client that sent "I am in range" would be sending a value anybody can send.
+  await db.student.update({ where: { id: F_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0, cohortId: dCohort.id } });
+  const fLogin = await login(F_EMAIL, A_PASSWORD);
+  const fToken = fLogin.data?.token;
+  check("the sixth student signed in, with an untouched check-in budget", !!fToken, `HTTP ${fLogin.status}`);
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  const HERE = { latitude: 51.5074, longitude: -0.1278 };                        // the campus
+  const NEXT_DOOR = { latitude: 51.5076, longitude: -0.1278, accuracy: 15 };     // ~22m away
+  const ACROSS_TOWN = { latitude: 51.5200, longitude: -0.1278, accuracy: 15 };   // ~1.4km away
+
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: true, geofenceCheck: true, geofenceRadiusM: 200 } });
+
+  // NOTHING LOCATED YET is the state every college starts in, and it must refuse rather
+  // than quietly pass — a boundary that stops applying wherever somebody forgot to set it
+  // is worse than no boundary, because the screen still says it is enforced.
+  const unlocated = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id, position: NEXT_DOOR } });
+  check("WITH NO CAMPUS LOCATED, the geofence refuses rather than waving everyone through",
+    unlocated.status === 403 && unlocated.data?.reason === "campus_not_located",
+    `HTTP ${unlocated.status} ${unlocated.data?.reason}`);
+
+  const campus = await db.campus.findFirst({ where: { active: true }, select: { id: true, name: true } });
+  check("the college has a campus to pin", !!campus, JSON.stringify(campus));
+
+  const halfPinned = await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: adminToken, body: { latitude: 51.5074 } });
+  check("HALF A COORDINATE IS REFUSED — it is not a location", halfPinned.status === 400, `HTTP ${halfPinned.status} ${halfPinned.data?.error}`);
+  const nowhere = await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: adminToken, body: { latitude: 0, longitude: 0 } });
+  check("...and so is (0, 0), which is an empty form rather than the Gulf of Guinea",
+    nowhere.status === 400, `HTTP ${nowhere.status} ${nowhere.data?.error}`);
+  const offEarth = await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: adminToken, body: { latitude: 91, longitude: 0 } });
+  check("...and a latitude that is not on the earth", offEarth.status === 400, `HTTP ${offEarth.status}`);
+
+  const pinned = await call(`/timetabling/campuses/${campus.id}`, {
+    method: "PUT", token: adminToken, body: { latitude: HERE.latitude, longitude: HERE.longitude },
+  });
+  check("a campus is pinned, and records who did it and when",
+    pinned.data?.latitude === HERE.latitude && !!pinned.data?.locatedAt && !!pinned.data?.locatedBy,
+    JSON.stringify({ lat: pinned.data?.latitude, by: pinned.data?.locatedBy }));
+
+  const away = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id, position: ACROSS_TOWN } });
+  check("A CHECK-IN FROM ACROSS TOWN IS REFUSED", away.status === 403 && away.data?.reason === "off_campus",
+    `HTTP ${away.status} ${away.data?.reason}`);
+  check("...and nothing was written", (await db.attendanceMark.count({ where: { sessionId: dNow.id } })) === 0);
+
+  // NO POSITION AT ALL IS A REFUSAL, not a pass. Otherwise the geofence is optional at the
+  // student's discretion: decline the permission and check in from anywhere.
+  const noPos = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id } });
+  check("REFUSING TO SHARE LOCATION DOES NOT BYPASS THE GEOFENCE",
+    noPos.status === 403 && noPos.data?.reason === "position_missing", `HTTP ${noPos.status} ${noPos.data?.reason}`);
+  check("...and the student is told what to do about it", /location/i.test(noPos.data?.error || ""), noPos.data?.error);
+
+  // A FIX TOO VAGUE TO MEAN ANYTHING IS REFUSED, even standing exactly on the campus. A
+  // phone with no satellite lock reports its cell tower give or take kilometres — a circle
+  // that contains the college from most of the city.
+  const vague = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id, position: { ...HERE, accuracy: 3000 } } });
+  check("A FIX THAT IS ONLY GOOD TO 3km IS REFUSED, even from the campus itself",
+    vague.status === 403 && vague.data?.reason === "accuracy_too_poor", `HTTP ${vague.status} ${vague.data?.reason}`);
+  const noAcc = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id, position: { latitude: HERE.latitude, longitude: HERE.longitude } } });
+  check("...and so is a position sent with no accuracy figure at all",
+    noAcc.status === 403 && noAcc.data?.reason === "accuracy_unknown", `HTTP ${noAcc.status} ${noAcc.data?.reason}`);
+
+  const arrived = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id, position: NEXT_DOOR } });
+  check("AND A STUDENT STANDING AT THE COLLEGE IS MARKED PRESENT", arrived.status === 201, `HTTP ${arrived.status} ${arrived.data?.reason || ""}`);
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  // The app is TOLD to ask for a position, rather than guessing. Prompting every student
+  // for their location whether or not it is used is a permission request with no honest
+  // answer to "why does this app want that" — which is what both app stores ask at review.
+  const ctxOn = await call("/student/me/tap-context", { token: fToken });
+  check("the app is told this college needs a location", ctxOn.data?.needsLocation === true, `needsLocation=${ctxOn.data?.needsLocation}`);
+
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { geofenceCheck: false } });
+  const ctxOff = await call("/student/me/tap-context", { token: fToken });
+  check("...and told NOT to ask when the college has the geofence off", ctxOff.data?.needsLocation === false, `needsLocation=${ctxOff.data?.needsLocation}`);
+  const noFence = await call("/student/me/declare-check-in", { method: "POST", token: fToken, body: { sessionId: dNow.id } });
+  check("WITH THE GEOFENCE OFF, no position is needed and check-in works as before",
+    noFence.status === 201, `HTTP ${noFence.status} ${noFence.data?.reason || ""}`);
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  // UNPINNING HAS TO WORK. A coordinate recorded by somebody standing in the wrong building
+  // refuses that building's students until it is cleared, and "delete the campus" is not a
+  // remedy — the rooms hang off it.
+  const cleared = await call(`/timetabling/campuses/${campus.id}`, { method: "PUT", token: adminToken, body: { latitude: null, longitude: null } });
+  check("a campus can be unpinned when it was pinned in the wrong place",
+    cleared.data?.latitude === null && cleared.data?.locatedAt === null, JSON.stringify(cleared.data));
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
 
   /* ====================================================================== */
