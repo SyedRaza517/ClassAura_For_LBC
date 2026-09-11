@@ -133,6 +133,14 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
   if (first.reason === "network_not_configured") {
     console.error("[presence] the college network check is ON but no usable IP range is saved — every check-in is being refused");
   }
+  // THE SAME ALARM FOR THE GEOFENCE, which had none. The comment above states the
+  // principle — a misconfiguration is invisible from the outside, so it is said out loud
+  // where an operator will meet it — and then applied it to one of the two checks. The
+  // geofence reaches the identical state by switching on with no campus pinned, or by
+  // somebody clearing the coordinates of the only one that was.
+  if (first.reason === "campus_not_located") {
+    console.error("[presence] the campus geofence is ON but no active campus has coordinates — every check-in is being refused");
+  }
 
   // 403, not 409. The class may well be running and the student may well be on the
   // register; what is wrong is WHERE they are, and that distinction matters to the app,
@@ -232,7 +240,11 @@ async function candidateSessions(studentId, date) {
   const found = await prisma.hndSession.findMany({
     where,
     include: {
-      unit: { select: { code: true, name: true, tutorStaff: { select: { name: true } }, tutor: true, term: { select: { name: true, start: true, end: true } } } },
+      // moodleSectionId/moodleCourseId are selected for rosterForSession, which needs to
+      // know whether this module's enrolment list was enumerated. Selected HERE rather
+      // than left to rosterForSession's own lookup because this is the one caller that
+      // asks per session across a whole day, and that would be a query per class.
+      unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true, tutorStaff: { select: { name: true } }, tutor: true, term: { select: { name: true, start: true, end: true } } } },
       // WHERE and WHO, which the check-in card has to show. A student deciding whether
       // this is the class in front of them needs the room; a student with two classes at
       // once needs the lecturer to tell them apart. Both come from the TIMETABLE event
@@ -425,7 +437,15 @@ router.post("/me/tap-check-in", async (req, res) => {
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
-  if (await refusedForPlace(req, res, settings, "nfc")) return;
+  // THE SESSION ID, WHEN THE STUDENT HAS NAMED ONE. This passed nothing, so the geofence
+  // fell back to "near any of the college's campuses" and every NFC place-refusal was
+  // logged against no register at all — the one capture method whose refusals could not be
+  // attributed to a class. It was already validated three lines above.
+  //
+  // Still null on the first tap of an ambiguous pair, which is correct rather than a gap:
+  // at that moment nobody knows which of two overlapping classes the student means, and
+  // the college-wide campus list is the honest answer to "is this phone at the college".
+  if (await refusedForPlace(req, res, settings, "nfc", isString(chosenId) ? chosenId.trim() || null : null)) return;
 
   // Every tag in this database belongs to this college, because every row does — so a
   // sticker that is not found is one nobody here registered. This used to be scoped by
@@ -606,7 +626,8 @@ router.post("/me/qr-check-in", async (req, res) => {
 
   const session = await prisma.hndSession.findUnique({
     where: { id: sessionId },
-    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+    // moodleSectionId/moodleCourseId for rosterForSession below — see roster.js.
+    include: { unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
   if (!session) {
     // A valid signature for a session that no longer exists: deleted mid-lecture.
@@ -747,7 +768,8 @@ router.post("/me/declare-check-in", async (req, res) => {
 
   const session = await prisma.hndSession.findUnique({
     where: { id: sessionId },
-    include: { unit: { select: { code: true, name: true, term: { select: { name: true, start: true, end: true } } } } },
+    // moodleSectionId/moodleCourseId for rosterForSession below — see roster.js.
+    include: { unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true, term: { select: { name: true, start: true, end: true } } } } },
   });
   if (!session) {
     await logTap(req, { studentId: req.user.id, sessionId, method: "declared", outcome: "session_unknown" });

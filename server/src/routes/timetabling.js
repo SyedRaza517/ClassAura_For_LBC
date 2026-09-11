@@ -191,6 +191,17 @@ function parseCampus(body, partial) {
     if (body.latitude === null && body.longitude === null) {
       data.latitude = null; data.longitude = null; data.locatedAt = null; data.locatedBy = null;
     } else {
+      // NUMBERS, NOT THINGS Number() WILL COERCE INTO ONE. `Number("")` is 0, and so are
+      // `Number(false)`, `Number([])` and `Number(" ")` — all finite, all in range. Sending
+      // `{ latitude: 51.5, longitude: "" }` therefore pinned a campus at 51.5, 0: about
+      // 90km off the English coast, refusing everybody standing on the real one. The
+      // (0, 0) guard below could not catch it because the latitude was not zero.
+      //
+      // So the invariant the comment above claims — "both together or neither" — was not
+      // actually enforced, and the hole was reachable by any client that is not the form.
+      if (typeof body.latitude !== "number" || typeof body.longitude !== "number") {
+        return { error: "A campus location needs both a latitude and a longitude, as numbers" };
+      }
       const lat = Number(body.latitude);
       const lon = Number(body.longitude);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return { error: "A campus location needs both a latitude and a longitude" };

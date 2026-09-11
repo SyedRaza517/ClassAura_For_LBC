@@ -267,7 +267,7 @@ function TapSettings({ settings, onSaved }) {
         {num("lateAfterMins", "Late after (minutes)", "A check-in this long after the start records Late instead of Present.")}
         {num("earlyGraceMins", "Early grace (minutes)", "How long before a lecture starts check-ins are accepted. Zero means not before it starts.")}
         {num("armSeconds", "Button stays live (seconds)", "How long after touching a sticker the student has to press the button.", 600)}
-        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each on-screen code lasts. The shortest allowed is ten seconds, so phones have time to scan.", 300)}
+        {num("qrRotateSeconds", "Code changes every (seconds)", "How long each code is shown. It keeps working for a few seconds after it changes, so a slow phone isn't punished. Shortest allowed is ten seconds.", 300)}
       </div>
 
       <label className="mt-4 flex items-start gap-3">
@@ -297,11 +297,24 @@ function NetworkPanel({ draft, saving, save, rejected }) {
   const [text, setText] = useState((draft.allowedNetworks || []).join("\n"));
   const [seen, setSeen] = useState(null);   // what the SERVER says our address is
   useEffect(() => { setText((draft.allowedNetworks || []).join("\n")); }, [draft.allowedNetworks]);
-  useEffect(() => { api.myAddress().then(setSeen).catch(() => setSeen(null)); }, []);
+  useEffect(() => { api.myAddress().then(setSeen).catch(() => setSeen(null)); }, [draft.allowedNetworks]);
 
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   const dirty = JSON.stringify(lines) !== JSON.stringify(draft.allowedNetworks || []);
-  const already = seen?.ip && (draft.allowedNetworks || []).some((n) => n === seen.ip || n.startsWith(seen.ip.split(".").slice(0, 3).join(".") + "."));
+  // ANSWERED BY THE SERVER, not re-derived here.
+  //
+  // This compared the first three octets as text, which said "Already covered" to an
+  // administrator sitting at 203.0.113.9 when the saved line was the bare address
+  // 203.0.113.200 — a /32 that covers nothing but itself. They would stop, every student
+  // would be refused, and the one diagnostic on this page would say it was fine: the exact
+  // failure this panel exists to prevent.
+  //
+  // Reimplementing CIDR matching in the browser would have fixed the symptom and created
+  // the real problem — two implementations of "is this address on the list", which is how
+  // a screen and a server come to disagree about the same student. The server already owns
+  // that arithmetic and now reports its own answer. It reflects what is SAVED, which is
+  // also the only thing that can refuse anybody.
+  const already = seen?.covered === true;
 
   return (
     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
@@ -354,7 +367,12 @@ function NetworkPanel({ draft, saving, save, rejected }) {
                     className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50">
                     Add this address
                   </button>
-                  <span className="text-slate-400">If you're on the college WiFi now, this is the one you want.</span>
+                  <span className="text-slate-400">
+                    If you're on the college WiFi now, this is usually the one you want — but check with
+                    IT that it's the college's own address. If your traffic goes through a filtering or
+                    security service, this is that service's address, and allowlisting it would let in
+                    everyone else who uses it too.
+                  </span>
                 </>
               )}
             </div>
@@ -372,7 +390,8 @@ function NetworkPanel({ draft, saving, save, rejected }) {
 
           {rejected.length > 0 && (
             <div className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] leading-snug text-rose-800 ring-1 ring-rose-200">
-              These lines weren't saved because they aren't valid addresses or ranges:{" "}
+              These lines weren't saved — they're either not valid addresses, or wide enough to
+              let in networks that aren't yours (anything bigger than a /16):{" "}
               <span className="font-mono">{rejected.join(", ")}</span>. Everything else was saved.
             </div>
           )}
@@ -465,9 +484,9 @@ function GeofencePanel({ draft, saving, save }) {
             Check-in must happen at a campus — {draft.geofenceCheck ? "ON" : "OFF"}
           </span>
           <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
-            The student's phone tells us where it is, and we check the distance. Applies to all
-            three methods. A student who won't share their location is refused, so this asks
-            something of every student on every check-in.
+            The student's phone <em>tells us</em> where it is, and we check the distance. Applies
+            to all three methods. A student who won't share their location is refused, so this
+            asks something of every student on every check-in.
           </span>
         </span>
       </label>
@@ -479,9 +498,11 @@ function GeofencePanel({ draft, saving, save }) {
           conversation later. */}
       <p className="mt-2.5 pl-7 text-[11px] leading-snug text-slate-500">
         <strong className="font-semibold text-slate-600">What this can and can't show:</strong>{" "}
-        it proves a phone was near the campus, never which room it was in — phone location is
-        accurate to tens of metres indoors, and worse in a concrete building. Use the stickers
-        for the room.
+        it records that a phone <em>reported</em> being near the campus. It can't show which room —
+        phone location is accurate to tens of metres indoors, and worse in a concrete building —
+        and it can't prove the reading was honest, because the position is sent by the phone.
+        It stops a student checking in from home by accident or out of habit; it won't stop
+        someone who sets out to defeat it. Use the stickers for the room, and for proof.
       </p>
 
       {draft.geofenceCheck && (

@@ -76,10 +76,34 @@ const crypto = require("crypto");
 // photographed screen still works.
 const GRACE_SECONDS = 7;
 
-// How many windows are CONSIDERED at all. Two: the current one, and the one before it
-// (which only verifies inside the grace above). Kept as its own constant because the
-// diagnostic loop below starts where this one stops.
-const ACCEPTED_WINDOWS = 2;
+/**
+ * The grace actually applied at a given rotation period.
+ *
+ * SCALED, because a flat seven seconds is a different promise at each end of the range a
+ * college can configure. The real code lifetimes, measured:
+ *
+ *     rotation   flat 7s grace   extra, as a share of the window
+ *        10s        17s life              70%
+ *        20s        27s life              35%
+ *       300s       307s life               2%
+ *
+ * At the ten-second floor, seven seconds is most of another window — which is most of what
+ * the "accept the whole following window" rule was removed for. A college setting the
+ * shortest rotation available is asking for the tightest exposure it can get, and was
+ * being handed nearly double the number on the screen.
+ *
+ * A third of the period caps it, so the grace stays a small share of the window at every
+ * setting. At the floor that still leaves three seconds — enough for a phone that has
+ * already resolved the square to complete one round trip, which is the only thing the
+ * grace exists to cover. Never below one second: a zero grace is the refusal-by-latency
+ * this whole mechanism was added to prevent.
+ */
+function graceFor(rotateSeconds) {
+  const period = Number.isFinite(Number(rotateSeconds)) && Number(rotateSeconds) >= 1
+    ? Math.floor(Number(rotateSeconds))
+    : 1;
+  return Math.max(1, Math.min(GRACE_SECONDS, Math.floor(period / 3)));
+}
 
 // How far back we keep CLAIMING TO RECOGNISE a code, purely to tell a student the truth
 // about why it failed.
@@ -193,11 +217,11 @@ function verifyCode({ secret, sessionId, code, nowSeconds, rotateSeconds }) {
     : 1;
   const t = Number.isFinite(Number(nowSeconds)) ? Math.floor(Number(nowSeconds)) : 0;
   const intoWindow = t - current * period;
-  if (intoWindow < GRACE_SECONDS) {
+  if (intoWindow < graceFor(rotateSeconds)) {
     if (sameCode(code, deriveCode({ secret, sessionId, windowIndex: current - 1 }))) return { valid: true };
   }
 
-  // FROM ONE, NOT FROM ACCEPTED_WINDOWS. This started at 2 while the previous window was
+  // FROM ONE, NOT FROM TWO. This started at 2 while the previous window was
   // accepted outright, which was correct then and became wrong the moment the grace was
   // bounded: the previous window's code is now REFUSED once the grace passes, and it is
   // the commonest refusal there is — a student a few seconds late. Starting the diagnosis
@@ -220,8 +244,8 @@ module.exports = {
   windowIndexFor,
   deriveCode,
   verifyCode,
-  ACCEPTED_WINDOWS,
   GRACE_SECONDS,
+  graceFor,
   DIAGNOSED_WINDOWS,
   CODE_LENGTH,
 };

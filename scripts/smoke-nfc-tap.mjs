@@ -24,6 +24,18 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const server = join(here, "..", "server");
 const require = createRequire(pathToFileURL(join(server, "package.json")));
+// Enough to mint a VALID code. Without this the "a different capture method cannot
+// overwrite an existing mark" assertion sent the string "anything", which dies at the
+// signature check long before the already-marked rule is consulted — so it passed
+// identically with that rule deleted. Same bridge smoke-qr-checkin.mjs uses.
+const { deriveCode, windowIndexFor } = require(join(server, "src", "attendanceQr.js"));
+const { qrSigningKey } = require(join(server, "src", "secrets.js"));
+const { DEFAULTS: TAP_DEFAULTS } = require(join(server, "src", "attendanceTapSettings.js"));
+const validQrCode = (sessionId) => deriveCode({
+  secret: qrSigningKey(),
+  sessionId,
+  windowIndex: windowIndexFor(Math.floor(Date.now() / 1000), TAP_DEFAULTS.qrRotateSeconds),
+});
 
 const BASE = process.env.API_URL || "http://localhost:4000/api";
 if (!process.env.DATABASE_URL) {
@@ -1400,6 +1412,10 @@ try {
   const COLLEGE_NET = "203.0.113.0/24";
   const ON_CAMPUS = "203.0.113.55";
   const AT_HOME = "198.51.100.9";
+  // 192.0.2.0/24 is TEST-NET-1 and is deliberately NOT the range AT_HOME sits in. A second
+  // allowlisted range that happens to contain the "student at home" address turns every
+  // refusal assertion below green by accepting the check-in — which is how this line was
+  // first written, and the suite caught it immediately.
 
   const addr = await call("/tags/settings/my-address", { token: adminToken, from: ON_CAMPUS });
   check("an administrator is shown the address we actually see them at",
@@ -1410,7 +1426,7 @@ try {
 
   const netSaved = await call("/tags/settings", {
     method: "PUT", token: adminToken,
-    body: { networkCheck: true, allowedNetworks: [COLLEGE_NET, "not-a-network", "", "10.0.0.0/8"] },
+    body: { networkCheck: true, allowedNetworks: [COLLEGE_NET, "not-a-network", "", "192.0.2.0/24", "0.0.0.0/0"] },
   });
   check("a college saves its ranges and the good ones are kept",
     netSaved.data?.networkCheck === true && netSaved.data?.allowedNetworks?.includes(COLLEGE_NET),
@@ -1419,8 +1435,16 @@ try {
   // list of four, watches four lines of text go in, and finds out in a lecture theatre
   // that only three of them work.
   check("...and the line that was not a network is reported back by name",
-    JSON.stringify(netSaved.data?.rejectedNetworks) === JSON.stringify(["not-a-network"]),
+    (netSaved.data?.rejectedNetworks || []).includes("not-a-network"),
     JSON.stringify(netSaved.data?.rejectedNetworks));
+  // A RANGE THAT ADMITS THE INTERNET IS REFUSED AND REPORTED, not saved. It parsed, was
+  // kept, and came back as a good line — after which the network check passed for every
+  // address on earth while the screen said it was enforced. That is the state the
+  // empty-list rule exists to prevent, reached by a different door.
+  check("...and so is a range wide enough to let in everybody",
+    (netSaved.data?.rejectedNetworks || []).includes("0.0.0.0/0")
+      && !(netSaved.data?.allowedNetworks || []).includes("0.0.0.0/0"),
+    JSON.stringify(netSaved.data?.allowedNetworks));
   check("...while a blank line is not reported as a mistake",
     !(netSaved.data?.rejectedNetworks || []).includes(""));
 
@@ -1442,7 +1466,9 @@ try {
     offNetDeclare.status === 403 && offNetDeclare.data?.reason === "off_network",
     `HTTP ${offNetDeclare.status} ${offNetDeclare.data?.reason}`);
   check("...and nothing was written for any of the three",
-    (await db.attendanceMark.count({ where: { sessionId: dNow.id, takenBy: { contains: "Self check-in" } } })) === 0);
+    (await db.attendanceMark.count({ where: { sessionId: dNow.id, takenBy: { contains: "Self check-in" } } })) === 0
+      && offNet.data?.reason === "off_network" && offNetQr.data?.reason === "off_network" && offNetDeclare.data?.reason === "off_network",
+    "an empty count also passes if all three failed for unrelated reasons, so the reasons are pinned too");
 
   // THE REFUSAL IS LOGGED AS A REFUSAL, not lost. A college switching this on wants to see
   // how many students it is turning away and from where, on the morning it starts.
@@ -1457,8 +1483,13 @@ try {
   // on its own merits. This is the assertion that stops the check being a blanket refusal
   // that would pass every test above while breaking the feature entirely.
   const onNetQr = await call("/student/me/qr-check-in", { method: "POST", token: eToken, from: ON_CAMPUS, body: { sessionId: dNow.id, code: "wrong-code" } });
+  // PINNED TO THE EXPECTED REFUSAL, not merely "not off_network". As written this passed on
+  // a 429 from the rate limiter, on a 403 qr_off, and on a 500 with no body at all — so the
+  // one assertion guarding against the network check becoming a blanket refusal would have
+  // survived the network check refusing everything.
   check("ON the college network, the request is judged on its own merits again",
-    onNetQr.data?.reason !== "off_network", `HTTP ${onNetQr.status} ${onNetQr.data?.reason}`);
+    onNetQr.status === 404 && onNetQr.data?.reason === "qr_bad_code",
+    `HTTP ${onNetQr.status} ${onNetQr.data?.reason}`);
 
   const onNetDeclare = await call("/student/me/declare-check-in", { method: "POST", token: eToken, from: ON_CAMPUS, body: { sessionId: dNow.id } });
   check("AND A STUDENT ON THE COLLEGE NETWORK IS MARKED PRESENT", onNetDeclare.status === 201, `HTTP ${onNetDeclare.status} ${onNetDeclare.data?.reason || ""}`);
@@ -1703,9 +1734,14 @@ try {
   //    switching capture method, must not rewrite a mark that already stands.
   const ovAgain = await call("/student/me/declare-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id }, device: ownPhone });
   check("...and cannot overwrite it by pressing again", ovAgain.data?.alreadyMarked === true, `HTTP ${ovAgain.status}`);
-  const ovViaQr = await call("/student/me/qr-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id, code: "anything" }, device: ownPhone });
-  check("...nor by arriving through a different capture method",
-    ovViaQr.status !== 201, `HTTP ${ovViaQr.status} ${ovViaQr.data?.reason}`);
+  // A VALID code, deliberately. This sent "anything", which is refused at the signature
+  // check — several guards before the already-marked rule is even reached — so the
+  // assertion passed for the wrong reason and would have passed with that rule deleted
+  // outright. It also passed on a 429 and on qr_off. A real code reaches the rule.
+  const ovViaQr = await call("/student/me/qr-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id, code: validQrCode(dNow.id) }, device: ownPhone });
+  check("...nor by arriving through a different capture method, with a code that IS valid",
+    ovViaQr.status === 200 && ovViaQr.data?.alreadyMarked === true,
+    `HTTP ${ovViaQr.status} ${ovViaQr.data?.reason || ""} alreadyMarked=${ovViaQr.data?.alreadyMarked}`);
   const stillTheirs = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: G_ID }, select: { takenBy: true, status: true } });
   check("...and the mark is untouched, still stamped as theirs",
     stillTheirs?.takenBy === "Self check-in (declared)" && stillTheirs?.status === "P", JSON.stringify(stillTheirs));

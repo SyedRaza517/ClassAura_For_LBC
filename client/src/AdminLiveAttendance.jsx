@@ -817,9 +817,9 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                             // the two screens describe one observation identically.
                             <span
                               className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800"
-                              title={`Checked in from the same phone as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} here. Worth a look — there are innocent reasons, like a borrowed phone.`}
+                              title={`Checked in from the same device as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} here. Worth a look — a shared computer in the library or a lab does this too, and so does a borrowed phone.`}
                             >
-                              SAME PHONE
+                              SAME DEVICE AS {r.sharedDeviceWith}
                             </span>
                           )}
                           {!r.enrolled && (

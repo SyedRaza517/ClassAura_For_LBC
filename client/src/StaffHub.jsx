@@ -7006,6 +7006,21 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
           captured: CHECK_IN_METHODS[r.checkInMethod]?.csv
             || r.takenBy
             || (st ? "Not recorded" : "Not marked"),
+          // THE SHARED-DEVICE FLAG BELONGS IN THE EXPORT, and was missing from it.
+          //
+          // This file is the document somebody attaches to an email when a mark is
+          // challenged — the comment above says so, and then the one fact most likely to be
+          // the REASON it is being challenged was visible on two screens and absent here.
+          // Somebody defending or disputing a register would have been working from an
+          // export that quietly dropped it.
+          //
+          // A sentence rather than a number, because a spreadsheet cell has no tooltip to
+          // carry the caveat, and the caveat is the important half: this is a thing to look
+          // at, not a finding. Empty when there is nothing to say — a "0" in every other row
+          // would read as a measurement rather than an absence.
+          sharedDevice: r.sharedDeviceWith
+            ? `Same device as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} here — worth checking; a shared library or lab computer does this too`
+            : "",
           remark: draft[r.student.id]?.remark || "",
         };
       }),
@@ -7144,12 +7159,19 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
                               // This puts the pattern in front of the person who knows the
                               // room; it does not decide anything, and the wording must not
                               // either. "Same phone as" is what we observed; "marked someone
-                              // else in" is a conclusion only a human can reach.
+                              // else in" is a conclusion only a human can reach. And it says
+                              // same DEVICE, not same PHONE. The id is one localStorage key on one
+                              // origin, so two students checking in from the same library PC,
+                              // lab machine or classroom desktop produce an identical one — on
+                              // every register they share, all term. The rule is right; "phone"
+                              // was the wrong word for the commonest institutional case, and a
+                              // lecturer reads it as proxy attendance rather than a shared
+                              // computer.
                               <span
                                 className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800"
-                                title={`Checked in from the same phone as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} on this register. Worth a look — there are innocent reasons, like a borrowed phone.`}
+                                title={`Checked in from the same device as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} on this register. Worth a look — a shared computer in the library or a lab does this too, and so does a borrowed phone.`}
                               >
-                                SAME PHONE AS {r.sharedDeviceWith} OTHER{r.sharedDeviceWith === 1 ? "" : "S"}
+                                SAME DEVICE AS {r.sharedDeviceWith} OTHER{r.sharedDeviceWith === 1 ? "" : "S"}
                               </span>
                             )}
                             {!r.enrolled && <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NO LONGER ENROLLED</span>}

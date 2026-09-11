@@ -41,7 +41,7 @@ const prisma = require("../db");
 // for everybody, in a spec whose whole promise is that nothing changes.
 const { sSemester, sCourse, sCohort, sTerm, sUnit, sStudent, sSession, sMark } = require("../serializers");
 const { rosterForSession, unitStudentCounts, unitTeachingContext } = require("../timetabling/registers");
-const { deriveRoster } = require("../timetabling/roster");
+const { deriveRoster, enrolmentIsAuthoritativeFor } = require("../timetabling/roster");
 const { requireAuth, requireAnyPage, hasPage, isStudent } = require("../auth");
 const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
@@ -1661,7 +1661,7 @@ router.get("/sessions/:id/register", requireAuth, async (req, res) => {
         // A NUMBER RATHER THAN A LIST, deliberately. The names are already on the screen:
         // a lecturer looking at a flagged row is looking at a register of thirty students
         // and can see which other row carries the same flag. Shipping the names would put
-        // "checked in on the same phone as Jane Smith" into a payload about Tom Brown,
+        // "checked in on the same device as Jane Smith" into a payload about Tom Brown,
         // which is a statement about Jane in Tom's record, reachable by anybody who can
         // read Tom's row.
         //
@@ -1831,6 +1831,28 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
   // column answers — who says this status is right — untouched.
   const statusMoved = (r) => (priorMarks.get(r.studentId)?.status ?? null) !== r.status;
 
+  // AND THE SAME RULE AGAIN FOR A MARK WE DID NOT KNOW ABOUT — the race.
+  //
+  // `priorMarks` is read before the writes. A student who checks themselves in during that
+  // gap has no entry in it, so `statusMoved` compares null against their status, says
+  // "changed", and the update stamps the LECTURER's name over "Self check-in (QR)". The
+  // row is then internally contradictory: attributed to a member of staff, carrying a
+  // student's arrival time and the handset it came from.
+  //
+  // Worse, the audit below reads the same stale map, records `before: null`, and so claims
+  // the lecturer CREATED a mark they did not — and `overrodeSelf` counts zero, because the
+  // stale map has no takenBy to recognise. In the race, the trail added to record overrides
+  // says the opposite of what happened.
+  //
+  // So takenBy moves only when we actually SAW the prior mark. Absent from the map means
+  // one of two things and both want the same handling: either there is no row, in which
+  // case the `create` branch below sets takenBy anyway; or a row appeared underneath us, in
+  // which case we know nothing about its provenance and must not overwrite it. Narrowing
+  // the window further — an interactive transaction — would not close it either, because
+  // Postgres reads at READ COMMITTED; declining to write the field we cannot reason about
+  // is the fix that does not depend on timing at all.
+  const knownPrior = (r) => priorMarks.has(r.studentId);
+
   await prisma.$transaction(rows.map((r) => (
     r.status === null
       ? prisma.attendanceMark.deleteMany({ where: { sessionId: session.id, studentId: r.studentId } })
@@ -1840,7 +1862,7 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
           update: {
             status: r.status,
             ...(r.hasRemark ? { remark: r.remark } : {}),
-            ...(statusMoved(r) ? { takenBy } : {}),
+            ...(knownPrior(r) && statusMoved(r) ? { takenBy } : {}),
             takenAt: new Date(),
           },
         })
@@ -1854,7 +1876,11 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
   // bulk import writing a several-hundred-key blob.
   const before = {}, after = {};
   for (const r of rows) {
-    const was = priorMarks.get(r.studentId)?.status ?? null;
+    // `null` here means "there was no mark", which is a CLAIM about the register's prior
+    // state. In the race above there was a mark and we simply had not read it, so the
+    // entry would say the lecturer created something that already existed. Where we did
+    // not see the row, the honest word is that we do not know.
+    const was = priorMarks.has(r.studentId) ? priorMarks.get(r.studentId).status : "(not read)";
     if (was === r.status) continue;
     before[r.studentId] = was;
     after[r.studentId] = r.status;
@@ -1996,6 +2022,10 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
       unit: {
         select: {
           id: true, code: true, name: true,
+          // Whether this module's enrolment list was ENUMERATED by the Moodle sync or
+          // assembled one student at a time. deriveRoster needs it below; sUnit is an
+          // allowlist, so neither id reaches the browser. See roster.js.
+          moodleSectionId: true, moodleCourseId: true,
           term: { select: { start: true, end: true } },
           // Only a name and only for display. NOT the staff email — GET /staff already
           // denies colleagues' addresses to page-scoped admins, and a session list must
@@ -2091,6 +2121,11 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
             cohortStudentIds: studentsByCohort.get(s.cohortId) || [],
             enrolledStudentIds: enrolledIds,
             unitHasEnrolments: enrolledIds.length > 0,
+            // The fourth answer deriveRoster needs, and the reason this panel does not
+            // report "1 to mark" for a class of twenty-five the moment somebody ticks
+            // that module on one student's record. Read off the unit already loaded
+            // above, so it costs no query.
+            enrolmentIsAuthoritative: enrolmentIsAuthoritativeFor(s.unit),
           }).studentIds
         : enrolledIds,
     );
@@ -2207,7 +2242,8 @@ router.get("/my-sessions/today", requireAuth, requireStaffAccount, async (req, r
 router.get("/sessions/:id/students/:studentId/history", requireAuth, lecturerGate(["live-attendance", "registers"]), async (req, res) => {
   const session = await prisma.hndSession.findUnique({
     where: { id: String(req.params.id || "") },
-    select: { id: true, unitId: true, cohortId: true, unit: { select: { code: true, name: true } } },
+    // moodleSectionId/moodleCourseId for rosterForSession — see roster.js.
+    select: { id: true, unitId: true, cohortId: true, unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true } } },
   });
   if (!session) return res.status(404).json({ error: "That class could not be found." });
 
@@ -2318,7 +2354,9 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   const session = await prisma.hndSession.findUnique({
     where: { id: req.params.id },
     include: {
-      unit: { select: { id: true, code: true, name: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } },
+      // moodleSectionId/moodleCourseId for rosterForSession — see roster.js. sUnit is an
+      // allowlist, so neither reaches the browser.
+      unit: { select: { id: true, code: true, name: true, moodleSectionId: true, moodleCourseId: true, tutorStaffId: true, term: { select: { name: true, start: true, end: true } } } },
       // Ids only, and only so `mayClose` below can ask the same question `lecturerGate`
       // already asked at the door. Without it the lecturer the TIMETABLE names walks
       // through the gate and is then told `canClose: false` about a route that would
@@ -2445,7 +2483,7 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
       // A NUMBER RATHER THAN A LIST, deliberately. The names are already on the screen:
       // a lecturer looking at a flagged row is looking at a register of thirty students
       // and can see which other row carries the same flag. Shipping the names would put
-      // "checked in on the same phone as Jane Smith" into a payload about Tom Brown,
+      // "checked in on the same device as Jane Smith" into a payload about Tom Brown,
       // which is a statement about Jane in Tom's record, reachable by anybody who can
       // read Tom's row.
       //
@@ -2521,7 +2559,7 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
 });
 
 // In-process, module-level, and therefore correct for ONE Node process — a clustered
-// deployment needs Redis. The screen asks for a new code once per rotation (30s by
+// deployment needs Redis. The screen asks for a new code once per rotation (20s by
 // default), so thirty a minute is well clear of every legitimate cadence and still
 // stops a broken client timer from turning one projector into a request loop.
 const qrMintHits = new Map(); // staffId -> number[] of timestamps

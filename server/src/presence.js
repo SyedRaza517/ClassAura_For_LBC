@@ -50,6 +50,9 @@ const MAX_ACCURACY_METRES = 250;
 const MIN_RADIUS_METRES = 50;
 const MAX_RADIUS_METRES = 5000;
 
+// The widest prefix a college may allowlist. See parseCidr for why this exists at all.
+const MIN_PREFIX_BITS = 16;
+
 const EARTH_RADIUS_METRES = 6371008.8;
 
 /**
@@ -129,6 +132,22 @@ function parseCidr(entry) {
     if (!/^\d{1,2}$/.test(bitsText)) return null;
     bits = Number(bitsText);
     if (bits > 32) return null;
+    // TOO WIDE TO BE A COLLEGE'S OWN NETWORK, refused rather than saved.
+    //
+    // `0.0.0.0/0` parsed, saved, survived the merge and was reported back as a good line —
+    // after which the network check passed for the entire internet while the settings
+    // screen said it was enforced. That is precisely the state the empty-list rule exists
+    // to prevent, reached by a different door and with no refusal on the way.
+    //
+    // An administrator told to "ask IT for the addresses" can plausibly be handed a
+    // supernet, or type a zero too few. A college's public egress is a handful of
+    // addresses — a /29 or a /24, occasionally a /20. Sixteen bits still admits 65,536 of
+    // them, which is far past any real answer and leaves room for an institution that
+    // genuinely owns a large block, while making the catastrophic entries impossible.
+    //
+    // Refused, not clamped: silently narrowing somebody's range would be a different lie.
+    // The route reports it back by name so they can see which line did not take.
+    if (bits < MIN_PREFIX_BITS) return null;
   }
 
   // >>> 0 keeps it unsigned: JavaScript's bitwise operators work on SIGNED 32-bit values,
@@ -311,7 +330,7 @@ function checkPresence({ ip, position, campuses, settings } = {}) {
 }
 
 module.exports = {
-  MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES,
+  MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES, MIN_PREFIX_BITS,
   normaliseIp, parseCidr, parseNetworks, ipInNetworks, describeAddress,
   distanceMetres, radiusFor, checkPresence,
 };

@@ -12,7 +12,7 @@ const audit = require("../audit");
 const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
 const tapConfig = require("../attendanceTapConfig");
-const { describeAddress, parseCidr } = require("../presence");
+const { describeAddress, parseCidr, parseNetworks, ipInNetworks } = require("../presence");
 
 router.use(requireAuth, requirePage("attendance-settings"));
 
@@ -104,8 +104,17 @@ router.put("/settings", async (req, res) => {
 //
 // Declared BEFORE GET /:id/log and PATCH /:id, like GET /settings above, or "settings"
 // is parsed as a tag id. Express matches in declaration order.
-router.get("/settings/my-address", (req, res) => {
-  res.json(describeAddress(req.ip));
+router.get("/settings/my-address", async (req, res) => {
+  const seen = describeAddress(req.ip);
+  const settings = await tapConfig.get();
+  // WHETHER THE SAVED LIST ALREADY COVERS THIS ADDRESS, answered here rather than in the
+  // browser. The screen used to compare the first three octets as text, which reported
+  // "already covered" for a saved /32 sharing a prefix — telling an administrator their
+  // network was configured while every student was refused. Reimplementing CIDR matching
+  // in the client would have fixed that and created a worse problem: two implementations
+  // of "is this address on the list", which is how a screen and a server come to disagree
+  // about the same student. This is the same ipInNetworks the check itself runs.
+  res.json({ ...seen, covered: seen.allowlistable ? ipInNetworks(seen.ip, parseNetworks(settings.allowedNetworks)) : false });
 });
 
 // GET /api/tags — every sticker this college has registered. Never the codes.

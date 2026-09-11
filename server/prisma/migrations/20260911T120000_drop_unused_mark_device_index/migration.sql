@@ -1,0 +1,15 @@
+-- Drop an index added yesterday for a query that does not exist.
+--
+-- 20260910T140000_mark_device created ("sessionId", "deviceId") with a comment describing
+-- "every mark on one register, grouped by handset". No such query was ever written: the
+-- grouping happens in JavaScript, in sharedDevice.js, over marks the register read has
+-- already loaded in full. The only lookup either caller performs is by "sessionId" alone,
+-- which the existing unique on ("sessionId", "studentId") already serves as a prefix.
+--
+-- So it was pure write cost — paid on every mark insert, every self check-in and every
+-- register save — in exchange for nothing, behind a comment asserting otherwise. The
+-- comment was the more expensive half: the next person to read it would believe a query
+-- exists and reason about performance from a premise that was never true.
+--
+-- The column stays. Only the index goes.
+DROP INDEX IF EXISTS "AttendanceMark_sessionId_deviceId_idx";

@@ -47,7 +47,7 @@ if (!process.env.JWT_SECRET) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-const { deriveCode, windowIndexFor, CODE_LENGTH, GRACE_SECONDS } = require(join(server, "src", "attendanceQr.js"));
+const { deriveCode, windowIndexFor, CODE_LENGTH, graceFor } = require(join(server, "src", "attendanceQr.js"));
 const { qrSigningKey } = require(join(server, "src", "secrets.js"));
 // The platform default, READ rather than repeated. This suite derives codes itself, so a
 // rotation period that disagrees with the server's produces a different window index and
@@ -498,7 +498,11 @@ try {
   // This is the assertion that fails if the tolerance is ever widened back to a whole
   // window, which is the change that would silently double how long a photographed screen
   // keeps working.
-  await sleep((GRACE_SECONDS + 1) * 1000);
+  // graceFor(ROTATE), not the raw ceiling. The grace is scaled to the rotation period —
+  // a third of it, capped — so at the 20-second default it is six seconds, not seven.
+  // Sleeping a hardcoded eight happened to clear it; deriving the real figure means this
+  // still waits past the boundary if either constant changes, instead of flaking.
+  await sleep((graceFor(ROTATE) + 2) * 1000);
   const tooLate = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: graceCode } });
   check("...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED",
     tooLate.status === 409 && tooLate.data?.reason === "qr_expired",
@@ -1095,8 +1099,16 @@ try {
   check("a scan's log row records the device the app identified itself as",
     withDevice.status === 200 && devRow?.deviceId === "dev-suite-abc", `HTTP ${withDevice.status} deviceId=${devRow?.deviceId}`);
   const junkDevice = "x".repeat(200) + "<script>";
-  await call("/student/me/qr-check-in", { method: "POST", token: qcToken, headers: { "X-Device-Id": junkDevice }, body: { sessionId: tutorSess.id, code: codeFor(tutorSess.id) } });
+  const junkCall = await call("/student/me/qr-check-in", { method: "POST", token: qcToken, headers: { "X-Device-Id": junkDevice }, body: { sessionId: tutorSess.id, code: codeFor(tutorSess.id) } });
   const junkRow = await db.tagTap.findFirst({ where: { studentId: QC_ID, method: "qr" }, orderBy: { at: "desc" } });
+  // PINNED TO THE JUNK REQUEST, not merely to the newest row for this student. If the call
+  // above ever stops producing a log row — one route change away — this picks up the
+  // PREVIOUS row, whose deviceId is the clean "dev-suite-abc" from four lines up, and that
+  // value satisfies all three predicates below. The assertion would then report
+  // sanitisation as working while testing a value that was never sanitised.
+  check("the junk-device scan was itself logged, so the row below is that request's",
+    junkCall.status === 200 && junkRow?.deviceId !== "dev-suite-abc",
+    `HTTP ${junkCall.status} stored=${String(junkRow?.deviceId).slice(0, 20)}`);
   check("a device id is cut to size and stripped of anything but id characters",
     typeof junkRow?.deviceId === "string" && junkRow.deviceId.length <= 64 && /^[A-Za-z0-9_-]+$/.test(junkRow.deviceId),
     `stored=${String(junkRow?.deviceId).slice(0, 70)}`);

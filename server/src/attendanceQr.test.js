@@ -13,8 +13,8 @@ const {
   windowIndexFor,
   deriveCode,
   verifyCode,
-  ACCEPTED_WINDOWS,
   GRACE_SECONDS,
+  graceFor,
 } = require("./attendanceQr");
 
 // A signing key of the shape hkdf gives us. Fixed, so codes in this file are stable.
@@ -191,7 +191,48 @@ test("GRACE_SECONDS is a named, bounded tolerance", () => {
   // photographed screen still works.
   assert.equal(GRACE_SECONDS, 7);
   assert.ok(GRACE_SECONDS < ROTATE, "a grace as long as the rotation is not a grace");
-  assert.equal(ACCEPTED_WINDOWS, 2, "the current window, and the one before it within the grace");
+});
+
+test("THE GRACE IS A SMALL SHARE OF THE WINDOW AT EVERY SETTING, not a flat seven seconds", () => {
+  // The defect this replaced: a flat grace is a different promise at each end of the range.
+  // At the ten-second floor it was seven seconds — seventy per cent extra, which is most of
+  // what removing the "whole following window" rule was for. A college choosing the
+  // shortest rotation available is asking for the tightest exposure it can get.
+  //
+  // Asserted as a RATIO across the whole legal range rather than at three sampled values,
+  // so a future change to either constant has to keep the property rather than the numbers.
+  for (const period of [10, 15, 20, 30, 60, 120, 300]) {
+    const g = graceFor(period);
+    assert.ok(g >= 1, `a zero grace at ${period}s is the refusal-by-latency this exists to prevent`);
+    assert.ok(g <= GRACE_SECONDS, `${g}s exceeds the ceiling at ${period}s`);
+    assert.ok(g <= period / 3 + 1, `${g}s is ${Math.round((g / period) * 100)}% of a ${period}s window`);
+  }
+  assert.equal(graceFor(10), 3, "the floor still leaves room for one round trip");
+  assert.equal(graceFor(20), 6);
+  assert.equal(graceFor(300), GRACE_SECONDS, "and a long rotation is capped by the ceiling, not the ratio");
+});
+
+test("graceFor survives a rotation period that is not a number", () => {
+  // Reachable from a hand-edited settings blob, exactly as windowIndexFor's own floor is.
+  for (const bad of [0, -5, "20", null, undefined, NaN, Infinity, {}]) {
+    const g = graceFor(bad);
+    assert.ok(Number.isFinite(g) && g >= 1, `${JSON.stringify(bad)} gave ${g}`);
+  }
+});
+
+test("a code's life is bounded at the FLOOR too, not only at the default", () => {
+  // The whole-lifetime walk above runs at ROTATE = 30. This runs the same property at the
+  // shortest rotation a college can set, which is where a flat grace did the most damage —
+  // and which no test in this file exercised at all.
+  const SHORT = 10;
+  const mintedAt = Math.floor(NOW / SHORT) * SHORT;
+  const code = deriveCode({ secret: SECRET, sessionId: SESSION, windowIndex: windowIndexFor(mintedAt, SHORT) });
+  const alive = (elapsed) => verifyCode({
+    secret: SECRET, sessionId: SESSION, code, nowSeconds: mintedAt + elapsed, rotateSeconds: SHORT,
+  }).valid;
+  assert.equal(alive(SHORT + graceFor(SHORT) - 1), true, "the last second of its life");
+  assert.equal(alive(SHORT + graceFor(SHORT)), false, "and dead immediately after");
+  assert.equal(alive(17), false, "17s was its life under the flat grace; it must not be now");
 });
 
 // ---------------------------------------------------------------------------

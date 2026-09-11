@@ -136,10 +136,62 @@ async function request(path, { method = "GET", body, timeoutMs = DEFAULT_TIMEOUT
   return data;
 }
 
-// Whether this college checks WHERE a check-in came from. Set from every tap-context
-// response; false until one arrives, which is the safe direction — it means no permission
-// prompt appears before the server has said it needs one.
-let needsLocation = false;
+// Whether this college checks WHERE a check-in came from.
+//
+// THREE STATES, NOT TWO, and the third one is a bug fix. This was a plain `false` until a
+// tap-context response arrived, on the reasoning that false is the safe direction — no
+// permission prompt before the server has asked for one. That reasoning is right and the
+// implementation was wrong, because "we have not asked yet" is not the same as "no", and
+// on the most important path they diverge:
+//
+//   A student points their camera at the code on the projector. The link opens the app
+//   COLD. The check-in screen reads the pending scan synchronously and fires the check-in
+//   from a child effect — which React runs BEFORE the parent effect that loads tap-context.
+//   So the flag was still `false`, no position was sent, and the server refused with
+//   "Turn on location so we can check you're at the college" while the app had never
+//   asked for location at all. Deterministic, not a race: with the geofence on, the FIRST
+//   scan after opening the app always failed, and scanning from the camera is the primary
+//   QR route. The second attempt worked, which is exactly how this survives testing.
+//
+// So: null means unknown, and unknown RESOLVES rather than guessing — see
+// resolveNeedsLocation below. The last known answer is also kept in localStorage, so a
+// returning student skips that round trip entirely.
+const NEEDS_LOCATION_KEY = "edtech.needsLocation";
+let needsLocation = (() => {
+  try {
+    const v = localStorage.getItem(NEEDS_LOCATION_KEY);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch (_) {
+    return null;   // storage blocked: ask the server instead, which is the correct fallback
+  }
+})();
+// One in-flight lookup shared by every caller, so a screen that fires two check-ins does
+// not open two context requests.
+let contextInFlight = null;
+
+function rememberNeedsLocation(value) {
+  needsLocation = value === true;
+  try { localStorage.setItem(NEEDS_LOCATION_KEY, needsLocation ? "1" : "0"); } catch (_) { /* nothing to keep */ }
+}
+
+/**
+ * The answer, fetching it once if nobody has asked yet.
+ *
+ * A FAILED LOOKUP ANSWERS FALSE, deliberately. If tap-context cannot be reached the
+ * check-in is about to fail anyway for a larger reason, and the alternative — prompting
+ * for location because we could not find out whether it was needed — is the permission
+ * request with no honest explanation that the whole flag exists to avoid.
+ */
+async function resolveNeedsLocation() {
+  if (needsLocation !== null) return needsLocation;
+  if (!contextInFlight) {
+    contextInFlight = request("/student/me/tap-context")
+      .then((ctx) => { rememberNeedsLocation(ctx?.needsLocation); return needsLocation; })
+      .catch(() => false)
+      .finally(() => { contextInFlight = null; });
+  }
+  return contextInFlight;
+}
 
 /**
  * `{ position }` to spread into a check-in body, or `{}`.
@@ -155,7 +207,7 @@ let needsLocation = false;
  * opinion about a rule that belongs to the college.
  */
 async function positionIfNeeded() {
-  if (!needsLocation) return {};
+  if (!(await resolveNeedsLocation())) return {};
   const position = await wherePhoneIs();
   return position ? { position } : {};
 }
@@ -249,7 +301,7 @@ export const api = {
     // handlers already. Every one of the three flows loads this context before it can
     // offer a check-in at all, so the flag is never stale, and holding it in one place
     // means a fourth capture method added later cannot be the one that forgets.
-    needsLocation = ctx?.needsLocation === true;
+    rememberNeedsLocation(ctx?.needsLocation);
     return ctx;
   },
   studentTapCheckIn: async (tagCode, sessionId) => request("/student/me/tap-check-in", { method: "POST", body: { tagCode, ...(sessionId ? { sessionId } : {}), ...(await positionIfNeeded()) }, headers: deviceHeaders() }),

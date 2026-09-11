@@ -1272,9 +1272,16 @@ model AttendanceMark {
 
   @@unique([sessionId, studentId])
   @@index([studentId])
-  // The collision query: every mark on one register, grouped by handset. Without it that
-  // is a sequential scan on a table with a row per student per class per week.
-  @@index([sessionId, deviceId])
+  // NO INDEX ON deviceId, and that is deliberate rather than an omission.
+  //
+  // One was added with the column on 10 Sep 2026, its comment claiming "the collision
+  // query: every mark on one register, grouped by handset". No such query was ever
+  // written — sharedDevice.js groups in JavaScript over marks the register read has
+  // already loaded in full, and the only lookup either caller makes is by sessionId, which
+  // the unique above already serves as a prefix. It was write cost on every insert in
+  // exchange for nothing, and the comment was the more expensive half: it invited the next
+  // reader to reason from a query that did not exist. Dropped by
+  // 20260911T120000_drop_unused_mark_device_index.
 }
 
 // A registered NFC sticker. One per room, and the SAME sticker serves students and
@@ -1327,9 +1334,23 @@ model TagTap {
   // the two fail differently: a dead sticker and an expired code look identical in a
   // log that does not say.
   method    String?
-  // marked | checked_in | already_marked | already_checked_in | no_session_now |
-  // ambiguous | term_locked | tag_unknown | rate_limited | disabled |
-  // qr_expired | qr_bad_code | session_unknown | not_enrolled
+  // What happened, in one word. Kept as a list here because this column is the vocabulary
+  // an administrator reads the tap log through, and a value that exists in the routes but
+  // not in this comment is one nobody knows to look for.
+  //
+  //   marked | checked_in | already_marked | already_checked_in | no_session_now |
+  //   ambiguous | term_locked | tag_unknown | rate_limited | disabled |
+  //   qr_expired | qr_bad_code | session_unknown | not_enrolled
+  //
+  // ...and, since 10 Sep 2026, WHERE the phone was rather than what it did. These are the
+  // presence checks, and they split into two kinds that send a reader somewhere different:
+  //
+  //   off_network | off_campus | position_missing | accuracy_unknown | accuracy_too_poor
+  //       — the student is not where the college requires, or their phone cannot say.
+  //   network_not_configured | campus_not_located
+  //       — the COLLEGE's own settings are refusing everybody. These two are also written
+  //         to the service log with console.error, because a misconfiguration that refuses
+  //         an entire institution is invisible from the outside.
   outcome   String
   status    String? // "P" | "L" when a mark was actually written
   site      String? // "Onsite" for a staff tap — the tap itself proves that

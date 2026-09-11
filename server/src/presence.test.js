@@ -7,7 +7,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES,
+  MAX_ACCURACY_METRES, MIN_RADIUS_METRES, MAX_RADIUS_METRES, MIN_PREFIX_BITS,
   normaliseIp, parseCidr, parseNetworks, ipInNetworks,
   distanceMetres, radiusFor, checkPresence, describeAddress,
 } = require("./presence");
@@ -50,20 +50,44 @@ test("a college can type a single address or a range", () => {
   assert.equal(parseCidr(" 203.0.113.0/24 ").bits, 24, "trimmed");
 });
 
+test("A RANGE WIDE ENOUGH TO ADMIT THE INTERNET IS REFUSED", () => {
+  // 0.0.0.0/0 parsed, saved, survived the merge and came back reported as a good line —
+  // after which the network check passed for every address on earth while the settings
+  // screen said it was enforced. That is the exact state the empty-list rule exists to
+  // prevent, reached by a different door and with nothing refusing on the way.
+  for (const wide of ["0.0.0.0/0", "128.0.0.0/1", "10.0.0.0/8", "172.16.0.0/12", "1.0.0.0/15"]) {
+    assert.equal(parseCidr(wide), null, `${wide} should be refused as too wide`);
+  }
+  // And the boundary, so the limit is a decision rather than an accident.
+  assert.ok(parseCidr("203.0.0.0/16"), "a /16 is the widest a college may claim");
+  assert.equal(MIN_PREFIX_BITS, 16);
+});
+
+test("a realistic college egress still parses", () => {
+  // The refusal above must not have eaten the ordinary case. These are the shapes an IT
+  // department actually hands over.
+  for (const ok of ["203.0.113.0/24", "203.0.113.8/29", "203.0.112.0/20", "203.0.113.9"]) {
+    assert.ok(parseCidr(ok), `${ok} is a normal answer and must be accepted`);
+  }
+});
+
 test("a /0 or /1 does not come out negative", () => {
   // JavaScript's bitwise operators work on SIGNED 32-bit values, so `0xffffffff << 31`
   // is negative and every comparison against it silently fails. Without the >>> 0 in
   // parseCidr this test fails and a college's widest range matches nothing.
-  const wide = parseCidr("0.0.0.0/0");
+  // Asserted on the widest prefix a college may now save. The original built a /0, which
+  // is refused outright since it admitted the internet — but the signed-shift bug it was
+  // guarding is real at any prefix and still needs a guard.
+  const wide = parseCidr("203.0.0.0/16");
   assert.ok(wide.mask >= 0, `mask went negative: ${wide.mask}`);
-  assert.ok(parseCidr("128.0.0.0/1").mask >= 0);
-  assert.equal(ipInNetworks("203.0.113.9", [wide]), true, "a /0 matches everything");
+  assert.equal(ipInNetworks("203.0.113.9", [wide]), true, "and it matches inside itself");
+  assert.equal(ipInNetworks("204.0.113.9", [wide]), false, "and not outside it");
 });
 
 test("a range that is not one is refused rather than half-read", () => {
   for (const bad of [
     "", "   ", "not an ip", "203.0.113", "203.0.113.9.9", "203.0.113.256",
-    "203.0.113.0/33", "203.0.113.0/", "203.0.113.0/24/8", "203.0.113.0/aa",
+    "203.0.113.0/33", "203.0.113.0/", "203.0.113.0/24/8", "203.0.113.0/aa", "0.0.0.0/0",
     "-1.0.0.1", "1e2.0.0.1", "2001:db8::/32", null, undefined, 42, {},
   ]) {
     assert.equal(parseCidr(bad), null, `${JSON.stringify(bad)} should not parse`);
