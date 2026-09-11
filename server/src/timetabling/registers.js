@@ -415,4 +415,55 @@ async function unitTeachingContext() {
   return out;
 }
 
-module.exports = { syncEventRegisters, rosterForSession, unitStudentCounts, unitTeachingContext };
+/**
+ * Which modules a student is on — the INVERSE of the roster rule.
+ *
+ * `rosterForSession` answers "who is on this register". Two screens need the question the
+ * other way round: which modules does this student have, so their attendance and their
+ * results can be listed. Both answered it from `Enrolment` alone, which made them the
+ * seventh and eighth handlers in this codebase to get that wrong, and the consequence was
+ * not cosmetic: a student taught on hand-created modules — every module a college makes
+ * itself rather than syncing from Moodle — opened Attendance and Results and saw NOTHING.
+ * Their own marks and their own grades existed and were invisible to them, while the same
+ * marks showed correctly on the lecturer's register.
+ *
+ * Three routes in, mirroring the roster rule rather than inventing a looser one:
+ *
+ *   ENROLMENT. Unchanged, and still the primary answer where a college records them.
+ *
+ *   A MARK. If a register has their name on it, that module is theirs — whatever the
+ *   enrolment table says now. This is what keeps a student's history visible after they
+ *   leave a group or an enrolment is tidied away, and it is the one route that cannot be
+ *   wrong: somebody was marked.
+ *
+ *   THEIR GROUP'S TIMETABLE, but only where the module's enrolment list is NOT
+ *   authoritative. That is the same test deriveRoster applies, for the same reason: on a
+ *   module whose enrolments enumerate the class, absence from that list is evidence, so a
+ *   cohort-mate who is not enrolled is genuinely not on it and must not see it. On a
+ *   hand-created module there is no such evidence and the group IS the class.
+ */
+async function unitIdsForStudent(studentId) {
+  const student = await prisma.student.findUnique({ where: { id: studentId }, select: { cohortId: true } });
+  const [enrolled, marked] = await Promise.all([
+    prisma.enrolment.findMany({ where: { studentId }, select: { unitId: true } }),
+    prisma.attendanceMark.findMany({ where: { studentId }, select: { session: { select: { unitId: true } } } }),
+  ]);
+
+  const ids = new Set(enrolled.map((e) => e.unitId));
+  for (const m of marked) if (m.session?.unitId) ids.add(m.session.unitId);
+
+  if (student?.cohortId) {
+    const cohortUnits = await prisma.hndSession.findMany({
+      where: { cohortId: student.cohortId },
+      select: { unit: { select: { id: true, moodleSectionId: true, moodleCourseId: true } } },
+      distinct: ["unitId"],
+    });
+    for (const s of cohortUnits) {
+      if (s.unit && !enrolmentIsAuthoritativeFor(s.unit)) ids.add(s.unit.id);
+    }
+  }
+
+  return [...ids];
+}
+
+module.exports = { syncEventRegisters, rosterForSession, unitStudentCounts, unitTeachingContext, unitIdsForStudent };

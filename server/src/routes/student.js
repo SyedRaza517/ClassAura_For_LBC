@@ -10,7 +10,7 @@ const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
-const { rosterForSession } = require("../timetabling/registers");
+const { rosterForSession, unitIdsForStudent } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP } = require("../attendanceTap");
@@ -876,9 +876,15 @@ router.get("/me", async (req, res) => {
 // per-student breakdown but locked to this student.
 router.get("/me/attendance", async (req, res) => {
   const sid = req.user.id;
-  const student = await prisma.student.findUnique({ where: { id: sid }, include: { enrolments: { select: { unitId: true } } } });
+  const student = await prisma.student.findUnique({ where: { id: sid }, select: { id: true } });
   if (!student) return res.status(404).json({ error: "Student not found" });
-  const enrolledIds = student.enrolments.map((e) => e.unitId);
+  // THE STUDENT'S MODULES, NOT THEIR ENROLMENTS. This read `Enrolment` alone, so a student
+  // taught on hand-created modules — every module a college builds itself rather than
+  // syncing from Moodle — opened this screen and saw nothing at all. Their marks existed,
+  // their lecturer's register showed them correctly, and their own attendance record was
+  // invisible to them. unitIdsForStudent is the inverse of the roster rule, and the one
+  // place that question gets answered.
+  const enrolledIds = await unitIdsForStudent(sid);
   const safeIds = enrolledIds.length ? enrolledIds : ["__none__"];
 
   const [units, marks, sessions] = await Promise.all([
@@ -926,9 +932,11 @@ router.get("/me/attendance", async (req, res) => {
 
 // GET /api/student/me/assessments — this student's assessments, marks, grades, average.
 router.get("/me/assessments", async (req, res) => {
-  const student = await prisma.student.findUnique({ where: { id: req.user.id }, include: { enrolments: { select: { unitId: true } } } });
+  const student = await prisma.student.findUnique({ where: { id: req.user.id }, select: { id: true } });
   if (!student) return res.status(404).json({ error: "Student not found" });
-  const unitIds = student.enrolments.map((e) => e.unitId);
+  // Same correction as /me/attendance, and the same consequence without it: a student with
+  // graded work on a hand-created module saw an empty Results screen.
+  const unitIds = await unitIdsForStudent(req.user.id);
   const assessments = await prisma.assessment.findMany({
     where: { unitId: { in: unitIds.length ? unitIds : ["__none__"] } },
     include: { unit: { select: { code: true, name: true } } },

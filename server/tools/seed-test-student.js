@@ -29,6 +29,7 @@ const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const { runWithAcademicScope } = require("../src/academicScope");
 const { syncEventRegisters } = require("../src/timetabling/registers");
+const supportDepartments = require("../src/supportDepartments");
 
 const bare = new PrismaClient();
 const APPLY = process.argv.includes("--apply");
@@ -74,9 +75,17 @@ const localTime = (offsetMinutes = 0) =>
       const regs = await bare.hndSession.deleteMany({ where: { OR: [{ timetableEventId: { in: ids } }, { unitId: { in: units.map((u) => u.id) } }] } });
       const evs = await bare.timetableEvent.deleteMany({ where: { id: { in: ids } } });
       if (student) await bare.student.delete({ where: { id: student.id } }).catch((e) => console.error("  student:", e.message));
+      // Assessments (and their grades, by cascade) go before the modules they hang off.
+      // Named rather than left to the unit cascade: a cascade is a schema decision
+      // somebody may change, and a seed tool that silently stops cleaning up is worse
+      // than one that fails loudly.
+      await bare.assessment.deleteMany({ where: { unitId: { in: units.map((u) => u.id) } } });
       await bare.unit.deleteMany({ where: { id: { in: units.map((u) => u.id) } } });
       if (cohort) await bare.cohort.delete({ where: { id: cohort.id } }).catch((e) => console.error("  group:", e.message));
-      console.log(`Removed ${evs.count} class(es), ${regs.count} register(s), the modules, the group and the student.`);
+      // The review, the questions and the referral are all Cascade from Student, so
+      // deleting the student takes them — which is why the student delete happens above
+      // and not last.
+      console.log(`Removed ${evs.count} class(es), ${regs.count} register(s), the modules, the group, the student and everything hanging off them.`);
       return;
     }
 
@@ -114,7 +123,10 @@ const localTime = (offsetMinutes = 0) =>
     // is tested by coming back after 14:00 rather than by looking twice in a minute.
     const PLAN = [
       { name: `${TEST_PREFIX} Computing Practice`, code: "ZZT101", start: "10:00", end: "13:00" },
-      { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: "14:00", end: "17:00" },
+      // 13:00 rather than 14:00 so the afternoon class is live from one o'clock — there is
+      // no gap in the middle of the day where neither session is running and the Check In
+      // screen has nothing to act on.
+      { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: "13:00", end: "17:00" },
     ];
 
     // A WHOLE TERM, not one day — because the timetable screen is a term of dates and a
@@ -221,6 +233,149 @@ const localTime = (offsetMinutes = 0) =>
     }
 
     console.log(`  ✓ ${made} class(es) across the term, ${registers} register(s) built by the product`);
+
+    /* ------------------------------------------------------------------ *
+     * THE REST OF THE APP.
+     *
+     * A student account with only a timetable exercises one screen out of seven. Every
+     * other tab renders its own empty state — which is a real state worth having seen
+     * once, and useless for judging whether the screen works. So each gets enough data
+     * to be looked at properly, and no more.
+     *
+     * DELIBERATELY A MIXED PICTURE rather than a tidy one. A student who is Present at
+     * everything, passing everything and has no open conversations tests only the happy
+     * half of each screen: the late chip, the absence, the failed assessment, the
+     * unanswered question and the "At Risk" review are the states somebody actually has
+     * to make a decision about, and a demo without them shows the easy screen.
+     * ------------------------------------------------------------------ */
+
+    // ATTENDANCE: marks against the classes that have already happened.
+    //
+    // Written onto the registers the product built above, not onto invented sessions, so
+    // the attendance percentage, the module breakdown and the timetable's own "Not
+    // marked" column are all reading the same rows the real app reads.
+    //
+    // One class is deliberately left UNMARKED. That is the difference between "absent"
+    // and "nobody took the register", which this codebase treats as null rather than
+    // zero everywhere — and the one case a screen can silently get wrong.
+    const pastRegisters = await bare.hndSession.findMany({
+      where: { date: { lt: date }, unit: { code: { startsWith: "ZZT" } } },
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
+      select: { id: true, date: true },
+    });
+    const PATTERN = ["P", "P", "L", "P", "A", "P", "P", "E"];
+    let marked = 0;
+    for (const [i, reg] of pastRegisters.entries()) {
+      if (i === pastRegisters.length - 1) break;          // the last one: nobody took it
+      const status = PATTERN[i % PATTERN.length];
+      await bare.attendanceMark.create({
+        data: {
+          sessionId: reg.id, studentId: student.id, status, remark: "",
+          takenBy: staff.name,
+          // Only a mark that says they turned up carries an arrival time. An absence has
+          // no arrival, and inventing one would make the row contradict itself.
+          checkedInAt: status === "A" ? null : (status === "L" ? "10:22" : "10:03"),
+        },
+      }).catch(() => {});
+      marked += 1;
+    }
+
+    // ASSESSMENTS: two per module, one marked and one still to come.
+    //
+    // The ungraded one matters more than the graded one. A results screen showing only
+    // finished work never renders "not submitted yet" or a due date in the future, which
+    // is most of what a student opens it to see.
+    let assessments = 0, grades = 0;
+    for (const [i, c] of PLAN.entries()) {
+      const unit = await bare.unit.findFirst({ where: { code: c.code }, select: { id: true } });
+      if (!unit) continue;
+      const done = await bare.assessment.create({
+        data: { unitId: unit.id, title: `${TEST_PREFIX} Coursework 1`, type: "Assignment", maxMarks: 100, weight: 40, dueDate: TERM_DATES[1] },
+      });
+      const upcoming = await bare.assessment.create({
+        data: { unitId: unit.id, title: `${TEST_PREFIX} Coursework 2`, type: "Project", maxMarks: 100, weight: 60, dueDate: TERM_DATES[TERM_DATES.length - 2] },
+      });
+      assessments += 2;
+      // A pass on one module and a near-miss on the other, so the screen has to render
+      // both a comfortable result and one worth a conversation.
+      await bare.assessmentGrade.create({
+        data: {
+          assessmentId: done.id, studentId: student.id, marks: i === 0 ? 72 : 38,
+          gradedOn: TERM_DATES[2], gradedBy: staff.name,
+          feedback: i === 0
+            ? "Solid work — clear structure and good use of examples. Push the evaluation further next time."
+            : "Below the pass mark. The analysis section needs more depth; see me about a resubmission.",
+        },
+      });
+      grades += 1;
+      void upcoming;
+    }
+
+    // A PASTORAL REVIEW, and deliberately not a reassuring one. "At Risk" with agreed
+    // actions and a follow-up date is the shape a college reads these for; "On Track"
+    // with nothing to do renders the same layout with none of the content.
+    await bare.studentReview.create({
+      data: {
+        studentId: student.id, staffId: staff.id, staffName: staff.name,
+        date: TERM_DATES[3], progress: "Monitor",
+        concerns: JSON.stringify(["Attendance", "Assessment submission"]),
+        summary: "Attendance has dipped since the start of term and one piece of coursework came in below the pass mark. Student reports travel difficulties on the days affected.",
+        agreedActions: "Attend all sessions for the next four weeks. Resubmit Coursework 1 by the agreed date. Book a study-skills session.",
+        followUp: true, followUpDate: TERM_DATES[TERM_DATES.length - 3],
+      },
+    });
+
+    // TWO QUESTIONS: one answered, one still open. The open one is the state the screen
+    // exists for — a student checking whether anybody has come back to them.
+    await bare.studentQuery.create({
+      data: {
+        studentId: student.id, subject: "Timetable clash",
+        message: "My two modules both show as running this afternoon. Which one should I go to?",
+        status: "answered", response: "Thanks for flagging it — the afternoon session moved to 13:00 and the timetable is now correct. Go to Business Systems.",
+        respondedBy: staff.name, respondedAt: TERM_DATES[3],
+      },
+    });
+    await bare.studentQuery.create({
+      data: {
+        studentId: student.id, subject: "Resubmission deadline",
+        message: "When is the latest I can resubmit Coursework 1?",
+        status: "open",
+      },
+    });
+
+    // A SUPPORT REFERRAL, open, so the support screen has a live case on it rather than
+    // a closed one nobody needs to act on.
+    // The department is a KEY from the support-departments config, not a table and not a
+    // display name — the student's own referral route resolves the key the same way, and a
+    // row carrying a pretty name would never match the staff screens' filter.
+    const activeDepts = await supportDepartments.active().catch(() => []);
+    const deptKey = activeDepts[0]?.key || null;
+    if (!deptKey) {
+      console.log("    (no support team is taking requests on this deployment — referral skipped)");
+    } else {
+      await bare.referral.create({
+        data: {
+          studentId: student.id,
+          department: deptKey,
+          reason: "Struggling to keep up after missing two weeks. Would like help planning the catch-up work.",
+          urgency: "routine", status: "open", raisedOn: TERM_DATES[3],
+          // studentNotified TRUE, exactly as the student's own referral route sets it.
+          // The column records whether the referrer chose to tell the student, and the
+          // student's list filters on it — so a referral seeded without it is invisible on
+          // the screen it was seeded for, which is how this was first written and how the
+          // rehearsal caught it. A referral somebody raises about THEMSELVES is, by
+          // definition, one they know about.
+          studentNotified: true,
+          // raisedBy stays NULL, exactly as the student's own route leaves it: that column
+          // means "which colleague raised this", and a self-referral carrying a name there
+          // reads as staff-raised on every screen that shows it.
+        },
+      });
+    }
+
+    console.log(`  ✓ ${marked} attendance mark(s) on past classes, one register left untaken on purpose`);
+    console.log(`  ✓ ${assessments} assessment(s), ${grades} graded — one pass, one below the mark`);
+    console.log(`  ✓ 1 pastoral review, 2 questions (one answered, one open), 1 support referral`);
     const roster = await bare.hndSession.findMany({
       where: { date, unit: { code: { startsWith: "ZZT" } } },
       select: { id: true, startTime: true, endTime: true, unit: { select: { code: true } } },
