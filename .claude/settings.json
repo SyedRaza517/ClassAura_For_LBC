@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|mcp__.*Supabase__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-database.js\"",
+            "timeout": 15,
+            "statusMessage": "Checking the database this would touch..."
+          }
+        ]
+      }
+    ]
+  }
+}
