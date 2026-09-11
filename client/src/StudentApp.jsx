@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+// The scan outcome is a full-screen sheet, not a card in the page flow — see
+// QrCheckInCard for why it has to escape this screen's scroll container.
+import { createPortal } from "react-dom";
 import useReveal from "./RevealButton";
 import PhoneShell from "./PhoneShell";
 import { BrandMark } from "./Brand";
@@ -314,7 +317,13 @@ export default function StudentApp({ user, logout }) {
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
-        <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies} codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)} />
+        {/* `=== false` rather than `!`: anyCheckInWay is null until the first load
+            answers, and treating "not told yet" as "off" would drop the tab out of
+            the bar on every app open and put it back half a second later — a visible
+            jump, on the majority of colleges, where the tab belongs. */}
+        <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies}
+          codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)}
+          hideCheckIn={anyCheckInWay(tapContext) === false} />
       </div>
     </PhoneShell>
   );
@@ -326,10 +335,27 @@ export default function StudentApp({ user, logout }) {
 // college that only shows codes on screen — the first thing a student reads on the bar
 // would name the one technology their college does not use. The More screen already
 // picks its glyph this way; the bar now agrees with it.
-function TabBar({ screen, setScreen, newReplies, codesOnly = false }) {
+//
+// `hideCheckIn`: the tab goes away entirely at a college that has switched every
+// capture method off. THIS REVERSES A DELIBERATE EARLIER CHOICE and the reversal was
+// asked for, so both halves are recorded. The tab used to be permanent on the reasoning
+// that a student who cannot tell "switched off" from "never built" reports it as
+// missing — which had happened twice — and that a destination explaining itself beats
+// an absence to interpret. What that argument did not weigh is the administrator's side:
+// somebody switching the feature off in Settings expects it to LEAVE the app, and a tab
+// that stays put reads as a switch that did not work. A permanent tab also spends one
+// of six bottom-bar slots on a screen with nothing in it.
+//
+// The honest answer survives where it was always kept: CheckInStatusRow on the More
+// screen still renders, still says the college has not switched check-in on, and is now
+// the one place that says it. Deliberately not removed alongside these two — take it out
+// as well and "switched off" becomes indistinguishable from "never built" again, which
+// is the exact defect the permanent tab was introduced to fix.
+function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn = false }) {
+  const tabs = hideCheckIn ? TABS.filter((t) => t.key !== "checkin") : TABS;
   return (
     <nav className="sticky bottom-0 z-30 mt-2 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
-      {TABS.map(({ key, label, Icon: TabIcon }) => {
+      {tabs.map(({ key, label, Icon: TabIcon }) => {
         const on = screen === key;
         const Icon = key === "checkin" && codesOnly ? QrCode : TabIcon;
         return (
@@ -406,6 +432,27 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
 /* ============================== home ============================== */
 
 /* ============================== tap check-in ============================== */
+
+/**
+ * Is there ANY way for this student to check themselves in?
+ *
+ * `null` while the answer is unknown, which is not "no" — see the callers, which all
+ * keep the entry point visible until told otherwise rather than popping it in half a
+ * second after the app opens.
+ *
+ * THREE SWITCHES, and all three have to be read or this hides a working feature. A
+ * college can run stickers (`enabled`), on-screen codes (`qrEnabled`), or the plain
+ * "I'm here" declaration (`declareEnabled`) in any combination, and the three are
+ * genuinely independent — `enabled` is the sticker switch alone, not a master. The
+ * screen's own "Not switched on yet" card used to test only the first two, so a college
+ * running declarations and nothing else told its students the feature did not exist
+ * while the button to use it sat on the same screen. Everything that asks this question
+ * now asks it here, so that cannot drift apart again.
+ */
+function anyCheckInWay(tapContext) {
+  if (tapContext == null) return null;
+  return tapContext.enabled === true || tapContext.qrEnabled === true || tapContext.declareEnabled === true;
+}
 
 /** One line for the Check In tile, honest in every state. */
 function checkInSub(tapContext) {
@@ -627,7 +674,11 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
       {/* A scanned code outranks everything else on the screen: the student is holding
-          the result of an action they just took, and it answers first. */}
+          the result of an action they just took, and it answers first. It renders as a
+          full-screen sheet over this whole screen rather than as the first card in it —
+          its own comment explains why anything less went unseen. Left HERE in the tree,
+          not lifted to the app root, because this screen owns the scan lifecycle and
+          nothing about a portalled child cares where it was declared. */}
       {/* Keyed on the code so a SECOND scan remounts the card — its once-only submit
           guard is a ref, which must not survive from the previous scan's card. */}
       {pendingQr && <QrCheckInCard key={pendingQr.code} qr={pendingQr} reload={reload} onDone={onQrDone} />}
@@ -669,10 +720,15 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
         </div>
       )}
 
-      {/* "Not switched on" is only true when BOTH capture methods are off. This card
-          used to key on the sticker switch alone, which told a QR-only college's
-          students the feature didn't exist while a live code sat on their projector. */}
-      {tapContext && !enabled && !qrEnabled && (
+      {/* "Not switched on" is only true when EVERY capture method is off — asked of
+          anyCheckInWay so this card, the bottom tab and the More row cannot disagree
+          about the same college. This has been wrong in both directions: it keyed on the
+          sticker switch alone, which told a QR-only college's students the feature didn't
+          exist while a live code sat on their projector, and then on two switches of
+          three, which said the same thing to a college running "I'm here" declarations.
+          Reachable even with the tab hidden — a student who scans a projector code at a
+          college that has since switched check-in off arrives straight here. */}
+      {anyCheckInWay(tapContext) === false && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
             <Nfc size={19} style={{ color: ACCENT.checkin }} />
@@ -740,6 +796,33 @@ const QR_TONES = {
   refused: { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
 };
 
+/**
+ * What a scanned code turned into, shown as a FULL-SCREEN SHEET rather than a card in
+ * the page flow.
+ *
+ * THIS IS A BUG FIX, and the bug was invisible in every way that matters. The outcome
+ * used to render as the first child of the check-in screen — above the day's header
+ * line, above the class list. But the button that opens the scanner is ON the running
+ * class, which is usually the second or third card down, so a student had scrolled to
+ * reach it. The camera closed the instant the code decoded (a few hundred milliseconds:
+ * the code is right in front of them), the sheet-less card mounted somewhere above the
+ * fold, and the screen they were looking at did not visibly change. Reported exactly as
+ * it looked from the outside: "the camera closes in a millisecond and it doesn't put me
+ * present." It very often HAD put them present.
+ *
+ * A sheet is the fix rather than scrolling the container to the top, because the scroll
+ * would be a race — the card mounts in the same commit that the scanner unmounts, and
+ * a scroll into a list whose height is changing lands wherever it lands. The outcome of
+ * a check-in is also the one thing on this screen that must not be missed: the student
+ * is standing in a lecture theatre deciding whether to put the phone away. It takes over
+ * the screen the camera just gave back, which is where their eyes already are.
+ *
+ * Portalled to document.body deliberately. This screen is inside PhoneShell's
+ * overflow-y-auto scrollport, and a `fixed` element inside a scrolling ancestor is only
+ * as reliable as that ancestor's transforms — one `transform` anywhere up the tree makes
+ * it the containing block, and "fixed" quietly becomes "absolute inside a box you have
+ * scrolled past". The portal steps outside all of it.
+ */
 function QrCheckInCard({ qr, reload, onDone }) {
   // sending → done | failed. One object rather than separate flags so a render can
   // never see a half-updated pair.
@@ -772,58 +855,87 @@ function QrCheckInCard({ qr, reload, onDone }) {
     })();
   }, [qr, reload]);
 
+  // Escape closes it, but only once there is something to close. Dismissing mid-flight
+  // would leave a request in the air with nowhere to report back to, and the student
+  // believing they had cancelled something that had already been written.
+  const settled = state.phase !== "sending";
+  useEffect(() => {
+    if (!settled) return;
+    const onKey = (e) => { if (e.key === "Escape") onDone(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settled, onDone]);
+
+  let body;
   if (state.phase === "sending") {
-    return (
-      <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
-        <Loader2 size={20} className="mx-auto animate-spin text-slate-300" />
-        <p className="mt-2 text-[13px] text-slate-500">Checking you in…</p>
+    body = (
+      <div className="p-6 text-center">
+        <Loader2 size={26} className="mx-auto animate-spin text-slate-300" />
+        <p className="mt-3 text-sm font-bold text-slate-700">Checking you in…</p>
+        <p className="mt-1 text-[12.5px] text-slate-500">Hold on a moment.</p>
       </div>
     );
-  }
-
-  if (state.phase === "done") {
+  } else if (state.phase === "done") {
     const v = qrScanResult(state.result);
     const tone = QR_TONES[v.tone] || QR_TONES.present;
     const Icon = v.good ? CheckCircle2 : AlertTriangle;
-    return (
-      <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
-        <div className="flex items-start gap-3">
-          <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
-            <Icon size={20} className={tone.text} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className={`flex items-center gap-2 text-sm font-extrabold ${tone.text}`}>
-              {v.heading}
-              {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">{v.chip}</span>}
-            </p>
-            <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.detail}</p>
-          </div>
+    body = (
+      <div className="p-5" role="status" aria-live="polite">
+        {/* The icon is BIG and on its own line here, where the card had it beside the
+            text at 44px. On a sheet that has the whole screen, the first thing to reach
+            the student across a lecture theatre is the shape and the colour — they read
+            the sentence second. */}
+        <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-3xl ${tone.chip}`}>
+          <Icon size={30} className={tone.text} />
         </div>
-        <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Done</button>
+        <p className={`mt-3.5 flex items-center justify-center gap-2 text-center text-[17px] font-extrabold ${tone.text}`}>
+          {v.heading}
+          {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">{v.chip}</span>}
+        </p>
+        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600">{v.detail}</p>
+        <button onClick={onDone} className="press mt-5 w-full rounded-xl py-3.5 text-[14px] font-bold text-white" style={{ background: ACCENT.checkin }}>Done</button>
+      </div>
+    );
+  } else {
+    // Refused. Rose, so a refusal is never mistaken at a glance for the amber of a Late
+    // check-in — the two used to differ only by the words in them.
+    const v = qrScanRefusal(state.error);
+    const tone = QR_TONES.refused;
+    body = (
+      <div className="p-5" role="alert" aria-live="assertive">
+        <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-3xl ${tone.chip}`}>
+          <AlertTriangle size={28} className={tone.text} />
+        </div>
+        <p className={`mt-3.5 text-center text-[17px] font-extrabold ${tone.text}`}>{v.heading}</p>
+        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600">{v.advice}</p>
+        <button onClick={onDone} className="press mt-5 w-full rounded-xl bg-white py-3.5 text-[14px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
       </div>
     );
   }
 
-  // Refused. Rose, so a refusal is never mistaken at a glance for the amber of a Late
-  // check-in — the two used to differ only by the words in them.
-  const v = qrScanRefusal(state.error);
-  const tone = QR_TONES.refused;
-  return (
-    <div className={`rounded-2xl p-5 ring-1 ${tone.bg} ${tone.ring}`} role="status" aria-live="polite">
-      <div className="flex items-start gap-3">
-        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone.chip}`}>
-          <AlertTriangle size={19} className={tone.text} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className={`text-sm font-extrabold ${tone.text}`}>{v.heading}</p>
-          <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{v.advice}</p>
-        </div>
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Check-in result"
+      className="fixed inset-0 z-[96] flex items-end justify-center bg-slate-900/55 p-4 sm:items-center"
+      // The scrim dismisses, once settled — the same rule as Escape, and never a way to
+      // walk away from a request still in flight.
+      onClick={settled ? onDone : undefined}
+    >
+      {/* z-[96]: one above the scanner's z-[95]. They are never on screen together —
+          the scanner stops itself before handing the code over — but ordering them
+          leaves nothing to a mount race if that ever stops being true. */}
+      <div
+        className="scale-in w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {body}
       </div>
-      <button onClick={onDone} className="press mt-3 w-full rounded-xl bg-white py-3 text-[13px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
-    </div>
+    </div>,
+    document.body
   );
 }
-
 // The card at the top of the home screen. Renders nothing at all when the college has
 // not switched tap check-in on, so a student at an institution that does not use it
 // never sees a feature they cannot have.
@@ -1043,12 +1155,20 @@ function Home({ user, attendance, results, queries, reviews, tapContext, busy, e
 
       <SectionTitle colour={ACCENT.attendance}>Quick actions</SectionTitle>
       <div className="grid grid-cols-2 gap-2.5">
-        {/* Always rendered, whatever state the feature is in. It was previously shown
-            only when a class was checkable, which is defensible for a student and left
-            nobody able to tell "switched off" from "not built" — reported as missing
-            twice. The destination explains itself in every state instead. */}
-        <Action onClick={() => setScreen("checkin")} Icon={Nfc} label="Check In"
-          sub={checkInSub(tapContext)} c={ACCENT.checkin} i={0} />
+        {/* Rendered in every state EXCEPT one: a college that has switched all three
+            capture methods off. It used to be rendered unconditionally, because showing
+            it only when a class was checkable left nobody able to tell "switched off"
+            from "not built" — reported as missing twice, which is why the tile explains
+            itself in every state rather than disappearing between classes. That still
+            holds and has not changed; what changed is that a college with the feature
+            OFF is not a state to explain here. It matches the bottom tab, which is the
+            point — a Check In tile linking to a tab that no longer exists is worse than
+            either choice made consistently. TabBar carries the full reasoning and names
+            where the "switched off" answer still lives. */}
+        {anyCheckInWay(tapContext) !== false && (
+          <Action onClick={() => setScreen("checkin")} Icon={Nfc} label="Check In"
+            sub={checkInSub(tapContext)} c={ACCENT.checkin} i={0} />
+        )}
         <Action onClick={() => setScreen("attendance")} Icon={Percent} label="My Attendance" sub="By unit" c={ACCENT.attendance} i={1} />
         <Action onClick={() => setScreen("assessments")} Icon={Award} label="My Results" sub="Marks & grades" c={ACCENT.results} i={2} />
         <Action onClick={() => setScreen("timetable")} Icon={CalendarDays} label="My Timetable" sub="Weekly classes" c={ACCENT.timetable} i={3} />

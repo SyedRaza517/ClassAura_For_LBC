@@ -220,7 +220,31 @@ export default function App() {
   // person holding it is a student standing in a running class, and every extra tap
   // between the scan and the mark is time the code spends expiring. Staff who somehow
   // scan one lose nothing — "Staff App" is where they sign in anyway.
-  const [entry, setEntry] = useState(() => (hasPendingQr() ? "app" : null));
+  // WHERE AN UNAUTHENTICATED VISITOR STARTS.
+  //
+  // The packaged app opens straight on the sign-in screen; the web build still opens on
+  // the Landing chooser. That split is new — both used to open on the chooser — and the
+  // reasoning on each side is different, so both are written down.
+  //
+  //   Packaged app. Everybody who installs ClassAura from a store has an account at the
+  //   college: staff and students both sign in through MobileAuth, which is one screen
+  //   for both. Making them choose "Staff App" out of three tiles before they may type a
+  //   password is a step that exists only because the WEB build has to serve three
+  //   audiences off one URL. The app does not; it has a front door of its own.
+  //
+  //   Web. Unchanged. The chooser is the only thing distinguishing the admin dashboard
+  //   (a separate sign-in, 2FA) and the public Student Portal from the staff app on a
+  //   single origin, so it stays.
+  //
+  // THE CHOOSER IS STILL REACHABLE IN THE APP, and that is not a nicety. The Student
+  // Portal is the public entry point — a prospective student registers and applies with
+  // no college account — and it is what makes this a general-audience app rather than a
+  // login wall, which App Review reads as a reason to reject. MobileAuth's header back
+  // button calls onExit, which lands on Landing. One tap away instead of zero, not gone.
+  //
+  // A pending scan still wins over both: somebody who scanned a projector code is
+  // standing in a running class and needs the sign-in, not a menu.
+  const [entry, setEntry] = useState(() => (hasPendingQr() || isNativeApp() ? "app" : null));
   // A "?reset=<token>" link from a password-reset email. Read once on mount so that
   // clearing the query string later doesn't yank the screen away mid-flow.
   const [resetToken, setResetToken] = useState(() => {
@@ -317,11 +341,14 @@ export default function App() {
   );
 
   if (!user) {
-    // Both the web build AND the packaged app open on the Landing chooser, so a member of
-    // the public can reach the Student Portal (register + apply to the College) WITHOUT a
-    // College account. That public entry point is what makes the app a general-audience app
-    // for App Store distribution — otherwise it's a staff/student login wall. Staff/students
-    // pick "Staff App" to sign in; admins use the Admin tile (2FA included).
+    // The three doors. Which one opens FIRST is decided where `entry` is initialised
+    // above — the packaged app starts on "app", the web build starts on the chooser —
+    // and the reasoning for that split lives there rather than being half-told here.
+    //
+    // What matters at this point is that all three remain reachable in both builds: the
+    // Student Portal is the public entry point (register + apply to the College with no
+    // College account), and it is what makes this a general-audience app for App Store
+    // distribution rather than a staff/student login wall.
     if (entry === "admin") return (<><style>{GLOBAL_STYLE}</style><Login onBack={() => setEntry(null)} /></>);
     // The Student Portal — a prospective student (general public) registers / signs in to
     // apply to the College and track their application. The public front door.

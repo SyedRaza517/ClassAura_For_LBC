@@ -74,6 +74,32 @@ const REFUSALS = {
   qr_off:         { heading: "Scanning isn't switched on",         advice: "Your lecturer will mark you in." },
   qr_unavailable: { heading: "Check-in isn't available right now",  advice: "Ask your lecturer to mark you in." },
   too_many:       { heading: "Too many tries",                     advice: "Wait a moment, then scan again." },
+
+  // WHERE THE PHONE IS. These seven come from presence.js via refusedForPlace, and every
+  // one of them was MISSING here until 11 Sep 2026 — a college that had switched the
+  // network or geofence check on refused every scan with "That didn't work. Try scanning
+  // again", which is the fallback below and is advice that cannot work. The student scans
+  // again, is refused again for the same reason, and has been told nothing. That was the
+  // whole of the defect: the server knew exactly why and the app threw the answer away.
+  //
+  // Each says WHAT IS WRONG AND WHAT TO DO, and the two failure kinds are kept apart —
+  // "you are somewhere else" is a different action from "we cannot tell where you are".
+  //
+  // The two _not_configured / _not_located reasons are the college's misconfiguration,
+  // not the student's: nobody entered the WiFi ranges, or nobody put coordinates on a
+  // campus. The student is told the same thing as a genuine refusal ON PURPOSE, because
+  // the alternative is telling them their college has set the product up wrong, which
+  // they can do nothing with and which advertises the check to somebody working out how
+  // to get past it. The distinction is kept where it is useful: the `reason` is logged
+  // against every refusal, so an administrator looking at the tap log sees
+  // `network_not_configured` and knows it is a settings screen, not a student.
+  off_network:            { heading: "You're not on the college WiFi",     advice: "Join the college WiFi, then scan again." },
+  network_not_configured: { heading: "You're not on the college WiFi",     advice: "Join the college WiFi, then scan again. If you already are, ask your lecturer to mark you in." },
+  off_campus:             { heading: "You're too far from the college",    advice: "Check in from inside the building. If you're already there, ask your lecturer to mark you in." },
+  campus_not_located:     { heading: "You're too far from the college",    advice: "Check in from inside the building. If you're already there, ask your lecturer to mark you in." },
+  position_missing:       { heading: "Location is switched off",           advice: "Turn location on for this app, then scan again." },
+  accuracy_unknown:       { heading: "We can't tell where you are",        advice: "Move near a window and scan again." },
+  accuracy_too_poor:      { heading: "We can't tell where you are",        advice: "Move near a window and scan again." },
 };
 
 /** The card for a scan the server refused. Never renders the server's own wording. */

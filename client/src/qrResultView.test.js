@@ -15,6 +15,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { qrScanResult, qrScanRefusal, keepScanAfter } from "./qrResultView.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const session = { unitCode: "OBM", unitName: "Organisational Behaviour Management" };
 
@@ -136,4 +138,50 @@ test("every other refusal, and a dropped connection, does not resurrect the scan
   assert.equal(keepScanAfter(Object.assign(new Error("server"), { status: 500 })), false);
   assert.equal(keepScanAfter(new TypeError("Load failed")), false);
   assert.equal(keepScanAfter(null), false);
+});
+
+// ---- The refusals the server can send, and the ones this file knows about ----------
+//
+// THIS TEST EXISTS BECAUSE SEVEN OF THEM WERE MISSING. presence.js refuses a check-in
+// from the wrong network or the wrong place, routes/student.js turns that into a
+// `reason` on the wire, and NONE of the seven were in REFUSALS — so a college running
+// either check refused every scan with the unmapped fallback, "That didn't work. Try
+// scanning again." Advice that cannot work: the student scans again, is refused again,
+// and never learns they are on mobile data instead of the college WiFi.
+//
+// Nothing caught it, and nothing could have. Both halves are correct on their own and
+// the seam between them is a string. A reason added to the server months from now would
+// go the same way and produce the same silently-useless card.
+//
+// READ OUT OF THE SERVER'S SOURCE rather than restated here, which is the point: a copy
+// of the list in this file is one more thing to keep in step, and it would have been
+// written from the same wrong understanding that caused the bug. The regex is over the
+// PLACE_REFUSALS literal alone — `default` is its own fallback key, not a wire reason.
+test("every place refusal the server can send has wording in this file", () => {
+  const server = readFileSync(
+    fileURLToPath(new URL("../../server/src/routes/student.js", import.meta.url)),
+    "utf8",
+  );
+  const block = /const PLACE_REFUSALS = \{([\s\S]*?)\n\};/.exec(server);
+  assert.ok(block, "PLACE_REFUSALS not found in server/src/routes/student.js — has it moved?");
+  const reasons = [...block[1].matchAll(/^\s{2}([a-z_]+):/gm)].map((m) => m[1]).filter((r) => r !== "default");
+
+  // Guard the guard. A regex that quietly matched nothing would make this test pass for
+  // every reason in the world, which is exactly the shape of vacuous test this codebase
+  // has been bitten by before.
+  assert.ok(reasons.length >= 7, `expected at least 7 place reasons, parsed ${reasons.length}`);
+  assert.ok(reasons.includes("off_network") && reasons.includes("off_campus"), `parsed the wrong thing: ${reasons}`);
+
+  const unmapped = reasons.filter((reason) => {
+    const v = qrScanRefusal({ body: { reason } });
+    return v.heading === "That didn't work";
+  });
+  assert.deepEqual(unmapped, [], `these refusals fall through to the generic card: ${unmapped.join(", ")}`);
+});
+
+// And the fallback itself still has to work, or the test above proves nothing — it
+// detects an unmapped reason BY that wording, so the wording has to be reachable.
+test("a refusal with no reason at all still falls back", () => {
+  assert.equal(qrScanRefusal({ body: { reason: "something_invented_later" } }).heading, "That didn't work");
+  assert.equal(qrScanRefusal(null).heading, "That didn't work");
 });
