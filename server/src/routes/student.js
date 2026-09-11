@@ -244,7 +244,7 @@ async function candidateSessions(studentId, date) {
       // know whether this module's enrolment list was enumerated. Selected HERE rather
       // than left to rosterForSession's own lookup because this is the one caller that
       // asks per session across a whole day, and that would be a query per class.
-      unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true, tutorStaff: { select: { name: true } }, tutor: true, term: { select: { name: true, start: true, end: true } } } },
+      unit: { select: { code: true, name: true, moodleSectionId: true, moodleCourseId: true, tutorStaff: { select: { name: true } }, tutor: true, term: { select: { name: true, start: true, end: true } }, course: { select: { name: true, academicDepartment: { select: { name: true } } } } } },
       // WHERE and WHO, which the check-in card has to show. A student deciding whether
       // this is the class in front of them needs the room; a student with two classes at
       // once needs the lecturer to tell them apart. Both come from the TIMETABLE event
@@ -267,6 +267,13 @@ async function candidateSessions(studentId, date) {
     unitId: s.unitId,
     unitCode: s.unit?.code || "",
     unitName: s.unit?.name || "",
+    // THE SAME FACTS THE TIMETABLE CARD PRINTS, from the same place. The two screens
+    // describe one class, and a student who taps a row on their timetable lands here — so
+    // a card that dropped half of what they were just looking at reads as a different
+    // class. Reached through the UNIT rather than the session's own course, exactly as
+    // the timetable does, or the two could disagree about which course a module is on.
+    course: s.unit?.course?.name || null,
+    school: s.unit?.course?.academicDepartment?.name || null,
     date: s.date,
     startTime: s.startTime,
     endTime: s.endTime,
@@ -294,6 +301,10 @@ const sTapSession = (s) => ({
   // not recorded one -- an online class has no room, and "not recorded" is not "unknown
   // room", so the card omits the line rather than printing a dash.
   room: s.room ?? null, floor: s.floor ?? null, campus: s.campus ?? null, staff: s.staff ?? [],
+  // And what the hour is FOR. Same pair the timetable carries, for the same reason: this
+  // is the one screen a student opens while standing outside a door, and "which course is
+  // this" is a real question when two modules share a room and a time.
+  course: s.course ?? null, school: s.school ?? null,
 });
 
 // GET /api/student/me/tap-context — what the check-in screen shows before a tap.

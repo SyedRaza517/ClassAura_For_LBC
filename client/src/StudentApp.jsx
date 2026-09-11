@@ -534,10 +534,24 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
                     it: an online class has no room, and "—" reads as a room nobody
                     knows. */}
                 {(c.room || c.campus || (c.staff || []).length > 0) && (
-                  <span className="mt-0.5 block truncate text-[11.5px] text-slate-500">
+                  // WRAPPED, NOT TRUNCATED — the same fix the timetable card needed. This
+                  // was `truncate`, so on a phone the campus and the lecturer fell off the
+                  // end of the line, which is precisely the half that tells two classes at
+                  // the same hour apart.
+                  <span className="mt-0.5 block text-[11.5px] leading-snug text-slate-500">
                     {[c.room ? `Room ${c.room}` : null, c.floor, c.campus].filter(Boolean).join(" · ")}
                     {(c.staff || []).length > 0 && (c.room || c.campus ? " · " : "")}
                     {(c.staff || []).join(", ")}
+                  </span>
+                )}
+                {/* The module code, the course and the school — the same three the
+                    timetable card carries, kept quieter than the room because a student
+                    standing outside a door needs the room first. They are here because
+                    tapping a timetable row lands on this screen, and a card that dropped
+                    half of what they were just looking at reads as a different class. */}
+                {(c.unitCode || c.course || c.school) && (
+                  <span className="mt-0.5 block text-[11px] leading-snug text-slate-400">
+                    {[c.unitCode, c.course, c.school].filter(Boolean).join(" · ")}
                   </span>
                 )}
               </span>

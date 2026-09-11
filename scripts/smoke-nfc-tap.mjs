@@ -972,8 +972,12 @@ try {
   // between two classes running at once needs to know which room and whose class, and
   // that was the one thing this screen could not tell them. `staff` is NAMES ONLY — the
   // same rule the staff timetable follows — never an email and never an id.
+  // `course` and `school` joined on 11 Sep 2026, so this card says the same things the
+  // student's timetable says — they tap a row there and land here, and a card missing half
+  // of what they were just reading looks like a different class. Both name academic
+  // structures, never people.
   check("...and each choice carries only the fields the screen needs, and no more",
-    shape.length === 2 && shape.every((k) => k === "campus,endTime,floor,id,room,staff,startTime,unitCode,unitName"),
+    shape.length === 2 && shape.every((k) => k === "campus,course,endTime,floor,id,room,school,staff,startTime,unitCode,unitName"),
     `keys: ${JSON.stringify(shape)}`);
   // Asserted for CONTENT as well, or the key list above is satisfied by four nulls and
   // the screen still has nothing to show.
@@ -1201,7 +1205,10 @@ try {
     // test, because a column added to HndSession tomorrow must fail here.
     dayList.every((c) => Object.keys(c).every((k) =>
       ["id", "unitCode", "unitName", "startTime", "endTime", "state", "status", "checkedInAt", "termOpen",
-       "room", "floor", "campus", "staff"].includes(k))),
+       "room", "floor", "campus", "staff",
+       // 11 Sep 2026: the same two the timetable carries. Names of a course and a school,
+       // which are academic structures — nothing here is about another person.
+       "course", "school"].includes(k))),
     `keys: ${[...new Set(dayList.flatMap((c) => Object.keys(c)))].sort().join(",")}`);
 
   // THE POINT OF RETURNING IT EITHER WAY. A college that never switches tap check-in on

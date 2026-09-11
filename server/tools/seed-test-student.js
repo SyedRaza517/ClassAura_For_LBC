@@ -117,13 +117,38 @@ const localTime = (offsetMinutes = 0) =>
       { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: "14:00", end: "17:00" },
     ];
 
+    // A WHOLE TERM, not one day — because the timetable screen is a term of dates and a
+    // single day tells you nothing about whether it works.
+    //
+    // Twelve weeks on the SAME WEEKDAY AS TODAY, four of them already behind. Both halves
+    // of that are deliberate:
+    //
+    //   The weekday is today's, so today always carries both sessions. A term pinned to
+    //   Mondays would leave Check In empty on every other day of the week, which is the
+    //   one screen this account exists to exercise.
+    //
+    //   Four weeks in the past make the screen honest. A term that starts today shows
+    //   "0 of 12 so far", every row identical and nothing marked — so the week counter,
+    //   the past-class greying and the "Not marked" state are all invisible. With weeks
+    //   behind it, the screen shows what a student meets in the middle of a term, which
+    //   is when they actually open it.
+    const WEEKS_BEFORE = 4;
+    const WEEKS_AFTER = 7;
+    const dayOffset = (n) => {
+      const d = new Date(`${date}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    };
+    const TERM_DATES = [];
+    for (let w = -WEEKS_BEFORE; w <= WEEKS_AFTER; w += 1) TERM_DATES.push(dayOffset(w * 7));
+
     console.log(`  student   Test Student <${STUDENT_EMAIL}>  (ref ${STUDENT_REF})`);
     console.log(`  group     ${TEST_PREFIX} Group   — one student, scheduled against nothing else`);
     console.log(`  course    ${course.name}`);
     console.log(`  lecturer  ${staff.name}`);
-    console.log(`  date      ${date}`);
+    console.log(`  term      ${TERM_DATES[0]} → ${TERM_DATES[TERM_DATES.length - 1]}  (${TERM_DATES.length} weeks, today is week ${WEEKS_BEFORE + 1})`);
     for (const [i, c] of PLAN.entries()) {
-      console.log(`    ${c.code}  ${c.name}  |  ${c.start}–${c.end}  |  ${rooms[i % Math.max(1, rooms.length)]?.name || "no room"}`);
+      console.log(`    ${c.code}  ${c.name}  |  ${c.start}–${c.end}  |  ${rooms[i % Math.max(1, rooms.length)]?.name || "no room"}  ×${TERM_DATES.length}`);
     }
     if (!APPLY) { console.log("\nWould create the above. Add --apply."); return; }
 
@@ -160,40 +185,42 @@ const localTime = (offsetMinutes = 0) =>
       let unit = await bare.unit.findFirst({ where: { code: c.code } });
       if (!unit) {
         unit = await bare.unit.create({
-          data: { code: c.code, name: c.name, courseId: course.id, startDate: date, endDate: date },
+          data: { code: c.code, name: c.name, courseId: course.id, startDate: TERM_DATES[0], endDate: TERM_DATES[TERM_DATES.length - 1] },
         });
       } else {
         // The module outlives the day, so its dates are widened to include today rather
         // than left on whenever it was first seeded — a class outside its module's dates
         // is refused by the term lock, which would look like the feature being broken.
-        await bare.unit.update({ where: { id: unit.id }, data: { startDate: date, endDate: date } });
+        await bare.unit.update({ where: { id: unit.id }, data: { startDate: TERM_DATES[0], endDate: TERM_DATES[TERM_DATES.length - 1] } });
       }
 
       // NO ENROLMENT ROW, deliberately. The student reaches this register through their
       // GROUP, which is how every hand-created module in this product works — and it is
       // the path the roster fix of 11 Sep 2026 exists to protect. Testing the enrolment
       // path instead would test the easy half.
-      const event = await bare.timetableEvent.create({
-        data: {
-          title: c.name, date, startTime: c.start, endTime: c.end,
-          unitId: unit.id, courseId: course.id, roomId: rooms[i % Math.max(1, rooms.length)]?.id ?? null,
-          published: true, publishedAt: new Date(), createRegisters: true,
-        },
-      });
-      await bare.timetableEventStaff.create({ data: { eventId: event.id, staffId: staff.id } });
-      await bare.timetableEventGroup.create({ data: { eventId: event.id, cohortId: cohort.id } });
+      for (const when of TERM_DATES) {
+        const event = await bare.timetableEvent.create({
+          data: {
+            title: c.name, date: when, startTime: c.start, endTime: c.end,
+            unitId: unit.id, courseId: course.id, roomId: rooms[i % Math.max(1, rooms.length)]?.id ?? null,
+            published: true, publishedAt: new Date(), createRegisters: true,
+          },
+        });
+        await bare.timetableEventStaff.create({ data: { eventId: event.id, staffId: staff.id } });
+        await bare.timetableEventGroup.create({ data: { eventId: event.id, cohortId: cohort.id } });
 
-      // The register is BUILT BY THE PRODUCT, not written here — syncEventRegisters is what
-      // the save path itself calls, so this exercises the same roster rule the screens read
-      // rather than proving the seed can insert a row. College-wide scope because a bare
-      // script has no request to take one from, and a narrower one would silently skip the
-      // very event it just created.
-      const out = await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => syncEventRegisters(event.id));
-      made += 1; registers += out.created;
-      if (out.skipped?.length) console.log(`    ${c.code}: register skipped — ${out.skipped.map((s) => s.reason).join("; ")}`);
+        // The register is BUILT BY THE PRODUCT, not written here — syncEventRegisters is
+        // what the save path itself calls, so this exercises the same roster rule the
+        // screens read rather than proving the seed can insert a row. College-wide scope
+        // because a bare script has no request to take one from, and a narrower one would
+        // silently skip the very event it just created.
+        const out = await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => syncEventRegisters(event.id));
+        made += 1; registers += out.created;
+        if (out.skipped?.length) console.log(`    ${c.code} ${when}: register skipped — ${out.skipped.map((s) => s.reason).join("; ")}`);
+      }
     }
 
-    console.log(`  ✓ ${made} class(es) running now, ${registers} register(s) built by the product`);
+    console.log(`  ✓ ${made} class(es) across the term, ${registers} register(s) built by the product`);
     const roster = await bare.hndSession.findMany({
       where: { date, unit: { code: { startsWith: "ZZT" } } },
       select: { id: true, startTime: true, endTime: true, unit: { select: { code: true } } },
