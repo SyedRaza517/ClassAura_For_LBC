@@ -88,6 +88,12 @@ android {
         // keeping Android on 1 to stay tidy, buys a permanent off-by-one between the
         // platforms in exchange for tidiness nobody ever sees.
         //
+        // 3 (11 Sep 2026), one build on from 2, because a fresh build train is going out
+        // carrying the QR check-in fixes and 2 may already have been fed to a build. The
+        // rule from the top of this comment is the only thing that matters here: the number
+        // climbs on every build meant for upload, and it is cheaper to climb than to find
+        // out the hard way that Play has seen the one you are holding. Gaps are free.
+        //
         // NOTE: there is no matching edit on the iOS side and that is deliberate, not
         // an oversight. codemagic.yaml's "Set build number from latest TestFlight" step
         // runs `agvtool new-version -all $(latest + 1)`, overwriting CURRENT_PROJECT_VERSION
@@ -95,7 +101,7 @@ android {
         // discarded before the archive, so hardcoding one would only create a value that
         // disagrees with what actually ships. Bump Android by hand; let Codemagic count
         // for iOS.
-        versionCode 2
+        versionCode 3
         versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
