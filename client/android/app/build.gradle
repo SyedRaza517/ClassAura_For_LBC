@@ -72,7 +72,30 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Play rejects a versionCode it has seen before, on any track — including one
         // uploaded and then discarded. It must go UP on every upload, never sideways.
-        versionCode 1
+        //
+        // 2 (11 Sep 2026) rather than 1, even though uk.co.classaura.app has never been
+        // published to Play and 1 is therefore still free. The reason is the iOS side:
+        // the first App Store Connect upload of build 1 was rejected at the validation
+        // gate (error 90778, the NFC entitlement, since fixed), and a rejection at that
+        // gate is ambiguous about whether the number was consumed — Apple sometimes
+        // keeps the record. Rather than hold the two platforms at different numbers
+        // over a build that may or may not exist, both start the resubmission train at
+        // 2, so "ClassAura build 2" names one thing on both stores when someone reads a
+        // crash report or a TestFlight note.
+        //
+        // Burning versionCode 1 costs nothing — Play only requires the number to
+        // increase, never to start at 1 or to be contiguous — whereas the alternative,
+        // keeping Android on 1 to stay tidy, buys a permanent off-by-one between the
+        // platforms in exchange for tidiness nobody ever sees.
+        //
+        // NOTE: there is no matching edit on the iOS side and that is deliberate, not
+        // an oversight. codemagic.yaml's "Set build number from latest TestFlight" step
+        // runs `agvtool new-version -all $(latest + 1)`, overwriting CURRENT_PROJECT_VERSION
+        // in the .pbxproj during every cloud build. A number committed here would be
+        // discarded before the archive, so hardcoding one would only create a value that
+        // disagrees with what actually ships. Bump Android by hand; let Codemagic count
+        // for iOS.
+        versionCode 2
         versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

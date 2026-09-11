@@ -1,5 +1,6 @@
-// One student who can sign in, with three classes running right now — so every check-in
-// method can be tried end to end against a real deployment.
+// One student who can sign in, with a full teaching day on their timetable — morning,
+// afternoon and evening — so every check-in method can be tried end to end against a real
+// deployment, at whatever hour the person doing the testing is actually free.
 //
 // WHY THIS CREATES ITS OWN STUDENT INSTEAD OF REUSING ONE.
 //
@@ -65,6 +66,19 @@ const localTime = (offsetMinutes = 0) =>
   new Date(Date.now() + offsetMinutes * 60000)
     .toLocaleTimeString("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
 
+// "HH:MM" plus (or minus) a number of minutes, as "HH:MM".
+//
+// Deliberately string-in, string-out arithmetic on two numbers rather than a Date: these are
+// wall-clock times on a day whose date is already known, every comparison in this codebase
+// makes them as strings, and building a Date would drag a timezone into a calculation that
+// does not need one — which is the shape of bug STATUS.md records as D8. Wrapped at 24h so a
+// bad offset can never produce "25:10", though nothing here goes anywhere near midnight.
+const plusMinutes = (hhmm, mins) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  const t = (((h * 60 + m + mins) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+
 (async () => {
   const url = process.env.DATABASE_URL || "";
   if (!url) { console.error("FAILED: DATABASE_URL is not set. Pass it explicitly."); process.exit(1); }
@@ -122,24 +136,50 @@ const localTime = (offsetMinutes = 0) =>
     const rooms = await bare.room.findMany({ where: { active: true }, orderBy: { name: "asc" }, take: 3, select: { id: true, name: true } });
     const date = localDate();
 
-    // TWO SESSIONS, AT THE TIMES A REAL COLLEGE DAY RUNS: a morning block and an afternoon
-    // one, exactly as asked for.
+    // THREE SESSIONS, AT THE TIMES A REAL COLLEGE DAY RUNS: a morning block, an afternoon
+    // one, and an evening one that runs until nine.
     //
-    // This replaced three classes deliberately staggered to be in progress simultaneously,
-    // which was useful for one thing only — seeing the Check In screen with a CHOICE on it —
-    // and dishonest about everything else. No timetable looks like that, so every screen
-    // reading it showed something no student would ever meet.
+    // This said TWO for a while, and before that it was three classes deliberately staggered
+    // to be in progress simultaneously — useful for one thing only, seeing the Check In
+    // screen with a CHOICE on it, and dishonest about everything else. No timetable looks
+    // like that, so every screen reading it showed something no student would ever meet. The
+    // count is three again; what makes that different from the version this replaced is that
+    // the three are now CONSECUTIVE, which is a day a college actually runs.
+    //
+    // WHY THERE IS AN EVENING CLASS. The morning and afternoon blocks are both finished by
+    // five o'clock, so anybody testing self check-in after their own working day opened the
+    // screen, found it correctly empty, and could prove nothing about the one feature this
+    // whole account exists to exercise. Evening provision is also real — FE colleges teach
+    // it — and the timetable grid's own default periods already run to 21:00 (see
+    // timetabling/settingsDefaults.js), so 17:00–21:00 is a shape the product has to render
+    // properly anyway. This is not a fixture bent to suit the tester's diary; it is the part
+    // of a normal college day the fixture was missing.
+    //
+    // The alternative was a flag — --evening, or a --start/--end override — and it was
+    // rejected. With one, the seeded timetable's shape depends on how the tool was last
+    // invoked: two people both looking at "the test student" see different days, and a
+    // screenshot of a bug stops being reproducible from the tool alone. One fixed day, always
+    // the same, is worth the handful of extra rows a week it costs.
     //
     // The trade-off is worth stating because it changes how testing goes: at any given
-    // moment only ONE of these is running, so Check In shows one card, not two. That is the
-    // correct behaviour — a student is in one room at a time — and it means the second card
-    // is tested by coming back after 14:00 rather than by looking twice in a minute.
+    // moment only ONE of these is running, so Check In shows one card, not three. That is the
+    // correct behaviour — a student is in one room at a time — and it means the later cards
+    // are tested by coming back after 13:00 and after 17:00, not by looking three times in a
+    // minute. What it buys is that between 10:00 and 21:00 there is no longer any hour of the
+    // college day with nothing live to check into.
     const PLAN = [
       { name: `${TEST_PREFIX} Computing Practice`, code: "ZZT101", start: "10:00", end: "13:00" },
       // 13:00 rather than 14:00 so the afternoon class is live from one o'clock — there is
       // no gap in the middle of the day where neither session is running and the Check In
       // screen has nothing to act on.
       { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: "13:00", end: "17:00" },
+      // Starts the minute the afternoon block ends, for that same no-gap reason, and ends at
+      // 21:00 rather than later: late enough to still be running for somebody who tests after
+      // work, and inside the timetable's last default period so the tile has somewhere to be
+      // drawn. Nothing here may cross midnight — date and time are separate strings on both
+      // TimetableEvent and HndSession, so a class ending "01:00" would read, to every
+      // comparison in this codebase, as one that ends twenty-three hours before it starts.
+      { name: `${TEST_PREFIX} Evening Workshop`, code: "ZZT103", start: "17:00", end: "21:00" },
     ];
 
     // A WHOLE TERM, not one day — because the timetable screen is a term of dates and a
@@ -342,7 +382,9 @@ const localTime = (offsetMinutes = 0) =>
     const pastRegisters = await bare.hndSession.findMany({
       where: { date: { lt: date }, unit: { code: { startsWith: "ZZT" } } },
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
-      select: { id: true, date: true },
+      // startTime comes back because the arrival time written below is derived from it —
+      // see the note on checkedInAt.
+      select: { id: true, date: true, startTime: true },
     });
     const PATTERN = ["P", "P", "L", "P", "A", "P", "P", "E"];
     let marked = 0;
@@ -354,8 +396,18 @@ const localTime = (offsetMinutes = 0) =>
           sessionId: reg.id, studentId: student.id, status, remark: "",
           takenBy: staff.name,
           // Only a mark that says they turned up carries an arrival time. An absence has
-          // no arrival, and inventing one would make the row contradict itself.
-          checkedInAt: status === "A" ? null : (status === "L" ? "10:22" : "10:03"),
+          // no arrival, and inventing one would make the row contradict itself. NULL rather
+          // than "00:00": the column means "when did they tap in", and for somebody who was
+          // not there that is not measurable, which this codebase spells null everywhere.
+          //
+          // DERIVED FROM THE CLASS'S OWN START TIME, not the fixed "10:03"/"10:22" this used
+          // to write. That pair was right only while every seeded class began at ten; with an
+          // afternoon and now an evening block on the timetable it put the student in the
+          // room up to seven hours before the class started, and "arrived 10:03" on a 17:00
+          // class is a self-contradicting row on the exact column a disputed register is read
+          // for. Three minutes after the start reads as on time; twenty-two minutes after it
+          // reads as unambiguously late, which is the whole point of the "L".
+          checkedInAt: status === "A" ? null : plusMinutes(reg.startTime, status === "L" ? 22 : 3),
         },
       }).catch(() => {});
       marked += 1;
@@ -366,6 +418,18 @@ const localTime = (offsetMinutes = 0) =>
     // The ungraded one matters more than the graded one. A results screen showing only
     // finished work never renders "not submitted yet" or a due date in the future, which
     // is most of what a student opens it to see.
+    // ONE RESULT PER MODULE, IN ORDER, rather than the `i === 0 ? 72 : 38` this used to be.
+    // That expression meant "the first module passes and EVERY other one fails", which was
+    // invisible while there were two modules and wrong the moment a third arrived: the
+    // evening module would have silently inherited a failing mark and a resubmission
+    // conversation nobody chose to give this student. Three distinct results also make the
+    // results screen render three states — comfortable, below the mark, and a bare pass —
+    // instead of two.
+    const RESULTS = [
+      { marks: 72, feedback: "Solid work — clear structure and good use of examples. Push the evaluation further next time." },
+      { marks: 38, feedback: "Below the pass mark. The analysis section needs more depth; see me about a resubmission." },
+      { marks: 55, feedback: "A pass, but the practical write-up is thin against the criteria. Bring your workshop notes next week." },
+    ];
     let assessments = 0, grades = 0;
     for (const [i, c] of PLAN.entries()) {
       const unit = await bare.unit.findFirst({ where: { code: c.code }, select: { id: true } });
@@ -377,15 +441,14 @@ const localTime = (offsetMinutes = 0) =>
         data: { unitId: unit.id, title: `${TEST_PREFIX} Coursework 2`, type: "Project", maxMarks: 100, weight: 60, dueDate: TERM_DATES[TERM_DATES.length - 2] },
       });
       assessments += 2;
-      // A pass on one module and a near-miss on the other, so the screen has to render
-      // both a comfortable result and one worth a conversation.
+      // Modulo so the fixture cannot crash on a fourth module somebody adds without reading
+      // this far; RESULTS is meant to be extended alongside PLAN, and wrapping is a duller
+      // failure than a TypeError halfway through a seed.
+      const result = RESULTS[i % RESULTS.length];
       await bare.assessmentGrade.create({
         data: {
-          assessmentId: done.id, studentId: student.id, marks: i === 0 ? 72 : 38,
-          gradedOn: TERM_DATES[2], gradedBy: staff.name,
-          feedback: i === 0
-            ? "Solid work — clear structure and good use of examples. Push the evaluation further next time."
-            : "Below the pass mark. The analysis section needs more depth; see me about a resubmission.",
+          assessmentId: done.id, studentId: student.id, marks: result.marks,
+          gradedOn: TERM_DATES[2], gradedBy: staff.name, feedback: result.feedback,
         },
       });
       grades += 1;
@@ -411,7 +474,7 @@ const localTime = (offsetMinutes = 0) =>
     await bare.studentQuery.create({
       data: {
         studentId: student.id, subject: "Timetable clash",
-        message: "My two modules both show as running this afternoon. Which one should I go to?",
+        message: "Two of my modules both show as running this afternoon. Which one should I go to?",
         status: "answered", response: "Thanks for flagging it — the afternoon session moved to 13:00 and the timetable is now correct. Go to Business Systems.",
         respondedBy: staff.name, respondedAt: TERM_DATES[3],
       },
