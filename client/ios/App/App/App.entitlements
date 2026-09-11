@@ -11,10 +11,25 @@
 	  a bug in the app rather than a missing capability, which is why it is written down
 	  here rather than left to be rediscovered.
 
-	  NDEF is the only format listed on purpose. The plugin can also open a raw "tag"
-	  session, which needs TAG added here — but a raw session reads the chip directly,
-	  which is a broader permission than reading a check-in sticker warrants, and every
-	  extra entitlement is another thing App Review asks about.
+	  TAG, NOT NDEF — and this reverses a deliberate choice, so the reason is recorded.
+
+	  It used to read NDEF only, on the argument that a raw tag session reads the chip
+	  directly and is a broader permission than reading a check-in sticker warrants.
+	  That argument was sound and is now moot: Apple's upload validator refuses it. A
+	  binary built against the current SDK with a minimum of iOS 15 is rejected at
+	  App Store Connect with error 90778, saying both halves plainly —
+
+	      'TAG is missing in the entitlement'
+	      'NDEF is disallowed'
+
+	  So the narrow option no longer exists. NDEF is not a format we may ask for any
+	  more, and TAG is the only value that uploads at all. Reading an NDEF message off
+	  a sticker still works through it; what changed is the name of the permission we
+	  have to hold to do it, not what the app does with the tag.
+
+	  Found at the UPLOAD step, not at build: the archive compiled and signed cleanly
+	  and was rejected afterwards by App Store Connect, which is why it survived every
+	  local check.
 
 	  THIS FILE IS NOT ENOUGH ON ITS OWN. Two manual steps remain, in Xcode:
 	    1. Signing & Capabilities -> + Capability -> Near Field Communication Tag Reading
@@ -25,7 +40,7 @@
 	-->
 	<key>com.apple.developer.nfc.readersession.formats</key>
 	<array>
-		<string>NDEF</string>
+		<string>TAG</string>
 	</array>
 </dict>
 </plist>

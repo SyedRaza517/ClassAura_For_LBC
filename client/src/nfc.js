@@ -46,14 +46,27 @@ export const NEEDS_PROMPT = PLATFORM === "ios";
 //   - NFCTagReaderSession ('tag') talks to the chip directly and does expose the UID,
 //     which is what a blank sticker needs.
 //
-// We deliberately stay on 'ndef'. A raw tag session requires TAG added to
-// `com.apple.developer.nfc.readersession.formats` in ios/App/App/App.entitlements, and
-// that file argues against it at length and on purpose: reading the chip directly is a
-// broader permission than reading a check-in sticker warrants, and every extra
-// entitlement is one more thing App Review asks about. Without the entitlement the
-// session does not merely degrade — startScanning rejects with NO_NFC, so quietly
-// passing iosSessionType:'tag' would break scanning on iPhone *entirely*, including the
-// written stickers that work today.
+// We deliberately stay on 'ndef', and the reason is now narrower than it was.
+//
+// It used to be about the ENTITLEMENT: a raw tag session needed TAG added to
+// `com.apple.developer.nfc.readersession.formats`, that file argued against it at
+// length, and so the session type followed. Apple has since removed that choice — its
+// upload validator rejects an NDEF-only entitlement outright (error 90778, "NDEF is
+// disallowed", "TAG is missing in the entitlement"), so App.entitlements now declares
+// TAG because nothing else uploads. Read that file before changing this one; it records
+// what happened.
+//
+// The entitlement being broader does NOT mean this should switch to a tag session. That
+// is a separate decision with its own consequence: a tag session exposes the chip's UID,
+// which is what a BLANK sticker needs, and this product writes its stickers rather than
+// reading factory UIDs. What has changed is the permission we are obliged to hold, not
+// what the app does with a tag — so the session type stays where it was on its own
+// merits rather than drifting along with the entitlement.
+//
+// UNVERIFIED ON DEVICE AT THE TIME OF WRITING. Apple treats TAG as the superset and an
+// NDEF session is expected to keep working under it, but this was changed to get past an
+// upload rejection and could only be proven by a scan on a real iPhone. If iOS scanning
+// comes back NO_NFC after this, that is the first thing to check.
 //
 // So the limitation stands, and the job here is to make it loud instead of silent. An
 // iPhone pointed at a blank sticker used to sit on Apple's sheet doing nothing until it
