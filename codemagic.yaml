@@ -9,7 +9,7 @@
 #       role "App Manager"; download the .p8, note the Key ID + Issuer ID).
 #      Give the integration a NAME and put that same name below in
 #      `app_store_connect: <NAME>` under integrations.
-#   3. App Store Connect → create the app (bundle ID uk.co.edtech.hub) — this
+#   3. App Store Connect → create the app (bundle ID uk.co.classaura.app) — this
 #      gives you the numeric "Apple ID" for the app. Put it in APP_STORE_APPLE_ID.
 #   4. Push this file, then in Codemagic run the "ios-release" workflow.
 #
@@ -57,10 +57,10 @@ workflows:
         # disagree, the archive is signed for one app and built as another and the
         # upload is rejected. The "Apply the white-label identity" step below compares
         # the two and fails the build early rather than 20 minutes later.
-        bundle_identifier: uk.co.edtech.hub
+        bundle_identifier: uk.co.classaura.app
       vars:
         XCODE_SCHEME: "App"
-        BUNDLE_ID: "uk.co.edtech.hub"
+        BUNDLE_ID: "uk.co.classaura.app"
         # The packaged app has no usable host (capacitor://), so the API URL MUST be
         # baked in at build time. .env.production is gitignored and never reaches
         # this cloud build, so set it here explicitly — otherwise the app falls back
@@ -74,6 +74,11 @@ workflows:
         VITE_API_URL: "https://edtech-xr8g.onrender.com/api"
         # Numeric Apple ID of the app from App Store Connect (step 3). Until you
         # have it, the "increment build number" step below will fail — set it first.
+        # ⚠ STILL THE OLD APP'S NUMERIC ID. ClassAura is a NEW listing under
+        # uk.co.classaura.app, so App Store Connect issues it a NEW Apple ID when the app
+        # record is created — and until this is replaced with that number, a successful
+        # build uploads ClassAura's binary to the Staff Hub listing, where it is rejected
+        # for a bundle id that does not match. Replace it before the first iOS release.
         APP_STORE_APPLE_ID: 6795300712
       node: 22
       xcode: latest

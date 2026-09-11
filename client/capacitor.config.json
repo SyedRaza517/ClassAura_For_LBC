@@ -1,6 +1,6 @@
 {
-  "appId": "uk.co.edtech.hub",
-  "appName": "Staff Hub",
+  "appId": "uk.co.classaura.app",
+  "appName": "ClassAura",
   "webDir": "dist",
   "backgroundColor": "#ffffffff",
   "android": {

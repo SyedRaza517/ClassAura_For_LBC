@@ -1,7 +1,7 @@
 {
-  "name": "Staff Hub",
-  "short_name": "Staff Hub",
-  "description": "Staff attendance, leave and document access.",
+  "name": "ClassAura",
+  "short_name": "ClassAura",
+  "description": "Timetables, attendance and check-in for staff and students.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

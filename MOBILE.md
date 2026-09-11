@@ -322,10 +322,30 @@ npm --workspace client run ios        # ...and open Xcode (macOS only)
 its own to see the diff before committing. Push to trigger the Codemagic `ios-release`
 workflow for the iOS side.
 
+### ClassAura, and the app that came before it
+
+**`uk.co.classaura.app` is the app this repo now builds.** Named ClassAura, starting at
+`1.0.0` / build `1` on 11 Sep 2026 — a NEW listing in both stores, not a rename.
+
+That distinction is the whole reason the version numbers restart. A published app's
+`versionCode` only ever goes up, on any track, and Play rejects a repeat *after* the
+upload rather than before it. Version 1 is therefore only correct under an id no store
+has seen, and the two decisions — new id, restart at 1 — stand or fall together. Keeping
+the old id and restarting at 1 is the combination that fails, and it fails late.
+
+Two things still carry the old app's identity and are correct to:
+
+* `namespace` in `build.gradle` — the Java package `MainActivity` and the generated `R`
+  class live in. Internal, invisible, and changing it means moving source files.
+* `APP_STORE_APPLE_ID` in `codemagic.yaml` — **this one is NOT correct yet.** App Store
+  Connect issues a new numeric id when the ClassAura record is created, and until that
+  number replaces `6795300712`, a successful build uploads ClassAura's binary to the
+  Staff Hub listing, where it is rejected for a mismatched bundle id.
+
 ### What is fixed for the app that already exists
 
 `uk.co.edtech.hub` is live — App Store Connect app `6795300712`, Play `versionCode 26`.
-**It stays.** Changing a published app's bundle id does not update that app; it
+It is a SEPARATE listing and nothing above affects it. **It stays.** Changing a published app's bundle id does not update that app; it
 publishes a *different* one, and every existing install is orphaned on the old version
 with no upgrade path. `brand.properties` therefore ships with `app.id=uk.co.edtech.hub`
 as the default, and a new institution gets a new id in its own copy of the file — never
