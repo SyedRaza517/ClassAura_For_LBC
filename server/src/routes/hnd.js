@@ -1805,16 +1805,44 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
   // overwritten by the next save, so without this snapshot a mark changed from A to P
   // months later leaves nothing behind saying it was ever an A.
   const priorMarks = new Map(
-    (await prisma.attendanceMark.findMany({ where: { sessionId: session.id }, select: { studentId: true, status: true } }))
-      .map((m) => [m.studentId, m.status])
+    (await prisma.attendanceMark.findMany({ where: { sessionId: session.id }, select: { studentId: true, status: true, takenBy: true } }))
+      .map((m) => [m.studentId, { status: m.status, takenBy: m.takenBy }])
   );
+
+  // A SAVE THAT CHANGES NOTHING MUST NOT RESTAMP THE WHOLE CLASS AS LECTURER-MARKED.
+  //
+  // This wrote `takenBy` on every row in the request, and a register save re-sends the
+  // ENTIRE class whether or not anything moved. So opening a register and pressing Save —
+  // the most ordinary action on this screen — replaced every student's self check-in stamp
+  // with the lecturer's name. `selfMarked` went false, `checkInMethod` went null, and the
+  // register, the live view and the exported CSV all stopped showing that thirty students
+  // had tapped in. No status changed, so `moved` was 0 and NOTHING WAS AUDITED: the only
+  // record that those marks were ever self check-ins was destroyed silently, by a save
+  // that did nothing else.
+  //
+  // The brief's rule is "once marked, cannot be overridden unless the lecturer does it from
+  // the dashboard". A lecturer who CHANGES a mark is doing exactly that and takes ownership
+  // of it, which is why takenBy still moves to their name below. A lecturer who changes
+  // nothing has overridden nothing, and must not inherit the authorship of a mark the
+  // student made.
+  //
+  // Keyed on the STATUS, not on the remark. A remark is a note about a mark; it does not
+  // assert that the student was or was not there, so editing one leaves the question this
+  // column answers — who says this status is right — untouched.
+  const statusMoved = (r) => (priorMarks.get(r.studentId)?.status ?? null) !== r.status;
+
   await prisma.$transaction(rows.map((r) => (
     r.status === null
       ? prisma.attendanceMark.deleteMany({ where: { sessionId: session.id, studentId: r.studentId } })
       : prisma.attendanceMark.upsert({
           where: { sessionId_studentId: { sessionId: session.id, studentId: r.studentId } },
           create: { sessionId: session.id, studentId: r.studentId, status: r.status, remark: r.remark, takenBy },
-          update: { status: r.status, ...(r.hasRemark ? { remark: r.remark } : {}), takenBy, takenAt: new Date() },
+          update: {
+            status: r.status,
+            ...(r.hasRemark ? { remark: r.remark } : {}),
+            ...(statusMoved(r) ? { takenBy } : {}),
+            takenAt: new Date(),
+          },
         })
   )));
 
@@ -1826,12 +1854,18 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
   // bulk import writing a several-hundred-key blob.
   const before = {}, after = {};
   for (const r of rows) {
-    const was = priorMarks.has(r.studentId) ? priorMarks.get(r.studentId) : null;
+    const was = priorMarks.get(r.studentId)?.status ?? null;
     if (was === r.status) continue;
     before[r.studentId] = was;
     after[r.studentId] = r.status;
   }
   const moved = Object.keys(after).length;
+  // HOW MANY OF THOSE REPLACED A STUDENT'S OWN CHECK-IN, counted before the write is
+  // described. "P changed to A" is the whole audit entry today, and it does not say the P
+  // was a student's own tap — which is precisely the fact a disputed mark turns on, and
+  // precisely what the student will say when they appeal. It is one number and it costs
+  // nothing to record.
+  const overrodeSelf = Object.keys(after).filter((id) => isSelfCheckIn(priorMarks.get(id)?.takenBy)).length;
   // Only the marks that actually MOVED. A register save re-sends the whole class, so
   // flagging every student on it would rescore the cohort every time a register is
   // opened and closed unchanged.
@@ -1841,6 +1875,7 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
       action: outOfTerm ? "attendance.register.corrected" : "attendance.register.saved",
       entity: "HndSession", entityId: session.id,
       summary: `${moved} attendance mark(s) changed on the ${session.date} register for ${session.unit?.code || "a unit"}` +
+        (overrodeSelf ? `, ${overrodeSelf} of which replaced a mark the student had made themselves` : "") +
         (outOfTerm ? ` — an out-of-term correction made after ${term.name} closed on ${term.end}` : "") +
         ` by ${req.user?.name || "an administrator"}`,
       before, after,

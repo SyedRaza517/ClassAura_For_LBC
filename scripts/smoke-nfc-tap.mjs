@@ -77,6 +77,13 @@ const C_EMAIL = "100126@edtech.co.uk";
 // And a sixth, for the geofence block. Same reasoning as the fifth: ten check-in
 // attempts a minute is a budget shared across every capture method, and a 429 satisfies
 // "is it refused" for the wrong reason while making every acceptance vacuous.
+// A SEVENTH, for the override block. Each block that drives real check-ins needs a
+// student with an untouched budget: the limiter allows ten attempts a minute ACROSS
+// every capture method, so a 429 satisfies "is it refused" for entirely the wrong
+// reason while making every acceptance beside it vacuous.
+const G_ID = "st-100123";
+const G_EMAIL = "100123@edtech.co.uk";
+
 const F_ID = "st-100140";
 const F_EMAIL = "100140@edtech.co.uk";
 
@@ -1668,6 +1675,99 @@ try {
   check("A LECTURER EDITING THE MARK DOES NOT WIPE THE HANDSET IT CAME FROM",
     afterEdit?.status === "L" && afterEdit?.deviceId === beforeEdit?.deviceId && !!afterEdit?.deviceId,
     JSON.stringify({ before: beforeEdit?.deviceId, after: afterEdit?.deviceId, status: afterEdit?.status }));
+
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
+
+
+  /* ====================================================================== */
+  console.log("\n--- Once marked: only a lecturer overrides, and it is on the record ---");
+  /* ====================================================================== */
+  //
+  // "Once marked, cannot be overridden unless the lecturer will do it from the dashboard."
+  // Four separate claims, each asserted here rather than assumed, because three of them
+  // were already true and one was not.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: true } });
+  await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
+
+  await db.student.update({ where: { id: G_ID }, data: { passwordHash: bcrypt.hashSync(A_PASSWORD, 10), tokenVersion: 0, cohortId: dCohort.id } });
+  const gLogin = await login(G_EMAIL, A_PASSWORD);
+  const gToken = gLogin.data?.token;
+  check("the seventh student signed in, with an untouched check-in budget", !!gToken, `HTTP ${gLogin.status}`);
+
+  const ownPhone = `own-${RUN}`.slice(0, 60);
+  const ovMarked = await call("/student/me/declare-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id }, device: ownPhone });
+  check("a student marks themselves present", ovMarked.status === 201, `HTTP ${ovMarked.status}`);
+
+  // 1. THE STUDENT CANNOT OVERRIDE THEIR OWN MARK, by any route. Pressing again, or
+  //    switching capture method, must not rewrite a mark that already stands.
+  const ovAgain = await call("/student/me/declare-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id }, device: ownPhone });
+  check("...and cannot overwrite it by pressing again", ovAgain.data?.alreadyMarked === true, `HTTP ${ovAgain.status}`);
+  const ovViaQr = await call("/student/me/qr-check-in", { method: "POST", token: gToken, body: { sessionId: dNow.id, code: "anything" }, device: ownPhone });
+  check("...nor by arriving through a different capture method",
+    ovViaQr.status !== 201, `HTTP ${ovViaQr.status} ${ovViaQr.data?.reason}`);
+  const stillTheirs = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: G_ID }, select: { takenBy: true, status: true } });
+  check("...and the mark is untouched, still stamped as theirs",
+    stillTheirs?.takenBy === "Self check-in (declared)" && stillTheirs?.status === "P", JSON.stringify(stillTheirs));
+
+  // 2. CLOSING THE REGISTER DOES NOT MARK THEM ABSENT. The blunt button writes only
+  //    against students who have no mark at all — it is a create, never an update, so it
+  //    is structurally incapable of overwriting a check-in.
+  const ovClosed = await call(`/hnd/sessions/${dNow.id}/mark-remaining-absent`, { method: "POST", token: adminToken, body: {} });
+  const afterClose = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: G_ID }, select: { takenBy: true, status: true } });
+  check("CLOSING THE REGISTER DOES NOT TURN A CHECK-IN INTO AN ABSENCE",
+    afterClose?.status === "P" && afterClose?.takenBy === "Self check-in (declared)",
+    `HTTP ${ovClosed.status} ${JSON.stringify(afterClose)}`);
+
+  // 3. A SAVE THAT CHANGES NOTHING MUST NOT RESTAMP THE CLASS AS LECTURER-MARKED.
+  //
+  //    THE DEFECT THIS BLOCK WAS WRITTEN TO CATCH. A register save re-sends the whole
+  //    class whether or not anything moved, and the update wrote `takenBy` on every row —
+  //    so opening a register and pressing Save, the most ordinary action on the screen,
+  //    replaced every self check-in stamp with the lecturer's name. selfMarked went false,
+  //    checkInMethod went null, and because no status changed, nothing was audited. The
+  //    only record that thirty students had tapped in was destroyed by a save that did
+  //    nothing else.
+  const ovNoop = await call(`/hnd/sessions/${dNow.id}/register`, {
+    method: "PUT", token: adminToken,
+    body: { marks: [{ studentId: G_ID, status: "P" }] },
+  });
+  const afterNoop = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: G_ID }, select: { takenBy: true, checkedInAt: true, deviceId: true } });
+  check("A SAVE THAT CHANGES NOTHING LEAVES THE CHECK-IN AS THE STUDENT'S",
+    afterNoop?.takenBy === "Self check-in (declared)", `HTTP ${ovNoop.status} takenBy=${afterNoop?.takenBy}`);
+  check("...and the arrival time and handset survive it too",
+    !!afterNoop?.checkedInAt && afterNoop?.deviceId === ownPhone, JSON.stringify(afterNoop));
+
+  const regAfterNoop = await call(`/hnd/sessions/${dNow.id}/register`, { token: adminToken });
+  const rowAfterNoop = (regAfterNoop.data?.rows || []).find((r) => r.student?.id === G_ID);
+  check("...so the register still shows it as a self check-in, by method",
+    rowAfterNoop?.selfMarked === true && rowAfterNoop?.checkInMethod === "declared",
+    JSON.stringify({ self: rowAfterNoop?.selfMarked, method: rowAfterNoop?.checkInMethod }));
+
+  // 4. A LECTURER WHO ACTUALLY CHANGES THE MARK DOES OVERRIDE IT, and takes ownership.
+  //    This is the half of the rule that must keep working: the dashboard is the one place
+  //    a mark can be overridden, and a lecturer correcting a register is doing their job.
+  const ovOverridden = await call(`/hnd/sessions/${dNow.id}/register`, {
+    method: "PUT", token: adminToken,
+    body: { marks: [{ studentId: G_ID, status: "A", remark: "not in the room" }] },
+  });
+  const afterOverride = await db.attendanceMark.findFirst({ where: { sessionId: dNow.id, studentId: G_ID }, select: { status: true, takenBy: true, checkedInAt: true } });
+  check("A LECTURER CHANGING THE MARK DOES OVERRIDE IT, and owns it afterwards",
+    afterOverride?.status === "A" && afterOverride?.takenBy && !/^Self check-in/.test(afterOverride.takenBy),
+    `HTTP ${ovOverridden.status} ${JSON.stringify(afterOverride)}`);
+  // The arrival time is NOT erased. It is the only remaining record that the student was
+  // at the door at all, and a lecturer disagreeing with the mark does not unmake it.
+  check("...but the time the student checked in is not erased by the correction",
+    !!afterOverride?.checkedInAt, `checkedInAt=${afterOverride?.checkedInAt}`);
+
+  // AND IT SAYS SO IN THE AUDIT. "P changed to A" does not record that the P was the
+  // student's own tap — which is exactly what the student will say when they appeal.
+  const ovEntry = await db.auditLog.findFirst({
+    where: { entityId: dNow.id, action: { startsWith: "attendance.register." } },
+    orderBy: { at: "desc" }, select: { summary: true },
+  });
+  check("THE AUDIT SAYS THE OVERRIDE REPLACED A MARK THE STUDENT MADE THEMSELVES",
+    /themselves/i.test(ovEntry?.summary || ""), ovEntry?.summary || "(no audit entry)");
 
   await db.attendanceMark.deleteMany({ where: { sessionId: dNow.id } });
   await call("/tags/settings", { method: "PUT", token: adminToken, body: { declareEnabled: false } });
