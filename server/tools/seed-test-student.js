@@ -34,6 +34,19 @@ const supportDepartments = require("../src/supportDepartments");
 const bare = new PrismaClient();
 const APPLY = process.argv.includes("--apply");
 const REMOVE = process.argv.includes("--remove");
+// --for <email>: give an EXISTING student one test module instead of creating a new one.
+//
+// The account named here is a real person's, so nothing about them is edited: not their
+// password, not their group, not their name. They gain ONE enrolment on one clearly-named
+// test module and nothing else, and --remove takes it away again with the module.
+//
+// The classes it creates carry NO GROUP, deliberately. A grouped register's roster is
+// built from the cohort, so a student outside that cohort could only be added by MOVING
+// them into it — which would take them off their own group's registers, in their own
+// college's attendance figures, to make a test work. An ungrouped register's roster is the
+// enrolment list, so one enrolment row is the whole change.
+const FOR_INDEX = process.argv.indexOf("--for");
+const FOR_EMAIL = FOR_INDEX > -1 ? (process.argv[FOR_INDEX + 1] || "").trim().toLowerCase() : null;
 
 const TEST_PREFIX = "ZZ TEST";
 const STUDENT_EMAIL = "test.student@edtech.co.uk";
@@ -89,7 +102,7 @@ const localTime = (offsetMinutes = 0) =>
       return;
     }
 
-    if (!PASSWORD || PASSWORD.length < 10) {
+    if (!FOR_EMAIL && (!PASSWORD || PASSWORD.length < 10)) {
       console.error("FAILED: set TEST_STUDENT_PASSWORD (at least 10 characters).");
       process.exit(1);
     }
@@ -158,6 +171,74 @@ const localTime = (offsetMinutes = 0) =>
     console.log(`  group     ${TEST_PREFIX} Group   — one student, scheduled against nothing else`);
     console.log(`  course    ${course.name}`);
     console.log(`  lecturer  ${staff.name}`);
+    /* ------------------------------------------------------------------ *
+     * --for <email>: ONE module for a student who already exists.
+     * ------------------------------------------------------------------ */
+    if (FOR_EMAIL) {
+      const them = await bare.student.findFirst({
+        where: { email: { equals: FOR_EMAIL, mode: "insensitive" } },
+        select: { id: true, firstName: true, lastName: true, email: true, cohortId: true },
+      });
+      if (!them) {
+        console.error(`FAILED: no student on this database has the email ${FOR_EMAIL}.`);
+        process.exit(1);
+      }
+      console.log(`
+  FOR: ${them.firstName} ${them.lastName} <${them.email}>`);
+      console.log(`       ${TERM_DATES.length} class(es) 13:00–17:00, one per week, plus one enrolment`);
+      // THE DRY RUN HAS TO BE DRY. This block sits above the tool's own --apply guard, so
+      // without this it wrote to the database while printing "nothing will be written" —
+      // on a tool whose entire purpose is being pointed at live college databases.
+      if (!APPLY) { console.log("  Would do that. Add --apply."); return; }
+      // Their group is READ and printed, never written. If this ever starts changing it,
+      // the printed line is what makes that visible in the output rather than in a support
+      // call from somebody who vanished off their own register.
+      console.log(`       group unchanged (${them.cohortId || "none"}), password unchanged, only an enrolment is added`);
+
+      const code = "ZZT201";
+      let mine = await bare.unit.findFirst({ where: { code } });
+      if (!mine) {
+        mine = await bare.unit.create({
+          data: { code, name: `${TEST_PREFIX} ${them.firstName}'s Module`, courseId: course.id, startDate: TERM_DATES[0], endDate: TERM_DATES[TERM_DATES.length - 1] },
+        });
+      } else {
+        await bare.unit.update({ where: { id: mine.id }, data: { startDate: TERM_DATES[0], endDate: TERM_DATES[TERM_DATES.length - 1] } });
+      }
+
+      // THE ONE ROW THAT TOUCHES THEIR RECORD.
+      await bare.enrolment.upsert({
+        where: { studentId_unitId: { studentId: them.id, unitId: mine.id } },
+        create: { studentId: them.id, unitId: mine.id },
+        update: {},
+      }).catch(async () => {
+        const has = await bare.enrolment.findFirst({ where: { studentId: them.id, unitId: mine.id } });
+        if (!has) await bare.enrolment.create({ data: { studentId: them.id, unitId: mine.id } });
+      });
+
+      // 13:00–17:00, so today's class is running through the afternoon and can be checked
+      // into the moment this finishes — the point of the exercise.
+      let mineMade = 0, mineRegs = 0;
+      for (const when of TERM_DATES) {
+        const ev = await bare.timetableEvent.create({
+          data: {
+            title: `${TEST_PREFIX} ${them.firstName}'s Module`, date: when, startTime: "13:00", endTime: "17:00",
+            unitId: mine.id, courseId: course.id, roomId: rooms[0]?.id ?? null,
+            published: true, publishedAt: new Date(), createRegisters: true,
+          },
+        });
+        await bare.timetableEventStaff.create({ data: { eventId: ev.id, staffId: staff.id } });
+        // NO timetableEventGroup on purpose — see the note beside --for. No group means one
+        // register whose roster IS the enrolment list, which is the only way to put a
+        // student on a sheet without moving them between cohorts.
+        const out = await runWithAcademicScope({ academicDepartmentIds: [], collegeWide: true }, () => syncEventRegisters(ev.id));
+        mineMade += 1; mineRegs += out.created;
+        if (out.skipped?.length) console.log(`    ${code} ${when}: register skipped — ${out.skipped.map((x) => x.reason).join("; ")}`);
+      }
+      console.log(`  ✓ ${code} — ${mineMade} class(es) 13:00–17:00 across the term, ${mineRegs} register(s)`);
+      console.log(`  ✓ 1 enrolment added for ${them.email}; nothing else about their account was touched`);
+      return;
+    }
+
     console.log(`  term      ${TERM_DATES[0]} → ${TERM_DATES[TERM_DATES.length - 1]}  (${TERM_DATES.length} weeks, today is week ${WEEKS_BEFORE + 1})`);
     for (const [i, c] of PLAN.entries()) {
       console.log(`    ${c.code}  ${c.name}  |  ${c.start}–${c.end}  |  ${rooms[i % Math.max(1, rooms.length)]?.name || "no room"}  ×${TERM_DATES.length}`);
