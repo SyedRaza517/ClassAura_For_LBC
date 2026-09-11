@@ -47,8 +47,14 @@ if (!process.env.JWT_SECRET) {
 
 const { PrismaClient } = require(join(server, "node_modules", "@prisma", "client"));
 const bcrypt = require(join(server, "node_modules", "bcryptjs"));
-const { deriveCode, windowIndexFor, CODE_LENGTH } = require(join(server, "src", "attendanceQr.js"));
+const { deriveCode, windowIndexFor, CODE_LENGTH, GRACE_SECONDS } = require(join(server, "src", "attendanceQr.js"));
 const { qrSigningKey } = require(join(server, "src", "secrets.js"));
+// The platform default, READ rather than repeated. This suite derives codes itself, so a
+// rotation period that disagrees with the server's produces a different window index and
+// every happy-path scan below fails for a reason that looks nothing like the cause. It
+// was a literal 30 and the default moved to 20 underneath it, which is exactly the drift
+// this import removes.
+const { DEFAULTS: TAP_DEFAULTS } = require(join(server, "src", "attendanceTapSettings.js"));
 
 // A BARE client, not the one the API writes through, so this suite can plant fixtures
 // the API would refuse (a lecturer's A, a closed term) and read back what the API
@@ -62,7 +68,7 @@ const RUN = Date.now().toString(36);
 // happy path below fails immediately, which is the fastest possible detection of a
 // derivation drift between suite and server.
 const SECRET = qrSigningKey();
-const ROTATE = 30;
+const ROTATE = TAP_DEFAULTS.qrRotateSeconds;
 const codeFor = (sessionId, offsetWindows = 0) =>
   deriveCode({ secret: SECRET, sessionId, windowIndex: windowIndexFor(Math.floor(Date.now() / 1000), ROTATE) + offsetWindows });
 
@@ -75,6 +81,22 @@ const avoidBoundary = async () => {
   const into = Math.floor(Date.now() / 1000) % ROTATE;
   if (into >= ROTATE - 2) await new Promise((r) => setTimeout(r, (ROTATE - into + 1) * 1000));
 };
+
+// The opposite of avoidBoundary: wait until we are JUST PAST a rotation, because that is
+// the only moment the grace can be observed at all.
+//
+// The previous window's code used to verify for the whole of the current one, so this
+// distinction did not exist and any instant would do. It verifies for GRACE_SECONDS now,
+// which is the point of the change — a code's life went from twice the rotation period to
+// the rotation plus a few seconds — and an assertion about it has to stand at a known
+// distance from the boundary or it tests whatever the clock happened to be doing.
+//
+// Costs at most one rotation period, once.
+const justAfterBoundary = async () => {
+  const into = Math.floor(Date.now() / 1000) % ROTATE;
+  if (into !== 0) await new Promise((r) => setTimeout(r, (ROTATE - into) * 1000 + 300));
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Three seeded students, none of them the ones smoke-nfc-tap signs in. The reason is
 // the rate limiter, twice over: the verify route shares the NFC route's budget of ten
@@ -343,6 +365,13 @@ try {
   check("the screen is told when the code turns over",
     mint.data?.rotateSeconds === ROTATE && mint.data?.secondsLeft >= 1 && mint.data?.secondsLeft <= ROTATE,
     `secondsLeft=${mint.data?.secondsLeft}`);
+  // THE NUMBER THE WHOLE FEATURE'S HONESTY RESTS ON, asserted end to end rather than only
+  // in the settings unit test — it travels through the merge, the config cache and the
+  // serialiser before it reaches the projector, and a college reading "20 seconds" on the
+  // settings screen is only being told the truth if this is the value the mint actually
+  // uses. Twenty since 11 Sep 2026; it was thirty.
+  check("...and it is the twenty seconds this college is configured for",
+    mint.data?.rotateSeconds === 20, `rotateSeconds=${mint.data?.rotateSeconds}`);
 
   const mintFuture = await call(`/hnd/sessions/${future.id}/qr-code`, { token: adminToken });
   check("no code is minted before the class opens — the screen says when instead",
@@ -442,19 +471,44 @@ try {
   check("the live view carries the QR switch for the screen",
     liveView.data?.qrEnabled === true, `qrEnabled=${liveView.data?.qrEnabled}`);
 
-  // A second scan with the PREVIOUS window's code: the trailing tolerance verifies it
-  // (or this would be qr_expired, not alreadyMarked) — and no second mark is written,
-  // no arrival time moves.
+  // THE ROTATION GRACE, END TO END — and the shape of this block changed on 11 Sep 2026
+  // along with the rule it tests.
+  //
+  // It used to scan with the previous window's code at any old moment, because the
+  // previous window verified for the WHOLE of the current one. That made a code live for
+  // up to twice the rotation period, which quietly gave away half of what the rotation
+  // setting promises: the number a college sets is how long a photographed screen keeps
+  // working, and it was really that number doubled. The previous code is now accepted for
+  // GRACE_SECONDS after it leaves the screen and no longer, so both halves are asserted at
+  // a KNOWN distance from the boundary rather than wherever the clock happened to be.
   const firstCheckedInAt = markRow?.checkedInAt;
-  await avoidBoundary();
-  const again = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: codeFor(live.id, -1) } });
+
+  await justAfterBoundary();
+  const graceCode = codeFor(live.id, -1);
+  const again = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: graceCode } });
   const markCount = await db.attendanceMark.count({ where: { sessionId: live.id, studentId: QA_ID } });
   const afterAgain = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
-  check("the previous window's code still verifies, and a second scan does not double-mark",
+  check("A CODE THAT JUST ROTATED OFF STILL VERIFIES, so a slow phone is not punished",
     again.status === 200 && again.data?.alreadyMarked === true && markCount === 1,
     `HTTP ${again.status} ${again.data?.reason || again.data?.error || ""}, ${markCount} mark(s)`);
   check("a second scan does not move the recorded arrival time",
     afterAgain?.checkedInAt === firstCheckedInAt, `${firstCheckedInAt} -> ${afterAgain?.checkedInAt}`);
+
+  // ...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED. The same code, a few seconds later.
+  // This is the assertion that fails if the tolerance is ever widened back to a whole
+  // window, which is the change that would silently double how long a photographed screen
+  // keeps working.
+  await sleep((GRACE_SECONDS + 1) * 1000);
+  const tooLate = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: graceCode } });
+  check("...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED",
+    tooLate.status === 409 && tooLate.data?.reason === "qr_expired",
+    `HTTP ${tooLate.status} ${tooLate.data?.reason}`);
+  // "Scan the new one" and "that was never one of ours" are different sentences with
+  // different next steps, and this is the commonest refusal there is — a student a few
+  // seconds late. It read as a forgery for a moment while this change was being made,
+  // because the diagnostic loop still started where the acceptance loop used to stop.
+  check("...and is reported as expired, not as a forgery",
+    /expired/i.test(tooLate.data?.error || tooLate.data?.reason || ""), tooLate.data?.error);
 
   /* ====================================================================== */
   console.log("\n--- one code, a whole class ---");

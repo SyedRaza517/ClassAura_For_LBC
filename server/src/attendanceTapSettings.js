@@ -62,10 +62,18 @@ const DEFAULTS = Object.freeze({
   // This is the single number the feature's honesty rests on. A photographed screen works
   // until the code rotates, so this is literally how long proxy attendance stays possible
   // — and it trades directly against a student with a slow phone or poor signal, who is
-  // refused if the code moves on before they can focus. Thirty seconds is the compromise;
-  // it is a setting because this is exactly the sort of threshold a college will want to
-  // argue about, and it should not need a deploy to say so.
-  qrRotateSeconds: 30,
+  // refused if the code moves on before they can focus. It is a setting because this is
+  // exactly the sort of threshold a college will want to argue about, and it should not
+  // need a deploy to say so.
+  //
+  // TWENTY, down from thirty on 11 Sep 2026, and the change is smaller than it looks
+  // because a second change came with it. The old code used to verify for the WHOLE of the
+  // following window, so a code actually lived for up to twice this number: thirty seconds
+  // of setting bought sixty seconds of exposure. attendanceQr.js now accepts it only for
+  // GRACE_SECONDS after it leaves the screen, so the real figure went from 60 to 27 — and
+  // the student with the slow phone is no worse off, because seven seconds of grace is
+  // what they actually needed rather than another whole window.
+  qrRotateSeconds: 20,
   // Whether a student can mark themselves present straight from their class list — no
   // sticker, no code. The app shows what the timetable says is running now and they tap
   // the one they are in.

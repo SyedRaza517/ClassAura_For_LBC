@@ -12,6 +12,7 @@ const {
   DEFAULTS, SETTING_FIELDS, merge, MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, MAX_NETWORKS,
 } = require("./attendanceTapSettings");
 const { MAX_RADIUS_METRES } = require("./presence");
+const { GRACE_SECONDS } = require("./attendanceQr");
 
 test("an unconfigured college gets the defaults, and the feature is OFF", () => {
   // Shipping enabled would switch this on at every college on the next deploy.
@@ -100,8 +101,21 @@ test("the two switches move independently, in both directions", () => {
   assert.equal(qrOffStickersOn.enabled, true);
 });
 
-test("the rotation period defaults to thirty seconds", () => {
-  assert.equal(DEFAULTS.qrRotateSeconds, 30);
+test("the rotation period defaults to twenty seconds", () => {
+  // Was thirty until 11 Sep 2026. Pinned rather than merely defaulted because it is the
+  // one number that says how long a photographed screen keeps working, and a change to it
+  // should be a deliberate edit to a test, not a quiet edit to a constant.
+  assert.equal(DEFAULTS.qrRotateSeconds, 20);
+});
+
+test("...and a code cannot outlive that setting by more than the grace", () => {
+  // The setting and the verifier are in two files, and the number a college reads on the
+  // settings screen is only honest if the second one agrees with it. This asserts the
+  // relationship rather than either value: a code lives for the rotation plus the grace,
+  // and the grace is a few seconds rather than another whole window. Widen GRACE_SECONDS
+  // to the rotation period and this fails, which is the point.
+  assert.ok(GRACE_SECONDS < DEFAULTS.qrRotateSeconds / 2,
+    `a ${GRACE_SECONDS}s grace on a ${DEFAULTS.qrRotateSeconds}s rotation is most of another window`);
 });
 
 test("a rotation shorter than the floor is raised to it", () => {

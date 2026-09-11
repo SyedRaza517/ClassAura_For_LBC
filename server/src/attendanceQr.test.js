@@ -14,6 +14,7 @@ const {
   deriveCode,
   verifyCode,
   ACCEPTED_WINDOWS,
+  GRACE_SECONDS,
 } = require("./attendanceQr");
 
 // A signing key of the shape hkdf gives us. Fixed, so codes in this file are stable.
@@ -125,18 +126,72 @@ test("verifyCode: accepts the code showing on screen right now", () => {
   assert.equal(out.valid, true);
 });
 
-test("verifyCode: accepts a code from the window that just ended", () => {
-  // A student who scanned at 29.8 seconds should not be refused by their own latency.
+// The instant a window begins, so the tests below can sit an exact number of seconds
+// after a rotation rather than wherever NOW happens to fall inside its window.
+const startOfWindow = (seconds) => windowIndexFor(seconds, ROTATE) * ROTATE;
+
+test("verifyCode: accepts the code that just rotated off, for a few seconds", () => {
+  // A student who raised their phone at 29.8 seconds must not be refused by their own
+  // network round trip. Two seconds past the boundary, the old code still works.
+  const justAfter = startOfWindow(NOW) + 2;
   const out = verifyCode({
-    secret: SECRET, sessionId: SESSION, code: codeAt(NOW - ROTATE), nowSeconds: NOW, rotateSeconds: ROTATE,
+    secret: SECRET, sessionId: SESSION, code: codeAt(justAfter - ROTATE), nowSeconds: justAfter, rotateSeconds: ROTATE,
   });
   assert.equal(out.valid, true);
 });
 
-test("ACCEPTED_WINDOWS is two: the current one and the one before it", () => {
-  // Named so that widening the tolerance is a deliberate edit to a constant with a test
-  // on it, rather than an off-by-one in a loop nobody reads.
-  assert.equal(ACCEPTED_WINDOWS, 2);
+test("verifyCode: ...and STOPS accepting it once the grace has passed", () => {
+  // THE CHANGE THIS BLOCK EXISTS FOR, and it is a tightening rather than a fix to a crash.
+  //
+  // The previous code used to verify for the WHOLE of the current window, which made a
+  // code live for up to twice the rotation period — mint it at the start of its window and
+  // it still worked two full periods later. The rotation period is the one number this
+  // feature's honesty rests on, because it is literally how long a photographed screen
+  // keeps working, and doubling it behind a constant nobody reads gave away half of what
+  // the setting promised.
+  const wellAfter = startOfWindow(NOW) + GRACE_SECONDS + 1;
+  const out = verifyCode({
+    secret: SECRET, sessionId: SESSION, code: codeAt(wellAfter - ROTATE), nowSeconds: wellAfter, rotateSeconds: ROTATE,
+  });
+  assert.equal(out.valid, false);
+  assert.equal(out.reason, "expired", "and it is still recognised as ours, so the student is told to scan again");
+});
+
+test("verifyCode: the grace boundary is exact, not approximate", () => {
+  // One second either side of it, asserted directly: a tolerance that is "about seven
+  // seconds" is one nobody can reason about when a student says the code did not work.
+  const at = (offset) => {
+    const when = startOfWindow(NOW) + offset;
+    return verifyCode({ secret: SECRET, sessionId: SESSION, code: codeAt(when - ROTATE), nowSeconds: when, rotateSeconds: ROTATE }).valid;
+  };
+  assert.equal(at(0), true, "the instant of rotation");
+  assert.equal(at(GRACE_SECONDS - 1), true, "the last second inside the grace");
+  assert.equal(at(GRACE_SECONDS), false, "the first second outside it");
+});
+
+test("A CODE NEVER LIVES LONGER THAN ONE ROTATION PLUS THE GRACE", () => {
+  // The property the whole design rests on, asserted as a property rather than at one
+  // sampled instant: a code minted at the start of its window is dead by rotate + GRACE,
+  // and alive at every second before that. This is the assertion that fails if somebody
+  // widens the tolerance back to a whole window.
+  const minted = startOfWindow(NOW);
+  const alive = (elapsed) => verifyCode({
+    secret: SECRET, sessionId: SESSION, code: codeAt(minted), nowSeconds: minted + elapsed, rotateSeconds: ROTATE,
+  }).valid;
+  for (let elapsed = 0; elapsed < ROTATE + GRACE_SECONDS; elapsed += 1) {
+    assert.equal(alive(elapsed), true, `should still verify ${elapsed}s after it was minted`);
+  }
+  assert.equal(alive(ROTATE + GRACE_SECONDS), false, "and must be dead the second after");
+  assert.equal(alive(ROTATE * 2 - 1), false, "nowhere near a second full rotation");
+});
+
+test("GRACE_SECONDS is a named, bounded tolerance", () => {
+  // Named so that widening it is a deliberate edit to a constant with a test on it, rather
+  // than an off-by-one in a loop nobody reads. Every second here is a second in which a
+  // photographed screen still works.
+  assert.equal(GRACE_SECONDS, 7);
+  assert.ok(GRACE_SECONDS < ROTATE, "a grace as long as the rotation is not a grace");
+  assert.equal(ACCEPTED_WINDOWS, 2, "the current window, and the one before it within the grace");
 });
 
 // ---------------------------------------------------------------------------

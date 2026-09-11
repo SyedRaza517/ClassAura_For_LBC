@@ -1042,7 +1042,14 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
   // the boundary even with a slightly fast local clock.
   useEffect(() => {
     if (!mint && fails === 0) return undefined;
-    const t = setTimeout(fetchCode, mint ? (mint.secondsLeft ?? 30) * 1000 + 400 : 5000);
+    // The fallback is FIVE, not thirty. It only applies if a response arrives without
+    // secondsLeft — a truncated body, or an older server — and in that case waiting a
+    // guessed thirty seconds on a college whose rotation is twenty leaves a dead square on
+    // the projector for ten of them, with a hall of students scanning it. A short retry in
+    // a case that should not happen is the cheap direction to be wrong in. (It was 30 while
+    // that was also the default rotation; the default is 20 now, which is exactly how a
+    // guessed constant goes quietly stale.)
+    const t = setTimeout(fetchCode, mint ? (mint.secondsLeft ?? 5) * 1000 + 400 : 5000);
     return () => clearTimeout(t);
   }, [mint, fails, fetchCode]);
 
