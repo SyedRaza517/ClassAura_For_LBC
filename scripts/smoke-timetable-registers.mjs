@@ -1085,6 +1085,68 @@ check("and the response says so rather than leaving it to be discovered",
 // Put them back so the cleanup below finds them where it expects.
 await db.student.updateMany({ where: { studentRef: { in: [`${TAG}-x1`, `${TAG}-x2`] } }, data: { cohortId: gX.id } }).catch(() => {});
 
+console.log("\n--- ONE ENROLMENT DOES NOT EMPTY A REGISTER THE GROUP WAS ALREADY ON ---");
+//
+// The cliff. `unitHasEnrolments` was a count crossing zero, so the module above — zero
+// enrolments, a group of two, a register correctly listing both — became a module with
+// ONE enrolment the moment anybody ticked it on one student's record, and the roster
+// flipped to cohort ∩ enrolment. Two rows became one. On the production shape that is a
+// class of twenty-five becoming a class of one, and it happens while the lecturer is
+// holding the register: a student already MARKED stays on the sheet (the `extra` list in
+// the register handler keeps them), so the people who vanish are exactly the ones still
+// to be marked.
+//
+// Reached three ordinary ways, none of them a mistake: a per-student enrolment edit, the
+// Moodle attendance import enrolling only the students it is about to mark, or a
+// hand-built module gaining its first student. roster.js carries the reasoning; this
+// asserts it end to end, through the same six handlers the register actually uses.
+//
+// The fixture is deliberately the SAME unit and register as the section above, after its
+// assertions have run. A fresh one would prove the new rule works; this proves the
+// transition does — that adding the enrolment changed nothing about who is on the sheet.
+await db.enrolment.create({ data: { studentId: c1.id, unitId: noEnrolUnit.id } });
+check("the module now has exactly ONE enrolment, and the group still has two students",
+  (await db.enrolment.count({ where: { unitId: noEnrolUnit.id } })) === 1
+  && (await db.student.count({ where: { cohortId: cohortC.id } })) === 2);
+
+const afterEnrol = await call(`/hnd/sessions/${neReg.id}/register`, { token: admin.token });
+check("THE REGISTER STILL LISTS BOTH STUDENTS — it listed one before this was fixed",
+  (afterEnrol.data?.rows || []).length === 2, `${(afterEnrol.data?.rows || []).length} row(s)`);
+// The unenrolled half is the half that used to disappear, so it is named rather than
+// counted: a count of two could also be satisfied by the wrong two.
+const c2Row = (afterEnrol.data?.rows || []).find((r) => r.student?.studentRef === `${TAG}-c2`);
+check("and the student who was NOT enrolled is still one of them",
+  !!c2Row, (afterEnrol.data?.rows || []).map((r) => r.student?.studentRef).join(","));
+check("still reported honestly as not enrolled, because that is the fact",
+  c2Row?.enrolled === false, JSON.stringify(c2Row?.enrolled));
+check("while the one enrolment IS reported against the student who has it",
+  (afterEnrol.data?.rows || []).find((r) => r.student?.studentRef === `${TAG}-c1`)?.enrolled === true);
+
+// The LIVE view is the second of the six handlers and the one a lecturer is holding.
+const liveAfter = await call(`/hnd/sessions/${neReg.id}/live`, { token: admin.token });
+check("the live view did not collapse either", (liveAfter.data?.rows || []).length === 2,
+  `${(liveAfter.data?.rows || []).length} row(s)`);
+
+// THE CARD AND THE REGISTER MUST NOT DISAGREE — the bug this suite already caught once,
+// re-asked at the new branch. "1 student" beside a register listing two is the same
+// contradiction as "0 students" beside a register listing twenty.
+const cardsAfter = await call("/hnd/units", { token: admin.token });
+const neCard = (cardsAfter.data?.units || cardsAfter.data || []).find?.((u) => u.id === noEnrolUnit.id);
+check("THE UNIT CARD STILL COUNTS TWO, not the one enrolment",
+  neCard?.studentCount === 2, JSON.stringify(neCard?.studentCount));
+
+// And the only handler of the six that WRITES. c1 was marked present earlier in this
+// file, so closing the register must reach c2 — the student the cliff removed. Under the
+// old rule this answered "everyone already has a mark" having written nothing.
+const closeOff = await call(`/hnd/sessions/${neReg.id}/mark-remaining-absent`, { method: "POST", token: admin.token });
+check("CLOSING THE REGISTER REACHES THE UNENROLLED GROUP MEMBER", closeOff.status === 200 && closeOff.data?.marked === 1,
+  `${closeOff.status} ${JSON.stringify(closeOff.data)}`);
+check("and the absence is against the right student",
+  (await db.attendanceMark.count({ where: { sessionId: neReg.id, studentId: c2.id, status: "A" } })) === 1);
+// The mark c1 made earlier is untouched: close-off creates, it never overwrites.
+check("the present mark it was not asked about is still present",
+  (await db.attendanceMark.findFirst({ where: { sessionId: neReg.id, studentId: c1.id } }))?.status === "P");
+
 // ------------------------------------------------------------------ cleanup --
 await db.attendanceMark.deleteMany({ where: { student: { lastName: TAG } } });
 await db.hndSession.deleteMany({ where: { unitId: { in: [unit.id, noEnrolUnit.id, mergedUnit.id] } } });

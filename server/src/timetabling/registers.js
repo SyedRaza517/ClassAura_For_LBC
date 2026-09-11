@@ -10,7 +10,7 @@
 // single register with a null cohortId, which HndSession_event_group_key permits
 // exactly once through its COALESCE — see the comment on HndSession in schema.prisma.
 const prisma = require("../db");
-const { deriveRoster, deriveUnitRoster } = require("./roster");
+const { deriveRoster, deriveUnitRoster, enrolmentIsAuthoritativeFor } = require("./roster");
 const { registerAction } = require("./registerRules");
 
 /**
@@ -29,7 +29,14 @@ async function syncEventRegisters(eventId) {
 
   const event = await prisma.timetableEvent.findUnique({
     where: { id: eventId },
-    include: { groups: { select: { cohortId: true } } },
+    include: {
+      groups: { select: { cohortId: true } },
+      // The two Moodle ids only, and only so deriveRoster can be told whether this
+      // module's enrolment list was ENUMERATED or assembled one student at a time. Read
+      // here rather than per group for the same reason the enrolment probe below is:
+      // it is a property of the unit and cannot differ between intakes.
+      unit: { select: { moodleSectionId: true, moodleCourseId: true } },
+    },
   });
   if (!event) {
     out.skipped.push({ reason: "No such event." });
@@ -75,6 +82,12 @@ async function syncEventRegisters(eventId) {
     select: { studentId: true },
   });
   const enrolledIds = enrolled.map((e) => e.studentId);
+
+  // Can this module's enrolment list be read for its SILENCES? A property of the unit,
+  // and deliberately NOT of the enrolment count — a count crossing zero is the cliff
+  // roster.js documents, where one new Enrolment row turned a twenty-five student
+  // register into a one-student one.
+  const enrolmentIsAuthoritative = enrolmentIsAuthoritativeFor(event.unit);
 
   // No groups means one register for the event itself. `[null]` rather than `[]` so the
   // loop below runs once instead of not at all.
@@ -123,6 +136,7 @@ async function syncEventRegisters(eventId) {
           cohortStudentIds: cohortStudents.map((s) => s.id),
           enrolledStudentIds: enrolledIds,
           unitHasEnrolments,
+          enrolmentIsAuthoritative,
         })
       // No group: the module's enrolment IS the roster, and there is no cohort to
       // intersect with. Reported as the enrolment rule because that is what it is.
@@ -139,9 +153,18 @@ async function syncEventRegisters(eventId) {
         // two empty registers mean opposite things — "nobody in this group takes this
         // module" versus "we do not know who does" — and without this they look
         // identical on screen.
+        //
+        // THREE SENTENCES SINCE 11 SEP 2026, because there are three rules. The middle
+        // one is the new branch: the module HAS enrolments, and they were not written by
+        // anything that enumerates a whole class, so their gaps are not being read as
+        // answers. Saying "no enrolment data" there would be a false statement about a
+        // module that has some, and a lecturer chasing why a name is missing would go
+        // looking in the wrong place.
         audience: roster.rule === "cohort-only"
           ? "All students in the group (no enrolment data for this module)"
-          : "Students enrolled on this module",
+          : roster.rule === "cohort-over-partial-enrolment"
+            ? "All students in the group (this module's enrolment list is not a full class list)"
+            : "Students enrolled on this module",
       },
     });
     out.created++;
@@ -177,7 +200,14 @@ async function syncEventRegisters(eventId) {
  * A session with NO cohort is unchanged: the module's enrolment is the roster, which is
  * what every register generated from a unit rather than from the timetable relies on.
  *
- * @returns {Promise<{ studentIds: string[], rule: "cohort-and-enrolment" | "cohort-only" }>}
+ * THE UNIT IS READ, NOT JUST ITS ENROLMENTS (11 Sep 2026), because deriveRoster now needs
+ * to be told whether this module's enrolment list was ENUMERATED. Callers that already
+ * loaded the unit hand it over and pay nothing; the rest cost one extra indexed lookup by
+ * primary key, and only on a session that HAS a cohort. That was accepted rather than
+ * making every caller remember to include it: six handlers ask this question, and the one
+ * that forgot would silently get the safe-but-wider answer with nothing to notice it by.
+ *
+ * @returns {Promise<{ studentIds: string[], rule: "cohort-and-enrolment" | "cohort-only" | "cohort-over-partial-enrolment" }>}
  */
 async function rosterForSession(session) {
   const enrolled = await prisma.enrolment.findMany({
@@ -187,6 +217,18 @@ async function rosterForSession(session) {
   const enrolledIds = enrolled.map((e) => e.studentId);
   if (!session.cohortId) return { studentIds: enrolledIds, rule: "cohort-and-enrolment" };
 
+  // Reuse the unit the caller already loaded when it carries the two columns; GET
+  // /register and GET /live both include it in full. `"moodleSectionId" in unit` rather
+  // than a truthiness test, because null is a real value here and means "not from
+  // Moodle", while an absent key means "this caller did not select it" — and those must
+  // not be confused, or a partially-selected unit would read as a hand-created one.
+  const unit = session.unit && "moodleSectionId" in session.unit
+    ? session.unit
+    : await prisma.unit.findUnique({
+        where: { id: session.unitId },
+        select: { moodleSectionId: true, moodleCourseId: true },
+      });
+
   const cohortStudents = await prisma.student.findMany({
     where: { cohortId: session.cohortId },
     select: { id: true },
@@ -194,6 +236,10 @@ async function rosterForSession(session) {
   return deriveRoster({
     cohortStudentIds: cohortStudents.map((s) => s.id),
     enrolledStudentIds: enrolledIds,
+    // Whether a cohort member's ABSENCE from that list is evidence. Off for a
+    // hand-created module, so one stray enrolment cannot empty a register a lecturer is
+    // standing in front of — roster.js carries the long form.
+    enrolmentIsAuthoritative: enrolmentIsAuthoritativeFor(unit),
     // A question about the UNIT, asked unfiltered by student — the same hoisted probe
     // syncEventRegisters uses, and for the same reason. Narrowing it to this group turns
     // "this module records no enrolments" into "nobody in this group enrolled", which
@@ -211,7 +257,7 @@ async function rosterForSession(session) {
  * register beside them listed the group. A rule copied into two route handlers is a rule
  * that drifts; this is the same reason rosterForSession exists above.
  *
- * FOUR QUERIES, NOT ONE PER UNIT. These endpoints return every unit in the college —
+ * FIVE QUERIES, NOT ONE PER UNIT. These endpoints return every unit in the college —
  * 87 on the test data, hundreds on a real install — so a per-unit roster lookup is an
  * N+1 that collapses at exactly the scale the screen is for. The shape here is the one
  * GET /hnd/units already uses for its enrolment and session counts: aggregate over the
@@ -225,7 +271,7 @@ async function rosterForSession(session) {
  * @returns {Promise<Map<string, number|null>>} unitId -> distinct student count, or null.
  */
 async function unitStudentCounts() {
-  const [enrolments, eventGroups, sessionGroups] = await Promise.all([
+  const [enrolments, eventGroups, sessionGroups, units] = await Promise.all([
     prisma.enrolment.findMany({ select: { unitId: true, studentId: true } }),
     // A cohort reaches a unit through the timetable: TimetableEvent -> TimetableEventGroup.
     // DRAFT events count. A class scheduled against a group is the college saying those
@@ -242,7 +288,14 @@ async function unitStudentCounts() {
     // students on it are still the ones this module concerns. A null cohortId here is
     // the ungrouped register deriveUnitRoster asks about.
     prisma.hndSession.groupBy({ by: ["unitId", "cohortId"] }),
+    // Two columns off every unit, for the same question rosterForSession asks: was this
+    // module's enrolment list enumerated. The card has to ask it or it disagrees with the
+    // register the moment a hand-built module gains its first enrolment — the register
+    // would list the group and the card would print "1 student", which is the original
+    // "0 students beside a full register" bug back with a newer number.
+    prisma.unit.findMany({ select: { id: true, moodleSectionId: true, moodleCourseId: true } }),
   ]);
+  const unitById = new Map(units.map((u) => [u.id, u]));
 
   const enrolledByUnit = new Map();
   for (const e of enrolments) {
@@ -283,6 +336,7 @@ async function unitStudentCounts() {
       // produced are any. A group nobody is in yet is an answer; no group is not.
       hasScheduledGroup: !!cohorts && cohorts.size > 0,
       hasUngroupedRegister: ungrouped.has(unitId),
+      enrolmentIsAuthoritative: enrolmentIsAuthoritativeFor(unitById.get(unitId)),
     });
     out.set(unitId, roster.studentIds ? roster.studentIds.length : null);
   }
