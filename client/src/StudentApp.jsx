@@ -199,16 +199,6 @@ export default function StudentApp({ user, logout }) {
   // A student who arrives holding a scan is standing in a running class — land them on
   // the check-in screen the mark belongs to, not the home screen.
   const [screen, setScreen] = useState(pendingQr ? "checkin" : "home");
-  // "Open the camera when you get there" — the one piece of state that travels from the
-  // timetable to Check In.
-  //
-  // The SESSION deliberately does not travel with it. A scanned code names its own
-  // register, so which class the student tapped cannot change what the scan marks; carrying
-  // a session id would create a second opinion about that, and the two would disagree the
-  // first time somebody tapped one class and scanned the code for another. What the tap
-  // actually means is "I want to check in now", and that is all that is passed.
-  const [openScanner, setOpenScanner] = useState(false);
-  const goScan = useCallback(() => { setOpenScanner(true); setScreen("checkin"); }, []);
   const [queries, setQueries] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [results, setResults] = useState(null);
@@ -314,11 +304,11 @@ export default function StudentApp({ user, logout }) {
       <div className="flex min-h-full flex-col">
         <div className="flex-1" style={{ background: "linear-gradient(180deg,#f6f8fc 0%,#eef2f9 60%,#f6f8fc 100%)" }}>
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
-          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} openScanner={openScanner} onScannerOpened={() => setOpenScanner(false)} />}
+          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
-          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} onCheckIn={goScan} />}
+          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
@@ -436,7 +426,7 @@ function checkInSub(tapContext) {
 // "what have I got today and when" — whether or not the college taps stickers. It also
 // makes the check-in card legible: a row marked NOW is the one the button will mark, and
 // a row already carrying P or L is one nobody needs to think about again.
-function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
+function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan }) {
   // Which class is mid-request, and what the last attempt said. Above the early return
   // with every other hook: the rule is positional, and a hook below `if (loading)` runs a
   // different number of times on the render after the data lands.
@@ -491,8 +481,8 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
   };
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
-      <p className="px-5 pb-1 pt-4 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+    <div className="space-y-2.5">
+      <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
         Today &middot; {today.length} class{today.length === 1 ? "" : "es"}
       </p>
       {/* SAID, NOT SWALLOWED. The server refuses a declaration for good reasons — the
@@ -500,94 +490,116 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
           and each is a different next step for the student. A button that simply did
           nothing would send them to the office to ask why. */}
       {failed && (
-        <p className="mx-5 mb-2 rounded-lg bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-200">
+        <p className="rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-200">
           {failed}
         </p>
       )}
-      <p className="hidden">
-      </p>
-      <ul className="divide-y divide-slate-100">
-        {today.map((c) => {
-          const mark = c.status ? MARK[c.status] : null;
-          const isNow = c.state === "now";
-          const over = c.state === "over";
-          return (
-            <li key={c.id} className="flex items-start gap-3 px-5 py-3.5">
-              {/* The time column is the spine of the list, so it is fixed-width and
-                  tabular — times that do not line up are hard to scan. */}
-              <span className={`w-[52px] shrink-0 pt-0.5 text-[12px] font-bold tabular-nums ${over ? "text-slate-300" : "text-slate-500"}`}>
-                {c.startTime}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className={`block truncate text-[13.5px] font-bold leading-tight ${over && !mark ? "text-slate-400" : "text-slate-800"}`}>
-                  {c.unitName || c.unitCode}
+
+      {/* ONE CARD PER CLASS, not rows in a shared box.
+          The screen-level scanner bar is gone, so each class has to carry its own action
+          — and an action inside a divided list row reads as an afterthought. Separate
+          cards give the running class somewhere to be obviously different from the two
+          that are not, which is the whole job of this screen. */}
+      {today.map((c, i) => {
+        const mark = c.status ? MARK[c.status] : null;
+        const isNow = c.state === "now";
+        const over = c.state === "over";
+        const actionable = isNow && !mark && (canScan || canDeclare);
+        const where = [c.room ? `Room ${c.room}` : null, c.floor, c.campus].filter(Boolean).join(" · ");
+        const about = [c.unitCode, c.course, c.school].filter(Boolean).join(" · ");
+        return (
+          <div
+            key={c.id}
+            className={`fade-up overflow-hidden rounded-2xl bg-white transition ${
+              isNow ? "shadow-card ring-2" : "shadow-sm ring-1 ring-slate-200"
+            } ${over && !mark ? "opacity-70" : ""}`}
+            style={{ ...(isNow ? { "--tw-ring-color": ACCENT.checkin } : null), animationDelay: `${i * 60}ms` }}
+          >
+            {/* The live strip. A student glancing at this screen between corridors is
+                answering one question — which of these is happening NOW — and colour
+                answers it before any word does. */}
+            {isNow && <div className="h-1" style={{ background: ACCENT.checkin }} />}
+
+            <div className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className={`text-[15px] font-extrabold leading-tight ${over && !mark ? "text-slate-400" : "text-slate-800"}`}>
+                    {c.unitName || c.unitCode}
+                  </p>
+                  <p className="mt-1 flex items-center gap-1.5 text-[12.5px] font-bold tabular-nums text-slate-600">
+                    <Clock3 size={12.5} className="shrink-0 text-slate-400" aria-hidden="true" />
+                    {c.startTime}&ndash;{c.endTime}
+                    {c.checkedInAt && <span className="font-semibold text-emerald-600">&middot; in at {c.checkedInAt}</span>}
+                    {!c.termOpen && <span className="font-semibold text-amber-600">&middot; term closed</span>}
+                  </p>
+                  {/* WRAPPED, NOT TRUNCATED. On a phone the campus and the lecturer used
+                      to fall off the end of the line — which is precisely the half that
+                      tells two classes at the same hour apart, and the reason the line is
+                      here at all. Each part is omitted rather than dashed when the college
+                      has not recorded it: an online class has no room, and "—" reads as a
+                      room nobody knows. */}
+                  {where && (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500">
+                      <MapPin size={12.5} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" />
+                      <span>{where}</span>
+                    </p>
+                  )}
+                  {(c.staff || []).length > 0 && (
+                    <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500">
+                      <User size={12.5} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" />
+                      <span>{(c.staff || []).join(", ")}</span>
+                    </p>
+                  )}
+                  {about && <p className="mt-1.5 text-[11px] leading-snug text-slate-400">{about}</p>}
+                </div>
+
+                <span className="shrink-0">
+                  {mark
+                    ? <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${mark.bg} ${mark.text} ${mark.ring}`}>{mark.label}</span>
+                    : isNow
+                      ? <span className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold text-white" style={{ background: ACCENT.checkin }}>
+                          {/* A pulse, because "on now" is the only thing on this screen
+                              that is true for the next hour and then stops being true. */}
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />On now
+                        </span>
+                      : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">{over ? "Finished" : "Later"}</span>}
                 </span>
-                <span className="mt-0.5 block text-[11.5px] text-slate-400">
-                  {c.startTime}&ndash;{c.endTime}
-                  {c.checkedInAt && <> &middot; checked in {c.checkedInAt}</>}
-                  {!c.termOpen && <> &middot; term closed</>}
-                </span>
-                {/* WHERE AND WHO, on their own line. A student holding this screen in a
-                    corridor is deciding whether this is the class in front of them, and
-                    with two classes at once the lecturer is what tells them apart. Each
-                    part is omitted rather than dashed when the college has not recorded
-                    it: an online class has no room, and "—" reads as a room nobody
-                    knows. */}
-                {(c.room || c.campus || (c.staff || []).length > 0) && (
-                  // WRAPPED, NOT TRUNCATED — the same fix the timetable card needed. This
-                  // was `truncate`, so on a phone the campus and the lecturer fell off the
-                  // end of the line, which is precisely the half that tells two classes at
-                  // the same hour apart.
-                  <span className="mt-0.5 block text-[11.5px] leading-snug text-slate-500">
-                    {[c.room ? `Room ${c.room}` : null, c.floor, c.campus].filter(Boolean).join(" · ")}
-                    {(c.staff || []).length > 0 && (c.room || c.campus ? " · " : "")}
-                    {(c.staff || []).join(", ")}
-                  </span>
-                )}
-                {/* The module code, the course and the school — the same three the
-                    timetable card carries, kept quieter than the room because a student
-                    standing outside a door needs the room first. They are here because
-                    tapping a timetable row lands on this screen, and a card that dropped
-                    half of what they were just looking at reads as a different class. */}
-                {(c.unitCode || c.course || c.school) && (
-                  <span className="mt-0.5 block text-[11px] leading-snug text-slate-400">
-                    {[c.unitCode, c.course, c.school].filter(Boolean).join(" · ")}
-                  </span>
-                )}
-              </span>
-              <span className="flex shrink-0 flex-col items-end gap-1">
-                {/* OFFERED ONLY WHILE THE CLASS IS RUNNING AND ONLY IF NOBODY HAS MARKED
-                    THEM. A class that is over cannot be claimed after the fact, and a
-                    mark that already stands is never overwritten by a student — the same
-                    rule the sticker and the code obey, said here so the button is not
-                    offered for a request the server would refuse. */}
-                {canDeclare && isNow && !mark && (
-                  <button onClick={() => declare(c)} disabled={marking === c.id}
-                    className="press rounded-lg px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
-                    style={{ background: ACCENT.checkin }}>
-                    {marking === c.id ? "Marking…" : "I'm here"}
-                  </button>
-                )}
-                {mark
-                  ? <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ring-1 ${mark.bg} ${mark.text} ${mark.ring}`}>{mark.label}</span>
-                  : isNow
-                    ? <span className="flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10.5px] font-bold ring-1" style={{ color: ACCENT.checkin, borderColor: "transparent", boxShadow: `inset 0 0 0 1px ${ACCENT.checkin}44` }}>
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: ACCENT.checkin }} />On now
-                      </span>
-                    : <span className="text-[10.5px] font-semibold text-slate-300">{over ? "Finished" : "Later"}</span>}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+              </div>
+
+              {/* THE ACTION, ON THE CLASS IT MARKS. Offered only while the class is
+                  running and only if nobody has marked them: a class that is over cannot
+                  be claimed after the fact, and a mark that already stands is never
+                  overwritten by a student — the same rule the sticker and the code obey.
+                  Said here so a button is never offered for a request the server refuses. */}
+              {actionable && (
+                <div className="mt-3.5 flex gap-2">
+                  {canScan && (
+                    <button onClick={onScan}
+                      className="press flex flex-1 items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold text-white"
+                      style={{ background: ACCENT.checkin }}>
+                      <ScanLine size={15} aria-hidden="true" /> Scan the code
+                    </button>
+                  )}
+                  {canDeclare && (
+                    <button onClick={() => declare(c)} disabled={marking === c.id}
+                      className={`press flex items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold disabled:opacity-50 ${
+                        canScan ? "px-4 bg-white text-slate-700 ring-1 ring-slate-200" : "flex-1 text-white"
+                      }`}
+                      style={canScan ? undefined : { background: ACCENT.checkin }}>
+                      {marking === c.id ? "Marking…" : "I'm here"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// A screen of its own, so Check In is somewhere a student can always GO rather than a
-// card that may or may not be on the home screen. Every state answers plainly here,
-// including the two that previously rendered nothing at all.
-function CheckInScreen({ tapContext, reload, pendingQr, onQrDone, openScanner, onScannerOpened }) {
+function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   const enabled = tapContext?.enabled;
   const qrEnabled = tapContext?.qrEnabled;
   const running = (tapContext?.now || []).length;
@@ -597,17 +609,6 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone, openScanner, o
   const onScanned = useCallback((p) => { setScanning(false); stashScan(p); }, []);
   const closeScanner = useCallback(() => setScanning(false), []);
 
-  // Arriving from a tap on a class in the timetable: open the camera straight away rather
-  // than landing on a screen and making them find the button they already pressed.
-  //
-  // The flag is cleared by the PARENT as soon as it is honoured, so closing the scanner
-  // leaves it closed. Clearing it here instead would re-open the camera on every render
-  // that followed, which is a phone with its torch on that will not go away.
-  useEffect(() => {
-    if (!openScanner) return;
-    onScannerOpened?.();
-    setScanning(true);
-  }, [openScanner, onScannerOpened]);
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
@@ -641,37 +642,18 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone, openScanner, o
         </div>
       )}
 
-      {/* QR is on and stickers are not: one instruction, the way SEAtS-class products
-          word it. No mechanics, no caveats — the server answers every edge case at scan
-          time with its own message. Hidden while a scan's result card is up. */}
-      {tapContext && !enabled && qrEnabled && !pendingQr && (
-        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
-            <QrCode size={19} style={{ color: ACCENT.checkin }} />
-          </span>
-          <p className="mt-3 text-sm font-extrabold text-slate-800">Scan to check in</p>
-          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            Scan the code your lecturer shows on screen.
-          </p>
-          <button onClick={() => setScanning(true)} className="press mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold text-white" style={{ background: ACCENT.checkin }}>
-            <Camera size={16} /> Open the scanner
-          </button>
-          <p className="mt-2 text-center text-[12px] text-slate-400">Your phone's camera app works on it too.</p>
-        </div>
-      )}
-
-      {/* Stickers AND codes on: the sticker card above carries the walkthrough, so the
-          scanner is one button here rather than a second card. */}
-      {tapContext && enabled && qrEnabled && !pendingQr && (
-        <button onClick={() => setScanning(true)} className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[13px] font-bold text-slate-800 ring-1 ring-slate-200">
-          <Camera size={16} style={{ color: ACCENT.checkin }} /> Scan the code on screen
-        </button>
-      )}
-
+      {/* THE SCANNER IS NOT A SCREEN-LEVEL CONTROL ANY MORE.
+          Two of them used to sit here — a "Scan to check in" card when only codes were on,
+          and a "Scan the code on screen" bar when stickers were on too — directly above the
+          list of today's classes. A student then had to hold two ideas at once: which class
+          they were in, and a button somewhere else that did not name it. The action now
+          lives on the class itself, where they are already looking. The scanner it opens is
+          the same one; only the place you press has moved. */}
       {scanning && <QrScanner onScan={onScanned} onClose={closeScanner} />}
 
       <TodaysClasses today={tapContext?.today} loading={tapContext == null}
-        canDeclare={tapContext?.declareEnabled === true} onDeclared={reload} />
+        canDeclare={tapContext?.declareEnabled === true} onDeclared={reload}
+        canScan={qrEnabled === true} onScan={() => setScanning(true)} />
 
       {(enabled || qrEnabled) && running === 0 && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
@@ -1352,7 +1334,7 @@ const ttWeeksBetween = (a, b) =>
  * reason this reads as a timetable rather than a spreadsheet. What varies stays in the
  * table, because that is what the table is for.
  */
-function ModuleTimetable({ events, today, onCheckIn }) {
+function ModuleTimetable({ events, today }) {
   const groups = [];
   const byKey = new Map();
   for (const ev of events) {
@@ -1425,27 +1407,21 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                   const past = ev.date < today;
                   const firstOfDay = i === 0 || g.items[i - 1].date !== ev.date;
                   const weekNo = ttWeeksBetween(ttWeekStart(g.items[0].date), ttWeekStart(ev.date)) + 1;
-                  // TAPPABLE ONLY WHERE TAPPING DOES SOMETHING. A row for next Tuesday, or
-                  // one whose class has no register, leads nowhere — and a row that looks
-                  // pressable and answers nothing is worse than a plain one, because the
-                  // student concludes check-in is broken rather than that it is not today.
-                  const canCheckIn = isToday && !!ev.sessionId;
-                  const open = () => canCheckIn && onCheckIn(ev);
+                  // THE TIMETABLE DOES NOT CHECK ANYBODY IN, and that is a deliberate
+                  // reversal of a day-old change.
+                  //
+                  // Rows were briefly tappable, opening the scanner. It conflated two
+                  // screens that answer different questions: this one is "when and where
+                  // am I this term", read across twelve weeks and mostly about days that
+                  // are not today, while checking in is a thing you do once, standing in a
+                  // room, about now. Putting the action here put a live control on a
+                  // reference document — and on eleven rows out of twelve it had to be
+                  // inert, which is its own kind of broken.
+                  //
+                  // Check In is the screen with the action. What this column shows instead
+                  // is what HAPPENED: the mark, or that nobody took the register.
                   return (
-                    <tr
-                      key={ev.id}
-                      className={`${isToday ? "bg-slate-50" : ""} ${canCheckIn ? "cursor-pointer active:bg-slate-100" : ""}`}
-                      onClick={open}
-                      // Reachable without a pointer. The whole row is the target on a
-                      // phone, so it has to be a real control for anybody navigating by
-                      // keyboard or screen reader rather than a div that happens to react.
-                      {...(canCheckIn ? {
-                        role: "button",
-                        tabIndex: 0,
-                        "aria-label": `Check in to ${g.title}, ${ev.start} to ${ev.end}`,
-                        onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
-                      } : {})}
-                    >
+                    <tr key={ev.id} className={isToday ? "bg-slate-50" : ""}>
                       {/* Numbered within the MODULE and FROM THE DATE, so "week 3" is the
                           third week this module runs — the way a student and a brief both
                           say it — and two classes on one day share a number instead of
@@ -1465,15 +1441,11 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                       {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.floor, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
                       {!staff && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{(ev.staff || []).join(", ") || "—"}</td>}
                       <td className="px-2 py-2 text-right">
-                        {canCheckIn
-                          ? <span className="press inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: g.colour }}>
-                              <ScanLine size={11} aria-hidden="true" /> Check in
-                            </span>
-                          : ev.status
-                            ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
-                            : past
-                              ? <span className="text-[10px] text-slate-300">Not marked</span>
-                              : null}
+                        {ev.status
+                          ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
+                          : past || isToday
+                            ? <span className="text-[10px] text-slate-300">Not marked</span>
+                            : null}
                       </td>
                     </tr>
                   );
@@ -1486,7 +1458,7 @@ function ModuleTimetable({ events, today, onCheckIn }) {
     </>
   );
 }
-function TimetableScreen({ timetable, busy, reload, onCheckIn }) {
+function TimetableScreen({ timetable, busy, reload }) {
   if (busy && !timetable) return <LoadingScreen />;
   const stages = timetable?.stages || [];
   const events = timetable?.events || [];
@@ -1505,7 +1477,7 @@ function TimetableScreen({ timetable, busy, reload, onCheckIn }) {
     // reported. Where there are real classes, they ARE the timetable.
     return (
       <Screen>
-        <ModuleTimetable events={events} today={today} onCheckIn={() => onCheckIn?.()} />
+        <ModuleTimetable events={events} today={today} />
         <p className="mt-1 px-1 text-center text-[11px] text-slate-400">
           Times and rooms are set by the college. If something looks wrong, message us from &ldquo;Ask the College&rdquo;.
         </p>
