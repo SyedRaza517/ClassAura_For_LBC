@@ -337,10 +337,11 @@ Two things still carry the old app's identity and are correct to:
 
 * `namespace` in `build.gradle` — the Java package `MainActivity` and the generated `R`
   class live in. Internal, invisible, and changing it means moving source files.
-* `APP_STORE_APPLE_ID` in `codemagic.yaml` — **this one is NOT correct yet.** App Store
-  Connect issues a new numeric id when the ClassAura record is created, and until that
-  number replaces `6795300712`, a successful build uploads ClassAura's binary to the
-  Staff Hub listing, where it is rejected for a mismatched bundle id.
+* `APP_STORE_APPLE_ID` in `codemagic.yaml` — **now `6811078668`**, ClassAura's own
+  record (created 11 Sep 2026). It is both the upload target and what the build-number
+  step reads to find the latest TestFlight build, so the old `6795300712` would have
+  uploaded to the Staff Hub listing *and* numbered the build from that listing's
+  history.
 
 ### What is fixed for the app that already exists
 

@@ -74,12 +74,12 @@ workflows:
         VITE_API_URL: "https://edtech-xr8g.onrender.com/api"
         # Numeric Apple ID of the app from App Store Connect (step 3). Until you
         # have it, the "increment build number" step below will fail — set it first.
-        # ⚠ STILL THE OLD APP'S NUMERIC ID. ClassAura is a NEW listing under
-        # uk.co.classaura.app, so App Store Connect issues it a NEW Apple ID when the app
-        # record is created — and until this is replaced with that number, a successful
-        # build uploads ClassAura's binary to the Staff Hub listing, where it is rejected
-        # for a bundle id that does not match. Replace it before the first iOS release.
-        APP_STORE_APPLE_ID: 6795300712
+        # ClassAura's App Store Connect record, created 11 Sep 2026 against
+        # uk.co.classaura.app. NOT interchangeable with the old app's 6795300712: this
+        # number is both the upload target AND what the build-number step reads to find
+        # the latest TestFlight build, so a wrong value uploads to another listing and
+        # numbers the build from that listing's history.
+        APP_STORE_APPLE_ID: 6811078668
       node: 22
       xcode: latest
     scripts:
