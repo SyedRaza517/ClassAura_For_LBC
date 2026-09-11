@@ -31,6 +31,18 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- REQUIRED by the campus geofence, and its absence is silent rather than loud.
+	     The check-in screens call navigator.geolocation inside the WebView; iOS will
+	     not even show the permission prompt without this key, so the request simply
+	     never resolves and every check-in is refused as "location not shared" — on a
+	     college that has the geofence switched on and has pinned its campuses
+	     correctly. Nothing in the log says why.
+
+	     Apple shows this exact text in the prompt, and App Review reads it, so it
+	     says what the location is FOR and how little is kept: the server compares the
+	     distance and stores none of it. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Used to check you are at the college when you check in to a class. Your location is compared with your campus and is never stored.</string>
 	<!-- REQUIRED by the biometric app lock. iOS raises an NSException and kills
 	     the process the first time Face ID is evaluated without this key, so its
 	     absence would crash the app the moment someone turned the lock on — and
