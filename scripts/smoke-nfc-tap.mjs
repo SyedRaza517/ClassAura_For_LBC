@@ -1291,6 +1291,29 @@ try {
     "colour" in (ttEv || {}) && "category" in (ttEv || {}),
     JSON.stringify({ colour: ttEv?.colour, category: ttEv?.category }));
 
+  // EVERY FACT THE STUDENT'S TIMETABLE CARD PRINTS, asserted at the payload rather than
+  // trusted to the screen. There is no client test framework here, so a field quietly
+  // dropped from the serialiser shows up as a blank line on a phone and nowhere else.
+  //
+  // Course and school were added on 11 Sep 2026 and are the two that answer a different
+  // question from the rest: not "where do I go" but which qualification this hour counts
+  // towards and who runs it — which is what a student needs when they are chasing a mark
+  // and do not know who to ask.
+  check("the timetable carries the room, its floor and its campus",
+    "room" in (ttEv || {}) && "floor" in (ttEv || {}) && "campus" in (ttEv || {}),
+    JSON.stringify({ room: ttEv?.room, floor: ttEv?.floor, campus: ttEv?.campus }));
+  check("...the lecturer, as a list rather than a joined string",
+    Array.isArray(ttEv?.staff), JSON.stringify(ttEv?.staff));
+  check("...and the module, its course and the school that runs it",
+    "unitCode" in (ttEv || {}) && "unitName" in (ttEv || {}) && "course" in (ttEv || {}) && "school" in (ttEv || {}),
+    JSON.stringify({ code: ttEv?.unitCode, course: ttEv?.course, school: ttEv?.school }));
+  check("...with the course NAMED, not merely present as a key",
+    typeof ttEv?.course === "string" && ttEv.course.length > 0, `course=${ttEv?.course}`);
+  // The session id is what makes a row tappable: no id, no register to check in to, and
+  // the app must show a plain row rather than a control that leads nowhere.
+  check("...and the register id the Check In tap needs",
+    typeof ttEv?.sessionId === "string" && ttEv.sessionId.length > 0, `sessionId=${ttEv?.sessionId}`);
+
   const draftEvt = await call("/timetabling/events", { method: "POST", token: adminToken, body: {
     title: `Draft TT ${RUN}`, date: today, start: shift(now, 200), end: shift(now, 260),
     unitId: grpUnit.id, cohortIds: [grpCohort.id], published: false } });

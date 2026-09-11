@@ -100,15 +100,21 @@ const localTime = (offsetMinutes = 0) =>
     const rooms = await bare.room.findMany({ where: { active: true }, orderBy: { name: "asc" }, take: 3, select: { id: true, name: true } });
     const date = localDate();
 
-    // THREE CLASSES, ALL IN PROGRESS AT ONCE. A weekly timetable would never look like
-    // this, and that is the point: the Check In screen is only worth testing when it has a
-    // CHOICE on it, and one class proves the plumbing rather than the screen. Their windows
-    // are staggered — opened 30, 20 and 10 minutes ago — so they are distinguishable rows
-    // rather than three copies of one, while all three are inside their check-in window.
+    // TWO SESSIONS, AT THE TIMES A REAL COLLEGE DAY RUNS: a morning block and an afternoon
+    // one, exactly as asked for.
+    //
+    // This replaced three classes deliberately staggered to be in progress simultaneously,
+    // which was useful for one thing only — seeing the Check In screen with a CHOICE on it —
+    // and dishonest about everything else. No timetable looks like that, so every screen
+    // reading it showed something no student would ever meet.
+    //
+    // The trade-off is worth stating because it changes how testing goes: at any given
+    // moment only ONE of these is running, so Check In shows one card, not two. That is the
+    // correct behaviour — a student is in one room at a time — and it means the second card
+    // is tested by coming back after 14:00 rather than by looking twice in a minute.
     const PLAN = [
-      { name: `${TEST_PREFIX} Computing Practice`, code: "ZZT101", start: localTime(-30), end: localTime(90) },
-      { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: localTime(-20), end: localTime(100) },
-      { name: `${TEST_PREFIX} Research Methods`, code: "ZZT103", start: localTime(-10), end: localTime(110) },
+      { name: `${TEST_PREFIX} Computing Practice`, code: "ZZT101", start: "10:00", end: "13:00" },
+      { name: `${TEST_PREFIX} Business Systems`, code: "ZZT102", start: "14:00", end: "17:00" },
     ];
 
     console.log(`  student   Test Student <${STUDENT_EMAIL}>  (ref ${STUDENT_REF})`);

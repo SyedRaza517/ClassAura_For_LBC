@@ -983,7 +983,20 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     where: { published: true, date: { gte: from, lte: to }, OR: or },
     select: {
       id: true, date: true, startTime: true, endTime: true, title: true,
-      unit: { select: { id: true, code: true, name: true } },
+      // The module, AND the course and school it sits in.
+      //
+      // Course and school come through the UNIT rather than the event's own courseId,
+      // because the unit is what the class actually teaches: an event can be created
+      // against a course for scheduling reasons while its module belongs elsewhere, and
+      // the student is being told which qualification this hour counts towards. Null all
+      // the way down is a real state — a module with no course, a course with no school —
+      // and each renders as absent rather than as a guess.
+      unit: {
+        select: {
+          id: true, code: true, name: true,
+          course: { select: { name: true, academicDepartment: { select: { name: true } } } },
+        },
+      },
       // The colour the college chose for this KIND of class — Lecture, Seminar, Lab. It
       // is the same colour the staff timetable paints, so a student and their lecturer
       // are looking at the same coded grid rather than two unrelated palettes.
@@ -1037,6 +1050,8 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
   return events.map((e) => ({
     id: e.id,
     date: e.date,
+    course: e.unit?.course?.name || null,
+    school: e.unit?.course?.academicDepartment?.name || null,
     start: e.startTime,
     end: e.endTime,
     title: e.title || e.unit?.name || "Class",

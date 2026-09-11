@@ -16,6 +16,7 @@ import {
   Settings, KeyRound, Lock, Trash2, AlertTriangle, Home as HomeIcon,
   Clock3, CalendarCheck, CalendarDays, Sparkles, User, MapPin, Nfc,
   HeartHandshake, QrCode, Camera,
+  ScanLine,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
@@ -198,6 +199,16 @@ export default function StudentApp({ user, logout }) {
   // A student who arrives holding a scan is standing in a running class — land them on
   // the check-in screen the mark belongs to, not the home screen.
   const [screen, setScreen] = useState(pendingQr ? "checkin" : "home");
+  // "Open the camera when you get there" — the one piece of state that travels from the
+  // timetable to Check In.
+  //
+  // The SESSION deliberately does not travel with it. A scanned code names its own
+  // register, so which class the student tapped cannot change what the scan marks; carrying
+  // a session id would create a second opinion about that, and the two would disagree the
+  // first time somebody tapped one class and scanned the code for another. What the tap
+  // actually means is "I want to check in now", and that is all that is passed.
+  const [openScanner, setOpenScanner] = useState(false);
+  const goScan = useCallback(() => { setOpenScanner(true); setScreen("checkin"); }, []);
   const [queries, setQueries] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [results, setResults] = useState(null);
@@ -303,11 +314,11 @@ export default function StudentApp({ user, logout }) {
       <div className="flex min-h-full flex-col">
         <div className="flex-1" style={{ background: "linear-gradient(180deg,#f6f8fc 0%,#eef2f9 60%,#f6f8fc 100%)" }}>
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
-          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
+          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} openScanner={openScanner} onScannerOpened={() => setOpenScanner(false)} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
-          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} setScreen={setScreen} />}
+          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} onCheckIn={goScan} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
@@ -562,7 +573,7 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared }) {
 // A screen of its own, so Check In is somewhere a student can always GO rather than a
 // card that may or may not be on the home screen. Every state answers plainly here,
 // including the two that previously rendered nothing at all.
-function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
+function CheckInScreen({ tapContext, reload, pendingQr, onQrDone, openScanner, onScannerOpened }) {
   const enabled = tapContext?.enabled;
   const qrEnabled = tapContext?.qrEnabled;
   const running = (tapContext?.now || []).length;
@@ -571,6 +582,18 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   const [scanning, setScanning] = useState(false);
   const onScanned = useCallback((p) => { setScanning(false); stashScan(p); }, []);
   const closeScanner = useCallback(() => setScanning(false), []);
+
+  // Arriving from a tap on a class in the timetable: open the camera straight away rather
+  // than landing on a screen and making them find the button they already pressed.
+  //
+  // The flag is cleared by the PARENT as soon as it is honoured, so closing the scanner
+  // leaves it closed. Clearing it here instead would re-open the camera on every render
+  // that followed, which is a phone with its torch on that will not go away.
+  useEffect(() => {
+    if (!openScanner) return;
+    onScannerOpened?.();
+    setScanning(true);
+  }, [openScanner, onScannerOpened]);
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
@@ -1332,24 +1355,43 @@ function ModuleTimetable({ events, today, onCheckIn }) {
         // Hoisted only when EVERY class agrees. One room for eleven weeks and a different
         // room for the twelfth is exactly the week somebody turns up to the wrong door,
         // so a single exception keeps the column and shows it on every row.
-        const room = one(g.items, (e) => [e.room ? `Room ${e.room}` : null, e.campus].filter(Boolean).join(" · "));
+        const room = one(g.items, (e) => [e.room ? `Room ${e.room}` : null, e.floor, e.campus].filter(Boolean).join(" · "));
         const staff = one(g.items, (e) => (e.staff || []).join(", "));
         const time = one(g.items, (e) => `${e.start}–${e.end}`);
+        // The course and the school do not vary within a module and never belong in a
+        // row. They answer a question the rest of this card does not: not "where do I go"
+        // but "what is this hour FOR" — which qualification it counts towards and who
+        // runs it. A student chasing a mark needs the school's name to know who to ask.
+        const course = one(g.items, (e) => e.course);
+        const school = one(g.items, (e) => e.school);
         return (
           <div key={g.key} className="mb-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
-            <div className="px-3 py-2.5 text-white" style={{ background: g.colour }}>
-              <p className="truncate text-[14px] font-extrabold">{g.title}</p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-white/85">
-                {g.code && <span className="tabular-nums">{g.code}</span>}
-                {time && <span className="tabular-nums">{time}</span>}
-                {room && <span className="truncate">{room}</span>}
-                {staff && <span className="truncate">{staff}</span>}
+            <div className="px-3.5 py-3 text-white" style={{ background: g.colour }}>
+              <p className="text-[15px] font-extrabold leading-tight">{g.title}</p>
+              {/* WRAPPED, NOT TRUNCATED, and that is the width fix.
+                  These lines were `truncate` inside a single flex row, so on a phone the
+                  room and the lecturer were cut to an ellipsis and the course and school
+                  would have had nowhere to go at all. A timetable that hides the room is
+                  not narrower, it is wrong — so the facts wrap onto as many lines as they
+                  need and the card grows instead. */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] leading-snug text-white/90">
+                {g.code && <span className="rounded bg-white/20 px-1.5 py-0.5 font-bold tabular-nums">{g.code}</span>}
+                {time && <span className="tabular-nums font-semibold">{time}</span>}
+                {room && <span>{room}</span>}
+                {staff && <span>{staff}</span>}
+              </div>
+              {(course || school) && (
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-snug text-white/70">
+                  {course && <span>{course}</span>}
+                  {course && school && <span aria-hidden="true">·</span>}
+                  {school && <span>{school}</span>}
+                </div>
+              )}
+              <p className="mt-1.5 text-[11px] tabular-nums text-white/70">
                 {/* How much of this module is behind them. A term of dates says when to
                     turn up; "3 of 12" is the sentence that tells them where they are in
                     it, which is the question the college's own emails are about. */}
-                <span className="tabular-nums">
-                  {g.items.filter((e) => e.date < today).length} of {g.items.length} so far
-                </span>
+                {g.items.filter((e) => e.date < today).length} of {g.items.length} so far
               </p>
             </div>
             <table className="w-full border-collapse text-left">
@@ -1369,8 +1411,27 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                   const past = ev.date < today;
                   const firstOfDay = i === 0 || g.items[i - 1].date !== ev.date;
                   const weekNo = ttWeeksBetween(ttWeekStart(g.items[0].date), ttWeekStart(ev.date)) + 1;
+                  // TAPPABLE ONLY WHERE TAPPING DOES SOMETHING. A row for next Tuesday, or
+                  // one whose class has no register, leads nowhere — and a row that looks
+                  // pressable and answers nothing is worse than a plain one, because the
+                  // student concludes check-in is broken rather than that it is not today.
+                  const canCheckIn = isToday && !!ev.sessionId;
+                  const open = () => canCheckIn && onCheckIn(ev);
                   return (
-                    <tr key={ev.id} className={isToday ? "bg-slate-50" : ""}>
+                    <tr
+                      key={ev.id}
+                      className={`${isToday ? "bg-slate-50" : ""} ${canCheckIn ? "cursor-pointer active:bg-slate-100" : ""}`}
+                      onClick={open}
+                      // Reachable without a pointer. The whole row is the target on a
+                      // phone, so it has to be a real control for anybody navigating by
+                      // keyboard or screen reader rather than a div that happens to react.
+                      {...(canCheckIn ? {
+                        role: "button",
+                        tabIndex: 0,
+                        "aria-label": `Check in to ${g.title}, ${ev.start} to ${ev.end}`,
+                        onKeyDown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } },
+                      } : {})}
+                    >
                       {/* Numbered within the MODULE and FROM THE DATE, so "week 3" is the
                           third week this module runs — the way a student and a brief both
                           say it — and two classes on one day share a number instead of
@@ -1380,19 +1441,20 @@ function ModuleTimetable({ events, today, onCheckIn }) {
                           day. A module with a morning and an afternoon session used to
                           print the same date twice, one under the other, which is the
                           repetition this screen was rebuilt to remove. */}
-                      <td className={`px-3 py-1.5 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>
+                      <td className={`px-3 py-2 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>
                         {firstOfDay ? weekNo : ""}
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-1.5 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>
+                      <td className={`whitespace-nowrap px-2 py-2 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>
                         {firstOfDay ? ttDMY(ev.date) : ""}
                       </td>
-                      {!time && <td className="whitespace-nowrap px-2 py-1.5 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
-                      {!room && <td className="px-2 py-1.5 text-[12px] text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
-                      {!staff && <td className="px-2 py-1.5 text-[12px] text-slate-500">{(ev.staff || []).join(", ") || "—"}</td>}
-                      <td className="px-2 py-1.5 text-right">
-                        {isToday && ev.sessionId
-                          ? <button onClick={() => onCheckIn(ev)}
-                              className="press rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: g.colour }}>Check in</button>
+                      {!time && <td className="whitespace-nowrap px-2 py-2 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
+                      {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.floor, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
+                      {!staff && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{(ev.staff || []).join(", ") || "—"}</td>}
+                      <td className="px-2 py-2 text-right">
+                        {canCheckIn
+                          ? <span className="press inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: g.colour }}>
+                              <ScanLine size={11} aria-hidden="true" /> Check in
+                            </span>
                           : ev.status
                             ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
                             : past
@@ -1410,8 +1472,7 @@ function ModuleTimetable({ events, today, onCheckIn }) {
     </>
   );
 }
-
-function TimetableScreen({ timetable, busy, reload, setScreen }) {
+function TimetableScreen({ timetable, busy, reload, onCheckIn }) {
   if (busy && !timetable) return <LoadingScreen />;
   const stages = timetable?.stages || [];
   const events = timetable?.events || [];
@@ -1430,7 +1491,7 @@ function TimetableScreen({ timetable, busy, reload, setScreen }) {
     // reported. Where there are real classes, they ARE the timetable.
     return (
       <Screen>
-        <ModuleTimetable events={events} today={today} onCheckIn={() => setScreen?.("checkin")} />
+        <ModuleTimetable events={events} today={today} onCheckIn={() => onCheckIn?.()} />
         <p className="mt-1 px-1 text-center text-[11px] text-slate-400">
           Times and rooms are set by the college. If something looks wrong, message us from &ldquo;Ask the College&rdquo;.
         </p>
