@@ -22,6 +22,7 @@ import {
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
 import { peekPendingQr, clearPendingQr, stashScan } from "./pendingQr";
 import QrScanner from "./QrScanner";
+import { nfcStatus } from "./nfc";
 // Section accents. Checked as an adjacent colour-blind-safe set (worst pair ΔE 16.4),
 // so the four areas stay tellable apart for every reader — and each still carries its
 // own icon and label, so colour is never the only signal.
@@ -609,6 +610,19 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
   const onScanned = useCallback((p) => { setScanning(false); stashScan(p); }, []);
   const closeScanner = useCallback(() => setScanning(false), []);
 
+  // CAN THIS PHONE ACTUALLY TAP A STICKER? Asked here rather than left inside the sticker
+  // card, because the answer decides whether two whole blocks belong on the screen at all.
+  //
+  // The card used to answer it privately and render "Use the app to check in — a browser
+  // can't read a sticker" in its place. On a college where codes are also on, that banner
+  // is an apology for a method the student does not need, sitting directly above the class
+  // they can scan right now. It is still shown where it is the ONLY answer — a college
+  // with stickers and nothing else has to tell somebody why the screen is empty.
+  const tapReady = useCanTap();
+  const canTap = enabled && tapReady === true;
+  const tapIsOnlyMethod = enabled && !qrEnabled && tapContext?.declareEnabled !== true;
+
+  const next = tapContext?.next;
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
@@ -618,7 +632,35 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           guard is a ref, which must not survive from the previous scan's card. */}
       {pendingQr && <QrCheckInCard key={pendingQr.code} qr={pendingQr} reload={reload} onDone={onQrDone} />}
 
-      {enabled && <StudentCheckIn tapContext={tapContext} reload={reload} />}
+      {/* ONE LINE THAT ANSWERS THE WHOLE SCREEN, before any card.
+          A student opens this in a corridor with one question — can I check in, now? —
+          and previously had to read three cards to find out. The state is said once, at
+          the top, in the words the answer actually takes. */}
+      {tapContext && (
+        <div className="overflow-hidden rounded-2xl" style={{ background: running ? ACCENT.checkin : "#ffffff" }}>
+          <div className={`px-4 py-3.5 ${running ? "text-white" : "ring-1 ring-slate-200"}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-wider ${running ? "text-white/70" : "text-slate-400"}`}>
+              {ttLongDate(tapContext.date)}
+            </p>
+            <p className={`mt-0.5 text-[17px] font-extrabold leading-tight ${running ? "text-white" : "text-slate-800"}`}>
+              {running > 1 ? `${running} classes on now`
+                : running === 1 ? `${(tapContext.now[0].unitName || tapContext.now[0].unitCode)} is on now`
+                : next ? "No class on right now"
+                : "That's you done for today"}
+            </p>
+            <p className={`mt-1 text-[12.5px] leading-snug ${running ? "text-white/85" : "text-slate-500"}`}>
+              {running
+                ? (canTap && qrEnabled ? "Scan the code on screen, or tap the sticker in your room."
+                  : qrEnabled ? "Scan the code your lecturer has on screen."
+                  : canTap ? "Hold your phone against the sticker in your room."
+                  : "Use the button on your class below.")
+                : next
+                  ? <>Check-in opens when <strong className="font-semibold">{next.unitName || next.unitCode}</strong> starts at {next.startTime}.</>
+                  : "You have no more classes today."}
+            </p>
+          </div>
+        </div>
+      )}
 
       {tapContext == null && (
         <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
@@ -642,53 +684,41 @@ function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
         </div>
       )}
 
-      {/* THE SCANNER IS NOT A SCREEN-LEVEL CONTROL ANY MORE.
-          Two of them used to sit here — a "Scan to check in" card when only codes were on,
-          and a "Scan the code on screen" bar when stickers were on too — directly above the
-          list of today's classes. A student then had to hold two ideas at once: which class
-          they were in, and a button somewhere else that did not name it. The action now
-          lives on the class itself, where they are already looking. The scanner it opens is
-          the same one; only the place you press has moved. */}
+      {/* The sticker card, only where a sticker is reachable — or where it is the only
+          method a student has, in which case they need to be told why it will not work. */}
+      <StudentCheckIn tapContext={tapContext} reload={reload} />
+
+      {/* THE SCANNER IS NOT A SCREEN-LEVEL CONTROL. Two of them used to sit above the
+          class list — a "Scan to check in" card and a "Scan the code on screen" bar — so a
+          student had to hold two ideas at once: which class they are in, and a button
+          elsewhere that did not name it. The action is on the class now. */}
       {scanning && <QrScanner onScan={onScanned} onClose={closeScanner} />}
 
       <TodaysClasses today={tapContext?.today} loading={tapContext == null}
         canDeclare={tapContext?.declareEnabled === true} onDeclared={reload}
         canScan={qrEnabled === true} onScan={() => setScanning(true)} />
 
-      {(enabled || qrEnabled) && running === 0 && (
-        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-          <p className="text-sm font-extrabold text-slate-800">
-            {tapContext.next ? "No class on right now" : "That's you done for today"}
-          </p>
-          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
-            {tapContext.next
-              ? <>Check-in opens when <strong>{tapContext.next.unitName || tapContext.next.unitCode}</strong> starts at {tapContext.next.startTime}.</>
-              : "You have no more classes today."}
-          </p>
-        </div>
-      )}
-
       {/* The sticker flow has real steps (arm, wait for the button, press), so its
-          walkthrough stays. Scanning a code has ONE step, already said in one line
-          above, so when only QR is on there is no card here at all — an instruction,
-          not a manual, which is how the established attendance products word it. */}
-      {enabled && (
+          walkthrough stays — but only for somebody who can actually follow it. Explaining
+          how to tap a sticker to a browser that cannot read one is the same apology the
+          banner above used to make, in three more lines. */}
+      {canTap && (
         <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How it works</p>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How the sticker works</p>
           <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
             <li>1. Hold your phone against the sticker in your classroom.</li>
             <li>2. The button turns blue for about a minute.</li>
             <li>3. Press it, and you&rsquo;re marked present with the time.</li>
           </ul>
           <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
-            It only works while your class is actually running, and only on a phone that can read
-            stickers. If yours can&rsquo;t, your lecturer marks you in the usual way.
+            It only works while your class is actually running.
           </p>
         </div>
       )}
     </div>
   );
 }
+
 
 /* --------------------------- the scanned-code card --------------------------- */
 
@@ -802,14 +832,49 @@ function QrCheckInCard({ qr, reload, onDone }) {
 // empty when none is, one when it is unambiguous, several when two overlap. The picker
 // only appears in that last case, which is rare enough that making it the default shape
 // would put a menu in front of every student every day for the sake of a few.
+/**
+ * Whether this phone can actually read a sticker.
+ *
+ * A HOOK RATHER THAN A CHECK IN TWO PLACES. The sticker card renders on Home and again on
+ * Check In, and the screen around it needs the same answer to decide its own wording and
+ * whether the walkthrough belongs there at all. Three copies of an async probe is three
+ * chances for the screens to disagree about the same phone.
+ *
+ * `null` while the answer is unknown, which is NOT "no": rendering the unavailable state
+ * during the first tick would flash an apology at every student for a moment before the
+ * probe comes back.
+ */
+function useCanTap() {
+  const [nfc, setNfc] = useState(null);
+  useEffect(() => {
+    let live = true;
+    nfcStatus().then((v) => live && setNfc(v)).catch(() => live && setNfc({ ok: false, reason: "error" }));
+    return () => { live = false; };
+  }, []);
+  return nfc === null ? null : nfc.ok === true;
+}
+
 function StudentCheckIn({ tapContext, reload }) {
   const [picked, setPicked] = useState(null);
+  // Every hook above the early returns. A hook below one runs a different number of times
+  // on the render after the data lands, which is React error #310 and a blank screen.
+  const canTap = useCanTap();
   // Hidden on the home screen when the college has not switched tap check-in on: a
   // student should not be shown a control their institution has not adopted. The row on
   // the More screen stays visible in that case and says so, because rendering NOTHING
   // anywhere made "switched off" and "never built" look identical — and that is how this
   // came to be reported as missing.
   if (!tapContext?.enabled) return null;
+  // AND HIDDEN WHERE THE PHONE CANNOT TAP AND SOMETHING ELSE CAN. The card's own
+  // unavailable state said "Use the app to check in — a browser can't read a sticker",
+  // which on a college that also shows codes is an apology for a method the student does
+  // not need, printed directly above the class they can scan right now. It renders on
+  // Home and on Check In, so it said it twice.
+  //
+  // Still shown where tapping is the ONLY method: a college with stickers and nothing
+  // else has to tell somebody why they cannot check in, or the screen is silently empty.
+  const anotherWay = tapContext.qrEnabled === true || tapContext.declareEnabled === true;
+  if (canTap === false && anotherWay) return null;
 
   const running = tapContext.now || [];
   const next = tapContext.next;
@@ -1282,6 +1347,17 @@ const ttColour = (ev) =>
 
 // "2026-09-14" → "14/09/2026", the form the college's own week-structure sheet uses.
 const ttDMY = (d) => { const [y, m, dd] = String(d || "").split("-"); return y ? `${dd}/${m}/${y}` : ""; };
+// "Thursday 11 September" — for the one place a date is a heading rather than a cell.
+// Built from the date STRING, never from a Date the browser re-zones: the college's day is
+// already decided by the server and re-deriving it locally is how a screen shows yesterday
+// to somebody an hour ahead.
+const ttLongDate = (d) => {
+  const [y, m, dd] = String(d || "").split("-").map(Number);
+  if (!y) return "";
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return `${DAYS[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()]} ${dd} ${MONTHS[m - 1]}`;
+};
 
 // What the student was marked, as they should read it.
 //
