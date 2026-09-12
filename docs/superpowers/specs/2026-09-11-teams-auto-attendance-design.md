@@ -1,7 +1,14 @@
 # Auto attendance from Microsoft Teams — design
 
 **Date:** 11 September 2026
-**Status:** approved in conversation 11 Sep 2026; implementation plan not yet written.
+**Revised:** 12 September 2026 — the first version had ONE dedicated organizer account
+("the ClassAura account") and an admin pasting every join link by hand. Both are
+replaced: the college now runs **a small set of dedicated organizer accounts** and the
+system **discovers their meetings automatically from those accounts' calendars**, with
+the pasted link demoted to a rescue hatch for the rare meeting the matcher cannot place.
+The old text is summarised where it changed rather than deleted, per the house rule.
+**Status:** revised model approved in conversation 12 Sep 2026; implementation plan not
+yet written.
 
 ## What this is
 
@@ -21,36 +28,61 @@ this subsystem by name: online attendance was the reason "I'm here" existed, and
 "I'm here" behind campus-presence checks was only defensible because online attendance
 would arrive from Teams instead. This is that arrival.
 
+## The two roles that make the whole design work
+
+A Teams meeting distinguishes its **organizer** (the account that created it) from the
+people who help run it (**co-organizers / owners**). Graph exposes a meeting's attendance
+artifacts only through its *organizer* — being added to a meeting afterwards unlocks
+nothing on the API side. The design leans on that split:
+
+- **Organizer accounts** — a small set of dedicated, college-owned scheduling accounts
+  (one, or one per department) that create *all* online class meetings. These are the
+  accounts our app is permitted to read. Their emails are listed in Settings.
+- **Teachers** — added to each meeting as co-organizer/owner. They start the class, share
+  the screen, admit students, and can still take the register by hand. Their personal
+  accounts and calendars are **never** read by this system.
+
 ## Decisions taken
 
 **The meeting is created in Teams, not by the platform.** The alternative — the platform
 creating meetings via Graph when a timetable event is published — was rejected for now
-because it needs *write* permissions (`OnlineMeetings.ReadWrite.All`), forces every
-lecturer onto platform-generated links on day one, and couples timetable publishing to a
-network call to Microsoft. The chosen shape needs only *read* permissions and changes
-nobody's scheduling habits. The door to platform-created meetings stays open (see "Not in
-scope") and nothing here forecloses it.
+because it needs *write* permissions (`OnlineMeetings.ReadWrite.All`), and couples
+timetable publishing to a network call to Microsoft. The chosen shape needs only *read*
+permissions. The door to platform-created meetings stays open (see "Not in scope") and
+nothing here forecloses it.
 
-**One dedicated organizer account, set in Settings.** The college admin creates every
-class meeting from a single account (the "ClassAura" account) and adds the teacher as
-co-organizer/presenter. This was the user's own suggestion, refined: Graph exposes a
-meeting's attendance artifacts only through its *organizer*, so being added to a meeting
-afterwards unlocks nothing — the account must be the creator. The payoff for that
-discipline is large: Microsoft's application access policy (the one-time IT setup that
-authorises app-only access to a user's meetings) needs to cover exactly one account
-instead of the whole teaching staff, and every Graph lookup addresses one known user id.
-The organizer account's email/id is a Settings field, not code.
+**Meetings are created by dedicated organizer accounts, listed in Settings — not by each
+teacher, and not by one hardcoded account.** The first draft fixed a single "ClassAura"
+account; the revision generalises it to a list, because a real college schedules by
+department and one shared login for every scheduler is an operational bottleneck. The
+constraint that earns the whole feature stays the same either way: because the organizer
+accounts are a known, small, college-owned set, the Microsoft-side permissions (below)
+are scoped to *exactly those accounts* — never to teaching staff at large. "Credentials"
+here means email addresses only; no passwords are ever stored, because app-only Graph
+access authenticates with the app registration's own secret, not with any user's.
 
-**The link between a meeting and a register is a pasted URL.** The admin pastes the Teams
-join link into the timetable event when building the timetable. Two alternatives were
-rejected. *Matching by lecturer calendars* needs `Calendars.Read` over all staff — the
-most invasive permission on offer — and fuzzy time-overlap matching that picks the wrong
-meeting on a busy calendar. *Listing all the organizer's meetings and matching by time*
-is not even possible: Graph refuses to enumerate `/users/{id}/onlineMeetings` without a
-filter on the join URL or join id; the URL is the lookup key, so somebody has to supply
-it. Reading the ClassAura account's *calendar* to harvest links automatically would work
-and is deliberately deferred, not rejected — it is the natural second version, and it
-only makes sense once this version has proven the pipeline.
+**Meetings are discovered automatically from the organizer accounts' calendars.** The
+first draft had an admin pasting every join link onto every timetable event; that is now
+the fallback, not the flow. Graph refuses to enumerate `/users/{id}/onlineMeetings`
+directly — the only filterable key is the join URL — but every *scheduled* meeting sits
+on its organizer's calendar with its join URL attached, so "find all this organizer's
+classes" is implemented as a `calendarView` read over the organizer accounts for the
+relevant dates. Reading calendars was rejected in the first draft as "the most invasive
+permission on offer" — that verdict was about reading *all teaching staff's personal
+calendars*. Reading the calendars of a handful of dedicated scheduling accounts that
+exist only to hold class meetings is a different proposition, and the Exchange
+application access policy (setup, below) pins the permission to those mailboxes so it
+cannot quietly mean more.
+
+**Matching a discovered meeting to a timetable session is by organizer + date + start
+time, with the title as tiebreak.** The organizer schedules the meeting at the class's
+timetabled time, which they naturally would. Where one organizer account has two classes
+at the same moment, the meeting title must contain the class/unit name and the matcher
+uses it. A meeting the matcher still cannot place is *reported, never guessed* — it lands
+on the sync log as unmatched, and an admin can paste that meeting's join link onto the
+right timetable event, which is an exact, non-fuzzy link and always wins over matching.
+Guessing was rejected for the same reason everywhere else in this codebase: a wrong
+automatic match writes wrong marks onto a real student's record.
 
 **Marks are written automatically, with no confirmation step.** "Suggest, then a teacher
 confirms" was rejected because it converts an automation into a daily chore, and an
@@ -81,15 +113,18 @@ Graph setup and the Test button passes.
 
 ## The flow, end to end
 
-1. Admin creates the meeting in Teams from the ClassAura account, adds the teacher as
-   co-organizer, copies the join link.
-2. Admin pastes the link into the **Teams meeting link** field on the timetable event.
-   Publishing the event carries the link down to each generated `HndSession`, exactly as
-   rooms and times already carry down.
-3. On first sight of a link, the server resolves it to a stable meeting id:
-   `GET /users/{organizerId}/onlineMeetings?$filter=JoinWebUrl eq '<url>'`, and stores
-   the id on the session. Resolution failures (bad paste, meeting deleted, wrong
-   organizer account) surface on the sync log and in Settings, not silently.
+1. A departmental organizer account creates the class meeting in Teams at the class's
+   timetabled time, titled with the class/unit name, and adds the teacher as
+   co-organizer. Nothing else is asked of anyone.
+2. The discovery job reads each listed organizer account's `calendarView` for the coming
+   days, takes every event that carries a Teams join URL, and matches it to a published
+   timetable session: same organizer's meeting, same date, same start time; title
+   tiebreak when two collide. A confident match stores the join URL and organizer on the
+   session. An unconfident one goes on the sync log for the paste-link rescue.
+3. On first sight of a join URL (matched or pasted), the server resolves it to a stable
+   meeting id — `GET /users/{organizerId}/onlineMeetings?$filter=JoinWebUrl eq '<url>'`
+   — and stores the id on the session. Resolution failures (deleted meeting, wrong
+   organizer) surface on the sync log, not silently.
 4. A poller inside the existing scheduler notices sessions whose `endTime` has passed,
    whose meeting id is set, and whose Teams marks have not yet been written. For each, it
    fetches `GET /users/{organizerId}/onlineMeetings/{id}/attendanceReports` and the
@@ -133,48 +168,54 @@ alone), times as London wall-clock strings via `clock.js`.
 
 ## What gets added
 
-**Schema** — four small changes, each with an in-codebase precedent:
+**Schema** — five small changes, each with an in-codebase precedent:
 
-- `TimetableEvent.teamsJoinUrl String?` — the pasted link, on the planning object.
-- `HndSession.teamsJoinUrl String?` and `HndSession.teamsMeetingId String?` — carried
-  down at publish; the meeting id cached after resolution. Precedent: `moodleSessionId`.
-  The session's uniqueness is not touched — the two partial unique indexes Prisma cannot
-  see (`schema.prisma:1181-1213`) stay exactly as they are.
+- `TimetableEvent.teamsJoinUrl String?` — the rescue-hatch pasted link, on the planning
+  object. An explicit paste always beats the matcher.
+- `HndSession.teamsJoinUrl String?`, `HndSession.teamsMeetingId String?` and
+  `HndSession.teamsOrganizerId String?` — the discovered (or pasted) link, the resolved
+  meeting id, and the organizer account it belongs to, since every artifact fetch is
+  addressed through the organizer. Precedent: `moodleSessionId`. The session's
+  uniqueness is not touched — the two partial unique indexes Prisma cannot see
+  (`schema.prisma:1181-1213`) stay exactly as they are.
 - `Student.msUserId String? @unique` — the AAD object id, cached on first email match.
   Precedent: `moodleUserId`, for the same reason it gives — later syncs re-use the match
   instead of re-resolving by email every time.
 - `model TeamsSync` — the run log: when, which sessions, how many marks written, how many
-  participants unmatched, errors. Precedent: `MoodleSync`.
+  participants unmatched, which meetings could not be matched to a session, errors.
+  Precedent: `MoodleSync`.
 
 **Credentials** — a new `teams` provider in `integrationConfig.js`, alongside `moodle`
 and `sharepoint`, with its own `tenantId` / `clientId` / `clientSecret` and a new
-non-secret setting `organizerUser` (the ClassAura account's email or AAD id). A separate
-provider row rather than piggybacking on `sharepoint`, for the reason
-`integrationConfig.js` itself argues: a college may legitimately hold two Microsoft app
-registrations with different permission grants, and mixing them into one row means one
-Test button vouching for two unrelated capabilities. Secrets are AES-256-GCM via
-`secrets.js`, which means **`CREDENTIALS_KEY` must be set in the environment** — it is
-optional today and unset on the live server; the setup guide and the Test button both say
-so loudly rather than failing obscurely.
+non-secret setting `organizerAccounts` — the list of organizer emails, resolved once to
+AAD user ids and cached. A separate provider row rather than piggybacking on
+`sharepoint`, for the reason `integrationConfig.js` itself argues: a college may
+legitimately hold two Microsoft app registrations with different permission grants, and
+mixing them into one row means one Test button vouching for two unrelated capabilities.
+Secrets are AES-256-GCM via `secrets.js`, which means **`CREDENTIALS_KEY` must be set in
+the environment** — it is optional today and unset on the live server; the setup guide
+and the Test button both say so loudly rather than failing obscurely.
 
 **Graph client** — the token-acquisition and fetch pattern proven in `sharepoint.js`
 (client-credentials grant against `login.microsoftonline.com`, plain `fetch`, no
 `@azure/*` or MSAL dependency — that absence is deliberate and documented there),
-instantiated for the `teams` provider's credentials. Two Graph operations: the
-URL→meeting-id resolution and the attendance-report fetch.
+instantiated for the `teams` provider's credentials. Three Graph operations: the
+organizer `calendarView` read, the URL→meeting-id resolution, and the attendance-report
+fetch.
 
 **Config singleton** — `TeamsAttendanceConfig` via the `add-config-table` skill:
 `enabled` (default **false**) and `minAttendancePct` (default 50). Lateness reuses the
 existing `lateAfterMins` rather than growing a twin.
 
 **Scheduler** — a `maybeSyncTeamsAttendance()` job in the existing scheduler, modelled on
-`maybeSyncMoodle()`: config-gated, dedupe against `TeamsSync`, stale-run sweep. Unlike
-the Moodle sync it runs at every tick rather than a fixed hour, because its work is
-"sessions that ended since last look", which is naturally incremental and cheap when
-empty. Retries are inherent — a session with a meeting id and no marks is simply still
-eligible next tick, with a bounded retry window — **7 days after the session date** —
-so a meeting nobody joined does not poll forever, while a weekend outage still
-self-heals on Monday.
+`maybeSyncMoodle()`: config-gated, dedupe against `TeamsSync`, stale-run sweep. Two
+sub-steps per run — discover/match upcoming meetings, then collect reports for ended
+sessions. Unlike the Moodle sync it runs at every tick rather than a fixed hour, because
+its work is "sessions that ended since last look", which is naturally incremental and
+cheap when empty. Retries are inherent — a session with a meeting id and no marks is
+simply still eligible next tick, with a bounded retry window — **7 days after the
+session date** — so a meeting nobody joined does not poll forever, while a weekend
+outage still self-heals on Monday.
 
 **Capture method** — one line in the frozen map in `attendanceTap.js`:
 `"Auto check-in (Teams)"` → `"teams"`, exactly as the comment there promises a new method
@@ -185,43 +226,56 @@ crosses the wire to app builds that are not redeployed in step with the server.
 outcome values added to the documented vocabulary in the schema comment, so "why is this
 student marked absent for Tuesday?" has an answer in the tap log like every other method.
 
-**Client** — the link field on the timetable event form; the Teams row on the existing
-Integration Settings screen (credentials, organizer account, Test button); the config
-toggle and threshold on the attendance settings; sync history read from `TeamsSync`.
-Registers render Teams marks with their stamp exactly as they render NFC and QR marks
-today — no new register UI.
+**Client** — the Teams row on the existing Integration Settings screen (credentials, the
+organizer-accounts list, Test button); the config toggle and threshold on the attendance
+settings; sync history and the unmatched-meetings list read from `TeamsSync`; the
+rescue-hatch link field on the timetable event form. Registers render Teams marks with
+their stamp exactly as they render NFC and QR marks today — no new register UI.
 
-**Documentation** — `TEAMS_SETUP.md` beside `SHAREPOINT_SETUP.md`: the app registration,
-the two application permissions (`OnlineMeetings.Read.All`,
-`OnlineMeetingArtifact.Read.All`), admin consent, and the Teams PowerShell application
-access policy granted to the ClassAura account. The policy step gets particular care
-because it is the one with no Azure-portal UI and the one everybody misses.
+**Documentation** — `TEAMS_SETUP.md` beside `SHAREPOINT_SETUP.md`: the app registration;
+the three application permissions (`Calendars.Read`, `OnlineMeetings.Read.All`,
+`OnlineMeetingArtifact.Read.All`); admin consent; the **Teams application access policy**
+(PowerShell) granting meeting-artifact access for the organizer accounts; and the
+**Exchange application access policy** (`New-ApplicationAccessPolicy`) restricting
+`Calendars.Read` to a mail-enabled security group containing exactly the organizer
+accounts — without which the calendar permission is tenant-wide, which no college should
+accept and none should be asked to. The two policy steps get particular care because
+they are the ones with no portal UI and the ones everybody misses.
 
 ## What can go wrong, and what happens when it does
 
-- **No link pasted** — the session works the old way: manual register, taps, scans.
-  Nothing breaks, nothing nags.
-- **Link fails to resolve** — recorded on the sync log with Microsoft's error text
-  verbatim (the `sharepoint.js` habit); the session stays manual.
-- **Student joins with a personal email** — no match, no mark, a named entry in the run's
-  unmatched list for a human to resolve. Once resolved (the student's email corrected, or
-  matched by hand), the next run marks them if the register row is still empty.
+- **A class has no meeting** (in-person teaching, or the organizer never scheduled one) —
+  the session works the old way: manual register, taps, scans. Nothing breaks, nothing
+  nags.
+- **The matcher can't place a meeting** (time moved, two classes at once with unhelpful
+  titles) — it appears on the sync log as unmatched; an admin pastes the join link on the
+  right class and the pipeline continues from there. No guess is ever written.
+- **A link fails to resolve** (deleted meeting, wrong organizer) — recorded on the sync
+  log with Microsoft's error text verbatim (the `sharepoint.js` habit); the session stays
+  manual.
+- **A student joins with a personal email** — no match, no mark, a named entry in the
+  run's unmatched list for a human to resolve. Once resolved (the student's email
+  corrected, or matched by hand), the next run marks them if the register row is still
+  empty.
 - **Report fetch fails** (permissions revoked, secret expired, Microsoft down) — the run
   records the failure, no marks are written, the session stays eligible for retry. Absent
   is only ever written on a *successful* fetch.
 - **The meeting ran but attendance reports are disabled** in the tenant's Teams admin
   settings — surfaced by the Test button and in setup docs; the report simply isn't
   there to fetch, and the sync log says so.
+- **A meeting is started ad hoc ("Meet now") instead of scheduled** — it never appears on
+  the organizer's calendar, so it cannot be discovered; the paste rescue works if the
+  link is captured, otherwise the register is manual. The setup guide tells organizers to
+  schedule, not improvise.
 
 ## Not in scope, kept open
 
-- **Platform-created meetings.** With the ClassAura account under the college's control
-  and its credentials already in the `teams` provider, a later version can create the
-  meeting at timetable-publish time (`OnlineMeetings.ReadWrite.All`) and eliminate the
-  paste entirely.
-- **Calendar harvesting.** Reading the ClassAura account's calendar to pick up join links
-  automatically — one account, one `Calendars.Read` grant, none of the all-staff
-  invasiveness that killed the general version of this idea.
+- **Platform-created meetings.** With the organizer accounts under the college's control
+  and the `teams` provider already holding credentials, a later version can create the
+  meeting at timetable-publish time (`OnlineMeetings.ReadWrite.All`) and eliminate even
+  the scheduling step.
+- **Teacher-calendar matching.** Rejected, not deferred: reading all staff calendars is
+  an invasive grant, and the organizer-account model makes it unnecessary.
 - **Zoom.** The presence spec says "Teams/Zoom"; Zoom is a different API and a different
   provider row, and nothing here assumes Microsoft beyond the `teams` provider module.
 - **Live in-meeting presence** (who is in the call right now, on the live register
@@ -229,19 +283,22 @@ because it is the one with no Azure-portal UI and the one everybody misses.
 
 ## Testing
 
-Pure logic beside its code, per `testing.md`: the join-URL parser, the interval-clipping
-and P/L/A decision (fed synthetic join/leave records — boundary cases at exactly the
-threshold, joins spanning the start, double joins, joins entirely outside the window),
-and the email→student matcher. None of it touches the network.
+Pure logic beside its code, per `testing.md`: the join-URL parser; the calendar-event →
+session matcher (exact match, title tiebreak, the two-classes-same-time collision, the
+must-not-guess refusal); the interval-clipping and P/L/A decision (fed synthetic
+join/leave records — boundary cases at exactly the threshold, joins spanning the start,
+double joins, joins entirely outside the window); and the email→student matcher. None of
+it touches the network.
 
 A `scripts/smoke-teams-attendance.mjs` suite mirroring `smoke-qr-checkin.mjs`, with the
 Graph layer faked at the module boundary (the test runner has no Microsoft tenant, and
 the suite must SKIP loudly, not pass vacuously, if the feature is off). It proves the
-whole pipeline against the seeded fixtures: link on event → carried to session → resolved
-id → fetched (fake) report → correct P/L/A written → lecturer's existing mark untouched →
-unmatched participant reported → failed fetch writes nothing. Weighted toward refusals,
-as the testing rule requires: the suite's most valuable assertions are the marks it
-proves were *not* written.
+whole pipeline against the seeded fixtures: organizer calendar (fake) → matched to
+session → resolved id → fetched (fake) report → correct P/L/A written → lecturer's
+existing mark untouched → unmatched participant reported → ambiguous meeting NOT matched
+→ pasted link overrides the matcher → failed fetch writes nothing. Weighted toward
+refusals, as the testing rule requires: the suite's most valuable assertions are the
+marks and matches it proves were *not* made.
 
 All of it runs against the local `edtech_dev` database with `DATABASE_URL` passed inline,
 per `database-safety.md`.
