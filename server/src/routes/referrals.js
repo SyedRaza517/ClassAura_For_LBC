@@ -24,7 +24,12 @@ const audit = require("../audit");
 const email = require("../email");
 const mailFrom = require("../mailFrom");
 const branding = require("../branding");
-const { notifyStudent } = require("../notify");
+// Required as a namespace, not destructured, because POST / below (line ~212) already
+// declares a LOCAL `const notifyStudent` — the "tell the student" tickbox on a raised
+// referral — and that name is 30-odd lines away from the destructuring site, exactly
+// the distance at which a shadowed import stops being obvious. `notify.notifyStudent`
+// at each call site below can never collide with it.
+const notify = require("../notify");
 
 // THE DEPARTMENT LIST IS MOUNTED ABOVE THE ROUTER GUARD, DELIBERATELY.
 //
@@ -312,7 +317,7 @@ router.put("/:id/accept", async (req, res) => {
   // WHERE clause reads, so a referral the student was never told about (studentNotified
   // false — the tickbox's default) can never surface a status ping either.
   if (updated.studentNotified) {
-    notifyStudent(updated.studentId, {
+    notify.notifyStudent(updated.studentId, {
       type: "info",
       message: `${(await departments.byKey(updated.department))?.name || updated.department} has picked up your referral`,
       link: "support",
@@ -379,7 +384,7 @@ router.put("/:id/close", async (req, res) => {
   // button — the WHY comment on the accept handler above about the studentNotified
   // gate applies identically here.
   if (updated.studentNotified) {
-    notifyStudent(updated.studentId, {
+    notify.notifyStudent(updated.studentId, {
       type: "info",
       message: `Your referral to ${(await departments.byKey(updated.department))?.name || updated.department} has been closed`,
       link: "support",
@@ -517,7 +522,7 @@ router.put("/:id/transfer", async (req, res) => {
   // router keeps for staff (label() above) precisely because it names the confidential
   // routing, not the outcome.
   if (updated.studentNotified) {
-    notifyStudent(updated.studentId, {
+    notify.notifyStudent(updated.studentId, {
       type: "info",
       message: `Your referral has moved to ${to.name}`,
       link: "support",
@@ -653,7 +658,7 @@ router.post("/:id/messages", async (req, res) => {
     // branch a department's reply to one can take.
     (async () => {
       const dept = await departments.byKey(row.department);
-      notifyStudent(row.studentId, {
+      notify.notifyStudent(row.studentId, {
         type: "info",
         message: `${dept?.name || row.department} replied to your request`,
         link: "support",
