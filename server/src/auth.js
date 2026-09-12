@@ -36,8 +36,18 @@ const signApplicantToken = (applicant) => jwt.sign({ sub: applicant.id, kind: "a
 //   /api/student  — their own data, every route scoped to req.user.id
 //   /api/auth     — /me, /change-password and /account, each of which branches on
 //                   req.user.kind === "student" before it touches a staff table
+//   /api/devices  — register/unregister a push token for THIS device. Added after
+//                   the 12 Sep survey found the student app already asking for push
+//                   permission on first launch, with nowhere for the granted token
+//                   to go: DeviceToken had no studentId column and every write in
+//                   devices.js assumed req.user was staff, so a student who said yes
+//                   to the permission prompt had that token silently discarded and
+//                   could never be sent a push. Task 1 gave DeviceToken a nullable
+//                   studentId; devices.js now branches on req.user.kind and scopes
+//                   every route to req.user.id exactly as /api/student does, so this
+//                   is the same shape of allowlist entry as the other two.
 // Nothing else. See the check in requireAuth below.
-const STUDENT_ROUTERS = ["/api/student", "/api/auth"];
+const STUDENT_ROUTERS = ["/api/student", "/api/auth", "/api/devices"];
 // The ONLY routers an applicant session may reach — same isolation idea as students.
 //   /api/applicant — their own Admission (register is public; everything else scoped to req.user.id)
 //   /api/auth      — /login and /change-password, which branch on kind before touching a staff table
@@ -87,10 +97,14 @@ async function requireAuth(req, res, next) {
     // Student session — a fully isolated path. The staff branch below is unchanged,
     // so nothing about existing staff/admin auth is affected.
     if (payload.kind === "student") {
-      // A student token may reach ONLY these two routers. Every other one — staff,
+      // A student token may reach ONLY these three routers. Every other one — staff,
       // hnd, leave, assessments, timesheets, documents, adjustments, moodle,
       // staff-reviews, student-reviews, passwords, my-reviews, interactions,
-      // notifications, devices, signup, student-queries — is off-limits.
+      // notifications, signup, student-queries — is off-limits. (Notifications
+      // themselves are not off-limits to a student — /api/student/me/notifications
+      // is exactly that — it is the STAFF notifications router, /api/notifications,
+      // that stays closed; a student's own notifications are read through
+      // /api/student like everything else that belongs to them.)
       //
       // An ALLOWLIST, deliberately: a router added tomorrow is closed to students
       // without anyone remembering to close it. This single check is what keeps

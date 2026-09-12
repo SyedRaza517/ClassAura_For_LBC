@@ -1423,4 +1423,64 @@ router.post("/me/query", async (req, res) => {
   res.status(201).json(sStudentQuery(query));
 });
 
+/* ============================== Notifications ============================== */
+
+// What a student may see of their own Notification row. An allowlist, like every
+// other shape in this file (sTapSession above is the same idea) — Notification now
+// carries BOTH staffId and studentId (Task 1's exactly-one-owner column pair), and
+// nothing about ownership, or any column added to this table later for staff's
+// sake, should reach a student's screen just because it happened to sit on the row.
+// Defined here rather than in serializers.js: this task's file list is
+// server/src/{notify,auth,routes/devices,routes/student}.js only, and student.js
+// already keeps its own local serialisers for shapes specific to this router.
+const sStudentNotification = (n) => ({
+  id: n.id, type: n.type, message: n.message, link: n.link, read: n.read, createdAt: n.createdAt,
+});
+
+// GET /api/student/me/notifications — this student's own notifications, latest 50,
+// newest first, plus how many are unread.
+//
+// `unread` counts EVERY unread row, not just the 50 returned — a badge that stopped
+// counting once the list scrolled off-screen would undercount a student who ignored
+// their notifications for a while, which is exactly the student a badge exists for.
+// Scoped to req.user.id like every route in this file; there is no id parameter to
+// tamper with.
+router.get("/me/notifications", async (req, res) => {
+  const [rows, unread] = await Promise.all([
+    prisma.notification.findMany({
+      where: { studentId: req.user.id },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    prisma.notification.count({ where: { studentId: req.user.id, read: false } }),
+  ]);
+  res.json({ notifications: rows.map(sStudentNotification), unread });
+});
+
+// PUT /api/student/me/notifications/read — mark notifications read. Body { ids? }:
+// given, mark just those; omitted, mark every one of this student's unread
+// notifications.
+//
+// NEVER AN ID PARAMETER THAT COULD REACH ANOTHER STUDENT'S ROWS. `ids` narrows the
+// WHERE clause, it does not replace it — `studentId: req.user.id` is always ANDed
+// in, so an id copied from another student's notification (guessed, or seen over
+// their shoulder) simply matches zero rows here rather than marking someone else's
+// notification read. That is why this reads `ids` from the body and updates by a
+// WHERE filter rather than looping `findUnique`+`update` by id: a per-id ownership
+// check that is ever skipped is a leak, and an unconditional filter cannot be
+// skipped.
+router.put("/me/notifications/read", async (req, res) => {
+  const { ids } = req.body || {};
+  const where = { studentId: req.user.id, read: false };
+  if (ids !== undefined) {
+    if (!Array.isArray(ids) || !ids.every(isString)) {
+      return res.status(400).json({ error: "ids must be an array of notification ids" });
+    }
+    if (!ids.length) return res.json({ ok: true, updated: 0 });
+    where.id = { in: ids };
+  }
+  const r = await prisma.notification.updateMany({ where, data: { read: true } });
+  res.json({ ok: true, updated: r.count });
+});
+
 module.exports = router;
