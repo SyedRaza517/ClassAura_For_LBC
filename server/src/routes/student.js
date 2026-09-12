@@ -3,8 +3,8 @@
 // branch already blocks student tokens from every other router.
 const router = require("express").Router();
 const prisma = require("../db");
-const { sUnit, sStudent, sStudentQuery, sReferralForStudent, sReferralMessage } = require("../serializers");
-const { requireAuth, requireStudent } = require("../auth");
+const { sUnit, sStudent, sStudentQuery, sReferralForStudent, sReferralMessage, parseAdminPages } = require("../serializers");
+const { requireAuth, requireStudent, hasPage } = require("../auth");
 const { summarise } = require("../attendance");
 const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
@@ -1686,6 +1686,59 @@ router.post("/me/mitigations", async (req, res) => {
   });
 
   res.status(201).json(sStudentMitigation(row));
+
+  // STAFF ARE TOLD, IN THE APP — mirroring the self-referral block above (the "The
+  // team is told in the app" comment on POST /me/referrals) exactly: fire-and-forget
+  // AFTER the response, never inside the request a student is waiting on, and never
+  // awaited into it either — a notification problem must not turn a claim that
+  // WROTE successfully into a failed submission.
+  //
+  // WHY THIS EXISTS AT ALL. mitigations.js's own file header opens with the story
+  // this silence would otherwise repeat at its earliest point: TRIP_CHRONIC_LATE
+  // went live because nothing had recorded that an extension existed, so a student
+  // was reported chronically late for using an accommodation the college itself
+  // granted. That was a claim nobody told the pipeline about; this is the same shape
+  // one step earlier — a claim nobody told a HUMAN about, sitting unseen until
+  // somebody happens to open the admin screen. A claim that arrives silently is a
+  // claim that can sit past a deadline it was meant to excuse.
+  //
+  // hasPage(s, "mitigations"), NOT "every admin" or notifyAdmins(). auth.js's own
+  // EXPLICIT_ONLY set (mitigations.js's header again: "its own admin page... so a
+  // college can grant 'see the risk register' without also granting 'read why each
+  // student is on it'") means an unconfigured admin does NOT hold this page by
+  // default, unlike an ordinary one. Filtering by hasPage rather than accountRole
+  // alone is what keeps this notification inside the same grant the route it is
+  // about is gated behind — telling every admin a claim exists, regardless of that
+  // grant, would leak the FACT of a health-related claim to staff the college
+  // deliberately did not give this page to.
+  //
+  // NO CATEGORY, NO DETAIL — the student's name and the window only, matching every
+  // other notification and audit line this file and mitigations.js write about a
+  // claim: enough for a member of staff to go and open it, never what it is about.
+  (async () => {
+    const staff = await prisma.staff.findMany({ where: { pendingActivation: false } });
+    // adminPages COMES BACK FROM PRISMA AS THE RAW COLUMN -- a JSON-encoded string
+    // (or null), never an array. hasPage() reads it with `.includes(p)` expecting an
+    // already-parsed array (auth.js's own comment on the line it is used: "already
+    // parsed by sStaff"); every other caller in this codebase passes it req.user,
+    // which requireAuth built through sStaff. There is no req.user here — this is a
+    // fire-and-forget loop over freshly-queried rows — so parseAdminPages (the exact
+    // function sStaff itself calls) is applied by hand, per row, before hasPage ever
+    // sees it. Skipping this would still "work" by accident: `.includes()` exists on
+    // String.prototype too, and a JSON-encoded string like `["mitigations"]` happens
+    // to contain the substring "mitigations" — which is correct for this one page key
+    // and would silently mismatch for one whose name was a substring of another's.
+    const recipients = staff.filter((s) => hasPage({ ...s, adminPages: parseAdminPages(s.adminPages) }, "mitigations"));
+    if (!recipients.length) return;
+    await prisma.notification.createMany({
+      data: recipients.map((s) => ({
+        staffId: s.id,
+        type: "info",
+        message: `${req.user.name || "A student"} has raised a mitigating circumstances claim covering ${row.coversFrom} to ${row.coversTo}`,
+        link: "mitigations",
+      })),
+    });
+  })().catch(() => {});
 });
 
 // POST /api/student/me/query — the student sends a query to the college. Admins pick
