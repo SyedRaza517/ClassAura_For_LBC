@@ -141,12 +141,25 @@ const MODEL_SCOPE = {
   Semester: "UNSCOPED",
   AssessmentAdjustment: "UNSCOPED",
   MoodleSync: "UNSCOPED",
+  // A sync run log, same shape as MoodleSync directly above: no relation to a student or
+  // a department, just a record of a run. Its `issues` JSON can name a student by email
+  // in prose -- "no match for jane.doe@example.ac.uk" -- rather than through a column
+  // Prisma could scope on, which is the same residual-exposure shape TagTap's comment
+  // describes for its diagnostic log above: real but small, and confined by the route
+  // rather than this map, because only a settings-page admin (college-wide, by
+  // definition) ever reads a sync log.
+  TeamsSync: "UNSCOPED",
 
   /* ---- Institution-wide for now: attendance hardware ---------------------- */
   AttendanceTag: "UNSCOPED",
   AttendanceTapConfig: "UNSCOPED",
   AttendanceEmailConfig: "UNSCOPED",
   AttendanceBandConfig: "UNSCOPED",
+  // A singleton config table, same shape as the three directly above: one settings row
+  // for the whole institution, no academicDepartmentId column and nothing to reach one
+  // through. Every config table in this file is UNSCOPED for that reason -- a college's
+  // switches and thresholds describe the college, not a department within it.
+  TeamsAttendanceConfig: "UNSCOPED",
 
   /* ---- Institution-wide for now: timetabling ------------------------------ */
   Room: "UNSCOPED",
