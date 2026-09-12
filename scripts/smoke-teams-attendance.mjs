@@ -17,7 +17,10 @@
 //     writes NO url onto EITHER candidate rather than guessing;
 //   * a future register is never touched, however confidently a meeting is matched to it;
 //   * collection is idempotent — a second sync against an already-collected session
-//     writes nothing new, which is what makes an hourly poller safe to run at all.
+//     writes nothing new, which is what makes an hourly poller safe to run at all;
+//   * an admin's pasted join link always beats the calendar matcher — discovery fills a
+//     BLANK teamsJoinUrl only, and never overwrites one that is already there, even when
+//     a competing meeting on the calendar lands on the exact same date and time.
 //
 // THE FIXTURES SEAM. teamsGraph.js answers every Graph call from a JSON file named by
 // TEAMS_GRAPH_FIXTURES, read fresh on every call, so this suite drives the whole pipeline
@@ -114,6 +117,8 @@ const URL_B = joinUrl("b"); // tomorrow — matched, never collected
 const URL_C = joinUrl("c"); // yesterday 11:19 — the failed-fetch case
 const URL_D = joinUrl("d"); // yesterday 13:31 — the ambiguous slot
 const URL_E = joinUrl("e"); // a personal meeting at a time nothing is timetabled
+const URL_F_PASTED = joinUrl("f-pasted"); // yesterday 16:45 — already on the session, an admin's paste
+const URL_F_COMPETING = joinUrl("f-competing"); // a DIFFERENT meeting the calendar offers at the same slot
 
 // Times deliberately NOT on the hour or half hour. prisma/seed.js times its own weekly
 // timetable at 10:00/14:00/18:00 on fixed weekdays computed relative to today — a real
@@ -125,6 +130,7 @@ const T = {
   c: { start: "11:19", end: "12:49" },
   d: { start: "13:31", end: "15:01" },
   e: { start: "20:53", end: "21:23" },
+  f: { start: "16:45", end: "18:15" },
 };
 
 const made = { sessions: [], events: [], enrolments: [], marks: [], students: [] };
@@ -133,6 +139,7 @@ let child = null, bootLog = "";
 let integrationExisted = false, priorIntegration = null;
 let teamsConfigExisted = false, priorTeamsConfig = null;
 let priorAdminPages;
+let runStart; // set just before the first sync — see cleanup()'s use of it
 
 function stopApi() {
   if (child && !child.killed) {
@@ -167,10 +174,14 @@ async function cleanup() {
     if (cohort) await db.cohort.delete({ where: { id: cohort.id } }).catch(() => {});
     if (course) await db.course.delete({ where: { id: course.id } }).catch(() => {});
 
-    // This suite's own runs, only. Nothing else in an isolated DATABASE_URL writes
-    // TeamsSync rows during this suite's lifetime — the shared API on port 4010 (if
-    // running at all) never sees TEAMS_GRAPH_FIXTURES and never gets asked to sync.
-    await db.teamsSync.deleteMany({}).catch(() => {});
+    // This suite's own runs, only — scoped by startedAt rather than a bare deleteMany({}).
+    // Nothing else in an isolated DATABASE_URL writes TeamsSync rows during this suite's
+    // lifetime today (the shared API on port 4010, if running at all, never sees
+    // TEAMS_GRAPH_FIXTURES and never gets asked to sync), but a bare deleteMany({}) would
+    // silently take down anything that ever does, whereas this one only ever reaches rows
+    // this run itself could have created. runStart is undefined if the suite bailed before
+    // ever reaching the sync section, in which case there is nothing of this run's to find.
+    if (runStart) await db.teamsSync.deleteMany({ where: { startedAt: { gte: runStart } } }).catch(() => {});
 
     // Put the "teams" integration and TeamsAttendanceConfig back exactly as found —
     // the same upsert-on-singleton idiom smoke-qr-checkin.mjs uses for tap settings,
@@ -216,9 +227,15 @@ try {
         // A staff meeting on the same calendar, at a time nothing is timetabled. Discovery
         // must ignore it silently (matchMeeting's "none") rather than force a match.
         { subject: "Personal 1:1", date: YEST, startTime: T.e.start, endTime: T.e.end, joinUrl: URL_E },
+        // A COMPETING meeting at the exact slot the pasted session already occupies, with
+        // a DIFFERENT join url. matchMeeting sees exactly one candidate here (session F's
+        // own group) and would happily match it — the point of this fixture is that
+        // discovery's own `teamsJoinUrl: null` guard never lets that match land, because
+        // session F does not have a blank to fill.
+        { subject: "Teams Suite Pasted Slot Competitor", date: YEST, startTime: T.f.start, endTime: T.f.end, joinUrl: URL_F_COMPETING },
       ],
     },
-    meetingIds: { [URL_A]: "m-a", [URL_C]: "m-c", [URL_B]: "m-b" },
+    meetingIds: { [URL_A]: "m-a", [URL_C]: "m-c", [URL_B]: "m-b", [URL_F_PASTED]: "m-f", [URL_F_COMPETING]: "m-f-competing" },
     attendance: {
       "m-a": [
         // student1: the report says they attended in full. Irrelevant to the outcome —
@@ -237,6 +254,13 @@ try {
       // meeting id with no key here (Task 10's one-line change to teamsGraph.js) rather
       // than answering [] — a fetch that failed must not read like a report that
       // succeeded and found nobody.
+      //
+      // "m-f" is the PASTED meeting's report, not the competing one's — "m-f-competing"
+      // has no entry at all, and must never be asked for, because nothing ever lets its
+      // url reach a session's teamsJoinUrl in the first place.
+      "m-f": [
+        { email: S1_EMAIL, msUserId: null, intervals: [{ joinedAt: "16:47", leftAt: "18:10" }] },
+      ],
     },
   };
   writeFileSync(FIXTURES_PATH, JSON.stringify(fixtures, null, 2));
@@ -361,6 +385,19 @@ try {
   const eventE = await mkEvent("Class", YEST, T.d.start, T.d.end);
   const sessE = await mkSession(eventE, YEST, T.d.start, T.d.end, "Class");
 
+  // The pasted-link case, built straight on HndSession rather than through mkEvent —
+  // an admin's paste on a TimetableEvent is carried DOWN to teamsJoinUrl by
+  // syncEventRegisters (registers.js), so what matters here is the session's own
+  // column already being set before the first sync ever runs, not the mechanism that
+  // set it. teamsOrganizerId is null (the paste path has no organizer — see
+  // teamsSync.js's comment on "the paste path has no organizer"), so collection has
+  // to resolve one itself, exactly as it would for a real pasted link.
+  const sessF = await db.hndSession.create({ data: {
+    unitId: unit.id, date: YEST, startTime: T.f.start, endTime: T.f.end,
+    description: "Teams Suite Pasted Link", teamsJoinUrl: URL_F_PASTED, teamsOrganizerId: null,
+  } });
+  made.sessions.push(sessF.id);
+
   /* ====================================================================== */
   console.log("\n--- the ship-switched-off proof ---");
   /* ====================================================================== */
@@ -413,6 +450,11 @@ try {
   console.log("\n--- the sync itself ---");
   /* ====================================================================== */
 
+  // Captured before this suite's first sync, so cleanup can scope its TeamsSync
+  // deletion to runs THIS suite created rather than every row in the table — a
+  // courtesy to anything else that might ever write one during this DATABASE_URL's
+  // lifetime, even though nothing else does today.
+  runStart = new Date();
   const synced = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
   check("the sync runs and answers 200", synced.status === 200, `HTTP ${synced.status} ${synced.data?.error || ""}`);
 
@@ -477,6 +519,21 @@ try {
     `D=${sessDAfter?.teamsJoinUrl} E=${sessEAfter?.teamsJoinUrl}`);
   check("the run's issues name the collision",
     (latestRun?.issues || []).some((i) => i.includes("matches more than one class")), JSON.stringify(latestRun?.issues));
+
+  /* ====================================================================== */
+  console.log("\n--- the pasted-link case: an admin's paste beats the matcher ---");
+  /* ====================================================================== */
+
+  const sessFAfter = await db.hndSession.findUnique({ where: { id: sessF.id } });
+  check("the pasted url survives discovery untouched, even with a competing meeting at the same slot",
+    sessFAfter?.teamsJoinUrl === URL_F_PASTED, `teamsJoinUrl=${sessFAfter?.teamsJoinUrl}`);
+  check("...and its meeting id resolved from the PASTED url, not the competing one",
+    sessFAfter?.teamsMeetingId === "m-f", `teamsMeetingId=${sessFAfter?.teamsMeetingId}`);
+
+  const s1PastedMark = await db.attendanceMark.findFirst({ where: { sessionId: sessF.id, studentId: s1.id } });
+  check("the mark was written from the pasted meeting's own report",
+    s1PastedMark?.status === "P" && s1PastedMark?.takenBy === "Auto check-in (Teams)",
+    `status=${s1PastedMark?.status} takenBy=${s1PastedMark?.takenBy}`);
 
   /* ====================================================================== */
   console.log("\n--- discovery ignores a meeting that matches no timetabled slot ---");
