@@ -50,7 +50,7 @@ export const CHECK_IN_METHODS = {
   // because nothing on this row is a check-in action the student performed in the room.
   teams: {
     Icon: Users,
-    words: "Joined the online class (Teams)",
+    words: "Joined the online class",
     short: "joined online",
     csv: "Student joined the online class, recorded by Microsoft Teams (Teams)",
   },

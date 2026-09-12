@@ -79,8 +79,9 @@ const TEAMS_AUTO_STAMP = "Auto check-in (Teams)";
 // other change anywhere on the server: the frozen list, the predicate and the token all
 // read off this map, so none of them can drift from the others. (This comment said "a
 // third" until 9 Sep 2026, by which point there was one — which is how somebody comes to
-// believe they are adding the first new one. There are THREE entries below; the entries
-// are the count, not this paragraph.)
+// believe they are adding the first new one. It then said THREE until 12 Sep 2026, when
+// a fourth arrived the same way. There are FOUR entries below; the entries are the
+// count, not this paragraph.)
 //
 // THE TOKEN IS THE THING CLIENTS SWITCH ON, and the split between it and the stamp is the
 // whole point. The stamp is prose — frozen, English, and written into rows in two live
