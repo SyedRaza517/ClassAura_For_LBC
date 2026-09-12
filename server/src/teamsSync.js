@@ -56,7 +56,6 @@ const daysAhead = (n) => {
 async function runSync({ mode = "manual", startedBy = null } = {}) {
   if (running) throw new Error("A Teams attendance sync is already running.");
   running = true;
-  const run = await prisma.teamsSync.create({ data: { mode, startedBy } });
   const issues = [];
   const note = (m) => issues.push(String(m).slice(0, 500));
   const summary = {
@@ -64,7 +63,23 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
     reportsFetched: 0, marksCreated: 0, marksSkippedExisting: 0,
     participantsUnmatched: 0,
   };
+  // `run` is declared here, outside the try, only so the catch block below can still
+  // see it — it is not assigned until the FIRST line inside the try. The create used
+  // to sit ahead of the try/finally entirely, which reads as harmless (it's "just"
+  // the row that records the run) but is not: a create that itself rejects — a pooler
+  // blip, or a deploy that reaches this code before `prisma migrate deploy` has run
+  // for the TeamsSync table — threw straight out of runSync without ever reaching
+  // `finally`, so `running` stayed true for the rest of the process's life. Every
+  // later call answered "A Teams attendance sync is already running", isRunning()
+  // told the scheduler to skip its hourly tick forever, and POST /sync answered 409
+  // forever too — with no TeamsSync row anywhere recording why, because the one
+  // attempt to create one is exactly what failed. Moving the create inside the try
+  // means its failure now reaches the same `finally { running = false }` every other
+  // failure here does.
+  let run;
   try {
+    run = await prisma.teamsSync.create({ data: { mode, startedBy } });
+
     // ---- DISCOVERY: put join URLs onto sessions that have none. -------------------
     const organizers = await graph.resolveOrganizers();
     const today = localDate();
@@ -227,25 +242,49 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
       const res = await prisma.attendanceMark.createMany({ data: rows, skipDuplicates: true });
       summary.marksCreated += res.count;
       summary.marksSkippedExisting += rows.length - res.count;
-      // The audit trail, one row per written mark, in the tap log every other method
-      // already writes — TagTap.method "teams" is documented in schema.prisma
-      // alongside "nfc"/"qr" for exactly this. Re-reading the marks just written
-      // (rather than reusing `rows`) is deliberate: `rows` includes every rostered
-      // student, most of whom `createMany` just skipped because a mark already stood,
-      // and logging all of them would flood the tap log with rows for a register a
-      // lecturer had already taken by hand. Filtering `rows` locally on "does this
-      // studentId already have a mark" would need the same query anyway (to know
-      // which were skipped), so reading back by takenBy is no extra trip and is
-      // provably exact: it is the database's own account of what this run wrote, not
-      // this process's belief about it.
-      if (res.count > 0) {
-        const mine = await prisma.attendanceMark.findMany({
-          where: { sessionId: session.id, takenBy: TEAMS_AUTO_STAMP },
-          select: { studentId: true, status: true },
+      // The audit trail, in the tap log every other method already writes — the spec
+      // requires BOTH "accepted and refused marks logged to TagTap", and TagTap.outcome
+      // is documented in schema.prisma as carrying "marked" and "already_marked" for
+      // method "teams" for exactly this pair.
+      //
+      // One re-read after createMany answers "which of these did this run actually
+      // write" for every rostered student at once, and it is read back rather than
+      // derived from `res.count` plus this process's belief about ordering: skipDuplicates
+      // gives no guarantee about WHICH rows in a batch were the duplicates, only how many,
+      // so `res.count` alone cannot tell "marked" from "already_marked" per student — only
+      // the database's own account of what now stands can. A student whose mark carries
+      // takenBy === TEAMS_AUTO_STAMP is one this run just wrote (or, exactly once, a run
+      // that crashed after this createMany but before teamsCollectedAt was set — a retry
+      // would then find its own prior write already standing and correctly log THAT as
+      // "already_marked", not double-count it as newly marked); anything else is a mark
+      // that already stood before this run touched the session — a lecturer's tick, a
+      // Moodle import, or an earlier capture method — and was correctly left alone.
+      if (rows.length > 0) {
+        const standing = await prisma.attendanceMark.findMany({
+          where: { sessionId: session.id, studentId: { in: rows.map((r) => r.studentId) } },
+          select: { studentId: true, status: true, takenBy: true },
         });
-        await prisma.tagTap.createMany({
-          data: mine.map((m) => ({ studentId: m.studentId, sessionId: session.id, method: "teams", outcome: "marked", status: m.status })),
-        });
+        const byStudent = new Map(standing.map((m) => [m.studentId, m]));
+        const tapRows = [];
+        for (const r of rows) {
+          const mark = byStudent.get(r.studentId);
+          if (!mark) continue; // every row was either just inserted or already existed
+          if (mark.takenBy === TEAMS_AUTO_STAMP) {
+            tapRows.push({ studentId: r.studentId, sessionId: session.id, method: "teams", outcome: "marked", status: mark.status });
+          } else {
+            // Refused, not silent — the never-overwrite invariant above is a decision,
+            // and a decision the sync makes belongs in the log the same as one it acts
+            // on. No `status`: the mark this run refused to write may disagree with the
+            // one already on the register (a lecturer may have marked this student
+            // differently), so reporting the STANDING mark's status here would credit
+            // it to the Teams sync's own judgement, which is exactly what did not
+            // happen. Bounded the same way "marked" is: teamsCollectedAt stops this
+            // session being looked at again, so a register a lecturer already took does
+            // not grow one "already_marked" row per student per hour.
+            tapRows.push({ studentId: r.studentId, sessionId: session.id, method: "teams", outcome: "already_marked" });
+          }
+        }
+        if (tapRows.length) await prisma.tagTap.createMany({ data: tapRows });
       }
       await prisma.hndSession.update({ where: { id: session.id }, data: { teamsCollectedAt: new Date() } });
     }
@@ -256,10 +295,15 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
     });
     return { run: finished, summary, issues };
   } catch (e) {
-    await prisma.teamsSync.update({
-      where: { id: run.id },
-      data: { status: "failed", finishedAt: new Date(), error: String(e.message || e).slice(0, 1000), summary: JSON.stringify(summary), issues: JSON.stringify(issues) },
-    }).catch(() => {});
+    // `run` is undefined here exactly when the create itself was what failed — in
+    // that case there is no row to mark "failed" and nothing for a later sweep to
+    // find, because none was ever written.
+    if (run) {
+      await prisma.teamsSync.update({
+        where: { id: run.id },
+        data: { status: "failed", finishedAt: new Date(), error: String(e.message || e).slice(0, 1000), summary: JSON.stringify(summary), issues: JSON.stringify(issues) },
+      }).catch(() => {});
+    }
     throw e;
   } finally {
     running = false;
