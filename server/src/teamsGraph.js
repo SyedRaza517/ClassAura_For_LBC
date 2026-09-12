@@ -89,8 +89,9 @@ function describe() {
 
 let cachedToken = null; // { value, expiresAt } | null
 let cachedOrganizers = null; // [{ email, id }] | null — forgotten on credential change
+let cachedCreator = null; // { email, id } | null — forgotten alongside cachedOrganizers
 
-function forgetCached() { cachedToken = null; cachedOrganizers = null; }
+function forgetCached() { cachedToken = null; cachedOrganizers = null; cachedCreator = null; }
 
 // --- Access token (client-credentials grant, cached) -----------------------------
 // Sharepoint.js's getAccessToken (sharepoint.js:142-200) in shape: prime config, reuse
@@ -230,6 +231,28 @@ async function resolveOrganizers() {
   }
   cachedOrganizers = out;
   return out;
+}
+
+/**
+ * The account that CREATES class meetings and OWNS new class Teams (Task 4's
+ * `creatorAccount` setting). Defaults to the first organizer account so a college
+ * that only ever filled in organizerAccounts — and never notices this newer field —
+ * keeps working exactly as before rather than ending up with no creator at all.
+ */
+function creatorEmail() {
+  return cfg.peek("teams").creatorAccount?.trim() || ORGANIZERS()[0] || "";
+}
+
+/** creatorEmail() resolved to its Entra user id, cached for the process like resolveOrganizers(). */
+async function resolveCreatorId() {
+  const email = creatorEmail();
+  if (!email) return null;
+  const fx = fixtures();
+  if (fx) return (fx.users || {})[email.toLowerCase()] ?? null;
+  if (cachedCreator && cachedCreator.email === email) return cachedCreator.id;
+  const u = await graphFetch(`/users/${encodeURIComponent(email)}?$select=id`);
+  cachedCreator = { email, id: u.id };
+  return cachedCreator.id;
 }
 
 /** Scheduled events carrying a Teams join URL on one organizer's calendar. */
@@ -540,4 +563,6 @@ module.exports = {
   // Teams automation (Task 2): writes, plus the reads they depend on.
   createClassMeeting, updateClassMeeting, cancelClassMeeting,
   createTeam, createChannel, getChannelEmail, addTeamMember, resolveUserId,
+  // Teams automation (Task 4): the creator-account setting.
+  creatorEmail, resolveCreatorId,
 };

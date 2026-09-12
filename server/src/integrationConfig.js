@@ -115,13 +115,23 @@ const PROVIDERS = {
   // that CREATE every online class meeting (teachers are co-organizers and are never
   // read). Graph exposes a meeting's attendance only through its organizer, which is
   // why these accounts, and only these, are what the sync reads.
+  //
+  // creatorAccount (Teams automation) is the ONE account among those that actually
+  // creates class meetings and owns new class Teams, when automation is switched on.
+  // A separate field rather than always "the first organizerAccounts entry" because a
+  // college may want the account doing the CREATING (mailbox space, licensing) to
+  // differ from the set the attendance sync reads calendars for — but see
+  // teamsGraph.js's creatorEmail(): left blank, it falls back to the first organizer
+  // account, so a college that configured this before automation existed needs to
+  // change nothing.
   teams: {
     label: "Teams attendance",
     secretField: "clientSecret",
-    settingFields: ["tenantId", "clientId", "organizerAccounts"],
+    settingFields: ["tenantId", "clientId", "organizerAccounts", "creatorAccount"],
     env: {
       clientSecret: "TEAMS_CLIENT_SECRET", tenantId: "TEAMS_TENANT_ID",
       clientId: "TEAMS_CLIENT_ID", organizerAccounts: "TEAMS_ORGANIZER_ACCOUNTS",
+      creatorAccount: "TEAMS_CREATOR_ACCOUNT",
     },
     describe: (s) => {
       const n = String(s.organizerAccounts || "").split(",").map((x) => x.trim()).filter(Boolean).length;

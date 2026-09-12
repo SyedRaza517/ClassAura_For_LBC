@@ -142,6 +142,7 @@ const FORMS = {
       { key: "tenantId", label: "Directory (tenant) ID" },
       { key: "clientId", label: "Application (client) ID" },
       { key: "organizerAccounts", label: "Organizer accounts", placeholder: "scheduling@yourcollege.ac.uk, dept2@yourcollege.ac.uk", hint: "The dedicated accounts that CREATE your online class meetings, comma-separated. Teachers join as co-organizers and are never read. Meetings must be scheduled (not “Meet now”) from these accounts at the timetabled class time." },
+      { key: "creatorAccount", label: "Creator account", placeholder: "scheduling@yourcollege.ac.uk", hint: "Which organizer account creates meetings and owns new class Teams. Leave blank to use the first organizer account." },
     ],
     note: "Your Microsoft 365 admin must grant the app three application permissions (Calendars.Read, OnlineMeetings.Read.All, OnlineMeetingArtifact.Read.All) and scope them to these accounts with the two access policies in TEAMS_SETUP.md. Until then, Test connection will say exactly which step is missing.",
   },
