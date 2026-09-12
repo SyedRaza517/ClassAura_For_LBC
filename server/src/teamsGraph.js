@@ -222,7 +222,17 @@ async function resolveMeetingId(organizerId, joinUrl) {
 /** Every participant's join/leave intervals, merged across ALL attendance reports. */
 async function attendanceIntervals(organizerId, meetingId) {
   const fx = fixtures();
-  if (fx) return (fx.attendance || {})[meetingId] || [];
+  // A missing key is not "no attendance", it is "the report could not be read" — the
+  // real Graph call two lines below throws on any non-2xx, and a fixture that answered
+  // [] for an unlisted meeting was a fake success where the real API would have failed.
+  // The sync (teamsSync.js) branches on this throw: NO marks on a failed fetch, only on
+  // a successful one that happens to report nobody there. Task 10's smoke suite is what
+  // this distinction exists to prove, hence the one-line change rather than leaving the
+  // fixture branch answering the safe-looking [].
+  if (fx) {
+    if (!(meetingId in (fx.attendance || {}))) throw new Error("fixture: no report");
+    return fx.attendance[meetingId];
+  }
   const reports = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports`);
   const byKey = new Map(); // email|msUserId -> { email, msUserId, intervals }
   for (const r of reports.value || []) {

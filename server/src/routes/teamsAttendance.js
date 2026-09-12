@@ -21,10 +21,27 @@ const audit = require("./../audit");
 const config = require("./../teamsAttendanceConfig");
 const teamsSync = require("./../teamsSync");
 const graph = require("./../teamsGraph");
+const cfg = require("./../integrationConfig");
 
 const router = express.Router();
 
+// PRIME THIS INSTITUTION'S OWN TEAMS CREDENTIALS BEFORE ASKING WHETHER THEY ARE
+// CONFIGURED — the same fix, for the same reason, as routes/moodle.js's /status
+// handler ("Prime this institution's own configuration before reporting on it").
+// graph.isConfigured() reads integrationConfig.peek("teams"), which is SYNCHRONOUS
+// and answers from whatever integrationConfig.load("teams") last cached — falling
+// back to process.env (empty on a deployment with no TEAMS_* variables) on a cold
+// cache. Nothing else on the request path for /settings or /sync ever warms that
+// cache: teamsGraph's own async entry points (getAccessToken, graphFetch) call
+// load() themselves, but isConfigured() is a synchronous convenience built from
+// peek() alone and is never one of them, and the fixture branch resolveOrganizers()
+// takes when TEAMS_GRAPH_FIXTURES is set bypasses the Graph module entirely. Only
+// scheduler.js's hourly tick (its own await cfg.load("teams")) ever primed this
+// before — so a college that had just saved working credentials got "not
+// configured" from the settings screen and a 409 from the manual "Sync now" button
+// until the next hourly tick happened to run, which is not what either exists for.
 router.get("/settings", requireAuth, requirePage("attendance-settings"), async (_req, res) => {
+  await cfg.load("teams");
   res.json({ settings: await config.get(), configured: graph.isConfigured(), running: teamsSync.isRunning() });
 });
 
@@ -43,6 +60,7 @@ router.put("/settings", requireAuth, requirePage("attendance-settings"), async (
 });
 
 router.post("/sync", requireAuth, requirePage("attendance-settings"), async (req, res) => {
+  await cfg.load("teams"); // see the comment above GET /settings
   if (!graph.isConfigured()) return res.status(409).json({ error: "Teams attendance is not configured — enter the credentials under Connected systems first." });
   if (teamsSync.isRunning()) return res.status(409).json({ error: "A sync is already running." });
   try {
