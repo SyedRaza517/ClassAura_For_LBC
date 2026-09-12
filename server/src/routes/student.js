@@ -10,6 +10,7 @@ const { localDate, localTime } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
+const attendanceBandConfig = require("../attendanceBandConfig");
 const { rosterForSession, unitIdsForStudent } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
@@ -930,6 +931,28 @@ router.get("/me/attendance", async (req, res) => {
   });
 });
 
+// GET /api/student/me/attendance-bands — this college's OWN attendance ladder, so the
+// app can colour a percentage the same way the admin table does instead of carrying a
+// second, hardcoded copy of the six platform defaults (client survey, 12 Sep: the app
+// had its own inline 85/70 scale, independent of whatever the college had configured).
+//
+// Served from attendanceBandConfig.get(), which already resolves this college's saved
+// bands over the platform defaults — the SAME resolution the admin screen and the
+// month-end email send use, so a threshold an administrator just moved is reflected
+// here on the same TTL rather than needing its own cache.
+//
+// ALLOWLISTED DOWN TO {key,label,min,colour} — narrower than attendanceBandConfig's
+// own BAND_FIELDS, which also carries `max` and `emailTrigger`. `max` is redundant on
+// the wire (bandForPct's own comment: the boundary that actually decides is the NEXT
+// band's `min`, and normaliseBands guarantees the ladder is gap-free, so a client only
+// ever needs "where does this band start"). `emailTrigger` is a STAFF fact — whether
+// landing in a band fires the automated warning letter — and has no business reaching
+// the person the letter would be sent to.
+router.get("/me/attendance-bands", async (req, res) => {
+  const bands = await attendanceBandConfig.get();
+  res.json({ bands: bands.map((b) => ({ key: b.key, label: b.label, min: b.min, colour: b.colour })) });
+});
+
 // GET /api/student/me/assessments — this student's assessments, marks, grades, average.
 router.get("/me/assessments", async (req, res) => {
   const student = await prisma.student.findUnique({ where: { id: req.user.id }, select: { id: true } });
@@ -1037,7 +1060,16 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
       timetableEventId: { in: events.map((e) => e.id) },
       OR: [{ cohortId }, { cohortId: null }].filter((c) => c.cohortId !== undefined),
     },
-    select: { id: true, timetableEventId: true, cohortId: true },
+    // teamsJoinUrl comes from the SESSION, not the event. TimetableEvent.teamsJoinUrl
+    // is the admin's rescue-hatch paste, "carried down to this event's registers on
+    // publish" (schema.prisma) — so by the time a class has a register at all, the
+    // register's OWN copy on HndSession is the per-class truth, and reading the
+    // event's copy here would show a link that publish already superseded on a
+    // reschedule. STATUS.md's own words for the feature this was meant to guarantee:
+    // "the guaranteed route for a student to find their class link is the student
+    // app reading the session's own teamsJoinUrl" — a promise this app was not
+    // keeping until now (closes the gap the 12 Sep claim-vs-code survey found).
+    select: { id: true, timetableEventId: true, cohortId: true, teamsJoinUrl: true },
   });
   // A cohort register wins over the ungrouped one: on a merged class the student belongs
   // to their group's sheet, and falling back to a null-cohort register would put them on
@@ -1095,6 +1127,10 @@ async function studentEvents(studentId, cohortId, unitIds, from, to) {
     // "P" | "L" | "E" | "A", or null for "nobody has marked this" — which is a different
     // fact from being absent and must never be drawn as one.
     status: markFor.get(sessionFor.get(e.id)?.id) ?? null,
+    // Nullable passthrough of the register's own join link — a class with no meeting
+    // (in person, or never synced) serialises null and the app shows no Join button,
+    // rather than a dash or an empty string standing in for "there is nothing here".
+    teamsJoinUrl: sessionFor.get(e.id)?.teamsJoinUrl || null,
   }));
 }
 
