@@ -1,14 +1,20 @@
+import { toneFromColour, toneVars } from "./tokens";
+
+// `c` is one of the fixed ACCENT section colours. Resolved through toneFromColour like
+// every other dynamic colour in this app now is: the button's own tint+text (`.tone-soft`)
+// and the icon square's solid fill (`.tone-solid`) both read AA-legible on a dark card.
 export function Action({ onClick, Icon, label, sub, c, badge, i = 0 }) {
+  const tone = toneFromColour(c);
   return (
-    <button onClick={onClick} className="press fade-up relative flex flex-col items-start gap-2.5 rounded-3xl p-4 text-left shadow-card ring-1"
-      style={{ background: c + "12", "--tw-ring-color": c + "2e", animationDelay: `${300 + i * 55}ms` }}>
-      <span className="relative flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md" style={{ background: c }}>
+    <button onClick={onClick} className="tone-soft press fade-up relative flex flex-col items-start gap-2.5 rounded-3xl p-4 text-left shadow-card ring-1"
+      style={{ ...toneVars(tone), animationDelay: `${300 + i * 55}ms` }}>
+      <span className="tone-solid relative flex h-11 w-11 items-center justify-center rounded-2xl shadow-md" style={toneVars(tone)}>
         <Icon size={19} />
-        {badge > 0 && <span className="pop absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-extrabold text-slate-900 ring-2 ring-white">{badge}</span>}
+        {badge > 0 && <span className="pop absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-extrabold text-slate-900 ring-2 ring-white dark:ring-slate-800">{badge}</span>}
       </span>
       <span>
-        <span className="block text-[13px] font-extrabold leading-tight" style={{ color: c }}>{label}</span>
-        <span className={`mt-0.5 block text-[11px] ${badge > 0 ? "font-bold text-amber-600" : "text-slate-500"}`}>{sub}</span>
+        <span className="tone-text block text-[13px] font-extrabold leading-tight" style={toneVars(tone)}>{label}</span>
+        <span className={`mt-0.5 block text-[11px] ${badge > 0 ? "font-bold text-amber-600 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"}`}>{sub}</span>
       </span>
     </button>
   );

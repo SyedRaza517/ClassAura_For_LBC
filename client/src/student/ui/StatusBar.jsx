@@ -1,24 +1,27 @@
-import { ATT } from "./tokens";
+import { ATT, toneVars } from "./tokens";
 
 // Stacked attendance bar. Segments are separated by a 2px gap and each carries its
 // own count + letter, so the four states never rely on colour alone to be told apart.
 export function StatusBar({ counts }) {
   const total = ATT.reduce((n, a) => n + (counts[a.key] || 0), 0);
-  if (!total) return <div className="h-2.5 rounded-full bg-slate-100" />;
+  if (!total) return <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-700" />;
   return (
     <>
       <div className="flex h-2.5 gap-[2px] overflow-hidden">
         {ATT.map(a => {
           const v = counts[a.key] || 0;
           if (!v) return null;
+          // A solid fill, unchanged in both schemes — this bar is decorative, not
+          // text, and the four status colours (checked colour-blind-safe, see
+          // tokens.js) read fine on either card without an AA-nudged pair.
           return <div key={a.key} className="h-full first:rounded-l-full last:rounded-r-full" style={{ width: `${(v / total) * 100}%`, background: a.colour, minWidth: 3 }} title={`${a.label}: ${v}`} />;
         })}
       </div>
       <div className="mt-2.5 grid grid-cols-4 gap-1.5">
         {ATT.map(a => (
-          <div key={a.key} className="rounded-xl py-1.5 text-center" style={{ background: a.colour + "12" }}>
-            <p className="text-sm font-extrabold tabular-nums" style={{ color: a.colour }}>{counts[a.key] ?? 0}</p>
-            <p className="text-[9px] font-semibold text-slate-500">{a.label}</p>
+          <div key={a.key} className="tone-soft rounded-xl py-1.5 text-center" style={toneVars(a.tone)}>
+            <p className="tone-text text-sm font-extrabold tabular-nums" style={toneVars(a.tone)}>{counts[a.key] ?? 0}</p>
+            <p className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">{a.label}</p>
           </div>
         ))}
       </div>
