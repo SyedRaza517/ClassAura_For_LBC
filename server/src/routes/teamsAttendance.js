@@ -1,6 +1,19 @@
 // The Teams attendance controls: the switch and threshold, a manual "Sync now", and
 // the run history (which is where unmatched meetings and unmatched participants
 // surface — the spec's "reported, never guessed" needs somewhere to report TO).
+//
+// Gated `attendance-settings`, NOT `settings`. These four endpoints back the "Teams
+// online classes" section on the attendance-settings screen (AdminNfcTags.jsx), same
+// screen and same grant as the NFC/QR/geofence controls beside it — so whoever holds
+// the grant that opens that screen is the same person every button on it works for.
+// `settings` would be both too broad (it also opens branding, document templates and
+// every other institution-wide setting this feature has nothing to do with) and too
+// narrow in the way that actually broke: a college can grant `attendance-settings`
+// without `settings`, and that person saw this card render and then 403 on every call.
+// The Teams *credentials* stay behind `settings` on the generic `/integrations/teams`
+// routes, correctly — connecting the college's Microsoft tenant at all is exactly the
+// kind of institution-wide act that belongs with branding and document templates, not
+// with the attendance controls a subject-matter admin uses day to day.
 const express = require("express");
 const prisma = require("./../db");
 const { requireAuth, requirePage } = require("./../auth");
@@ -11,11 +24,11 @@ const graph = require("./../teamsGraph");
 
 const router = express.Router();
 
-router.get("/settings", requireAuth, requirePage("settings"), async (_req, res) => {
+router.get("/settings", requireAuth, requirePage("attendance-settings"), async (_req, res) => {
   res.json({ settings: await config.get(), configured: graph.isConfigured(), running: teamsSync.isRunning() });
 });
 
-router.put("/settings", requireAuth, requirePage("settings"), async (req, res) => {
+router.put("/settings", requireAuth, requirePage("attendance-settings"), async (req, res) => {
   const body = req.body || {};
   const patch = {};
   if (body.enabled !== undefined) patch.enabled = body.enabled;
@@ -29,7 +42,7 @@ router.put("/settings", requireAuth, requirePage("settings"), async (req, res) =
   res.json({ settings });
 });
 
-router.post("/sync", requireAuth, requirePage("settings"), async (req, res) => {
+router.post("/sync", requireAuth, requirePage("attendance-settings"), async (req, res) => {
   if (!graph.isConfigured()) return res.status(409).json({ error: "Teams attendance is not configured — enter the credentials under Connected systems first." });
   if (teamsSync.isRunning()) return res.status(409).json({ error: "A sync is already running." });
   try {
@@ -40,7 +53,7 @@ router.post("/sync", requireAuth, requirePage("settings"), async (req, res) => {
   }
 });
 
-router.get("/runs", requireAuth, requirePage("settings"), async (_req, res) => {
+router.get("/runs", requireAuth, requirePage("attendance-settings"), async (_req, res) => {
   const runs = await prisma.teamsSync.findMany({ orderBy: { startedAt: "desc" }, take: 20 });
   res.json({ runs: runs.map((r) => ({ ...r, summary: JSON.parse(r.summary || "{}"), issues: JSON.parse(r.issues || "[]") })) });
 });

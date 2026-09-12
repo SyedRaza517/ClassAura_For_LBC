@@ -730,10 +730,13 @@ switches it on from the Teams online-classes section of the attendance settings 
 discovery and matching still run in the background (so a class is already matched by the
 time it is switched on) but nothing is ever marked.
 
-All four endpoints below sit behind `requireAuth` **and** `requirePage("settings")` —
-narrower than the `attendance-tags` grant NFC check-in's settings use, because this
-feature's counters and issues can name individual students by email, which is exactly
-the audience the college's own referral, HR and mitigation screens are kept out of.
+All four endpoints below sit behind `requireAuth` **and** `requirePage("attendance-settings")`
+— the same grant as the NFC/QR/geofence controls on the same screen (`AdminNfcTags.jsx`),
+because these endpoints back one section of that screen and whoever holds the grant that
+opens it is who every button on it needs to work for. The Teams *credentials* (tenant
+ID, client ID, client secret, organizer accounts) are a separate, broader act —
+connecting the college's Microsoft tenant at all — and stay behind `requirePage("settings")`
+on the generic `/integrations/teams` routes, alongside branding and document templates.
 
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
