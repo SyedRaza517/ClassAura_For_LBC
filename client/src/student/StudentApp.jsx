@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useCallback } from "react";
-import PhoneShell from "../PhoneShell";
+import PhoneShell, { isNativeApp } from "../PhoneShell";
 import { BrandMark } from "../Brand";
 import { useBackHandler } from "../backButton";
 import { peekPendingQr } from "../pendingQr";
-import { api } from "../api";
+import { api, API_BASE, getToken } from "../api";
+// Aliased to StatusBarStyle so it never reads as this file's own ui/StatusBar.jsx
+// (the attendance stacked-bar chart) — two completely different "StatusBar"s that
+// happen to share a name.
+import { StatusBar, Style as StatusBarStyle } from "@capacitor/status-bar";
 import {
   Percent, Award, MessageSquare, ChevronLeft, RefreshCw,
   Settings, Home as HomeIcon, User, Nfc, QrCode,
 } from "lucide-react";
 
-import { NAVY, NAVY_DARK, MAROON } from "../branding";
+import { NAVY, NAVY_DARK, MAROON, alpha } from "../branding";
+import { DEFAULT_ATTENDANCE_BANDS } from "./ui/tokens";
 
 import Home from "./screens/Home";
 import CheckInScreen, { anyCheckInWay } from "./screens/CheckIn";
@@ -22,6 +27,40 @@ import SupportScreen from "./screens/Support";
 import MoreScreen from "./screens/More";
 
 /* ============================== app shell ============================== */
+
+// GET /student/me/attendance-bands — fetched DEFENSIVELY. The endpoint is being built
+// in the same wave as this task, in a server routes/student.js this file must not
+// touch, so an app built from THIS commit can reach a server that does not have the
+// route yet (a plain 404, not carrying the `{error}` body api.js's `request()` uses to
+// tell "route missing" apart from "record missing") or one still deploying it. Neither
+// is a real failure: DEFAULT_ATTENDANCE_BANDS (ui/tokens.js, mirrored from the server's
+// own DEFAULT_BANDS) is exactly what a college that has configured nothing gets back
+// anyway, so a null here is silently absorbed by every screen's `bands` prop default.
+//
+// Written as a bare fetch rather than a new api.js method: this task's file allowlist
+// does not include api.js (a concurrent agent's routes/student.js is the other half of
+// this endpoint, and api.js is the one client file closest to that seam), so this reads
+// api.js's own exported pieces (API_BASE, getToken) rather than adding to it.
+async function fetchAttendanceBands() {
+  try {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/student/me/attendance-bands`, {
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Defensive about the exact shape too — the concurrent route is not landed yet, so
+    // this cannot assume `{ bands: [...] }` versus a bare array without ever having
+    // seen the real response. Anything that is not a non-empty array of band-shaped
+    // objects is treated the same as "not answered": DEFAULT_ATTENDANCE_BANDS covers it.
+    const list = Array.isArray(data?.bands) ? data.bands : Array.isArray(data) ? data : null;
+    const valid = Array.isArray(list) && list.length && list.every((b) => b && typeof b.min === "number" && typeof b.colour === "string");
+    return valid ? list : null;
+  } catch {
+    return null; // offline, CORS, malformed JSON — the default ladder covers all of it
+  }
+}
 
 // SIX, and the arithmetic rather than the habit.
 //
@@ -64,10 +103,55 @@ export default function StudentApp({ user, logout }) {
   // answer and renders the empty state; null is "we have not been told yet".
   const [referrals, setReferrals] = useState(null);
   const [supportDepts, setSupportDepts] = useState([]);
+  // Defaulted rather than null: attendanceTone/progressTone (ui/tokens.js) accept an
+  // empty or missing list and fall back to DEFAULT_ATTENDANCE_BANDS themselves, but
+  // starting the STATE at the same default means every screen paints its bands from
+  // frame one instead of the neutral "unknown" grey flashing briefly before the fetch
+  // resolves (or fails, which — see fetchAttendanceBands — is expected until the
+  // concurrent server route lands).
+  const [bands, setBands] = useState(DEFAULT_ATTENDANCE_BANDS);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(true);
   // Android back returns to the home screen from any other tab.
   useBackHandler(screen !== "home", () => { setScreen("home"); return true; });
+
+  // The native status bar. Guarded on isNativeApp(): the staff app never runs inside
+  // Capacitor (it is reached from a browser, same as every other non-student screen),
+  // so this plugin call — which is otherwise harmless even on web, @capacitor/status-bar
+  // ships a web stub — simply never fires there, which is what "unaffected" means for a
+  // surface that has no status bar to control in the first place.
+  //
+  // overlaysWebView:true (capacitor.config.json) is what makes the status bar draw ON
+  // TOP of this screen instead of pushing it down — Header's own paddingTop:
+  // env(safe-area-inset-top) is the other half, keeping the greeting and refresh
+  // button clear of the notch/clock now sitting over them.
+  //
+  // Style.Dark (light status-bar content) is used UNCONDITIONALLY rather than actually
+  // switching on prefers-color-scheme, and that is a deliberate reading of "per scheme"
+  // rather than a missed case: the surface the status bar overlays is Header's own
+  // gradient (NAVY_DARK -> NAVY -> MAROON below), which is dark in BOTH colour schemes
+  // by design — a student's Home banner does not turn white in light mode. Style.Light
+  // (dark content) here would print black icons on a navy bar and be unreadable in
+  // EVERY scheme, not just one. The scheme listener is kept anyway, wired through a
+  // single `styleForScheme` so the one place that would need to change if the header
+  // ever became scheme-dependent is a one-line edit here, not a rewrite.
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    let cancelled = false;
+    let mq;
+    const styleForScheme = () => StatusBarStyle.Dark; // see comment above — always Dark, on purpose
+    const apply = () => { if (!cancelled) StatusBar.setStyle({ style: styleForScheme() }).catch(() => {}); };
+    StatusBar.setOverlaysWebView({ overlay: true }).catch(() => {});
+    apply();
+    if (typeof window !== "undefined" && window.matchMedia) {
+      mq = window.matchMedia("(prefers-color-scheme: dark)");
+      if (mq.addEventListener) mq.addEventListener("change", apply); else mq.addListener(apply);
+    }
+    return () => {
+      cancelled = true;
+      if (mq) { if (mq.removeEventListener) mq.removeEventListener("change", apply); else mq.removeListener(apply); }
+    };
+  }, []);
 
   // A scan can arrive while the app is already open — a same-document navigation that
   // never reloads the page (see pendingQr.js). Pick it up and land on the check-in
@@ -91,6 +175,11 @@ export default function StudentApp({ user, logout }) {
     ]);
     const ref = await api.studentReferrals().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
     const sdep = await api.studentSupportDepartments().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
+    // A bonus fetch like referrals/support departments above: never added to `failed`
+    // below, and a null result is a silent no-op — `bands` state already starts at
+    // DEFAULT_ATTENDANCE_BANDS, so there is nothing to reset it TO on a rejection.
+    const bandList = await fetchAttendanceBands();
+    if (bandList) setBands(bandList);
     if (a.status === "fulfilled") setAttendance(a.value);
     if (r.status === "fulfilled") setResults(r.value);
     if (q.status === "fulfilled") setQueries(q.value);
@@ -152,12 +241,19 @@ export default function StudentApp({ user, logout }) {
   }, [screen, reviews]);
 
   const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", more: "More" }[screen];
-  const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen };
+  const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen, bands };
 
   return (
-    <PhoneShell header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} />}>
+    <PhoneShell
+      header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} />}
+      onRefresh={load} refreshing={busy}
+    >
       <div className="flex min-h-full flex-col">
-        <div className="flex-1" style={{ background: "linear-gradient(180deg,#f6f8fc 0%,#eef2f9 60%,#f6f8fc 100%)" }}>
+        {/* .student-bg (index.css) replaces an inline linear-gradient literal so dark
+            mode has somewhere to redefine it — Tailwind's `dark:` variant only matches
+            class names, and a gradient this specific was never going to become one
+            without a named class to hang the override on. */}
+        <div className="student-bg flex-1">
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
           {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
@@ -205,18 +301,22 @@ export default function StudentApp({ user, logout }) {
 function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn = false }) {
   const tabs = hideCheckIn ? TABS.filter((t) => t.key !== "checkin") : TABS;
   return (
-    <nav className="sticky bottom-0 z-30 mt-2 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
+    <nav className="sticky bottom-0 z-30 mt-2 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/90" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
       {tabs.map(({ key, label, Icon: TabIcon }) => {
         const on = screen === key;
         const Icon = key === "checkin" && codesOnly ? QrCode : TabIcon;
+        // NAVY is a CSS var; `NAVY + "14"` built an invalid colour string once the
+        // brand primary stopped being a literal hex (branding.js#alpha's own comment
+        // names this exact break) — alpha() is the fix. The inactive grey stays a
+        // literal hex; it is legible against both bg-white/90 and dark:bg-slate-900/90.
         return (
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
             className="press relative flex flex-1 flex-col items-center gap-1 py-2">
             <span className="relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200"
-              style={on ? { background: NAVY + "14" } : undefined}>
+              style={on ? { background: alpha(NAVY, 14) } : undefined}>
               <Icon size={20} strokeWidth={on ? 2.6 : 2} style={{ color: on ? NAVY : "#9aa5b8" }} />
               {key === "query" && newReplies > 0 && (
-                <span className="pop absolute right-1.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold text-slate-900 ring-2 ring-white">{newReplies}</span>
+                <span className="pop absolute right-1.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold text-slate-900 ring-2 ring-white dark:ring-slate-900">{newReplies}</span>
               )}
             </span>
             <span className="max-w-full truncate px-0.5 text-[10px] font-bold tracking-tight" style={{ color: on ? NAVY : "#9aa5b8" }}>{label}</span>
@@ -237,12 +337,19 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
     // negative margin on the content is what gives the app its sense of depth —
     // the screen reads as sitting *on* the header rather than under a flat bar.
     <div
-      className="animated-gradient relative z-20 overflow-hidden pt-2"
+      className="animated-gradient relative z-20 overflow-hidden"
       style={{
         background: `linear-gradient(135deg, ${NAVY_DARK} 0%, ${NAVY} 45%, #3730a3 78%, ${MAROON} 140%)`,
         backgroundSize: "220% 220%",
         borderBottomLeftRadius: home ? 30 : 22,
         borderBottomRightRadius: home ? 30 : 22,
+        // env(safe-area-inset-top) is 0 on every browser and on a Capacitor app with
+        // overlaysWebView:false — the calc() degrades to the old flat 0.5rem exactly.
+        // It is only ever non-zero once capacitor.config.json's overlaysWebView:true
+        // (this task) puts the system status bar/notch on TOP of this header instead
+        // of pushing it down, at which point this is what stops the greeting and the
+        // refresh button sitting under the clock and the notch.
+        paddingTop: "calc(env(safe-area-inset-top) + 0.5rem)",
       }}
     >
       {/* Decorative blooms — they give the flat gradient some light and depth. */}

@@ -408,7 +408,15 @@ export default function App() {
   if (user.kind === "student") return (
     <>
       <style>{GLOBAL_STYLE}</style>
-      <div className="w-full" style={{ height: "100dvh", minHeight: "100dvh" }}>
+      {/* GLOBAL_STYLE (below) `@import`s Plus Jakarta Sans, but importing a font only
+          makes it AVAILABLE — nothing on the student branch actually SET it as the
+          body font, so every student screen rendered in the browser default (Segoe
+          UI/Arial/…) despite the font loading successfully on every request. Every
+          other entry point in this file (Login, the public landing page, the applicant
+          portal) sets this same fontFamily on its own root; the student root just never
+          had the line. `system-ui, sans-serif` stays as the fallback for the instant
+          before the font finishes loading, and for a network that never gets it at all. */}
+      <div className="w-full" style={{ height: "100dvh", minHeight: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
         {/* Suspense fallback matches StudentApp's own LoadingScreen (skeleton tiles,
             same padding) — the chunk fetch is usually sub-second on a warm cache, so
             this reads as the screen still loading its data rather than a different
