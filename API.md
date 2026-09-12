@@ -711,6 +711,97 @@ academic record without somebody deciding it should.
 - Running it again answers 200 with `{ ok: true, marked: 0, message: "Everyone on this
   register already has a mark." }`.
 
+## Teams auto-attendance
+
+Reads each online class's Microsoft Teams attendance report once the class has ended and
+writes Present, Late or Absent onto its register from how long a student was actually in
+the meeting. Setup (the app registration, its three Graph permissions, and the two
+Microsoft application access policies that scope them to the college's organizer
+accounts) is `TEAMS_SETUP.md`. The credentials themselves (tenant ID, client ID, client
+secret, organizer accounts) are entered like any other integration, through the generic
+`GET /integrations`, `PUT`/`DELETE /integrations/teams` and `POST /integrations/teams/test`
+routes (`routes/integrations.js`) rather than through anything below — this section
+covers only the four endpoints specific to Teams attendance itself.
+
+**It ships off.** `enabled` defaults to `false` for every college, the same reason NFC
+tap check-in and Attendance Emails do: a feature that writes to the attendance record
+must not switch itself on at every college on the next deploy. Until an administrator
+switches it on from the Teams online-classes section of the attendance settings screen,
+discovery and matching still run in the background (so a class is already matched by the
+time it is switched on) but nothing is ever marked.
+
+All four endpoints below sit behind `requireAuth` **and** `requirePage("settings")` —
+narrower than the `attendance-tags` grant NFC check-in's settings use, because this
+feature's counters and issues can name individual students by email, which is exactly
+the audience the college's own referral, HR and mitigation screens are kept out of.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| GET | `/teams-attendance/settings` | — | `{ settings: { enabled, minAttendancePct }, configured, running }` |
+| PUT | `/teams-attendance/settings` | any of `{ enabled, minAttendancePct }` | `{ settings }` |
+| POST | `/teams-attendance/sync` | — | `{ ok: true, summary, issues }` |
+| GET | `/teams-attendance/runs` | — | `{ runs: [ {...row, summary, issues} ] }` (most recent 20) |
+
+`configured` is whether Graph credentials and at least one organizer account are saved
+(`teamsGraph.isConfigured()`) — a college can have `enabled: true` stored from before it
+disconnected the integration, and the settings screen uses `configured` rather than
+`enabled` to decide whether to offer the switch at all. `running` is whether a sync is
+in progress right now, `isRunning()` read from the same in-process flag `POST /sync`
+checks — see the note on clustering below.
+
+`PUT` **behaves as a PATCH**, exactly like `/tags/settings`: only the keys sent are
+changed, and a `minAttendancePct` that parses as a number is clamped to **1–100** — the
+floor is 1, not 0, because a report row showing any attendance at all would otherwise
+clear a 0% floor and mark every ghost row Present. A value that does not parse as a
+number at all is **ignored**, not reset to the platform default: `save()` merges over the
+college's *current* settings rather than the defaults, so one bad key in a PATCH cannot
+silently revert a threshold somebody already tuned. The response is always the complete
+merged object, never a partial one, so the caller can see exactly what was stored.
+
+**`POST /sync`** runs a pass immediately rather than only starting one, unlike
+`POST /moodle/sync` — a person pressing this is usually checking a class right after it
+ended and wants the answer on this screen, and a run is bounded by the organizer
+accounts' calendars plus the sessions in the retry window, not a whole VLE. Two ways to
+fail before any Graph call is made, both **409** (not run, nothing to retry):
+
+- Teams attendance is not configured — `{ error: "Teams attendance is not configured — enter the credentials under Connected systems first." }`.
+- A sync is already running — `{ error: "A sync is already running." }`. The lock is a
+  module-level boolean (`teamsSync.js`'s `running`), in-process like every other lock in
+  this codebase — correct for the one Node process a deployment is, and a clustered
+  deployment would need this to be a database-backed lock instead (the `TeamsSync` row
+  itself, `SELECT ... FOR UPDATE`), because two processes would each believe they held
+  the only lock.
+
+A failure partway through — a Graph call throwing after some meetings were already
+discovered or some marks already written — answers **502** with
+`{ error: "The sync failed: " + <message> }`. The `TeamsSync` row for that attempt is
+still written, with `status: "failed"` and whatever `summary`/`issues` had accumulated
+before the throw, which is why `GET /runs` is the more complete picture of a bad run than
+the 502 body alone — the failing call is usually only one of several sessions the run
+was in the middle of.
+
+`summary` (on both the sync response and every run row) is the same six-then-one
+counters object: `meetingsDiscovered`, `sessionsMatched`, `sessionsAmbiguous`,
+`reportsFetched`, `marksCreated`, `marksSkippedExisting`, `participantsUnmatched`.
+`issues` is a plain array of human-readable strings — an ambiguous meeting naming its
+subject and organizer, an unmatched participant naming what showed up in the report, a
+register whose term was closed, a calendar or attendance report that could not be read —
+because "reported, never guessed" (the spec's own words for what happens to an unmatched
+participant) needs somewhere a human actually reads it, and a code a person has to look
+up defeats that. `GET /runs` returns the 20 most recent rows regardless of status, so a
+scheduled run nobody was watching when it happened is exactly as visible as a manual one.
+
+**Never overwrites a mark.** Marks are written with `createMany` + `skipDuplicates` on
+`AttendanceMark`'s `@@unique([sessionId, studentId])`, the same invariant
+`moodleAttendance.js` holds and NFC tap check-in's own register write holds — a mark a
+lecturer already set, or one an earlier sync run already wrote, is a row that already
+exists at that key, so the insert for it is silently skipped rather than colliding.
+**Absent is only ever written after a successful report fetch** — a calendar or
+attendance-report call that fails leaves that session eligible for the next run (bounded
+by a 7-day retry window) rather than marking anybody, and a participant the report shows
+but cannot match to a student gets no mark at all, counted in
+`participantsUnmatched` and named in `issues`, never guessed as absent.
+
 ## Predictive analysis (progression risk)
 
 All of these sit behind `requireAuth` + `requirePage("prediction")`. A college that has

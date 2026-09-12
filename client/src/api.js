@@ -223,6 +223,17 @@ export const api = {
   saveIntegration: (provider, body) => request(`/integrations/${provider}`, { method: "PUT", body }),
   removeIntegration: (provider) => request(`/integrations/${provider}`, { method: "DELETE" }),
   testIntegration: (provider) => request(`/integrations/${provider}/test`, { method: "POST" }),
+  // Teams online classes: the enabled switch and the Present threshold live on their
+  // own settings row (teamsAttendanceConfig.js), separate from the `teams` integration
+  // credentials above — one is "can we reach Microsoft at all", the other is "should
+  // this college's registers actually be written". sync starts a run and waits for it
+  // (unlike moodleSync, which only starts one) because a manual press is someone
+  // checking a class right after it ended and wants the answer on this screen, not a
+  // poll — so it gets Canvas-preview's longer timeout rather than the 30s default.
+  teamsAttendanceSettings: () => request("/teams-attendance/settings"),
+  saveTeamsAttendanceSettings: (patch) => request("/teams-attendance/settings", { method: "PUT", body: patch }),
+  syncTeamsAttendance: () => request("/teams-attendance/sync", { method: "POST", timeoutMs: 120000 }),
+  teamsAttendanceRuns: () => request("/teams-attendance/runs"),
   // The institution's own name, colours and logo. getBranding (public) is fetched by
   // branding.js at boot; these are the administrator's read/write views.
   getBrandingAll: () => request("/branding/all"),

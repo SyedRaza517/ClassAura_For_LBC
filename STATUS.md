@@ -768,6 +768,47 @@ referrer↔department by design), reopening a closed referral, and any student-f
 of the conversation. Each widens the confidentiality surface, and none is needed for the
 queue to work.
 
+### 3.11 Teams auto-attendance (12 Sep 2026)
+
+Reads each online class's Microsoft Teams attendance report once the class has ended and
+writes Present, Late or Absent onto its register from how long a student was actually in
+the meeting, on the same never-overwrite, null-means-not-measurable, ships-off invariants
+NFC tap check-in already established for a feature that writes to the attendance record.
+
+**It ships switched off.** `enabled` is `false` in `teamsAttendanceSettings.js`'s
+platform defaults, and discovery and matching keep running in the background even while
+it is off — so a class already has its meeting matched by the time an administrator
+switches marking on, rather than starting cold. **No college has this today.**
+
+| Piece | Where | What it does |
+|---|---|---|
+| **Matching a meeting to a class** | `teamsAttendance.js` (`matchMeeting`, pure, tested) | Narrows on date + start time first, and only falls back to a case-insensitive substring test of the meeting's subject against the class's title when more than one class shares a slot (a split group). A failed title tiebreak, or none at all surviving it, is reported **ambiguous** rather than resolved by picking one — the same "no automatic guess on a real student's record" rule tap check-in's own ambiguous-tap branch follows |
+| **Clipping and merging attendance intervals** | `teamsAttendance.js` (`attendedMinutes`, pure, tested) | Clips every joined/left interval to the *timetabled* session window before summing, so a lecturer who opens the meeting fifteen minutes early to test their camera does not hand every early arrival free "attendance" minutes; merges overlapping intervals (join, drop, rejoin) so a flaky connection cannot double-count. `firstJoin` is kept unclipped, deliberately, because lateness is judged against the real arrival time, not the clipped one |
+| **The threshold** | `teamsAttendance.js` (`decideStatus`, pure, tested) | `minutes >= ceil(sessionMinutes * minAttendancePct / 100)` — below it is always Absent, with a remark (`"Joined N of M min"`) that tells it apart from a student never seen at all, which is Absent with no remark. Lateness is judged independently, on `firstJoin` against the session start plus the tap-settings `lateAfterMins` — arriving late but staying long enough to clear the threshold is Late, not Present, because lateness is about when they turned up |
+| **The sync engine** | `teamsSync.js` | Wiring only, by design: discovers meetings on each organizer's calendar for `[today − 7 days, today + 7 days]`, fills a session's `teamsJoinUrl` only when it is currently `null` (an admin's pasted link, or an earlier match, is never overwritten), then for ended sessions with a link and no `teamsCollectedAt`, resolves the meeting id, fetches its attendance report, and writes marks with `createMany({ skipDuplicates: true })` against `AttendanceMark`'s `@@unique([sessionId, studentId])` — the same structural guarantee `moodleAttendance.js` and NFC tap check-in's register write both rely on, so a lecturer's mark (or an earlier sync's) cannot be overwritten by construction, not by a check that could be missed |
+| **The retry window** | `teamsSync.js` (`RETRY_DAYS = 7`) | A session with a link and no `teamsCollectedAt` stays eligible for a week, so a weekend Graph outage self-heals on Monday without polling forever. A session outside its term when collection is attempted is marked collected with no marks written and an issue noted — retrying it tomorrow would ask the same unanswerable question every day until the window gave up anyway |
+| **Never guessing an absence** | `teamsSync.js` | A calendar or attendance-report fetch that fails leaves the session untouched (still eligible, bounded by the retry window) rather than marking anybody — Absent is only ever written after a **successful** fetch. A participant the report shows but cannot match to any student on the roster (by cached Microsoft user id, then by email) gets **no mark**, counted in `participantsUnmatched` and named in `issues` — reported, never guessed, the spec's own words |
+| **The audit trail** | `TagTap`, method `"teams"` | Every mark this feature writes (`outcome: "marked"`) or declines to write over an existing one (`outcome: "already_marked"`) is logged, read back from the database after `createMany` rather than inferred from its return count — `skipDuplicates` reports how many rows were skipped, never which ones, so only a re-read can tell "just written" from "already stood" per student |
+| **Settings** | `TeamsAttendanceConfig`, `teamsAttendanceSettings.js` (pure) + `teamsAttendanceConfig.js` (resolver) | The `attendanceBandConfig` shape again: two settings — `enabled` (false) and `minAttendancePct` (50, clamped 1–100 on save, an unusable value on a PATCH ignored rather than reset to the platform default) — a 30 s cache invalidated on save, and a read that fails serves the **last confirmed value** rather than inventing defaults, so a pooler blip mid-sync cannot masquerade as "the college switched this off" |
+| **The scheduler** | hourly poll (§3.8's scheduler shape) | Runs `runSync({ mode: "scheduled" })` on the same engine a manual "Sync now" uses, plus `sweepStaleRuns()`, which fails any `TeamsSync` row still `"running"` after 60 minutes so a killed process cannot wedge every future tick behind an in-process `running` flag that a new process can never see set |
+| **Settings screen** | `AdminNfcTags.jsx` (`TeamsAttendance`), `client/src/api.js` | A "Teams online classes" section on the same screen as NFC/QR check-in settings: the switch, the threshold, a "Sync now" button that runs a pass immediately and shows its own `summary`/`issues`, and the 20 most recent runs with their own issues lines — "reported, never guessed" needs a screen a human actually reads, both for a run just pressed and for last night's scheduled one nobody was watching |
+| **Setup guide** | `TEAMS_SETUP.md` | The app registration, its three Graph application permissions (`Calendars.Read`, `OnlineMeetings.Read.All`, `OnlineMeetingArtifact.Read.All`), and — the part SharePoint's setup does not need — the two Microsoft application access policies (`New-ApplicationAccessPolicy -AccessRight RestrictAccess` in Exchange, `New-CsApplicationAccessPolicy` + `Grant-CsApplicationAccessPolicy` in Teams) that scope those permissions from "every mailbox and meeting in the tenant" down to a named set of organizer accounts. Documents the scheduling rules the matcher depends on: meetings scheduled (never "Meet now"), from an organizer account, at the timetabled time, with the class name in the title as a tiebreak, teachers added as co-organizers rather than as organizer, and attendance reporting left on in the Teams admin center |
+
+**Verification status.** This is the honest split the house style asks for — what a run
+proved versus what reading the code establishes:
+
+| | |
+|---|---|
+| `teamsAttendance.test.js`, `teamsAttendanceSettings.test.js` | **Code-read as present and passing at commit time** — the matcher's date/time/title tiebreaks and ambiguity refusal, the interval-clip-and-merge arithmetic, and the threshold's exact rounding boundary, all pure and all database-free |
+| `scripts/smoke-teams-attendance.mjs` | Written by a concurrent task on this branch and **not run by this task**. Weighted, per the spec's own emphasis, toward the refusals: a sync while unconfigured or already running (409), a failed Graph call writing no marks (502, nothing written), a mark that already stands surviving a sync untouched, an unmatched participant appearing in `issues` and `participantsUnmatched` rather than as a guessed Absent, and the feature doing nothing at all while `enabled` is `false`. Whether it actually passes against a live `edtech_dev` is proven by the next full test run, not by this entry |
+| Client | **Builds** (`npm run --workspace client build`) — this task's own check. There is still no client test framework, so "builds" and "renders once the server answers" is the whole claim; the settings section has not been clicked in a browser |
+| In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant, a real organizer account, or a real online class — every claim above is a code read or a unit test, never a live Graph call |
+
+**Deliberately not built**, matching the spec: live in-meeting presence (this reads a
+report **after** a meeting ends, never during it), Zoom or any platform besides Teams,
+and meetings created by the platform itself (a college creates its own meetings the way
+it always has — this only ever reads what already exists).
+
 ### 3.7 Business rules that are actually enforced
 
 - Leave allowance is checked **server-side at approval**, inside a per-staff lock, with

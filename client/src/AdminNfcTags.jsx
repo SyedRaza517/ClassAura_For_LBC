@@ -18,7 +18,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Nfc, Plus, Loader2, AlertTriangle, CheckCircle2, Copy, Power, RefreshCw,
-  ScanLine, Clock3, ShieldCheck, X, Wifi, MapPin, Crosshair,
+  ScanLine, Clock3, ShieldCheck, X, Wifi, MapPin, Crosshair, Video, History,
 } from "lucide-react";
 import { api } from "./api";
 import { nfcStatus, scanOnce } from "./nfc";
@@ -94,6 +94,7 @@ export default function AdminNfcTags() {
       <div role="alert" aria-live="assertive">{err && <Banner tone="rose" Icon={AlertTriangle}>{err}</Banner>}</div>
 
       <TapSettings settings={settings} onSaved={(s) => setSettings(s)} />
+      <TeamsAttendance />
       <RegisterTag onCreated={load} />
 
       <section className="rounded-2xl border border-slate-200 bg-white">
@@ -593,6 +594,213 @@ function GeofencePanel({ draft, saving, save }) {
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------ Teams online classes ------------------------- */
+
+// A separate card from TapSettings on purpose, not a fourth switch inside it: taps, QR
+// and self-declare all capture attendance from a phone in a room, and this one reads a
+// Microsoft attendance report for a class that may never have had a room at all. It has
+// its own connection state ("configured" — is Teams reachable) layered under its own
+// on/off switch ("enabled" — should it write to the register), because a college can
+// get as far as saving credentials, testing the connection under Connected systems, and
+// only THEN decide it trusts the marks enough to switch writing on.
+function TeamsAttendance() {
+  const [state, setState] = useState(null); // { settings, configured, running }
+  const [runs, setRuns] = useState(null);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  // The outcome of a sync run FROM THIS SESSION — {ok, summary, issues} or {ok:false,
+  // note}. Kept apart from the runs list below (which is the server's permanent record)
+  // the same way ProviderCard's `test` is kept apart from the stored integration: this
+  // is what just happened, not history.
+  const [syncMsg, setSyncMsg] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [s, r] = await Promise.all([api.teamsAttendanceSettings(), api.teamsAttendanceRuns()]);
+      setState(s); setRuns(r.runs); setErr("");
+    } catch (e) { setErr(e?.message || "Could not load the Teams attendance settings."); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // EVERY hook above this line — see TapSettings's own comment on React #310: a
+  // useState below an early return changes the hook count between the loading render
+  // and the render after `state` arrives, and that is a crash, not a glitch.
+  if (!state) return err ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><Banner tone="rose" Icon={AlertTriangle}>{err}</Banner></div> : null;
+
+  const { settings, configured, running } = state;
+
+  const save = async (patch) => {
+    setSaving(true); setErr("");
+    try {
+      const { settings: saved } = await api.saveTeamsAttendanceSettings(patch);
+      setState((s) => ({ ...s, settings: saved }));
+    } catch (e) { setErr(e?.message || "Could not save."); }
+    finally { setSaving(false); }
+  };
+
+  const sync = async () => {
+    setSyncing(true); setSyncMsg(null); setErr("");
+    try {
+      const r = await api.syncTeamsAttendance();
+      setSyncMsg(r);
+      load(); // picks up settings.running having cleared, plus the run just written
+    } catch (e) {
+      // 409 (unconfigured or already running) and 502 (the Graph call itself failed)
+      // both land here as an ordinary message — the server already chose the words.
+      setSyncMsg({ ok: false, note: e?.message || "The sync failed." });
+    } finally { setSyncing(false); }
+  };
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-800">
+        <Video size={16} style={{ color: NAVY }} />Teams online classes
+      </h3>
+      <p className="mb-4 text-[12px] leading-relaxed text-slate-500">
+        Reads who attended each online class from its Microsoft Teams attendance report
+        once it has ended, and fills the register automatically — Present, Late or
+        Absent, from how long a student was actually in the meeting. A mark a lecturer
+        already set is never overwritten, and a student the report cannot place is
+        reported below rather than guessed at.
+      </p>
+
+      {!configured && (
+        <div className="mb-4">
+          <Banner tone="amber" Icon={AlertTriangle}>
+            Not connected yet. Enter the Teams credentials and organizer accounts under
+            Connected systems, then come back here to switch this on.
+          </Banner>
+        </div>
+      )}
+      {err && <div className="mb-3"><Banner tone="rose" Icon={AlertTriangle}>{err}</Banner></div>}
+
+      <label className="mb-4 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+        <input
+          type="checkbox" checked={settings.enabled} disabled={saving || !configured}
+          onChange={(e) => save({ enabled: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="block text-[13px] font-semibold text-slate-800">
+            Teams auto-attendance is {settings.enabled ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            While this is off, meetings are still discovered and matched to classes in
+            the background, but nothing is written to any register until you switch this
+            on. {!configured && "It cannot be switched on until Teams is connected."}
+          </span>
+        </span>
+      </label>
+
+      <label className="block max-w-xs">
+        <span className="text-[12px] font-semibold text-slate-700">Present needs at least</span>
+        <div className="mt-1 flex items-center gap-2">
+          <input
+            type="number" min="1" max="100" value={settings.minAttendancePct} disabled={saving}
+            onChange={(e) => setState((s) => ({ ...s, settings: { ...s.settings, minAttendancePct: Number(e.target.value) } }))}
+            onBlur={(e) => { const v = Number(e.target.value); if (v !== settings.minAttendancePct) save({ minAttendancePct: v }); }}
+            className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm tabular-nums"
+          />
+          <span className="text-[12px] text-slate-500">% of the class</span>
+        </div>
+        <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+          Below this share of the class's length, a student who joined is marked Absent
+          with the minutes they were in noted on the register — a student never seen in
+          the meeting at all is always Absent, whatever this is set to.
+        </span>
+      </label>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2.5">
+        <button
+          type="button" onClick={sync} disabled={syncing || running || !configured}
+          className="press flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+          style={{ background: NAVY }}
+        >
+          {syncing || running ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          {running ? "A sync is already running…" : syncing ? "Syncing…" : "Sync now"}
+        </button>
+        <span className="text-[11px] text-slate-400">
+          Runs on its own once an hour as well — this is for checking a class right after
+          it ends, without waiting.
+        </span>
+      </div>
+
+      {syncMsg && (
+        <div className={`mt-3 rounded-xl px-3.5 py-3 text-[13px] ring-1 ${syncMsg.ok ? "bg-slate-50 text-slate-700 ring-slate-200" : "bg-rose-50 text-rose-800 ring-rose-200"}`}>
+          {syncMsg.ok ? (
+            <>
+              <p className="font-semibold text-emerald-700">Sync finished.</p>
+              <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[12px] text-slate-600 sm:grid-cols-3">
+                <li>Meetings found: <b>{syncMsg.summary.meetingsDiscovered}</b></li>
+                <li>Classes matched: <b>{syncMsg.summary.sessionsMatched}</b></li>
+                <li>Ambiguous: <b>{syncMsg.summary.sessionsAmbiguous}</b></li>
+                <li>Reports fetched: <b>{syncMsg.summary.reportsFetched}</b></li>
+                <li>Marks written: <b>{syncMsg.summary.marksCreated}</b></li>
+                <li>Already marked: <b>{syncMsg.summary.marksSkippedExisting}</b></li>
+                <li>Unmatched people: <b>{syncMsg.summary.participantsUnmatched}</b></li>
+              </ul>
+              {/* THE LINE THIS WHOLE PANEL EXISTS FOR — "reported, never guessed" needs
+                  somewhere a human actually reads it. Rendered even on an otherwise
+                  clean run, because an ambiguous class or an unmatched participant is a
+                  register a lecturer still needs to check by hand. */}
+              {syncMsg.issues?.length > 0 && (
+                <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
+                  {syncMsg.issues.map((s, i) => <li key={i}>{s}</li>)}
+                </ul>
+              )}
+            </>
+          ) : (
+            <p>{syncMsg.note}</p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-5 border-t border-slate-100 pt-4">
+        <h4 className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          <History size={13} />Recent runs
+        </h4>
+        {!runs ? (
+          <p className="text-[12px] text-slate-400">Loading…</p>
+        ) : !runs.length ? (
+          <p className="text-[12px] text-slate-500">No syncs have run yet — scheduled runs happen hourly once this is switched on.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {runs.map((r) => {
+              const tone = r.status === "ok" ? "emerald" : r.status === "failed" ? "rose" : "slate";
+              return (
+                <li key={r.id} className="px-3.5 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] font-semibold text-slate-700">{fmtWhen(r.startedAt)}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ${TONES[tone]}`}>{r.status}</span>
+                    <span className="text-[11px] text-slate-400">
+                      {r.mode === "scheduled" ? "hourly" : "manual"}{r.startedBy ? ` · ${r.startedBy}` : ""}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {r.summary?.marksCreated ?? 0} marked · {r.summary?.sessionsAmbiguous ?? 0} ambiguous ·{" "}
+                    {r.summary?.participantsUnmatched ?? 0} unmatched people
+                  </p>
+                  {r.error && <p className="mt-1 text-[11px] font-medium text-rose-600">{r.error}</p>}
+                  {/* Same "reported, never guessed" lines as a fresh sync's own result, but
+                      read back from the row rather than session state — this is what
+                      makes an hourly SCHEDULED run's unmatched people visible at all,
+                      since nobody was watching this screen when it ran. */}
+                  {r.issues?.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
+                      {r.issues.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 
