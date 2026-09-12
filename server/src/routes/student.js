@@ -11,6 +11,8 @@ const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const attendanceBandConfig = require("../attendanceBandConfig");
+const { computeStreaks } = require("../studentStreaks");
+const { weightedAveragePct } = require("../studentAssessmentAverage");
 const { rosterForSession, unitIdsForStudent } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
@@ -953,6 +955,95 @@ router.get("/me/attendance-bands", async (req, res) => {
   res.json({ bands: bands.map((b) => ({ key: b.key, label: b.label, min: b.min, colour: b.colour })) });
 });
 
+// GET /api/student/me/streaks — private, per-student attendance streaks and badges.
+//
+// NEVER A LEADERBOARD, NEVER A COMPARISON. Computed fresh on every read from this
+// student's own marks; nothing is stored, so there is no cross-student table a wider
+// query could ever read from by mistake (constraints.md: streaks/badges are per-
+// student only). And NEVER prediction data: this reads AttendanceMark and HndSession
+// directly, the same two tables /me/attendance already reads for this student, not
+// anything the prediction feature computes.
+//
+// `days` IS BUILT HERE, PURELY FROM WHAT THIS STUDENT WAS ACTUALLY MARKED. Sessions
+// are looked up by the ids the marks themselves reference — not by "is this unit one
+// of my CURRENT enrolments" the way /me/attendance scopes things — because a streak is
+// a record of what already happened: a student who has since been unenrolled from a
+// unit must not lose the attendance history they built on it.
+router.get("/me/streaks", async (req, res) => {
+  const sid = req.user.id;
+  const student = await prisma.student.findUnique({ where: { id: sid }, select: { id: true } });
+  if (!student) return res.status(404).json({ error: "Student not found" });
+
+  const marks = await prisma.attendanceMark.findMany({ where: { studentId: sid }, select: { status: true, sessionId: true } });
+  const sessionIds = [...new Set(marks.map((m) => m.sessionId))];
+  const sessions = sessionIds.length
+    ? await prisma.hndSession.findMany({ where: { id: { in: sessionIds } }, select: { id: true, unitId: true, date: true } })
+    : [];
+  const sessById = new Map(sessions.map((s) => [s.id, s]));
+
+  // Group THIS STUDENT'S OWN marks by calendar date. A date with no mark for it never
+  // appears at all — "no sessions" per the brief — which is the same "not measurable,
+  // not zero" rule attendance.js applies elsewhere: a day nobody took a register for
+  // is not a day the student failed to attend.
+  const byDate = new Map(); // date -> status[]
+  for (const m of marks) {
+    const sess = sessById.get(m.sessionId);
+    if (!sess) continue; // a mark whose session was since deleted — nothing to date it by
+    if (!byDate.has(sess.date)) byDate.set(sess.date, []);
+    byDate.get(sess.date).push(m.status);
+  }
+
+  const days = [...byDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0])) // dates are strings, compared as strings
+    .map(([date, statuses]) => ({
+      date,
+      // any A -> false; every session P/L with no A -> true; anything else (only E,
+      // or a mix of P/L and E with no A) -> null, neutral. The brief states the first
+      // three cases by name ("every marked session P or L" / "any A" / "only E");
+      // this is the natural extension to a day that mixes P/L WITH an E and no A —
+      // there is real evidence of attendance but not an unbroken P/L day, so it reads
+      // as neutral rather than as a false "not attended", matching E's own house
+      // meaning of partial, non-zero credit (attendance.js POINTS.E = 1).
+      attended: statuses.some((s) => s === "A") ? false
+        : statuses.every((s) => s === "P" || s === "L") ? true
+        : null,
+    }));
+
+  const { current, best, badges } = computeStreaks({ days });
+
+  // perfectUnit: THE SAME summarise() /me/attendance calls, on the SAME per-unit
+  // grouping (marks bucketed by the unit their session belongs to) — never a second
+  // attendance formula living in this route, which is exactly the kind of drift a
+  // null-vs-zero bug hides behind. A unit is "perfect" when summarise() returns
+  // pct === 100, which can only happen once at least one session on it was marked
+  // (pct is null, not 100, when nothing was ever marked).
+  //
+  // ONE badge, not one per unit — badges are a flat achievement list, and a student
+  // is shown "a fully-attended unit exists", not an inventory of which ones. Dated
+  // the LATEST marked session across every perfect unit: the most recent day the
+  // record was reconfirmed still perfect, never an invented "today".
+  const marksByUnit = new Map();
+  for (const m of marks) {
+    const sess = sessById.get(m.sessionId);
+    if (!sess) continue;
+    if (!marksByUnit.has(sess.unitId)) marksByUnit.set(sess.unitId, []);
+    marksByUnit.get(sess.unitId).push(m);
+  }
+  let perfectUnitEarnedOn = null;
+  for (const unitMarks of marksByUnit.values()) {
+    if (summarise(unitMarks).pct !== 100) continue;
+    for (const m of unitMarks) {
+      const d = sessById.get(m.sessionId)?.date;
+      if (d && (!perfectUnitEarnedOn || d > perfectUnitEarnedOn)) perfectUnitEarnedOn = d;
+    }
+  }
+
+  res.json({
+    current, best,
+    badges: perfectUnitEarnedOn ? [...badges, { key: "perfectUnit", earnedOn: perfectUnitEarnedOn }] : badges,
+  });
+});
+
 // GET /api/student/me/assessments — this student's assessments, marks, grades, average.
 router.get("/me/assessments", async (req, res) => {
   const student = await prisma.student.findUnique({ where: { id: req.user.id }, select: { id: true } });
@@ -967,17 +1058,28 @@ router.get("/me/assessments", async (req, res) => {
   });
   const grades = await prisma.assessmentGrade.findMany({ where: { studentId: student.id } });
   const gMap = new Map(grades.map((g) => [g.assessmentId, g]));
-  let sum = 0, n = 0;
+  let n = 0;
   const items = assessments.map((a) => {
     const g = gMap.get(a.id);
     const pct = g ? pctOf(g.marks, a.maxMarks) : null;
-    if (pct != null) { sum += pct; n++; }
+    if (pct != null) n++;
     return { id: a.id, title: a.title, type: a.type, maxMarks: a.maxMarks, weight: a.weight, dueDate: a.dueDate, unitCode: a.unit.code, unitName: a.unit.name, unitId: a.unitId, moduleCode: a.unit.code, moduleName: a.unit.name, moduleId: a.unitId, marks: g ? g.marks : null, feedback: g ? g.feedback : "", pct, grade: bandOf(pct) };
   });
+  // studentAssessmentAverage.js's own file header explains why 0/missing weight is
+  // NOT a real weight of zero, and asserts in its own unit test that a college with
+  // no weights set gets back exactly the plain mean this route used to compute here.
+  const averagePct = weightedAveragePct(items.map((it) => ({ pct: it.pct, weight: it.weight })));
   res.json({
     assessments: items, count: items.length, graded: n,
-    averagePct: n ? Math.round((sum / n) * 10) / 10 : null,
-    averageGrade: n ? bandOf(Math.round((sum / n) * 10) / 10) : null,
+    averagePct,
+    averageGrade: averagePct != null ? bandOf(averagePct) : null,
+    // Whether the figure above actually reflects a college-set weight, or is the
+    // equal-weighting fallback wearing the same field name. `weight` already
+    // serialises per assessment above; a student comparing the two should not have
+    // to reconstruct this by eye. Restricted to GRADED items — an ungraded
+    // assessment's weight never entered the sum, so it cannot be why this is (or
+    // isn't) weighted.
+    averageIsWeighted: items.some((it) => it.pct != null && Number(it.weight) > 0),
   });
 });
 
