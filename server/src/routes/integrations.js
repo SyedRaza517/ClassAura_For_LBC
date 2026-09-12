@@ -96,6 +96,9 @@ router.put("/:provider", requireAuth, requirePage("settings"), async (req, res) 
     : await prisma.tenantIntegration.create({ data: { ...data, secretEnc: secrets.encrypt(incomingSecret) } });
 
   cfg.invalidate(provider);
+  // A cached Graph token or organizer list survives a credentials change — the same
+  // release valve sharepoint.js needs (see its forgetCached).
+  if (provider === "teams") { try { require("./../teamsGraph").forgetCached(); } catch {} }
   // WHAT changed, never the credential itself — audit.js redacts secret fields, and
   // this deliberately passes only the non-secret settings anyway.
   audit.record(req, {
