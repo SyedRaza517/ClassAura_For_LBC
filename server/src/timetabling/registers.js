@@ -50,6 +50,17 @@ async function syncEventRegisters(eventId) {
     roomId: event.roomId ?? null,
   };
 
+  // The admin's pasted link beats the calendar matcher (spec: "an explicit paste
+  // always wins"), so it is written on create AND update — and a CHANGED paste
+  // resets the resolved meeting identity, or the sync would keep reading the old
+  // meeting's report against the new link. An EMPTY event field writes nothing:
+  // blank is "no paste", not "remove the discovered link".
+  //
+  // Read straight off `event` rather than a `select` list: this query uses `include`
+  // with no top-level `select`, which Prisma answers with every scalar column plus
+  // the named relations, so `teamsJoinUrl` is already on the object.
+  const paste = (event.teamsJoinUrl || "").trim() || null;
+
   // The event-level gate: published, wanted, and attached to a module. Asked once with
   // existing:null, because none of those three answers can differ between groups, and
   // asking per group would report the same refusal once per intake.
@@ -98,6 +109,7 @@ async function syncEventRegisters(eventId) {
       where: { timetableEventId: event.id, cohortId },
       select: {
         id: true, date: true, startTime: true, endTime: true, roomId: true,
+        teamsJoinUrl: true,
         _count: { select: { marks: true } },
       },
     });
@@ -121,7 +133,17 @@ async function syncEventRegisters(eventId) {
       continue;
     }
     if (decision.action === "update") {
-      await prisma.hndSession.update({ where: { id: existing.id }, data: shape });
+      // The paste is applied ON TOP OF `shape`, not folded into it, because `shape` is
+      // built once for the whole event and reused by `registerAction` above — mixing a
+      // per-session write into it there would make the freeze/skip/update DECISION see
+      // fields that have nothing to do with date, time or room. Only a paste that
+      // actually CHANGED resets the resolved identity: re-saving the event with the
+      // same link untouched must not throw away a meeting the sync has already found.
+      const data = { ...shape };
+      if (paste && paste !== existing.teamsJoinUrl) {
+        Object.assign(data, { teamsJoinUrl: paste, teamsMeetingId: null, teamsOrganizerId: null, teamsCollectedAt: null });
+      }
+      await prisma.hndSession.update({ where: { id: existing.id }, data });
       out.updated++;
       continue;
     }
@@ -148,6 +170,10 @@ async function syncEventRegisters(eventId) {
         timetableEventId: event.id,
         cohortId,
         ...shape,
+        // A fresh register has no meeting resolved yet, so the paste is the only Teams
+        // column that can possibly have a value at creation — the identity fields stay
+        // at their column default (null) until a sync actually finds the meeting.
+        teamsJoinUrl: paste,
         description: event.title || "",
         // Which rule produced the roster, in the field a lecturer already reads. The
         // two empty registers mean opposite things — "nobody in this group takes this

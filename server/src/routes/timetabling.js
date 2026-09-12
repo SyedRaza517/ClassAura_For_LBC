@@ -14,6 +14,10 @@ const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
 const { normaliseCampus } = require("../timetabling/campusMatch");
 const { seriesDates } = require("../timetabling/recurrence");
 const { parseSessions } = require("../timetabling/sessions");
+// The rescue-hatch validator: the same shape check the sync engine will later run the
+// pasted string through, imported rather than reimplemented so a link this route
+// accepts is never one the sync then silently refuses to look up.
+const { parseJoinUrl } = require("../teamsAttendance");
 // The SAME module the Settings screen validates against, imported rather than
 // reimplemented: the key rules and the name cap live in one place, so a school this
 // route accepts cannot be one that screen then refuses to save.
@@ -1153,6 +1157,26 @@ function parseEvent(body, partial) {
     data.title = t.slice(0, MAX);
   }
   if (body?.notes !== undefined) data.notes = str(body.notes).slice(0, 4000);
+  // The rescue hatch: a Teams join link pasted by hand when automatic calendar
+  // matching could not place this class's meeting. An absent key leaves the stored
+  // value untouched — the same "undefined means unchanged" rule notes and every
+  // relation id below already follow — so an admin editing the room does not have to
+  // retype a link they never touched. A key that IS present but blank is a deliberate
+  // clear: it stores "" (registers.js then reads that as "no paste", never as "erase
+  // the link the sync already found" — see the carry-down comment there). Only a
+  // non-empty string that fails to parse is refused outright, because storing it
+  // anyway would silently break the sync rather than tell the admin now, while they
+  // can still fix the paste.
+  if (body?.teamsJoinUrl !== undefined) {
+    const raw = str(body.teamsJoinUrl);
+    if (!raw) {
+      data.teamsJoinUrl = "";
+    } else {
+      const parsed = parseJoinUrl(raw);
+      if (!parsed) return { error: "That does not look like a Teams meeting link — copy it from the meeting's Join link." };
+      data.teamsJoinUrl = parsed;
+    }
+  }
   if (body?.published !== undefined) data.published = !!body.published;
 
   // Nullable relations. An empty string clears the link; that is how a screen says

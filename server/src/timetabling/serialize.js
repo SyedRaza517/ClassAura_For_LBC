@@ -83,6 +83,16 @@ const sEvent = (e) => ({
   end: e.endTime,
   title: e.title,
   notes: e.notes || "",
+  // The rescue-hatch paste, back out to the planner that reads it — not a secret. It
+  // is the same join link the class's own students and staff already use to get into
+  // the meeting, so this being on sEvent (and therefore also on the staff/student read
+  // in routes/myTimetable.js, which shares this function) is the intended shape, not
+  // an oversight of the allowlist rule at the top of this file. Named here in the
+  // SAME change that adds the column to the update route, unlike academicDepartmentId
+  // below, whose reader guards on "the field is present at all" — that guard exists
+  // because that column shipped a release before its serialiser did; there is no such
+  // gap to guard against for a field introduced in one commit.
+  teamsJoinUrl: e.teamsJoinUrl || "",
   published: !!e.published,
   changedAt: e.changedAt,
 

@@ -1407,7 +1407,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
     if (start && end) b.sessions = [{ start, end }, b.sessions[1]];
     return {
       academicDepartmentId: "", showAllSchools: false,
-      cohortIds: [], notes: "", published: false,
+      cohortIds: [], notes: "", teamsJoinUrl: "", published: false,
       blocks: [b],
     };
   };
@@ -1630,6 +1630,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         academicDepartmentId: editing.academicDepartmentId || "",
         cohortIds: editing.cohortIds || [],
         notes: editing.notes || "",
+        teamsJoinUrl: editing.teamsJoinUrl || "",
         published: !!editing.published,
         title: (b.title || "").trim(),
         unitId: b.unitId || "",
@@ -2093,6 +2094,21 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                 <div className="sm:col-span-2">
                   <Field label="Notes"><textarea rows={2} className={inputCls} value={editing.notes || ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} /></Field>
                 </div>
+                {/* The rescue hatch for Teams auto-attendance: pasted only when automatic
+                    calendar matching could not place this class's meeting. An explicit
+                    paste beats the matcher and, on a CHANGE, resets whatever meeting the
+                    sync had already resolved — see the carry-down comment in
+                    timetabling/registers.js for why that reset has to happen. */}
+                <div className="sm:col-span-2">
+                  <Field label="Teams meeting link" hint="Optional — only if attendance didn't match automatically">
+                    <input
+                      className={inputCls}
+                      value={editing.teamsJoinUrl || ""}
+                      onChange={(e) => setEditing({ ...editing, teamsJoinUrl: e.target.value })}
+                      placeholder="Teams meeting link (optional — only if attendance didn't match automatically)"
+                    />
+                  </Field>
+                </div>
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
                   <input type="checkbox" checked={!!editing.published} onChange={(e) => setEditing({ ...editing, published: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                   Published — visible to staff
@@ -2327,6 +2343,18 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                   <div className="sm:col-span-2">
                     <Field label="Notes" hint="Applied to every class created below">
                       <textarea rows={2} className={inputCls} value={editing.notes || ""} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} />
+                    </Field>
+                  </div>
+                  {/* The rescue hatch for Teams auto-attendance: pasted only when automatic
+                      calendar matching could not place this class's meeting. */}
+                  <div className="sm:col-span-2">
+                    <Field label="Teams meeting link" hint="Optional — only if attendance didn't match automatically">
+                      <input
+                        className={inputCls}
+                        value={editing.teamsJoinUrl || ""}
+                        onChange={(e) => setEditing({ ...editing, teamsJoinUrl: e.target.value })}
+                        placeholder="Teams meeting link (optional — only if attendance didn't match automatically)"
+                      />
                     </Field>
                   </div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
