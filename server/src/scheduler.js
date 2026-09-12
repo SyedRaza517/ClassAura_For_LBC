@@ -182,6 +182,49 @@ async function maybeRunTeamsMeetings() {
   return true;
 }
 
+// The Teams PROVISIONING sweep (Phase B: Teams + channels + membership for every
+// cohort with a published timetable). NIGHTLY, unlike the two hourly jobs above —
+// same reasoning as maybeSyncMoodle's own SYNC_HOUR guard: this touches every cohort,
+// every unit and every student in the college on each run, so an hourly cadence would
+// buy nothing a nightly one does not (nobody's roster changes fast enough for that)
+// while making every Graph rate limit and every stray "already a member" 400 in the
+// journal an hourly event instead of a nightly one. Also always available manually
+// (the route this feature's routes/teamsAutomation.js exposes), for a college that
+// wants its first provisioning run to happen the moment it switches the setting on
+// rather than waiting for 02:00.
+//
+// Guarded on SYNC_HOUR — the SAME "02" hour Moodle's import uses — rather than a
+// literal 02:30 window. Ticks fire every 60 minutes from whatever minute the process
+// booted at (startScheduler below), never realigned to the wall clock, so a guard
+// that demanded minutes 30-59 specifically would only ever fire on nights where the
+// boot offset happened to land there — for most deployments, never. An hour-band
+// compare (matching Moodle's own) instead fires reliably once every 24 hours,
+// whatever the boot offset, which is what "runs once a night" actually requires;
+// running in the same tick as the Moodle import costs nothing since each guard is its
+// own statement with its own try/catch, and the two jobs dedupe against entirely
+// separate tables (TeamsProvisionSync vs MoodleSync) so neither can suppress the
+// other's run.
+async function maybeRunTeamsProvisioning() {
+  const teamsGraph = require("./teamsGraph");
+  const teamsAutomationConfig = require("./teamsAutomationConfig");
+  const teamsProvisioning = require("./teamsProvisioning");
+  const cfg = require("./integrationConfig");
+  await cfg.load("teams");
+  const settings = await teamsAutomationConfig.get();
+  if (!settings.provisionTeams) return false;
+  if (!teamsGraph.isConfigured() || teamsProvisioning.isRunning()) return false;
+  if (localTime().slice(0, 2) !== SYNC_HOUR) return false;
+  await teamsProvisioning.sweepStaleRuns();
+  const recent = await prisma.teamsProvisionSync.count({
+    where: { job: "provisioning", mode: "scheduled", status: { in: ["ok", "failed"] }, startedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+  });
+  if (recent > 0) return false; // tonight's run already happened
+  console.log("Scheduler: starting the nightly Teams provisioning sync");
+  const { summary } = await teamsProvisioning.runProvisioning({ mode: "scheduled" });
+  console.log(`Scheduler: Teams provisioning sync finished — ${summary.teamsCreated} team(s), ${summary.channelsCreated} channel(s), ${summary.ownersAdded} owner(s), ${summary.membersAdded} member(s) added`);
+  return true;
+}
+
 // Kick off the background scheduler. Hourly cadence; the guards inside each job
 // limit real work to its own day/hour. unref() so the timer never keeps the process
 // alive on its own.
@@ -199,20 +242,23 @@ function startScheduler() {
     // Moodle import either, so it is its own statement rather than chained onto them.
     maybeSyncTeamsAttendance()
       .catch((e) => console.error("Teams attendance sync failed:", e.message));
-    // Same reasoning again, for the Teams MEETINGS job added alongside the
-    // attendance sync above — its own statement so a failing meetings sync (a bad
-    // Graph credential, an event Graph rejects) never stops any of the others.
+    // Same reasoning again, for the two Teams AUTOMATION jobs (meetings, provisioning)
+    // added alongside the attendance sync above — each its own statement so that one
+    // failing job (a bad Graph credential, a stuck provisioning operation) never stops
+    // any of the others, including each other.
     maybeRunTeamsMeetings()
       .catch((e) => console.error("Teams meetings sync failed:", e.message));
+    maybeRunTeamsProvisioning()
+      .catch((e) => console.error("Teams provisioning sync failed:", e.message));
   };
   run(); // run once on boot (covers a deploy that happens on the reminder day)
   setInterval(run, 60 * 60 * 1000).unref();
-  // Names all four jobs — a prior review flagged that this line still named only
-  // the reminders and the Moodle import after the Teams attendance sync was added.
-  console.log(`Scheduler: timesheet month-end reminders active (checks hourly); Moodle import at ${SYNC_HOUR}:00; Teams attendance sync hourly; Teams meetings sync hourly`);
+  // Names every scheduled job — a prior review flagged that this line went stale
+  // (only naming reminders + Moodle) each time a new job was added beside them.
+  console.log(`Scheduler: timesheet month-end reminders active (checks hourly); Moodle import at ${SYNC_HOUR}:00; Teams attendance sync hourly; Teams meetings sync hourly; Teams provisioning sync nightly (${SYNC_HOUR}:00 hour)`);
 }
 
 module.exports = {
   startScheduler, sendTimesheetReminders, maybeSyncMoodle, maybeSyncTeamsAttendance,
-  maybeRunTeamsMeetings, isDayBeforeMonthEnd, lastDayOfMonth,
+  maybeRunTeamsMeetings, maybeRunTeamsProvisioning, isDayBeforeMonthEnd, lastDayOfMonth,
 };
