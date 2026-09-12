@@ -975,6 +975,10 @@ model Student {
   // The Moodle user this student was matched to, so later syncs re-use the match
   // instead of re-resolving by student number/email every time.
   moodleUserId Int?
+  // The Microsoft (Entra) user this student was matched to by the Teams attendance
+  // sync, so later syncs re-use the match instead of re-resolving by email every time.
+  // Same job, same reasoning, as moodleUserId above.
+  msUserId     String?
   firstName    String
   lastName     String
   studentRef   String
@@ -1031,6 +1035,7 @@ model Student {
   academicDepartmentId String?
 
   @@unique([moodleUserId])
+  @@unique([msUserId])
   @@unique([studentRef])
   @@unique([email])
   @@index([cohortId])
@@ -1146,6 +1151,17 @@ model HndSession {
   // without duplicating anything and (b) removed again in one statement, without
   // touching a single register a member of staff took by hand.
   moodleSessionId Int?
+  // The Teams meeting this register's class ran in. All four are NULL for a class
+  // that was never online. joinUrl arrives by calendar discovery or by an admin's
+  // paste on the timetable event; meetingId + organizerId are resolved from it once
+  // (every Graph artifact fetch is addressed through the meeting's ORGANIZER);
+  // collectedAt marks the attendance report as fetched and written, so the poller
+  // knows this register is done. NULL collectedAt with a joinUrl set means "still
+  // eligible" — the retry, bounded to 7 days, is simply that this stays NULL.
+  teamsJoinUrl     String?
+  teamsMeetingId   String?
+  teamsOrganizerId String?
+  teamsCollectedAt DateTime?
   // The lecturer's hand on the self check-in window (3 Sep 2026). Both null means
   // "follow the timetable", which is every session until somebody presses a button.
   //   checkInClosedAt  — the lecturer ended check-in before the timetabled end. Absolute:
@@ -1351,6 +1367,11 @@ model TagTap {
   //       — the COLLEGE's own settings are refusing everybody. These two are also written
   //         to the service log with console.error, because a misconfiguration that refuses
   //         an entire institution is invisible from the outside.
+  //
+  //   ...and, since 12 Sep 2026, the Teams attendance sync (method "teams") writes:
+  //   marked          — a mark was written from the meeting's attendance report
+  //   already_marked  — the report agreed or disagreed with a mark that already stood;
+  //                     either way the standing mark won
   outcome   String
   status    String? // "P" | "L" when a mark was actually written
   site      String? // "Onsite" for a staff tap — the tap itself proves that
@@ -1423,6 +1444,26 @@ model MoodleSync {
   mode       String    @default("manual") // manual | scheduled | preview
   startedBy  String? // admin name, or null for the nightly run
   // Counters, as JSON: courses/units/assessments/students/grades created & updated.
+  summary    String    @default("{}")
+  // Anything skipped or unmatched, as a JSON array of readable messages.
+  issues     String    @default("[]")
+  error      String?
+
+  @@index([startedAt])
+}
+
+// One row per Teams attendance sync run — what was matched, written and skipped, and
+// anything that needs a human (an unmatched meeting, a participant whose email fits no
+// student). Same job and shape as MoodleSync above.
+model TeamsSync {
+  id         String    @id @default(cuid())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  status     String    @default("running") // running | ok | failed
+  mode       String    @default("manual") // manual | scheduled
+  startedBy  String? // admin name, or null for the scheduled run
+  // Counters, as JSON: meetingsDiscovered, sessionsMatched, sessionsAmbiguous,
+  // reportsFetched, marksCreated, marksSkippedExisting, participantsUnmatched.
   summary    String    @default("{}")
   // Anything skipped or unmatched, as a JSON array of readable messages.
   issues     String    @default("[]")
@@ -3378,6 +3419,10 @@ model TimetableEvent {
   endTime   String
   title     String
   notes     String @default("")
+  // The rescue hatch: an admin pastes the Teams join link here when automatic
+  // calendar matching could not place the meeting. Carried down to this event's
+  // registers on publish, where an explicit paste always beats the matcher.
+  teamsJoinUrl String @default("")
 
   // NULLABLE, and that nullability is the point of this table. An exam, a workshop,
   // a study-support session or a staff meeting belongs to no module -- which is
