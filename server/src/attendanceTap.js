@@ -58,6 +58,22 @@ const SELF_CHECKIN_QR_STAMP = "Self check-in (QR)";
 // the TOKEN is the identifier screens switch on. Neither may be reworded.
 const SELF_CHECKIN_DECLARED_STAMP = "Self check-in (declared)";
 
+// The FOURTH stamp: the machine observed the student in the online class.
+//
+// It sits in this map — "the student did this, not a member of staff" — because the
+// underlying fact IS the student's own action: they joined the meeting, and Microsoft
+// recorded when and for how long. What distinguishes it from its three neighbours is
+// WHO WROTE THE ROW: no phone was tapped and no button pressed; the Teams attendance
+// sync wrote it from the meeting's attendance report after the class ended. Borrowing
+// the declared stamp was rejected for the same reason declared could not borrow NFC's:
+// "what evidence stands behind this mark" has a different answer (a meeting-join
+// record Microsoft holds, which is stronger than a declaration and weaker than a
+// sticker), and the register, the live view and the dispute CSV all need to give it.
+//
+// Frozen on arrival, like its neighbours: the stamp is prose written into rows, the
+// token crosses the wire into app builds not deployed in step with this server.
+const TEAMS_AUTO_STAMP = "Auto check-in (Teams)";
+
 // Every stamp that means "the student did this, not a member of staff", each beside the
 // short token the API reports it as. A NEW capture method adds ONE line here and needs no
 // other change anywhere on the server: the frozen list, the predicate and the token all
@@ -80,6 +96,7 @@ const SELF_CHECKIN_METHODS = new Map([
   [SELF_CHECKIN_STAMP, "nfc"],
   [SELF_CHECKIN_QR_STAMP, "qr"],
   [SELF_CHECKIN_DECLARED_STAMP, "declared"],
+  [TEAMS_AUTO_STAMP, "teams"],
 ]);
 
 // A Map rather than a plain object on purpose: `takenBy` is a column, so an attacker or an
@@ -256,6 +273,6 @@ function statusFor(session, now, settings) {
 
 module.exports = {
   addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
-  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP,
+  SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP, TEAMS_AUTO_STAMP,
   SELF_CHECKIN_STAMPS, isSelfCheckIn, checkInMethod,
 };

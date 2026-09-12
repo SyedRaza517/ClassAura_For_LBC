@@ -17,7 +17,7 @@
 //   short  — a summary line counting a whole register, where there is room for a clause
 //   csv    — the exported file somebody attaches to an email when a mark is challenged,
 //            which has no icon and no title attribute and must say the whole thing in one cell
-import { QrCode, Nfc, Hand } from "lucide-react";
+import { QrCode, Nfc, Hand, Users } from "lucide-react";
 
 export const CHECK_IN_METHODS = {
   qr: {
@@ -43,6 +43,16 @@ export const CHECK_IN_METHODS = {
     words: "Said they were here — no sticker or code",
     short: "said they were here",
     csv: "Student declared themselves present, with no sticker or code (declared)",
+  },
+  // The FOURTH register, and the only one no student pressed anything for. The row was
+  // written by the Teams attendance sync after the class ended, from the meeting's own
+  // attendance report — so the wording says "joined", not "checked in" or "tapped",
+  // because nothing on this row is a check-in action the student performed in the room.
+  teams: {
+    Icon: Users,
+    words: "Joined the online class (Teams)",
+    short: "joined online",
+    csv: "Student joined the online class, recorded by Microsoft Teams (Teams)",
   },
 };
 
