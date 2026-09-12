@@ -5,7 +5,7 @@
 // Run with: node --test src/studentStreaks.test.js   (from server/)
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { computeStreaks } = require("./studentStreaks");
+const { computeStreaks, attendedForDay } = require("./studentStreaks");
 
 // Small builder: N consecutive calendar dates starting at `start` (YYYY-MM-DD),
 // every one a "true" day, unless `overrides` supplies attended values by index.
@@ -19,6 +19,49 @@ function days(start, n, overrides = {}) {
   }
   return out;
 }
+
+/* ===================== attendedForDay: the day-bucketing rule ===================== */
+//
+// GET /me/streaks calls this once per calendar date, on the "P"|"L"|"E"|"A" statuses
+// of every session this student was marked for that day, to build the `days` array
+// computeStreaks consumes above. Pinned here per review: a mixed P/L + E day counts
+// as attended (E's half-credit discount already applies once, at summarise()'s
+// unit-percentage layer — applying it again here by refusing to count the day would
+// double-charge it); only a day with NO P/L evidence at all (only E) is neutral.
+
+test("attendedForDay: a P/L-only day is attended", () => {
+  assert.equal(attendedForDay(["P"]), true);
+  assert.equal(attendedForDay(["L"]), true);
+  assert.equal(attendedForDay(["P", "L"]), true);
+});
+
+test("attendedForDay: [P, L, E] with no A is attended — the pinned mixed case", () => {
+  assert.equal(attendedForDay(["P", "L", "E"]), true);
+  assert.equal(attendedForDay(["P", "E"]), true);
+  assert.equal(attendedForDay(["L", "E"]), true);
+});
+
+test("attendedForDay: [E] only, with no P/L and no A, is neutral", () => {
+  assert.equal(attendedForDay(["E"]), null);
+  assert.equal(attendedForDay(["E", "E"]), null);
+});
+
+test("attendedForDay: [P, A] — any A is not attended, even alongside a P/L", () => {
+  assert.equal(attendedForDay(["P", "A"]), false);
+  assert.equal(attendedForDay(["A"]), false);
+});
+
+test("attendedForDay: A wins over everything, including a mix of P/L and E", () => {
+  assert.equal(attendedForDay(["P", "L", "E", "A"]), false);
+  assert.equal(attendedForDay(["E", "A"]), false);
+});
+
+test("attendedForDay: no statuses at all is treated as neutral rather than thrown on", () => {
+  assert.equal(attendedForDay([]), null);
+  assert.equal(attendedForDay(undefined), null);
+});
+
+/* ===================== computeStreaks ===================== */
 
 test("empty input: no streak, no badges, nothing throws", () => {
   const result = computeStreaks({ days: [] });

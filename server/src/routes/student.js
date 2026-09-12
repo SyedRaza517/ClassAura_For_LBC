@@ -11,7 +11,7 @@ const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const attendanceBandConfig = require("../attendanceBandConfig");
-const { computeStreaks } = require("../studentStreaks");
+const { computeStreaks, attendedForDay } = require("../studentStreaks");
 const { weightedAveragePct } = require("../studentAssessmentAverage");
 const { rosterForSession, unitIdsForStudent } = require("../timetabling/registers");
 const supportDepartments = require("../supportDepartments");
@@ -965,10 +965,12 @@ router.get("/me/attendance-bands", async (req, res) => {
 // anything the prediction feature computes.
 //
 // `days` IS BUILT HERE, PURELY FROM WHAT THIS STUDENT WAS ACTUALLY MARKED. Sessions
-// are looked up by the ids the marks themselves reference — not by "is this unit one
-// of my CURRENT enrolments" the way /me/attendance scopes things — because a streak is
-// a record of what already happened: a student who has since been unenrolled from a
-// unit must not lose the attendance history they built on it.
+// are looked up by the ids the marks themselves reference, rather than re-deriving the
+// student's unit list first — unitIdsForStudent already folds in every unit a mark
+// exists for, current enrolment or not (timetabling/registers.js), so this is not a
+// wider scope than /me/attendance's, just a more direct route to the same rows: a
+// streak is a record of what already happened, and going by the marks themselves
+// means it is built without needing to ask "which units" at all.
 router.get("/me/streaks", async (req, res) => {
   const sid = req.user.id;
   const student = await prisma.student.findUnique({ where: { id: sid }, select: { id: true } });
@@ -997,16 +999,9 @@ router.get("/me/streaks", async (req, res) => {
     .sort((a, b) => a[0].localeCompare(b[0])) // dates are strings, compared as strings
     .map(([date, statuses]) => ({
       date,
-      // any A -> false; every session P/L with no A -> true; anything else (only E,
-      // or a mix of P/L and E with no A) -> null, neutral. The brief states the first
-      // three cases by name ("every marked session P or L" / "any A" / "only E");
-      // this is the natural extension to a day that mixes P/L WITH an E and no A —
-      // there is real evidence of attendance but not an unbroken P/L day, so it reads
-      // as neutral rather than as a false "not attended", matching E's own house
-      // meaning of partial, non-zero credit (attendance.js POINTS.E = 1).
-      attended: statuses.some((s) => s === "A") ? false
-        : statuses.every((s) => s === "P" || s === "L") ? true
-        : null,
+      // See studentStreaks.js's attendedForDay() for the rule and why a mixed
+      // P/L + E day counts in full rather than being discounted a second time.
+      attended: attendedForDay(statuses),
     }));
 
   const { current, best, badges } = computeStreaks({ days });

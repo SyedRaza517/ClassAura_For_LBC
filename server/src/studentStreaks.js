@@ -20,17 +20,17 @@
  * dates it is given — every entry it sees already passed that test in the route, and
  * this file only ever reasons about the SEQUENCE it was handed, in order.
  *
- *   attended: true  — every session marked that day was P or L (a "present" day).
+ *   attended: true  — at least one session that day was P or L, and none was A. An
+ *                     E sitting alongside a P/L does NOT change this — see
+ *                     attendedForDay() below for why a mixed day counts in full
+ *                     rather than being discounted a second time.
  *   attended: false — at least one session that day was marked A. Breaks the streak.
- *   attended: null  — the day had marked sessions, but none were unambiguously P/L
- *                     with no A (an E-only day, or a mix of P/L and E with no A).
- *                     NEUTRAL: it neither extends nor breaks a run, it BRIDGES
- *                     across it — it is skipped as if it were never in the list, so
- *                     the run's LENGTH does not grow on a null day, but a run either
- *                     side of one survives it intact. attendance.js treats Excused
- *                     the same way (E earns partial points, never zero); a streak
- *                     that broke every time a student produced a doctor's note would
- *                     be punishing exactly the people the E status protects.
+ *   attended: null  — the day had marked sessions but NONE were P/L (every one was
+ *                     E) — no evidence of attendance either way. NEUTRAL: it
+ *                     neither extends nor breaks a run, it BRIDGES across it — it is
+ *                     skipped as if it were never in the list, so the run's LENGTH
+ *                     does not grow on a null day, but a run either side of one
+ *                     survives it intact.
  *
  * BADGES. `streak5` / `streak10` / `streak25` fire the FIRST time the running streak
  * reaches that length, dated the day the threshold was crossed — and stay in the
@@ -47,6 +47,36 @@
  */
 
 const STREAK_THRESHOLDS = [5, 10, 25]; // -> badge keys streak5, streak10, streak25
+
+/**
+ * The single-day attendance verdict from the "P"|"L"|"E"|"A" statuses of every
+ * session marked for this student on one calendar date. GET /me/streaks calls this
+ * once per date to build the `days` array computeStreaks consumes; it is pulled out
+ * here, pure and exported, so the rule is unit-testable on its own rather than only
+ * provable by reading the route.
+ *
+ * any A -> false. Otherwise: every marked session E, and none P/L -> null (no
+ * evidence of attendance either way). Otherwise (at least one P/L, no A — an E may
+ * or may not also be present) -> true.
+ *
+ * A MIXED P/L + E DAY COUNTS AS ATTENDED, ruled on review after this file originally
+ * shipped it as neutral. That was wrong: summarise() (attendance.js) already applies
+ * E's half-credit discount exactly once, at the unit-percentage layer
+ * (POINTS.E = 1 of MAX_POINTS = 2) — that is where the judgement "an Excused session
+ * is worth less than a full Present" belongs. Discounting it AGAIN here, by refusing
+ * to count a day the student showed up to and was marked E for only one session on,
+ * reads as "this good day doesn't count": it measurably delays streak5/10/25 behind
+ * days that did nothing wrong, and makes a week that is legitimately a mix of
+ * attended and excused sessions permanently unable to earn perfectWeek no matter how
+ * consistent the student actually was. The student attended everything they were
+ * not excused from; only a day with NO P/L evidence at all (only E) stays neutral.
+ */
+function attendedForDay(statuses) {
+  const list = Array.isArray(statuses) ? statuses : [];
+  if (list.some((s) => s === "A")) return false;
+  if (list.length && list.every((s) => s === "E")) return null;
+  return list.length ? true : null; // no statuses at all: nothing to judge — should not occur, the route only ever calls this with at least one
+}
 
 /**
  * The ISO week a YYYY-MM-DD date falls in, as "YYYY-Www" (Monday-start). Computed by
@@ -140,4 +170,4 @@ function computeStreaks({ days } = {}) {
   return { current: run, best, badges: [...badges, ...perfectPeriodBadges(list)] };
 }
 
-module.exports = { computeStreaks, STREAK_THRESHOLDS };
+module.exports = { computeStreaks, attendedForDay, STREAK_THRESHOLDS };
