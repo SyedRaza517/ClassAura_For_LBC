@@ -48,8 +48,10 @@
     100% { opacity: 1; transform: none; }
   }
 
-  /* Slides in from the left — sidebar/nav items. */
-  .slide-in { animation: edtech-slide-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  /* Slides in from the left — sidebar/nav items. Same duration as .fade-up (420ms,
+     student/ui/tokens.js MOTION_MS.entrance) — both are "a thing arriving on screen"
+     and reading at different speeds made the two feel like separate systems. */
+  .slide-in { animation: edtech-slide-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
   @keyframes edtech-slide-in {
     from { opacity: 0; transform: translate3d(-12px, 0, 0); }
     to   { opacity: 1; transform: none; }
@@ -119,6 +121,55 @@
 
   /* Clamp long copy to n lines (used for reply previews). */
   .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* ── Student app: one dynamic-colour system, both schemes ──────────────────────
+     Every screen colours SOMETHING with a value it cannot know at build time: a
+     college's own attendance-band hex, the fixed ACCENT section colours, a grade or
+     an attendance-status colour. Tailwind's `dark:` variant only works for class
+     NAMES present in the source Tailwind scans, so a runtime hex can never become a
+     `dark:bg-[...]` class — the string simply is not there to find. These three
+     classes are the alternative: the calling component sets `--tone`/`--tone-*` as
+     inline CSS custom properties (student/ui/tokens.js#toneFromColour computes both
+     the light and dark values), and this stylesheet — not JavaScript — decides which
+     pair applies, via the same prefers-color-scheme media query darkMode:"media"
+     compiles `dark:` into. One rule, everywhere a runtime colour is drawn, instead of
+     each screen re-deciding how to keep its own hex legible on a dark card. */
+  .tone-soft {
+    background: var(--tone-bg);
+    color: var(--tone-text);
+    --tw-ring-color: var(--tone-ring);
+  }
+  .tone-solid {
+    background: var(--tone);
+    color: var(--tone-on, #fff);
+  }
+  /* Like `.tone-soft`, but for a LARGE panel (HeroTile's whole card, the Attendance /
+     Results headline block) — a paler tint than a small chip needs, so it does not
+     read as a solid colour block covering most of the screen. */
+  .tone-panel {
+    background: var(--tone-panel-bg);
+    color: var(--tone-text);
+    --tw-ring-color: var(--tone-ring);
+  }
+  /* Like `.tone-soft`'s colour half alone, for a value sitting on a background this
+     stylesheet does not otherwise control (Ring's headline number, drawn over
+     whatever panel the caller placed it on). */
+  .tone-text { color: var(--tone-text); }
+  @media (prefers-color-scheme: dark) {
+    .tone-soft {
+      background: var(--tone-bg-dark, var(--tone-bg));
+      color: var(--tone-text-dark, var(--tone-text));
+      --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
+    }
+    .tone-panel {
+      background: var(--tone-panel-bg-dark, var(--tone-panel-bg));
+      color: var(--tone-text-dark, var(--tone-text));
+      --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
+    }
+    .tone-text { color: var(--tone-text-dark, var(--tone-text)); }
+    /* A solid fill keeps its own colour in dark mode — it is not sitting on the card
+       surface the AA nudge above was computed against, so nothing needs to change. */
+  }
 }
 
 /* Respect the OS setting: anyone who asks for less motion gets none of it. */
@@ -129,6 +180,35 @@
     animation: none !important;
   }
   .press:active { transform: none; }
+}
+
+/* ── Student app: literal colours that can't be a `dark:` class ────────────────────
+   Two spots paint a colour directly in this stylesheet rather than through Tailwind
+   utilities, so `dark:*` classes on the element itself have nothing to override. */
+/* The student app's body gradient (behind every screen, StudentApp.jsx's content
+   wrapper). Declared here, BEFORE its own dark override below, on purpose: Tailwind
+   v3's `@layer` is a build-time grouping, not a real CSS cascade layer in the compiled
+   output, so two same-specificity rules for `.student-bg` resolve by plain SOURCE
+   ORDER — last one wins, unconditionally, regardless of which sits inside a satisfied
+   media query. Getting this backwards (the unconditional rule AFTER the dark one) is
+   exactly the bug the Task 6 AA spot-check caught: the media query matched, the
+   Tailwind `dark:` classes on the very same screen switched correctly, and this one
+   rule silently kept painting the light gradient under a dark card the whole time. */
+.student-bg {
+  background: linear-gradient(180deg, #f6f8fc 0%, #eef2f9 60%, #f6f8fc 100%);
+}
+@media (prefers-color-scheme: dark) {
+  /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
+     legible as "loading" on a white card, invisible as "loading" on a dark one. */
+  .skeleton {
+    background: linear-gradient(100deg, #1e293b 30%, #334155 48%, #1e293b 66%);
+    background-size: 220% 100%;
+  }
+  /* A pale blue-grey wash in light mode reads as a smudge on a dark phone, so dark
+     mode gets its own deep slate wash instead of the same three stops darkened. */
+  .student-bg {
+    background: linear-gradient(180deg, #0b1220 0%, #0f172a 60%, #0b1220 100%);
+  }
 }
 
 /* Mobile-app behaviours that a plain web page doesn't need.

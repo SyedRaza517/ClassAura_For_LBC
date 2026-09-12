@@ -1,6 +1,10 @@
 // Barrel for the student app's UI primitives, so a screen imports one module instead
 // of thirteen. Pure re-export — nothing here changes what any of these components do.
-export { ACCENT, pctTone, gradeTone, progressTone, ATT } from "./tokens";
+// pctTone/progressTone's old three-colour version are gone: attendanceTone is the ONE
+// ladder that replaced them (see tokens.js's file-level comment for why), and
+// progressTone is rebuilt on top of it rather than removed outright — Reviews.jsx still
+// calls it, just with the college's own band list threaded through now.
+export { ACCENT, ACCENT_TONE, DEFAULT_ATTENDANCE_BANDS, bandForPct, attendanceTone, gradeTone, progressTone, toneFromColour, toneVars, ATT, MOTION_MS } from "./tokens";
 export { default as useCountUp } from "./useCountUp";
 export { default as Screen } from "./Screen";
 export { default as Card } from "./Card";
