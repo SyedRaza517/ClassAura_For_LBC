@@ -6,9 +6,13 @@
 // Same split as teamsSync.js: decisions here are plain "what does this row need"
 // logic against rows already in memory, Graph access is entirely in teamsGraph.js,
 // and this file is wiring between the two — reading the right rows, calling the right
-// function, writing the result back. Nothing here is unit-tested for the same reason
-// nothing in teamsSync.js is: there is no pure decision to extract, only a database
-// and a Microsoft tenant to talk to, which is exactly what the smoke suite is for.
+// function, writing the result back. Most of it is unit-tested for the same reason
+// most of teamsSync.js is not: there IS one pure decision worth extracting here —
+// meetingFingerprint, below — after an engine review found the interim
+// updatedAt-vs-teamsMeetingSyncedAt gate never actually closed (see that function's
+// own comment). teamsMeetings.test.js covers it without a database or a Microsoft
+// tenant; runMeetingsSync itself remains wiring, exercised by the smoke suite the
+// same as teamsSync.js's runSync.
 const prisma = require("./db");
 const graph = require("./teamsGraph");
 
@@ -45,6 +49,25 @@ const daysAhead = (n) => {
   const d = new Date(Date.now() + n * 24 * 60 * 60 * 1000);
   return d.toLocaleDateString("en-CA", { timeZone: require("./clock").ZONE });
 };
+
+/**
+ * A fingerprint of exactly the fields sent to Graph in createClassMeeting /
+ * updateClassMeeting — subject, date, start/end time, and the attendee list sorted
+ * (so the SAME set of attendees in a different array order, which owes nothing to
+ * anyone actually changing, does not read as a change). This REPLACES comparing
+ * TimetableEvent.updatedAt against teamsMeetingSyncedAt as the patch gate: updatedAt
+ * is `@updatedAt`, so the very update that stores teamsMeetingSyncedAt bumps
+ * updatedAt to a LATER instant than what was just recorded, making
+ * "updatedAt > teamsMeetingSyncedAt" permanently true from the first sync onward —
+ * every owned meeting got re-PATCHed, and every attendee re-notified by Microsoft,
+ * on every single hourly tick forever. A tick that finds nothing actually different
+ * about the meeting's own inputs now computes the same string as last time and
+ * skips the PATCH; teamsMeetingSyncedAt remains on the row purely as an
+ * informational "last touched" timestamp for the UI/debugging, never read here.
+ */
+function meetingFingerprint({ subject, date, startTime, endTime, attendeeEmails }) {
+  return [subject, date, startTime, endTime, ...[...attendeeEmails].sort()].join("|");
+}
 
 /**
  * The channel address(es) to invite alongside staff, for an event whose unit already
@@ -119,7 +142,7 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
           await graph.cancelClassMeeting({ organizerId, calendarEventId: ev.teamsCalendarEventId });
           await prisma.timetableEvent.update({
             where: { id: ev.id },
-            data: { teamsCalendarEventId: null, teamsMeetingSyncedAt: null, teamsJoinUrl: "" },
+            data: { teamsCalendarEventId: null, teamsMeetingSyncedAt: null, teamsMeetingFingerprint: null, teamsJoinUrl: "" },
           });
           // The registers this event built carry their own copies of the join
           // details (teamsJoinUrl/teamsMeetingId/teamsOrganizerId) so attendance can
@@ -144,13 +167,15 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
           ...(await channelEmailsFor(ev)),
         ])].filter(Boolean);
 
+        const fp = meetingFingerprint({ subject: title, date: ev.date, startTime: ev.startTime, endTime: ev.endTime, attendeeEmails: attendees });
+
         if (!ev.teamsCalendarEventId) {
           const { calendarEventId, joinUrl } = await graph.createClassMeeting({
             organizerId, subject: title, date: ev.date, startTime: ev.startTime, endTime: ev.endTime, attendeeEmails: attendees,
           });
           await prisma.timetableEvent.update({
             where: { id: ev.id },
-            data: { teamsCalendarEventId: calendarEventId, teamsJoinUrl: joinUrl, teamsMeetingSyncedAt: new Date() },
+            data: { teamsCalendarEventId: calendarEventId, teamsJoinUrl: joinUrl, teamsMeetingSyncedAt: new Date(), teamsMeetingFingerprint: fp },
           });
           // Carry to registers NOW rather than waiting for the next publish pass —
           // publishing is what BUILT these registers, so they already exist and the
@@ -164,17 +189,21 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
             data: { teamsJoinUrl: joinUrl, teamsOrganizerId: organizerId },
           });
           summary.meetingsCreated++;
-        } else if (!ev.teamsMeetingSyncedAt || ev.updatedAt > ev.teamsMeetingSyncedAt) {
-          // updatedAt is bumped by ANY change to the row — time, room, title, staff —
-          // so comparing it against teamsMeetingSyncedAt is what tells "the event
-          // moved since we last told Microsoft about it" apart from "nothing changed,
-          // skip the write". A meeting the college is not actually editing gets left
-          // alone on every tick rather than PATCHed for no reason.
+        } else if (fp !== ev.teamsMeetingFingerprint) {
+          // The gate: PATCH only when the fields Graph was actually told about
+          // (subject/date/times/attendees) differ from what was stored after the
+          // last successful create or PATCH. See meetingFingerprint's own comment
+          // for why this replaced comparing updatedAt against teamsMeetingSyncedAt
+          // — that comparison never went false once true, so it re-PATCHed (and
+          // re-notified every attendee) on every hourly tick forever. A room change
+          // or a title edit that does not touch any of these fields correctly does
+          // NOT trigger a PATCH here — Graph's calendar event has nothing to say
+          // about a room, and this sync's whole job is the meeting, not the event.
           await graph.updateClassMeeting({
             organizerId, calendarEventId: ev.teamsCalendarEventId,
             subject: title, date: ev.date, startTime: ev.startTime, endTime: ev.endTime, attendeeEmails: attendees,
           });
-          await prisma.timetableEvent.update({ where: { id: ev.id }, data: { teamsMeetingSyncedAt: new Date() } });
+          await prisma.timetableEvent.update({ where: { id: ev.id }, data: { teamsMeetingSyncedAt: new Date(), teamsMeetingFingerprint: fp } });
           summary.meetingsUpdated++;
         }
       } catch (e) {
@@ -207,4 +236,4 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
   }
 }
 
-module.exports = { runMeetingsSync, isRunning, sweepStaleRuns };
+module.exports = { runMeetingsSync, isRunning, sweepStaleRuns, meetingFingerprint };

@@ -68,14 +68,21 @@ function teamNameFor(cohort) {
  * again. `delegate` is the Prisma model delegate (prisma.staff or prisma.student) —
  * one function serves both tables because the caching shape is identical and both
  * carry the same `@@unique([msUserId])` constraint with the same failure mode.
+ * `note` is the caller's issue-recorder — passed in, not read off a shared closure,
+ * because this function is called for both staff and students from two different
+ * loops and has no run of its own to remember one.
  *
- * The P2002 swallow matters for the same reason it does in teamsSync.js: two people
- * legitimately sharing one Microsoft account (a shared demo login, a data error) must
- * not crash the run — it is reported as an issue by the caller instead — but the id
- * Graph just resolved is still correct and still usable for THIS run's addTeamMember
- * call even when it could not be cached for next time.
+ * The P2002 catch matters for the same reason it does in teamsSync.js:215 — two
+ * people legitimately sharing one Microsoft account (a shared demo login, a data
+ * error) must not crash the run. It previously stopped there with a comment
+ * claiming the caller reports the case, which was never true: the exception was
+ * simply swallowed and nothing downstream ever saw it. `note()` is now called
+ * directly here, matching teamsSync.js's own wording for the identical collision,
+ * so the run log actually carries the same fact the comment always claimed it did.
+ * The id Graph just resolved is still returned and still usable for THIS run's
+ * addTeamMember call even though it could not be cached for next time.
  */
-async function resolveAndCacheMsId(delegate, person) {
+async function resolveAndCacheMsId(delegate, person, note) {
   if (person.msUserId) return person.msUserId;
   const id = await graph.resolveUserId(person.email);
   if (!id) return null;
@@ -83,6 +90,7 @@ async function resolveAndCacheMsId(delegate, person) {
     await delegate.update({ where: { id: person.id }, data: { msUserId: id } });
   } catch (e) {
     if (e?.code !== "P2002") throw e;
+    note(`Microsoft account "${person.email}" appears to belong to two people — id not cached.`);
   }
   return id;
 }
@@ -102,16 +110,19 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
   let run;
   // The creator account resolved (or found missing) at most once per run, not once
   // per cohort — it is one setting, so ten cohorts needing a new Team in the same run
-  // must not ask Graph the same question ten times, and a college with no creator
-  // account configured must not get the same "not configured" issue logged once per
-  // cohort. `undefined` means "not yet asked"; `null` is a real, cached answer of "no
-  // creator account", distinct from never having asked — the same null-means-checked
-  // shape UnitChannel.channelEmail uses below.
+  // must not ask Graph the same question ten times. `undefined` means "not yet
+  // asked"; `null` is a real, cached answer of "no creator account", distinct from
+  // never having asked — the same null-means-checked shape UnitChannel.channelEmail
+  // uses below. Memoizing the RESOLUTION here only stops the repeated Graph call —
+  // it says nothing about how many times the cohort loop below reports the miss, so
+  // `creatorMissingNoted` (declared right after it) is what actually keeps that to
+  // once per run rather than once per cohort lacking a Team.
   let creatorId;
   async function getCreatorId() {
     if (creatorId === undefined) creatorId = await graph.resolveCreatorId();
     return creatorId;
   }
+  let creatorMissingNoted = false;
 
   try {
     run = await prisma.teamsProvisionSync.create({ data: { job: "provisioning", mode, startedBy } });
@@ -147,7 +158,14 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
         if (!cohortTeam) {
           const owner = await getCreatorId();
           if (!owner) {
-            note(`No Teams creator account is configured — "${cohort.name}" was not provisioned a Team.`);
+            // Noted ONCE per run, not once per cohort missing a Team — a college
+            // with no creator account configured and fifty un-provisioned cohorts
+            // does not need the identical sentence fifty times in its run log to
+            // understand the one thing that is actually wrong.
+            if (!creatorMissingNoted) {
+              note("No Teams creator account is configured — no new Teams were provisioned this run.");
+              creatorMissingNoted = true;
+            }
             continue; // nothing else in this cohort can proceed without a Team to attach it to
           }
           const displayName = teamNameFor(cohort);
@@ -171,24 +189,62 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
           select: { unitId: true },
           distinct: ["unitId"],
         });
-        const existingChannelUnitIds = new Set((cohortTeam.channels || []).map((c) => c.unitId));
+        const existingChannelsByUnitId = new Map((cohortTeam.channels || []).map((c) => [c.unitId, c]));
         for (const { unitId } of taughtUnits) {
-          if (existingChannelUnitIds.has(unitId)) continue; // never re-ask a channel that already exists
+          const existing = existingChannelsByUnitId.get(unitId);
+          if (existing) {
+            // The channel row already exists. channelEmail === "" is the schema's
+            // "never fetched" state (its own default, restored by the
+            // 20260912T160000 migration) — distinct from a stored `null`, which
+            // means the email WAS asked for and this tenant has none. Only the
+            // never-fetched case is worth asking again; a confirmed null is not
+            // re-asked, exactly as the comment beside the create branch below
+            // already promises.
+            if (existing.channelEmail === "") {
+              try {
+                const channelEmail = await graph.getChannelEmail({ groupId: cohortTeam.groupId, channelId: existing.channelId });
+                await prisma.unitChannel.update({ where: { id: existing.id }, data: { channelEmail: channelEmail ?? null } });
+                if (channelEmail === null) summary.channelEmailMissing++;
+              } catch (e) {
+                note(`Channel email retry for unit ${unitId} in "${cohortTeam.displayName}": ${e.message}`);
+              }
+            }
+            continue; // never re-ask a channel that already exists
+          }
           try {
             const unit = await prisma.unit.findUnique({ where: { id: unitId }, select: { code: true, name: true } });
             const displayName = truncateName(unit?.name || unit?.code || "Unit", MAX_CHANNEL_NAME);
             const { channelId } = await graph.createChannel({ groupId: cohortTeam.groupId, displayName });
-            // Fetched exactly once, right here, at creation — never again for this
-            // channel. A null answer is stored as null (not skipped, not retried):
-            // it means "this tenant has channel email disabled", and re-asking a
-            // stored null on every future run would just spend a Graph call
-            // re-learning a fact this run already learned for good.
-            const channelEmail = await graph.getChannelEmail({ groupId: cohortTeam.groupId, channelId });
-            await prisma.unitChannel.create({
-              data: { cohortTeamId: cohortTeam.id, unitId, channelId, channelEmail: channelEmail ?? null },
+            // Written IMMEDIATELY, with channelEmail left at its "" (never fetched)
+            // default, rather than after the getChannelEmail call below. The
+            // channel already exists in Microsoft the instant createChannel
+            // returns; if the process died, or getChannelEmail threw, between here
+            // and a combined create+email write, this row would never exist and a
+            // LATER run would see no UnitChannel for this unit and create a SECOND
+            // channel — the first one left live in Teams with nothing in this
+            // database ever pointing at it again (there is no "list channels and
+            // reconcile" pass; UnitChannel rows ARE this sync's only memory of what
+            // it already made). Splitting the write in two means a crash after this
+            // line still leaves a row a later run recognises and merely retries the
+            // email fetch for (the branch above), never a duplicate channel.
+            const created = await prisma.unitChannel.create({
+              data: { cohortTeamId: cohortTeam.id, unitId, channelId },
             });
             summary.channelsCreated++;
-            if (channelEmail === null) summary.channelEmailMissing++;
+            try {
+              // A null answer is stored as null (not left at ""): it means "this
+              // tenant has channel email disabled", and re-asking a stored null on
+              // every future run would just spend a Graph call re-learning a fact
+              // this run already learned for good.
+              const channelEmail = await graph.getChannelEmail({ groupId: cohortTeam.groupId, channelId });
+              await prisma.unitChannel.update({ where: { id: created.id }, data: { channelEmail: channelEmail ?? null } });
+              if (channelEmail === null) summary.channelEmailMissing++;
+            } catch (e) {
+              // The channel itself is safely recorded above; only the email lookup
+              // failed. channelEmail stays at its "" default, so the branch above
+              // retries JUST the email on a later run — not the whole channel.
+              note(`Channel email for unit ${unitId} in "${cohortTeam.displayName}": ${e.message}`);
+            }
           } catch (e) {
             note(`Channel for unit ${unitId} in "${cohortTeam.displayName}": ${e.message}`);
           }
@@ -205,7 +261,7 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
         });
         for (const { staff } of staffRows) {
           try {
-            const userId = await resolveAndCacheMsId(prisma.staff, staff);
+            const userId = await resolveAndCacheMsId(prisma.staff, staff, note);
             if (!userId) {
               summary.peopleUnmatched++;
               note(`Staff "${staff.email}" has no matching Microsoft account — not added as an owner of "${cohortTeam.displayName}".`);
@@ -239,7 +295,7 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
         });
         for (const student of students) {
           try {
-            const userId = await resolveAndCacheMsId(prisma.student, student);
+            const userId = await resolveAndCacheMsId(prisma.student, student, note);
             if (!userId) {
               summary.peopleUnmatched++;
               note(`Student "${student.email}" has no matching Microsoft account — not added to "${cohortTeam.displayName}".`);

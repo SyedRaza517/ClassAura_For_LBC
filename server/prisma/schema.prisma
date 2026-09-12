@@ -1520,7 +1520,12 @@ model CohortTeam {
 // One channel per unit inside a cohort's Team. channelEmail is cached because it is
 // how the meeting invite reaches the channel (app-only cannot post messages), and
 // null records "this tenant has channel email disabled" after one failed read —
-// distinct from "never fetched", which is the empty string default's job.
+// distinct from "never fetched", which is the empty string default's job. The
+// `@default("")` was added by the engine review that noticed this comment promised
+// three states while the column, with no default, actually collapsed "never
+// fetched" into the same NULL as "confirmed none" for any row inserted without
+// naming a value — teamsProvisioning.js now relies on this default to tell the two
+// apart and retry only the genuinely-never-fetched rows.
 model UnitChannel {
   id           String     @id @default(cuid())
   cohortTeam   CohortTeam @relation(fields: [cohortTeamId], references: [id], onDelete: Cascade)
@@ -1528,7 +1533,7 @@ model UnitChannel {
   unit         Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
   unitId       String
   channelId    String
-  channelEmail String?
+  channelEmail String?    @default("")
   createdAt    DateTime   @default(now())
 
   @@unique([cohortTeamId, unitId])
@@ -3528,7 +3533,25 @@ model TimetableEvent {
   // When the meeting was last created or updated by the automation. Null means never
   // synced — distinct from teamsAutoMeeting being false, which means "don't sync",
   // so the two together answer both "should we?" and "did we, and when?".
+  //
+  // INFORMATIONAL ONLY — never a gate. It was briefly compared against `updatedAt`
+  // to decide whether a change warranted re-PATCHing Microsoft ("has this event
+  // moved since we last told Graph about it"), and that comparison was wrong: this
+  // very column is written by the SAME update that would have bumped `updatedAt`
+  // (an `@updatedAt` field, so Prisma stamps it on every write to the row,
+  // including this one), which made "updatedAt > teamsMeetingSyncedAt" permanently
+  // true from the first sync onward — every owned meeting got re-PATCHed, and every
+  // attendee re-notified by Microsoft, on every single hourly tick forever.
+  // teamsMeetingFingerprint below is the actual gate now; this column is kept only
+  // for the UI/debugging question "when did the automation last touch this".
   teamsMeetingSyncedAt DateTime?
+  // A fingerprint of the fields actually sent to Graph in createClassMeeting /
+  // updateClassMeeting (subject, date, start/end time, the sorted attendee list) —
+  // see teamsMeetingSyncedAt's comment above for what this replaced and why. The
+  // engine PATCHes an owned meeting only when this differs from a freshly computed
+  // fingerprint, and stores the new one after a successful PATCH (or the first
+  // create). Null for an event with no owned meeting yet.
+  teamsMeetingFingerprint String?
 
   // NULLABLE, and that nullability is the point of this table. An exam, a workshop,
   // a study-support session or a staff meeting belongs to no module -- which is

@@ -215,8 +215,18 @@ async function maybeRunTeamsProvisioning() {
   if (!teamsGraph.isConfigured() || teamsProvisioning.isRunning()) return false;
   if (localTime().slice(0, 2) !== SYNC_HOUR) return false;
   await teamsProvisioning.sweepStaleRuns();
+  // 12 hours, matching maybeSyncMoodle's own dedupe — not the 30-minute window the
+  // two HOURLY jobs above use. This job's own guard only narrows "which tick" down
+  // to the ones inside a single hour-of-day band, the same as Moodle's; a 30-minute
+  // dedupe sized for a job that ticks every hour is too short to cover "this hour's
+  // process restarted twice" or "the hour-02 tick landed, the process bounced, and
+  // the NEXT eligible tick is still inside hour 02" — both of which a 30-minute
+  // window would let run twice in the same night. 12 hours safely spans the whole
+  // remaining day without risking a false "already ran" carrying into TOMORROW
+  // night's window, the same trade-off maybeSyncMoodle already made for the
+  // identical once-a-night shape.
   const recent = await prisma.teamsProvisionSync.count({
-    where: { job: "provisioning", mode: "scheduled", status: { in: ["ok", "failed"] }, startedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+    where: { job: "provisioning", mode: "scheduled", status: { in: ["ok", "failed"] }, startedAt: { gte: new Date(Date.now() - 12 * 60 * 60 * 1000) } },
   });
   if (recent > 0) return false; // tonight's run already happened
   console.log("Scheduler: starting the nightly Teams provisioning sync");
