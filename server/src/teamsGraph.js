@@ -560,6 +560,14 @@ async function resolveUserId(email) {
 
 /** The Settings screen's Test button: names the failing step, not just "failed". */
 async function testConnection() {
+  // Prime the saved-credentials cache BEFORE the synchronous isConfigured() gate,
+  // exactly as sharepoint.js's testConnection does. Without this, a cold process
+  // answers "Not configured" to the very Test press that follows Save — peek() falls
+  // back to the environment, which on a deployed server carries no TEAMS_* variables —
+  // and the admin is told their freshly saved credentials do not exist. Found by the
+  // 12 Sep end-to-end UI run, not by the smoke suites, whose /test calls happened to
+  // follow other requests that had already primed the cache.
+  await cfg.load("teams");
   if (!isConfigured()) return { ok: false, note: "Not configured — enter the tenant ID, client ID, client secret and at least one organizer account." };
   try {
     const organizers = await resolveOrganizers();
