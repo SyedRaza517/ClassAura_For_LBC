@@ -33,10 +33,12 @@ import { isNativeApp } from "./PhoneShell";
 //
 // It is a flag rather than commented-out code deliberately — the same approach
 // TOTP_ENFORCED takes in server/src/routes/auth.js. Commenting out spans six files
-// (this one, BiometricGate, BiometricSignIn, StaffHub's BiometricSetting, StudentApp
-// and App), leaves dead imports behind, and makes the diff that restores it a
-// reconstruction job instead of a one-character change. Everything below stays
-// compiled, type-consistent and reviewable; it simply reports "unavailable".
+// (this one, BiometricGate, BiometricSignIn, student/BiometricSetting.jsx — shared by
+// both StaffHub and the student More screen since the Task 3 mechanical split moved it
+// out of StaffHub.jsx — StudentApp and App), leaves dead imports behind, and makes the
+// diff that restores it a reconstruction job instead of a one-character change.
+// Everything below stays compiled, type-consistent and reviewable; it simply reports
+// "unavailable".
 //
 // Anyone who had already switched the lock on is NOT stranded: isBiometricArmed()
 // returns false while this is off, so useAppLock never locks and they sign in with

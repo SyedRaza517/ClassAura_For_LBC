@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, Suspense } from "react";
 import useReveal from "./RevealButton";
 import { useAuth } from "./auth";
 import { useApiStore } from "./store";
@@ -14,7 +14,6 @@ import AdmissionApply from "./AdmissionApply";
 import { useIsHandset, isNativeApp } from "./PhoneShell";
 import { BrandMark } from "./Brand";
 import { getBranding, onBranding } from "./branding";
-import StudentApp from "./StudentApp";
 import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
 import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
@@ -22,9 +21,25 @@ import { useBackHandler } from "./backButton";
 import { StaffApp, AdminDashboard } from "./StaffHub";
 import { capturePendingQr, hasPendingQr, clearPendingQr } from "./pendingQr";
 import { LogOut, CheckCircle2, XCircle, Sparkles, Loader2, GraduationCap, Clock, KeyRound, Lock, ShieldCheck, X, WifiOff } from "lucide-react";
+// Only the loading skeleton, for the Suspense fallback below — not the rest of the
+// student app. A named import off the barrel still only pulls in what LoadingScreen
+// itself needs (Screen + Skeleton), not screens/ or the other primitives.
+import { LoadingScreen as StudentLoadingScreen } from "./student/ui";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
 const initialsOf = (name) => String(name || "").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+
+// The staff app (StaffHub.jsx, ~16k lines) is imported statically above for the
+// Shell/AdminDashboard routes, so it is already part of this file's own chunk for every
+// user — staff, student or applicant. Loading StudentApp eagerly here would put the
+// student screens in that SAME chunk too, which is harmless for staff but means a
+// student downloads staff-only code they will never render. React.lazy gives the
+// student app its own chunk, fetched only when `user.kind === "student"` actually
+// renders it below. This only pays off because BiometricSetting no longer drags
+// StaffHub.jsx in through StudentApp's own imports (see student/BiometricSetting.jsx) —
+// splitting the entry point does nothing if the split-off chunk still statically
+// imports the thing it was split away from.
+const StudentApp = React.lazy(() => import("./student/StudentApp"));
 
 // Small live clock for the top bar (ticks every 30s).
 function LiveClock() {
@@ -394,7 +409,13 @@ export default function App() {
     <>
       <style>{GLOBAL_STYLE}</style>
       <div className="w-full" style={{ height: "100dvh", minHeight: "100dvh" }}>
-        <StudentApp user={user} logout={logout} />
+        {/* Suspense fallback matches StudentApp's own LoadingScreen (skeleton tiles,
+            same padding) — the chunk fetch is usually sub-second on a warm cache, so
+            this reads as the screen still loading its data rather than a different
+            loading state taking over first. */}
+        <Suspense fallback={<StudentLoadingScreen />}>
+          <StudentApp user={user} logout={logout} />
+        </Suspense>
       </div>
       {/* Students reach the lock gate above like everyone else, but this return sits
           before the staff one, so they never saw the offer to switch it on — the
