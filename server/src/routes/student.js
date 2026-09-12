@@ -20,7 +20,17 @@ const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHEC
 const { checkPresence } = require("../presence");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
-const { isString, isRealDate } = require("../validate");
+const { isString, isRealDate, MAX_TEXT } = require("../validate");
+// A SECOND require() OF THE SAME MODULE, on purpose -- see the comment on
+// module.exports at the bottom of mitigations.js. index.js also requires that file
+// (to mount its router at /api/mitigations); Node caches the module, so this is the
+// same object, and pulling validateWindow/CATEGORIES off it here is how a student
+// raising their own claim is held to the identical window-cap and category rules as
+// a staff member raising one for them, without a second copy of either to drift.
+const { validateWindow: validateMitigationWindow, CATEGORIES: MITIGATION_CATEGORIES } = require("./mitigations");
+// The college's OWN cap on how long a single claim may cover -- mitigationWindowMaxDays,
+// read fresh on every POST rather than cached here, exactly as the staff route does.
+const mcSettings = require("../prediction/settings");
 
 router.use(requireAuth, requireStudent);
 
@@ -1536,6 +1546,146 @@ router.post("/me/referrals/:id/messages", async (req, res) => {
   });
 
   res.status(201).json(sReferralMessage(created));
+});
+
+/* ===================== mitigating circumstances, self-service ===================== */
+
+// THE GAP THIS FILLS. Until now the only route onto MitigatingCircumstance was
+// requirePage("mitigations") — a member of staff typing in what a student told them
+// on the phone or in an office. A student who already knows the dates and wants to
+// put something on record between one conversation and the next had nowhere to do
+// that themselves; they could only wait for a member of staff to write it up.
+//
+// SPECIAL CATEGORY DATA, SAME AS THE STAFF ROUTE, AND SERIALISED MORE NARROWLY STILL.
+// mitigations.js's own file header explains the three-way split at length (its own
+// admin page, an audit trail that never carries the reason, a prediction select
+// narrower than the model) — every line of that applies here unchanged, because this
+// is the SAME table. What changes for a student reading their OWN rows is that even
+// `detail` — their own account, in their own words — does not leave this route: the
+// allowlist below stops at the "what was decided" half of the model (status, the
+// window, coversAttendance, category, the dates) and never the "why" half beyond the
+// category, and never anything from a decision beyond WHEN. `decisionNote` is "shown
+// to staff" by the model's own comment; `decidedBy` and the adjustment rows are
+// administrative detail about how the college actioned it, not about the student.
+const sStudentMitigation = (m) => ({
+  id: m.id,
+  status: m.status,
+  coversFrom: m.coversFrom,
+  coversTo: m.coversTo,
+  coversAttendance: m.coversAttendance,
+  category: m.category,
+  raisedOn: m.raisedOn,
+  decidedOn: m.decidedOn,
+  createdAt: m.createdAt,
+});
+
+// GET /api/student/me/mitigations — this student's own claims, newest raised first.
+router.get("/me/mitigations", async (req, res) => {
+  const rows = await prisma.mitigatingCircumstance.findMany({
+    where: { studentId: req.user.id },
+    orderBy: [{ raisedOn: "desc" }, { createdAt: "desc" }],
+  });
+  res.json({ claims: rows.map(sStudentMitigation) });
+});
+
+// POST /api/student/me/mitigations — a student raises their own claim.
+//
+// THE SAME RULES AS THE STAFF ROUTE, REUSED RATHER THAN RE-IMPLEMENTED.
+// validateMitigationWindow is mitigations.js's own validateWindow: same real-date
+// check, same "ends before it starts" refusal, same cap against the college's own
+// mitigationWindowMaxDays setting. Re-typing that arithmetic here would be exactly
+// the kind of second copy this codebase keeps finding drifted — see conventions.md
+// on rate limiters and locks living in one place for the same reason.
+//
+// status IS ALWAYS "open" and cannot be set by the caller — a student cannot
+// self-approve. createdBy is stamped the literal "student" rather than a name pulled
+// from req.user (the staff route stamps the deciding administrator's own name for
+// exactly the opposite reason: THERE, who decided matters; HERE, only that a student
+// raised it does — req.user.id already owns the row via studentId).
+router.post("/me/mitigations", async (req, res) => {
+  const b = req.body || {};
+
+  const cfg = await mcSettings.get();
+  const win = await validateMitigationWindow(b, cfg);
+  if (win.error) return res.status(400).json({ error: win.error });
+
+  const category = str(b.category);
+  if (category && !MITIGATION_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: "Unknown category." });
+  }
+  const detail = str(b.detail).slice(0, MAX_TEXT);
+
+  // ONE OPEN CLAIM PER OVERLAPPING WINDOW, refused with a 409 naming the claim
+  // already standing. This is a dedupe, the same shape as the self-referral route's
+  // "one open request per team" a few hundred lines up — a double-tapped submit
+  // button must not queue the same circumstance twice for an administrator to
+  // untangle, and two OPEN claims for overlapping days is exactly that, not two
+  // separate circumstances (a second, genuinely different claim for the SAME window
+  // is something a member of staff sorts out on the admin screen, not something this
+  // route should silently accept a duplicate of). Overlap, not equality:
+  // `existing.coversFrom <= coversTo && existing.coversTo >= coversFrom` is the
+  // standard interval-overlap test, and it is what catches a new claim that sits
+  // wholly inside — or wholly around — an existing one, not only an exact repeat.
+  // Scoped to OPEN only: a claim that was rejected or withdrawn does not block a
+  // fresh attempt at the same dates, and an approved one covering the period means
+  // there is nothing left to ask for.
+  const overlapping = await prisma.mitigatingCircumstance.findFirst({
+    where: {
+      studentId: req.user.id,
+      status: "open",
+      coversFrom: { lte: win.coversTo },
+      coversTo: { gte: win.coversFrom },
+    },
+  });
+  if (overlapping) {
+    return res.status(409).json({
+      error: `You already have an open claim covering ${overlapping.coversFrom} to ${overlapping.coversTo}. `
+        + `Wait for a decision on that one rather than raising another for the same period.`,
+    });
+  }
+
+  // WHEN THE STUDENT RAISED IT — today, by definition, on this route. The staff form
+  // lets an administrator backdate this to when the student actually TOLD them,
+  // because those differ by days or weeks when the news travels through a person
+  // first; here the student is the one typing, so there is no gap to record.
+  const raisedOn = localDate();
+  if (!isRealDate(raisedOn)) return res.status(500).json({ error: "Clock misconfigured" });
+
+  const row = await prisma.mitigatingCircumstance.create({
+    data: {
+      studentId: req.user.id,
+      status: "open",
+      coversFrom: win.coversFrom,
+      coversTo: win.coversTo,
+      coversAttendance: b.coversAttendance === true,
+      category: category || null,
+      detail,
+      raisedOn,
+      createdBy: "student",
+    },
+  });
+
+  // Same reasoning as every other write in this file that touches a score: cheap to
+  // flag, and the runner picks it up on its own schedule. Never rescores inline — a
+  // student submitting a form must not wait on prediction arithmetic.
+  try { await predictionRunner.markStale([req.user.id]); }
+  catch (e) { console.error("[prediction] could not flag a score after a self-raised mitigation claim:", e.message); }
+
+  // NO CATEGORY, NO DETAIL — the identical rule mitigations.js's own audit.record call
+  // follows, for the identical reason: the audit log is read on Settings by
+  // administrators who were never granted the mitigations page, so writing either
+  // there would route health data past the access control this feature exists to
+  // apply.
+  audit.record(req, {
+    action: "mitigation.created", entity: "MitigatingCircumstance", entityId: row.id,
+    summary: `${req.user.name || "A student"} raised their own mitigating circumstances claim, covering ${row.coversFrom} to ${row.coversTo}`,
+    after: {
+      studentId: req.user.id, status: row.status, coversFrom: row.coversFrom, coversTo: row.coversTo,
+      coversAttendance: row.coversAttendance, raisedOn: row.raisedOn,
+    },
+  });
+
+  res.status(201).json(sStudentMitigation(row));
 });
 
 // POST /api/student/me/query — the student sends a query to the college. Admins pick

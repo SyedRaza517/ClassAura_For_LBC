@@ -32,6 +32,7 @@ const { localDate } = require("../clock");
 const settings = require("../prediction/settings");
 const predictionRunner = require("../prediction/runner");
 const audit = require("../audit");
+const { notifyStudent } = require("../notify");
 
 router.use(requireAuth, requirePage("mitigations"));
 
@@ -322,6 +323,38 @@ router.patch("/:id", async (req, res) => {
     },
   });
 
+  // ONE NOTIFICATION PER DECISION, and only for one — `decided` is already true only on
+  // the approved/rejected transition above, never on a plain edit (correcting a window,
+  // adding a decisionNote to an already-decided claim) and never on a re-decision of a
+  // claim that was already approved or rejected. Reopening a decided claim (the branch
+  // just above `decided` is set) does not notify either: that is the college retracting
+  // its own decision, not a new one to announce.
+  //
+  // WHAT IS SAID, AND WHAT IS DELIBERATELY LEFT OUT. The outcome only — decisionNote
+  // never appears in `message`, matching every other line in this file: the note is
+  // staff's account of the decision, not the student's, and this is the one place that
+  // account could otherwise leak straight to the person it is about via a push
+  // notification neither audit.record nor sMitigation would ever have shown them.
+  // link: "mitigations" opens the student app's own claims screen, not this admin one —
+  // the two are different routers behind different auth, and the app resolves the link
+  // by its own screen keys.
+  if (decided) {
+    try {
+      await notifyStudent(row.studentId, {
+        type: row.status === "approved" ? "success" : "info",
+        message: row.status === "approved"
+          ? `Your mitigating circumstances claim covering ${row.coversFrom} to ${row.coversTo} has been approved.`
+          : `A decision has been made on your mitigating circumstances claim covering ${row.coversFrom} to ${row.coversTo}. It was not approved — contact the college if you have questions.`,
+        link: "mitigations",
+      });
+    } catch (e) {
+      // notifyStudent already swallows its own errors and returns null — this catch is
+      // belt-and-braces so a future change to that contract still cannot turn a decision
+      // that WROTE successfully into a 500 answered to the staff member who made it.
+      console.error("[mitigations] could not notify the student of a decision:", e.message);
+    }
+  }
+
   res.json(sMitigation(row));
 });
 
@@ -451,4 +484,17 @@ router.delete("/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// EXPORTED FOR routes/student.js, ALONGSIDE THE ROUTER, NEVER INSTEAD OF IT. The
+// window cap is a college SETTING (mitigationWindowMaxDays, prediction/settings.js),
+// and CATEGORIES is the one list of what a claim may be filed under -- both belong in
+// exactly one place, and a student raising their own claim must be held to the SAME
+// rules as a staff member raising one on their behalf. Attaching them to the router
+// function (rather than replacing `module.exports` with an object) is deliberate:
+// index.js does `wrapAsync(require("./routes/mitigations"))` and wrapAsync expects an
+// Express Router -- a function with a `.stack` -- so `module.exports` must stay that
+// function. A Router is a function, and a function is an object, so extra named
+// properties ride along for a second `require("./mitigations")` in student.js without
+// touching what index.js sees at all.
 module.exports = router;
+module.exports.validateWindow = validateWindow;
+module.exports.CATEGORIES = CATEGORIES;

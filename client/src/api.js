@@ -964,6 +964,15 @@ export const api = {
   sendStudentReferral: (body) => request("/student/me/referrals", { method: "POST", body }),
   studentReferralMessages: (id) => request(`/student/me/referrals/${id}/messages`),
   addStudentReferralMessage: (id, body) => request(`/student/me/referrals/${id}/messages`, { method: "POST", body: { body } }),
+  // Mitigating circumstances, self-service. The GET is allowlisted server-side down
+  // to the "what was decided" half of the model — never decisionNote/decidedBy/the
+  // adjustment rows, and not even this student's own `detail` (see student.js's own
+  // comment on sStudentMitigation for why that goes further than the staff route's
+  // confidentiality split). The POST body is { coversFrom, coversTo, category?,
+  // detail, coversAttendance? }; a 409 means an open claim already covers an
+  // overlapping window and the server's message names its dates.
+  studentMitigations: () => request("/student/me/mitigations"),
+  addStudentMitigation: (body) => request("/student/me/mitigations", { method: "POST", body }),
   addStudentReview: (data) => request("/student-reviews", { method: "POST", body: data }),
   updateStudentReview: (id, data) => request(`/student-reviews/${id}`, { method: "PUT", body: data }),
   removeStudentReview: (id) => request(`/student-reviews/${id}`, { method: "DELETE" }),

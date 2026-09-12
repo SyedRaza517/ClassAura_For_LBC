@@ -24,6 +24,7 @@ import ReviewsScreen from "./screens/Reviews";
 import TimetableScreen from "./screens/Timetable";
 import QueryScreen from "./screens/Query";
 import SupportScreen from "./screens/Support";
+import MitigationsScreen from "./screens/Mitigations";
 import MoreScreen from "./screens/More";
 
 /* ============================== app shell ============================== */
@@ -240,7 +241,7 @@ export default function StudentApp({ user, logout }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, reviews]);
 
-  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", more: "More" }[screen];
+  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", mitigations: "Mitigating Circumstances", more: "More" }[screen];
   const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen, bands };
 
   return (
@@ -262,6 +263,10 @@ export default function StudentApp({ user, logout }) {
           {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
+          {/* Self-contained, unlike the screens above it — its own data is not part of
+              this shell's central load() (see Mitigations.jsx's own file comment for
+              why), so it carries no props from `shared` at all. */}
+          {screen === "mitigations" && <MitigationsScreen />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
         {/* `=== false` rather than `!`: anyCheckInWay is null until the first load

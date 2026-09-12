@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   KeyRound, Lock, Trash2, AlertTriangle, LogOut, CheckCircle2, Loader2, CalendarDays, Info,
-  HeartHandshake, QrCode, Nfc,
+  HeartHandshake, HeartPulse, QrCode, Nfc,
 } from "lucide-react";
 import { Screen, Card, Row } from "../ui";
 import useReveal from "../../RevealButton";
@@ -118,6 +118,11 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
             thumb can find, and this is a screen a student visits when something has
             happened rather than every day. */}
         <Row Icon={HeartHandshake} label="Support referrals" sub="Teams you have been referred to" onClick={() => setScreen("support")} />
+        {/* Mitigating circumstances — its own row rather than folded into Support:
+            those are two different queues, read by two different sets of staff, and
+            merging their entry points would misfile a health-and-deadlines claim as
+            a general support request. */}
+        <Row Icon={HeartPulse} label="Mitigating circumstances" sub="Tell the college about your circumstances" onClick={() => setScreen("mitigations")} />
       </Card>
 
       {pwOk && <div className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800"><CheckCircle2 size={15} /> Password changed.</div>}
