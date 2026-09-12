@@ -417,10 +417,18 @@ model Staff {
 // registered to two people — when someone else signs in on a shared phone the row
 // is reassigned rather than duplicated, so the previous user stops receiving
 // notifications for an account they no longer hold.
+// staffId was NOT NULL and the only owner until the student app needed to register its
+// own devices for push. Widened the same way, and for the same reason, as Notification
+// above: nullable staffId alongside an equally nullable studentId, with EXACTLY ONE of
+// the two ever set. Enforced by a raw-SQL CHECK the migration adds
+// (DeviceToken_one_owner_check) — Prisma cannot see it here either; see Notification's
+// comment and the HndSession partial-index precedent it points at.
 model DeviceToken {
   id         String   @id @default(cuid())
-  staff      Staff    @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  staffId    String
+  staff      Staff?   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  staffId    String?
+  student    Student? @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId  String?
   /// Unique — see @@unique([token]) below.
   ///
   /// It was unique per INSTITUTION while one database served several, because an FCM
@@ -435,6 +443,7 @@ model DeviceToken {
 
   @@unique([token])
   @@index([staffId])
+  @@index([studentId])
 }
 
 // A single-use "forgot password" token.
@@ -520,10 +529,23 @@ model SignupRequest {
 }
 
 // A persisted, per-user notification (survives reload, unlike the in-memory toasts).
+//
+// staffId was NOT NULL and the only owner until the student app needed its own
+// persisted feed (a check-in confirmed, a query answered, a streak milestone). Widened
+// to nullable and given an equally nullable studentId, with EXACTLY ONE of the two ever
+// set — a row owned by nobody is unreadable by anyone, and a row owned by both would
+// leak between the staff and student audiences, which must never read each other's
+// notifications. That invariant is a raw-SQL CHECK the migration adds
+// (Notification_one_owner_check); Prisma cannot express a cross-column constraint like
+// "exactly one of these two is null" and never shows it in this file — the same
+// situation as the two partial unique indexes on HndSession (see that model's comment,
+// schema.prisma:~1213).
 model Notification {
   id        String   @id @default(cuid())
-  staff     Staff    @relation("StaffNotifications", fields: [staffId], references: [id], onDelete: Cascade)
-  staffId   String
+  staff     Staff?   @relation("StaffNotifications", fields: [staffId], references: [id], onDelete: Cascade)
+  staffId   String?
+  student   Student? @relation("StudentNotifications", fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String?
   type      String   @default("info") // info | success | error
   message   String
   link      String? // optional client route hint, e.g. "balance"
@@ -531,6 +553,7 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([staffId, read])
+  @@index([studentId, read])
 }
 
 model CheckIn {
@@ -1035,6 +1058,12 @@ model Student {
   interventions     Intervention[]
   circumstances     MitigatingCircumstance[]
   vleEngagement     VleEngagement[]
+  // The student app's own persisted notification feed and registered push devices —
+  // same two models Staff already uses, widened rather than duplicated. See
+  // Notification's and DeviceToken's comments for why staffId/studentId are both
+  // nullable with exactly one set.
+  notifications     Notification[] @relation("StudentNotifications")
+  deviceTokens      DeviceToken[]
 
   /// Which academic department this student belongs to.
   ///
