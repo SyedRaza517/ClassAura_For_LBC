@@ -598,6 +598,10 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [gq, setGq] = useState("");
+  // The list's school filter — a FILTER, not the create form's picker below, so unlike
+  // that picker it lists retired schools (a group can still be attached to one) and
+  // offers "No school" for groups whose course has none. "" = every school.
+  const [gSchool, setGSchool] = useState("");
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState([]);
   const [making, setMaking] = useState(false);
@@ -798,7 +802,8 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
   // name on its own is an intake label — "SEP 25" — that repeats across every course in
   // the college. Typing "computing" has to be able to find them.
   const gterm = gq.trim().toLowerCase();
-  const shownGroups = groups.filter((g) => !gterm || `${g.name || ""} ${g.courseName || ""} ${g.schoolName || ""}`.toLowerCase().includes(gterm));
+  const inSchool = (g) => !gSchool || (gSchool === "none" ? !g.academicDepartmentId : g.academicDepartmentId === gSchool);
+  const shownGroups = groups.filter((g) => inSchool(g) && (!gterm || `${g.name || ""} ${g.courseName || ""} ${g.schoolName || ""}`.toLowerCase().includes(gterm)));
 
   const memberIds = new Set(members.map((m) => m.id));
   const term = q.trim().toLowerCase();
@@ -852,6 +857,17 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
               </div>
             </Field>
           </div>
+          {schools.length > 0 && (
+            <div className="min-w-[160px]">
+              <Field label="School">
+                <select className={inputCls} value={gSchool} onChange={(e) => setGSchool(e.target.value)}>
+                  <option value="">All schools</option>
+                  {schools.map((s) => <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (retired)" : ""}</option>)}
+                  <option value="none">No school</option>
+                </select>
+              </Field>
+            </div>
+          )}
           <button onClick={() => { setMaking((v) => !v); setErr(""); setNote(""); }}
             className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">
             {making ? <><X size={15} /> Cancel</> : <><Plus size={15} /> New group</>}

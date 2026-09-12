@@ -75,14 +75,35 @@ router.get("/roster", async (_req, res) => {
 router.get("/", async (_req, res) => {
   const rows = await prisma.ism.findMany({
     orderBy: { createdAt: "desc" },
-    include: { admission: { select: { id: true, firstName: true, surname: true, course: true } } },
+    // linkedStudentId is selected only to resolve a school below; it is stripped from
+    // the response, which keeps shipping the same four admission fields it always has.
+    include: { admission: { select: { id: true, firstName: true, surname: true, course: true, linkedStudentId: true } } },
   });
-  res.json(rows.map((r) => ({
-    ...r,
-    applicant: r.admission
-      ? { id: r.admission.id, name: [r.admission.firstName, r.admission.surname].filter(Boolean).join(" ").trim(), course: r.admission.course }
-      : null,
-  })));
+  // The school an ISM reaches only by two hops — Ism -> Admission -> linkedStudent — and
+  // the second hop is resolved as a TOP-LEVEL query, not an include: Admission is
+  // UNSCOPED and Student is scoped, and a nested include is the leak
+  // smoke-academic-nested-reads.mjs holds closed. Top-level, the student read stays
+  // inside the caller's scope. Unlinked rows — the common case until the backfill tool
+  // has run (see prediction-tripwires) — land in the filter's "Not assigned" bucket.
+  const linkedIds = [...new Set(rows.map((r) => r.admission?.linkedStudentId).filter(Boolean))];
+  const deptByStudent = new Map(
+    linkedIds.length
+      ? (await prisma.student.findMany({
+          where: { id: { in: linkedIds } },
+          select: { id: true, academicDepartmentId: true },
+        })).map((s) => [s.id, s.academicDepartmentId])
+      : [],
+  );
+  res.json(rows.map((r) => {
+    const { admission, ...rest } = r;
+    return {
+      ...rest,
+      applicant: admission
+        ? { id: admission.id, name: [admission.firstName, admission.surname].filter(Boolean).join(" ").trim(), course: admission.course }
+        : null,
+      academicDepartmentId: (admission?.linkedStudentId && deptByStudent.get(admission.linkedStudentId)) || null,
+    };
+  }));
 });
 
 router.post("/", async (req, res) => {

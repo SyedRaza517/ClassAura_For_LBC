@@ -1008,6 +1008,13 @@ export const api = {
   // Two access boundaries with one English word between them, so every name here is
   // spelled academicDepartment.
   academicDepartments: () => request("/academic-departments"),
+  // The school list as a filter vocabulary — id, name, colour, active; retired included.
+  // Gated on being signed in and nothing else, unlike the two page-gated lists above and
+  // in timetabling: school-filter dropdowns sit on screens across many different page
+  // grants, and a fetch that 403s makes the filter silently vanish. Use THIS one for
+  // filters; keep academicDepartments() (counts, settings screen) and ttDepartments()
+  // (the planner) for their own screens.
+  schoolOptions: () => request("/academic-departments/options"),
   saveAcademicDepartments: (departments) => request("/academic-departments", { method: "PUT", body: { departments } }),
   // The two counts that make both fail directions visible: how many accounts see
   // everything, and how much is not assigned to a department yet.

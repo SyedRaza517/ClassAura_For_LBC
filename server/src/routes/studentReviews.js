@@ -88,6 +88,9 @@ router.get("/roster", async (_req, res) => {
         // body. The picker needs a name and reference to identify a student, not a
         // contact detail.
         id: true, firstName: true, lastName: true, studentRef: true, initials: true, colour: true,
+        // The school, for the admin list's school filter. An id, not a contact detail —
+        // sStudent already ships it to any authenticated caller, so this widens nothing.
+        academicDepartmentId: true,
         // Both routes to a course, so the app can pick the student and have their
         // course follow. Only 4 of 136 students have a cohort, so the enrolments are
         // what actually answers it for almost everyone.
@@ -115,6 +118,7 @@ router.get("/roster", async (_req, res) => {
         // No email — it isn't selected above (contact details are withheld from this
         // roster). Emitting the undefined field was harmless but misleading.
         studentRef: s.studentRef, initials: s.initials, colour: s.colour,
+        academicDepartmentId: s.academicDepartmentId ?? null,
         courseId: s.cohort?.courseId || (fromUnits.length === 1 ? fromUnits[0] : null),
       };
     }),

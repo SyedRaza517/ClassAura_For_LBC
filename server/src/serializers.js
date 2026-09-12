@@ -72,6 +72,9 @@ const sSignup = (r) => ({
   name: r.name, email: r.email, role: r.jobTitle, dept: r.dept, site: r.site ?? null,
   status: r.status, note: r.note, decidedBy: r.decidedBy, decidedAt: r.decidedAt,
   requestedAt: r.createdAt,
+  // The school this request SUGGESTS, never a membership — schema.prisma spells out why
+  // the distinction matters. Shipped so the sign-ups queue can be filtered by school.
+  academicDepartmentId: r.academicDepartmentId ?? null,
 });
 const sNotification = (n) => ({ id: n.id, type: n.type, message: n.message, link: n.link, read: n.read, at: n.createdAt });
 // tagId is named explicitly for the same reason as checkedInAt below — sCheckin is an
@@ -116,7 +119,13 @@ const sAcademicDepartment = (d) => ({
   ...(d._count ? { courseCount: d._count.courses, studentCount: d._count.students } : {}),
 });
 
-const sCohort = (c) => ({ id: c.id, name: c.name, courseId: c.courseId, startDate: c.startDate ?? null, createdAt: c.createdAt });
+const sCohort = (c) => ({
+  id: c.id, name: c.name, courseId: c.courseId, startDate: c.startDate ?? null, createdAt: c.createdAt,
+  // Which school this cohort belongs to — the stored copy of its course's, kept in step
+  // at write time (see academicDepartments.assignCourses). Shipped so a list can be
+  // filtered by school in the browser; null means "not assigned" and is a real answer.
+  academicDepartmentId: c.academicDepartmentId ?? null,
+});
 const sTerm = (t) => ({ id: t.id, cohortId: t.cohortId, year: t.year, index: t.index, name: t.name, start: t.start, end: t.end });
 const sUnit = (m) => ({
   id: m.id, code: m.code, unitNumber: m.unitNumber ?? "", name: m.name, tutor: m.tutor, courseId: m.courseId ?? null,
@@ -139,6 +148,10 @@ const sUnit = (m) => ({
   leaderStaffId: m.leaderStaffId ?? null,
   leaderName: m.leaderStaff?.name ?? null,
   cohortId: m.cohortId ?? null, termId: m.termId ?? null,
+  // Which school owns this unit — the stored copy of its course's, like sCohort above.
+  // Without it the planner rebuilt unit -> course -> school in memory on every render;
+  // shipping the stored answer lets any list filter by school directly.
+  academicDepartmentId: m.academicDepartmentId ?? null,
   // Present only when the query asked Prisma to count relations.
   ...(m._count ? { sessionCount: m._count.sessions, studentCount: m._count.enrolments } : {}),
 });

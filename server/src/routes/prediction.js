@@ -38,6 +38,28 @@ const tripwires = require("../prediction/tripwires");
 
 router.use(requireAuth, requirePage("prediction"));
 
+/**
+ * Turn ?academicDepartmentId= into a fragment for a nested `student` relation filter.
+ *
+ * A FILTER, NOT A BOUNDARY — routes/hnd.js carries the long form of that distinction.
+ * Scoping is enforced by the server and confines an account; this narrows a view the
+ * caller chose and grants nothing. Same three cases as hnd.js's academicDepartmentFilter:
+ * omitted -> everything, "none" -> students not yet assigned to a school, an id -> that
+ * school. An unrecognised id passes through and matches nothing rather than being
+ * silently dropped, because a filter that ignores a value it does not recognise shows
+ * the whole college under a school heading.
+ *
+ * Nested under `student` rather than a column of its own because none of the prediction
+ * tables carries academicDepartmentId — the student is the single source of it, and a
+ * denormalised copy here would drift the day a student moves school.
+ */
+function studentDepartmentFilter(raw) {
+  const v = isString(raw) ? raw.trim() : "";
+  if (!v) return {};
+  if (v === "none") return { academicDepartmentId: null };
+  return { academicDepartmentId: v };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Serialisation                                                               */
 /* -------------------------------------------------------------------------- */
@@ -253,6 +275,9 @@ router.get("/students", async (req, res) => {
   if (req.query.interventionRequired === "true") where.interventionRequired = true;
   if (isString(req.query.cohortId) && req.query.cohortId) where.student = { cohortId: req.query.cohortId };
 
+  const deptFilter = studentDepartmentFilter(req.query.academicDepartmentId);
+  if (Object.keys(deptFilter).length) where.student = { ...(where.student || {}), ...deptFilter };
+
   const q = isString(req.query.q) ? req.query.q.trim() : "";
   if (q) {
     where.student = {
@@ -426,6 +451,9 @@ router.get("/outcomes", async (req, res) => {
   }
   if (isRealDate(req.query.from)) where.effectiveOn = { ...(where.effectiveOn || {}), gte: String(req.query.from) };
   if (isRealDate(req.query.to)) where.effectiveOn = { ...(where.effectiveOn || {}), lte: String(req.query.to) };
+
+  const outcomeDept = studentDepartmentFilter(req.query.academicDepartmentId);
+  if (Object.keys(outcomeDept).length) where.student = outcomeDept;
 
   const rows = await prisma.studentOutcome.findMany({
     where,
@@ -620,6 +648,9 @@ router.get("/interventions", async (req, res) => {
   if (isString(req.query.status) && req.query.status) where.status = req.query.status;
   if (isString(req.query.studentId) && req.query.studentId) where.studentId = req.query.studentId;
   if (req.query.due === "true") where.AND = [{ status: "open" }, { reviewDate: { lte: localDate() } }];
+
+  const interventionDept = studentDepartmentFilter(req.query.academicDepartmentId);
+  if (Object.keys(interventionDept).length) where.student = interventionDept;
 
   const rows = await prisma.intervention.findMany({
     where,

@@ -66,7 +66,30 @@ const sSlc = (a) => ({
 
 router.get("/", async (_req, res) => {
   const rows = await prisma.slcApplication.findMany({ orderBy: [{ updatedAt: "desc" }] });
-  res.json(rows.map(sSlc));
+  // The linked student's school, resolved as a SECOND, TOP-LEVEL query rather than an
+  // include. SlcApplication is UNSCOPED and Student is scoped, and a nested include is
+  // exactly the leak smoke-academic-nested-reads.mjs holds closed — the guard cannot
+  // reach it. A top-level student read IS guarded, so a scoped caller learns the school
+  // only of students they may already see, and everyone else's rows read "not assigned".
+  // That is the safe direction, and today it is invisible anyway: every account is
+  // college-wide until somebody narrows one.
+  //
+  // Most rows have no studentId at all — the link is written only by the backfill tool
+  // (see prediction-tripwires) — so null here overwhelmingly means "not linked", which
+  // the school filter's "Not assigned" bucket states honestly.
+  const linkedIds = [...new Set(rows.map((r) => r.studentId).filter(Boolean))];
+  const deptByStudent = new Map(
+    linkedIds.length
+      ? (await prisma.student.findMany({
+          where: { id: { in: linkedIds } },
+          select: { id: true, academicDepartmentId: true },
+        })).map((s) => [s.id, s.academicDepartmentId])
+      : [],
+  );
+  res.json(rows.map((r) => ({
+    ...sSlc(r),
+    academicDepartmentId: (r.studentId && deptByStudent.get(r.studentId)) || null,
+  })));
 });
 
 router.post("/", async (req, res) => {

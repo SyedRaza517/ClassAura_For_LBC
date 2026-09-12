@@ -457,6 +457,54 @@ function ExportBtn({ onClick, label = "Export", className = "" }) {
   return <button onClick={onClick} className={`press flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition hover:opacity-95 ${className}`} style={{ background: NAVY }}><Download size={14} /> {label}</button>;
 }
 
+/* ---------- school filter (academic departments), shared across admin lists ---------- */
+// The vocabulary every school filter uses. Fetched from /academic-departments/options,
+// which is gated on being signed in and nothing else. The page-gated lists exist for
+// their own screens — academicDepartments() needs "settings", ttDepartments() needs
+// "scheduling" — and a filter fed from either silently vanished for any admin holding
+// a different page, with nothing on screen saying why. Quiet failure to an empty list:
+// the dropdown simply does not render, and the screen keeps working.
+function useSchoolOptions() {
+  const [schools, setSchools] = useState([]);
+  useEffect(() => {
+    let live = true;
+    api.schoolOptions()
+      .then(rows => { if (live) setSchools(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (live) setSchools([]); });
+    return () => { live = false; };
+  }, []);
+  return schools;
+}
+// "" = every school, "none" = rows nobody has assigned yet, an id = that school.
+//
+// A FILTER, NOT A BOUNDARY. It is a view this admin chose and it grants nothing —
+// clearing it shows everything again. Departmental ACCESS control is a separate thing
+// the server enforces through scoping.
+const matchesSchool = (filter, academicDepartmentId) =>
+  !filter || (filter === "none" ? !academicDepartmentId : academicDepartmentId === filter);
+// The dropdown itself. Renders NOTHING when the college has no schools: a lone
+// "All schools" dropdown on a college that runs none is a control that cannot do
+// anything. Retired schools stay listed, marked — a FILTER, unlike a picker, must be
+// able to find the rows still attached to a school the college has stopped running
+// (AdminTimetablePlanner's events list carries the long form of that distinction).
+function SchoolFilter({ schools, value, onChange, className }) {
+  if (!schools.length) return null;
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      // A full REPLACEMENT when given, never appended: two Tailwind sizing utilities on
+      // one element resolve by stylesheet order, not by which the caller wrote last.
+      className={className || "shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200"}
+      title="Narrow the list to one school"
+    >
+      <option value="">All schools</option>
+      {schools.map(d => <option key={d.id} value={d.id}>{d.name}{d.active === false ? " (retired)" : ""}</option>)}
+      <option value="none">— Not assigned —</option>
+    </select>
+  );
+}
+
 /* ============================================================ STAFF MOBILE APP ============================================================ */
 export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onChangePassword, onSwitchToAdmin }) {
   const { staff } = store;
@@ -3499,6 +3547,8 @@ function AdminMitigations() {
   const [rows, setRows] = useState(null);
   const [students, setStudents] = useState([]);
   const [status, setStatus] = useState("");
+  const [school, setSchool] = useState(""); // "" = every school; see SchoolFilter
+  const schools = useSchoolOptions();
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(null);   // the claim open in the drawer
   const [adding, setAdding] = useState(false);
@@ -3511,6 +3561,13 @@ function AdminMitigations() {
   };
   useEffect(() => { load(); }, [status]);
   useEffect(() => { api.listStudents().then(setStudents).catch(() => setStudents([])); }, []);
+
+  // A claim's light student summary has no school on it; the full student rows already
+  // loaded for the claim form do, so the school is read off those by id. The pending
+  // banner above deliberately counts EVERY open claim, unfiltered — a claim suppressing
+  // signals is a college-wide fact whichever school the reader is narrowed to.
+  const schoolByStudent = Object.fromEntries(students.map((s) => [s.id, s.academicDepartmentId]));
+  const shown = rows && rows.filter((m) => matchesSchool(school, m.student ? schoolByStudent[m.student.id] : null));
 
   const open = (rows || []).filter((r) => r.status === "open");
 
@@ -3551,16 +3608,17 @@ function AdminMitigations() {
         {MIT_STATUSES.map((s) => (
           <button key={s} onClick={() => setStatus(s)} className={`rounded-full px-3 py-1.5 text-xs font-bold capitalize transition ${status === s ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={status === s ? { background: grad(BLUE) } : {}}>{s}</button>
         ))}
+        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto shrink-0 rounded-lg border-0 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
       </div>
 
       {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
       {!rows && <Card><p className="text-xs text-slate-400">Loading…</p></Card>}
-      {rows && rows.length === 0 && (
+      {shown && shown.length === 0 && (
         <EmptyState Icon={LifeBuoy} title="No claims recorded" msg="Nothing has been logged against this filter." />
       )}
 
       <div className="space-y-2">
-        {(rows || []).map((m) => (
+        {(shown || []).map((m) => (
           <Card key={m.id} className="!p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
@@ -3845,12 +3903,16 @@ function PredictionOutcomes({ bands }) {
   const [rows, setRows] = useState(null);
   const [cal, setCal] = useState(null);
   const [err, setErr] = useState("");
+  // Server-side, like the register: the outcomes list is capped at 500 newest-first, so
+  // filtering in the browser would silently lose a school's older outcomes.
+  const [school, setSchool] = useState("");
+  const schools = useSchoolOptions();
 
   useEffect(() => {
-    Promise.all([api.predictionOutcomes({}), api.predictionCalibration()])
+    Promise.all([api.predictionOutcomes({ academicDepartmentId: school }), api.predictionCalibration()])
       .then(([o, c]) => { setRows(o.outcomes || []); setCal(c); })
       .catch(e => setErr(e.message));
-  }, []);
+  }, [school]);
 
   if (err) return <Card><p className="text-xs font-semibold text-rose-700">{err}</p></Card>;
   if (!rows) return <Card><p className="text-xs text-slate-400">Loading…</p></Card>;
@@ -3912,9 +3974,12 @@ function PredictionOutcomes({ bands }) {
       </Card>
 
       <Card>
-        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Recorded outcomes · {rows.length}</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Recorded outcomes · {rows.length}</p>
+          <SchoolFilter schools={schools} value={school} onChange={setSchool} />
+        </div>
         {rows.length === 0 ? (
-          <p className="text-[11px] text-slate-500">Record an outcome from a student's record, under Progression risk.</p>
+          <p className="text-[11px] text-slate-500">{school ? "No outcomes recorded for this school." : "Record an outcome from a student's record, under Progression risk."}</p>
         ) : (
           <div className="divide-y divide-slate-100">
             {rows.map(o => (
@@ -3943,16 +4008,21 @@ function PredictionRegister({ bands, summary, onChanged }) {
   const [level, setLevel] = useState("");
   const [q, setQ] = useState("");
   const [needing, setNeeding] = useState(false);
+  const [school, setSchool] = useState(""); // "" = every school; a server-side filter here
+  const schools = useSchoolOptions();
   const [openId, setOpenId] = useState(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api.predictionStudents({ riskLevel: level, q, interventionRequired: needing ? "true" : "" });
+      // The school travels to the server, unlike most list screens which filter in the
+      // browser: this list is capped at 500 worst-first, so a client-side filter would
+      // silently lose a school's students once the college passes the cap.
+      const r = await api.predictionStudents({ riskLevel: level, q, interventionRequired: needing ? "true" : "", academicDepartmentId: school });
       setRows(r.students || []);
     } catch (e) { setNote(e.message); } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [level, needing]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [level, needing, school]);
 
   // Recalculation is bounded server-side, so one press may not finish the college.
   // This keeps going while the server reports students still outstanding, and stops
@@ -4023,6 +4093,7 @@ function PredictionRegister({ bands, summary, onChanged }) {
             <input type="checkbox" checked={needing} onChange={e => setNeeding(e.target.checked)} className="h-4 w-4 rounded" />
             Needs an intervention
           </label>
+          <div className="pb-1"><SchoolFilter schools={schools} value={school} onChange={setSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" /></div>
           <PrimaryBtn colour={BLUE} onClick={load} disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Filter</PrimaryBtn>
           <PrimaryBtn colour={MAROON} onClick={() => recalc(false)} disabled={busy}>
             {busy ? <><Loader2 size={16} className="animate-spin" /> Scoring…</> : <><RefreshCw size={16} /> Recalculate</>}
@@ -4517,15 +4588,19 @@ function InterventionModal({ open, onClose, student, onSaved }) {
 function PredictionInterventions({ onChanged }) {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("open");
+  // Server-side, like the register: the caseload is capped at 500, so a client-side
+  // school filter would silently lose entries once the college passes that.
+  const [school, setSchool] = useState("");
+  const schools = useSchoolOptions();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
   const load = async () => {
     setLoading(true);
-    try { setRows((await api.listInterventions({ status })).interventions || []); setErr(""); }
+    try { setRows((await api.listInterventions({ status, academicDepartmentId: school })).interventions || []); setErr(""); }
     catch (e) { setErr(e.message); } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [status, school]);
 
   const review = async (id, outcome) => {
     try { await api.updateIntervention(id, { outcome, status: "reviewed" }); await Promise.all([load(), onChanged()]); }
@@ -4539,6 +4614,7 @@ function PredictionInterventions({ onChanged }) {
           {[["open", "Open"], ["reviewed", "Reviewed"], ["closed", "Closed"], ["", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setStatus(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${status === k ? "text-white" : "bg-slate-50 text-slate-500 ring-1 ring-slate-200"}`} style={status === k ? { background: grad(BLUE) } : {}}>{label}</button>
           ))}
+          <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
         </div>
       </Card>
 
@@ -5862,7 +5938,13 @@ function AdminSignups({ store }) {
     return () => { live = false; };
   }, []);
 
-  const rows = store.signups || [];
+  // The list filter — DISTINCT from the approve-modal picker above. The picker writes,
+  // so it hides retired schools and empties on every open; this narrows the queue by the
+  // school a request SUGGESTS (never a membership), and "Not assigned" is the common
+  // case since staff requests only carry one when the applicant chose it.
+  const [schoolFilter, setSchoolFilter] = useState("");
+  const filterSchools = useSchoolOptions();
+  const rows = (store.signups || []).filter(r => matchesSchool(schoolFilter, r.academicDepartmentId));
   const pending = rows.filter(r => r.status === "pending");
   const history = rows.filter(r => r.status !== "pending");
 
@@ -5959,7 +6041,12 @@ function AdminSignups({ store }) {
         title="Sign-Up Requests"
         subtitle="People who signed up in the staff app — approving one creates their account"
         Icon={UserCheck}
-        action={rows.length > 0 && <ExportBtn onClick={exportCsv} label="Export CSV" />}
+        action={(
+          <div className="flex items-center gap-2">
+            <SchoolFilter schools={filterSchools} value={schoolFilter} onChange={setSchoolFilter} />
+            {rows.length > 0 && <ExportBtn onClick={exportCsv} label="Export CSV" />}
+          </div>
+        )}
       />
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -6320,11 +6407,19 @@ function AdminStudentQueries({ store }) {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [school, setSchool] = useState(""); // "" = every school; see SchoolFilter
+  const schools = useSchoolOptions();
+  // A query row carries a light student summary with no school; the student rows do.
+  // Fetched here because this screen does not otherwise load the student list.
+  const [students, setStudents] = useState([]);
+  useEffect(() => { api.listStudents().then(setStudents).catch(() => setStudents([])); }, []);
+  const schoolByStudent = Object.fromEntries(students.map(s => [s.id, s.academicDepartmentId]));
 
   const all = store.studentQueries || [];
   const ql = query.trim().toLowerCase();
   const rows = all
     .filter(q => filter === "all" || q.status === filter)
+    .filter(q => matchesSchool(school, schoolByStudent[q.studentId]))
     .filter(q => !ql || (q.studentName || "").toLowerCase().includes(ql) || (q.subject || "").toLowerCase().includes(ql) || (q.message || "").toLowerCase().includes(ql));
   const open = all.filter(q => q.status === "open").length;
 
@@ -6346,6 +6441,7 @@ function AdminStudentQueries({ store }) {
         <div className="flex gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
           {["all", "open", "answered"].map(f => <button key={f} onClick={() => setFilter(f)} className={`rounded-lg px-3 py-1.5 text-xs font-bold capitalize transition ${filter === f ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={filter === f ? { background: NAVY } : {}}>{f}</button>)}
         </div>
+        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       <div className="space-y-3">
@@ -6613,6 +6709,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
   const [pickStatus, setPickStatus] = useState("");
   const [pickTutor, setPickTutor] = useState("");
   const [pickCover, setPickCover] = useState("");
+  const [pickSchool, setPickSchool] = useState("");
   const [pickSort, setPickSort] = useState("teaching");
   // The live-view action every row offers, or null when the college has switched no
   // self check-in method on (see checkInAction.js: no dead-end buttons).
@@ -6689,7 +6786,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
   });
   const pickList = applyUnitFilters(pickInCourse, {
     course: pickCourse, year: pickYear, term: pickTerm, status: pickStatus,
-    tutor: pickTutor, cover: pickCover, sortBy: pickSort, query: pickQuery,
+    tutor: pickTutor, cover: pickCover, school: pickSchool, sortBy: pickSort, query: pickQuery,
   }, today);
   // THE UNIT YOU ARE LOOKING AT IS ALWAYS IN THE PICKER, even when the filters exclude
   // it. Otherwise typing a search after choosing a unit makes the selected card vanish
@@ -6706,9 +6803,9 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
       <UnitFilterBar
         units={store.units} inCourse={pickInCourse} courses={store.courses} today={today}
         f={{ course: pickCourse, year: pickYear, term: pickTerm, status: pickStatus,
-             tutor: pickTutor, cover: pickCover, sortBy: pickSort, query: pickQuery, shown: pickList.length }}
+             tutor: pickTutor, cover: pickCover, school: pickSchool, sortBy: pickSort, query: pickQuery, shown: pickList.length }}
         on={{ course: setPickCourse, year: setPickYear, term: setPickTerm, status: setPickStatus,
-              tutor: setPickTutor, cover: setPickCover, sortBy: setPickSort, query: setPickQuery }}
+              tutor: setPickTutor, cover: setPickCover, school: setPickSchool, sortBy: setPickSort, query: setPickQuery }}
       />
       {/* A DROPDOWN, NOT CARDS. Eighty-seven units is not a set you choose from by
           scanning tiles, however the tiles are bounded — a scroll box full of cards is
@@ -7268,13 +7365,19 @@ function HndPercentages({ store }) {
   const [sort, setSort] = useState("name"); // name | overall
   const [courseId, setCourseId] = useState("");   // "" = every course
   const [showTutorial, setShowTutorial] = useState(false);
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school; see SchoolFilter
+  // useSchoolOptions is a hook, so it too must sit above the loading guard below.
+  const schools = useSchoolOptions();
   // Everything derived here runs BEFORE the loading guard below, because usePaged is a
   // hook: skipping it on the first (attendance === null) render and calling it once the
   // data arrived changed the hook count between renders, which React rejects outright
   // ("Rendered more hooks than during the previous render") and crashes the whole app.
   const { units = [], rows = [], unitTotals = {}, overall = {} } = attendance || {};
   const ql = query.trim().toLowerCase();
-  let list = rows.filter(r => !ql || r.student.name.toLowerCase().includes(ql) || r.student.studentRef.includes(ql) || (r.student.email || "").toLowerCase().includes(ql));
+  // The attendance rows carry a light student summary without a school, so the school
+  // of each student is read off store.students — the same rows, keyed by id.
+  const schoolByStudent = Object.fromEntries((store.students || []).map(s => [s.id, s.academicDepartmentId]));
+  let list = rows.filter(r => matchesSchool(schoolFilter, schoolByStudent[r.student.id]) && (!ql || r.student.name.toLowerCase().includes(ql) || r.student.studentRef.includes(ql) || (r.student.email || "").toLowerCase().includes(ql)));
 
   // Every unit in the college as a column made this table unreadable: a row was mostly
   // "not enrolled", and the one figure that mattered was somewhere off to the right.
@@ -7309,7 +7412,7 @@ function HndPercentages({ store }) {
   list = sort === "overall"
     ? [...list].sort((a, b) => (a.overall.pct ?? 101) - (b.overall.pct ?? 101)) // lowest first — those needing chasing
     : list;
-  const paged = usePaged(list, 12, `${ql}|${sort}`);
+  const paged = usePaged(list, 12, `${ql}|${sort}|${schoolFilter}`);
   if (!attendance) return <div className="skeleton h-64 rounded-2xl" />;
 
   const atRisk = rows.filter(r => r.overall.pct !== null && r.overall.pct < 70).length;
@@ -7410,6 +7513,7 @@ function HndPercentages({ store }) {
           <option value="">All courses</option>
           {(store.courses || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400" />
         <button type="button" onClick={() => setShowTutorial(v => !v)}
           title="Tutorial and seminar attendance imported from Moodle, held on a synthetic unit per course"
           className={`press rounded-xl px-3 py-1.5 text-xs font-bold ring-1 transition ${showTutorial ? "text-white ring-transparent" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"}`}
@@ -7497,20 +7601,12 @@ function HndStudents({ store }) {
   // unambiguous for almost all of them; the dropdown lets an admin set or change it.
   const [courseId, setCourseId] = useState("");
   const [query, setQuery] = useState("");
-  // Which academic department the list is narrowed to. "" = every department,
-  // "none" = the students nobody has assigned yet.
-  //
-  // A FILTER, NOT A BOUNDARY. It is a view this admin chose and it grants nothing —
-  // clearing it shows everything again. Departmental ACCESS control is a separate thing
-  // the server enforces, and it is deliberately still switched off.
+  // Which school the list is narrowed to — the shared filter. This screen used to fetch
+  // its own list from the settings-gated endpoint, which 403'd for a registers admin
+  // without "settings" and silently hid the dropdown; useSchoolOptions reads the
+  // auth-only vocabulary route instead.
   const [deptFilter, setDeptFilter] = useState("");
-  const [academicDepts, setAcademicDepts] = useState([]);
-  useEffect(() => {
-    // Quiet failure to an empty list: the picker simply does not render, and searching by
-    // name still works. A college with no departments configured must not lose its
-    // student list to a settings call.
-    api.academicDepartments().then(d => setAcademicDepts(d.departments || [])).catch(() => setAcademicDepts([]));
-  }, []);
+  const schools = useSchoolOptions();
 
   // The course a student belongs to: their cohort if one is set, else the course
   // their existing units all belong to. Returns "" when it genuinely cannot be told.
@@ -7569,9 +7665,7 @@ function HndStudents({ store }) {
   const ql = query.trim().toLowerCase();
   // `none` matches a null department, which is the question the Settings screen's
   // "N students are not assigned" count raises and could not previously answer.
-  const inDept = (s) => !deptFilter
-    || (deptFilter === "none" ? !s.academicDepartmentId : s.academicDepartmentId === deptFilter);
-  const filtered = store.students.filter(s => inDept(s) && (!ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql)));
+  const filtered = store.students.filter(s => matchesSchool(deptFilter, s.academicDepartmentId) && (!ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql)));
   // The page resets when EITHER control changes; keying on `ql` alone left an admin on
   // page 4 of a list that had just become one page long.
   const paged = usePaged(filtered, 12, ql + "|" + deptFilter);
@@ -7584,20 +7678,7 @@ function HndStudents({ store }) {
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, number or email…" className="w-full bg-transparent text-sm outline-none" />
-          {/* Rendered only when the college HAS departments: a lone "All departments"
-              dropdown on a college that runs none is a control that cannot do anything. */}
-          {academicDepts.filter(d => d.active).length > 0 && (
-            <select
-              value={deptFilter}
-              onChange={e => setDeptFilter(e.target.value)}
-              className="shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200"
-              title="Narrow the list to one academic department"
-            >
-              <option value="">All departments</option>
-              {academicDepts.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              <option value="none">— Not assigned —</option>
-            </select>
-          )}
+          <SchoolFilter schools={schools} value={deptFilter} onChange={setDeptFilter} />
         </div>
         <PrimaryBtn className="ml-auto" onClick={openAdd}><UserPlus size={16} /> Add student</PrimaryBtn>
       </div>
@@ -7720,6 +7801,8 @@ function AdminStudents({ store }) {
   const [unitFilter, setUnitFilter] = useState("");     // "" = any unit
   const [statusFilter, setStatusFilter] = useState("all");  // all | active | inactive
   const [riskFilter, setRiskFilter] = useState("all");  // all | High Risk | Monitor | Good | Excellent | Perfect
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school; see SchoolFilter
+  const schools = useSchoolOptions();
   const [attnFor, setAttnFor] = useState(null);             // student whose breakdown is open
   // The student being referred to a support department, or null. There is no meeting
   // behind a referral raised from here, and that is the point: a tutor looking at an
@@ -7831,9 +7914,10 @@ function AdminStudents({ store }) {
     if (statusFilter === "inactive" && s.active !== false) return false;
     if (unitFilter && !(s.unitIds || []).includes(unitFilter)) return false;
     if (riskFilter !== "all" && riskBand(allPctOf(s)).label !== riskFilter) return false;
+    if (!matchesSchool(schoolFilter, s.academicDepartmentId)) return false;
     return !ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || s.studentRef.includes(ql);
   });
-  const paged = usePaged(filtered, 12, `${ql}|${unitFilter}|${statusFilter}|${riskFilter}`);
+  const paged = usePaged(filtered, 12, `${ql}|${unitFilter}|${statusFilter}|${riskFilter}|${schoolFilter}`);
   const emailPreview = form.email || (form.studentRef ? `${form.studentRef}@edtech.co.uk` : "");
 
   // Headline figures.
@@ -7932,6 +8016,7 @@ function AdminStudents({ store }) {
           <option value="Perfect">🟣 Perfect</option>
           <option value="No data">⚪ No data</option>
         </select>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         {riskFilter === "High Risk" && <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-600 ring-1 ring-rose-200">Showing red flags</span>}
         <span className="ml-auto text-xs font-semibold text-slate-400">{filtered.length} of {total}</span>
       </div>
@@ -9875,6 +9960,8 @@ function AdminStudentReviews({ store }) {
   const [query, setQuery] = useState("");
   const [progressFilter, setProgressFilter] = useState("all");
   const [followFilter, setFollowFilter] = useState("all");   // all | required
+  const [schoolFilter, setSchoolFilter] = useState("");      // "" = every school
+  const schools = useSchoolOptions();
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blankStudentReview);
@@ -9951,9 +10038,12 @@ function AdminStudentReviews({ store }) {
   };
 
   const ql = query.trim().toLowerCase();
+  // The review's own student summary has no school; the roster rows (either source) do.
+  const schoolByStudent = Object.fromEntries(rosterStudents.map(s => [s.id, s.academicDepartmentId]));
   const list = rows.filter(r => {
     if (progressFilter !== "all" && r.progress !== progressFilter) return false;
     if (followFilter === "required" && !r.followUp) return false;
+    if (!matchesSchool(schoolFilter, r.student ? schoolByStudent[r.student.id] : null)) return false;
     if (!ql) return true;
     return (r.student?.name || "").toLowerCase().includes(ql)
       || (r.student?.studentRef || "").toLowerCase().includes(ql)
@@ -9961,7 +10051,7 @@ function AdminStudentReviews({ store }) {
       || (r.unit?.code || "").toLowerCase().includes(ql)
       || (r.summary || "").toLowerCase().includes(ql);
   });
-  const paged = usePaged(list, 10, `${ql}|${progressFilter}|${followFilter}`);
+  const paged = usePaged(list, 10, `${ql}|${progressFilter}|${followFilter}|${schoolFilter}`);
 
   const exportCsv = () => {
     if (!list.length) { store.notify("Nothing to export in the current view", "error"); return; }
@@ -10001,6 +10091,7 @@ function AdminStudentReviews({ store }) {
             <button key={f.k} onClick={() => setFollowFilter(f.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${followFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={followFilter === f.k ? { background: NAVY } : {}}>{f.l}</button>
           ))}
         </div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
         <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search student, lecturer, unit or summary…" className="w-56 bg-transparent text-sm outline-none" />
@@ -10179,6 +10270,8 @@ function HndCourses({ store, onOpen }) {
     api.academicDepartments().then(d => setAcademicDepts(d.departments || [])).catch(() => setAcademicDepts([]));
   }, []);
   const [cohortProg, setCohortProg] = useState(null); // the course whose cohorts are being managed
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school; see SchoolFilter
+  const schools = useSchoolOptions();
   const YEARS = Array.from({ length: 7 }, (_, i) => nowYear - 2 + i);
 
   const [cohortBusy, setCohortBusy] = useState(false);
@@ -10245,11 +10338,14 @@ function HndCourses({ store, onOpen }) {
           A course groups the units taught under it — e.g. <span className="font-semibold">HND Business</span>.
           Add your courses here, then open one to add its units.
         </p>
-        <PrimaryBtn onClick={openAdd}><Plus size={16} /> Add course</PrimaryBtn>
+        <div className="flex items-center gap-2">
+          <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+          <PrimaryBtn onClick={openAdd}><Plus size={16} /> Add course</PrimaryBtn>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {store.courses.map((p, i) => {
+        {store.courses.filter(p => matchesSchool(schoolFilter, p.academicDepartmentId)).map((p, i) => {
           const colour = p.colour || NAVY;
           const seed = hashStr(p.name);
           return (
@@ -10499,6 +10595,10 @@ function CohortManager({ store, course, onClose }) {
 function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, showCover = true }) {
   const ql = (f.query || "").trim().toLowerCase();
   const tutorOf = (m) => (m.tutorName || m.tutor || "").trim();
+  // The school vocabulary is fetched here rather than passed in: every caller would
+  // pass the same list, and a caller that forgot would silently lose the control.
+  // The axis itself is still the caller's (f.school / on.school), like every other.
+  const schools = useSchoolOptions();
 
   // Trimmed at the pipe because that is where the redundancy is: every one of these
   // repeats its own qualification title after it, so the half before the pipe is what
@@ -10526,10 +10626,10 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
   // What is actually narrowing the list right now. Counted rather than merely shown,
   // because the failure this page had was a reader looking at four units and not knowing
   // which of four separate bars was hiding the rest.
-  const activeFilters = [f.course, f.year, f.term, f.status, f.tutor, f.cover, ql].filter(Boolean).length;
+  const activeFilters = [f.course, f.year, f.term, f.status, f.tutor, f.cover, f.school, ql].filter(Boolean).length;
   const clearAll = () => {
     on.course?.(""); on.year?.(""); on.term?.(""); on.status?.("");
-    on.tutor?.(""); on.cover?.(""); on.query?.("");
+    on.tutor?.(""); on.cover?.(""); on.school?.(""); on.query?.("");
   };
 
   // One shell for every control, so the bar reads as one row of things rather than as
@@ -10611,6 +10711,15 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
             <option value="no-students">No students</option>
           </Pick>
         )}
+        {/* Only when the caller wired the axis (on.school) AND the college runs schools —
+            the same "a control that cannot do anything" rule as every pick above. */}
+        {on.school && schools.length > 0 && (
+          <Pick label="School" value={f.school || ""} onChange={e => on.school?.(e.target.value)}>
+            <option value="">Any</option>
+            {schools.map(d => <option key={d.id} value={d.id}>{d.name}{d.active === false ? " (retired)" : ""}</option>)}
+            <option value="none">Not assigned</option>
+          </Pick>
+        )}
         <Pick label="Sort" value={f.sortBy} onChange={e => on.sortBy?.(e.target.value)}>
           <option value="teaching">Teaching order</option>
           <option value="code">Code</option>
@@ -10658,6 +10767,8 @@ function applyUnitFilters(inCourse, f, today) {
   return inCourse
     .filter(m => matchesPlace(m, f.year, f.term))
     .filter(m => !f.status || unitStatus(m, today) === f.status)
+    // Callers that never wired the school axis pass no f.school, which matches all.
+    .filter(m => matchesSchool(f.school, m.academicDepartmentId))
     // "none" is a real choice, not the absence of one: "which modules has nobody been put
     // against" is the question that finds the gap before term starts.
     .filter(m => !f.tutor || (f.tutor === "none" ? !tutorOf(m) : tutorOf(m) === f.tutor))
@@ -10708,6 +10819,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
   //                    the biggest or the emptiest.
   const [tutorFilter, setTutorFilter] = useState("");   // "" | "none" | a tutor name
   const [coverFilter, setCoverFilter] = useState("");   // "" | sessions | no-sessions | students | no-students
+  const [schoolFilter, setSchoolFilter] = useState("");  // "" | "none" | a school id
   const [sortBy, setSortBy] = useState("teaching");     // teaching | code | name | students | sessions
   const [picked, setPicked] = useState([]);           // studentIds enrolled on this course
   const [pickQuery, setPickQuery] = useState("");     // search within the student picker
@@ -10810,7 +10922,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
   });
   const today = todayISO();
   const filters = { course: courseFilter, year: yearFilter, term: termFilter, status: statusFilter,
-    tutor: tutorFilter, cover: coverFilter, sortBy, query };
+    tutor: tutorFilter, cover: coverFilter, school: schoolFilter, sortBy, query };
   const list = applyUnitFilters(inCourse, filters, today);
 
   return (
@@ -10819,7 +10931,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
         units={store.units} inCourse={inCourse} courses={store.courses} today={today}
         f={{ ...filters, shown: list.length }}
         on={{ course: setCourseFilter, year: setYearFilter, term: setTermFilter, status: setStatusFilter,
-              tutor: setTutorFilter, cover: setCoverFilter, sortBy: setSortBy, query: setQuery }}
+              tutor: setTutorFilter, cover: setCoverFilter, school: setSchoolFilter, sortBy: setSortBy, query: setQuery }}
         right={<PrimaryBtn onClick={openAdd}><Plus size={16} /> Add unit</PrimaryBtn>}
       />
 
@@ -11332,6 +11444,7 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
   // findable on Registers and not on Assessments.
   const [statusFilter, setStatusFilter] = useState("");
   const [tutorFilter, setTutorFilter] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState("");
   const [sortBy, setSortBy] = useState("teaching");
   const today = todayISO();
   const perUnit = Object.fromEntries((store.assessmentOverview?.units || []).map(u => [u.id, u]));
@@ -11346,7 +11459,7 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
   // studentCount — offering "No registers" would filter on undefined and silently return
   // nothing, which reads as "there are none" rather than "this page cannot answer that".
   const filters = { course: courseFilter, year: yearFilter, term: termFilter, status: statusFilter,
-    tutor: tutorFilter, cover: "", sortBy, query };
+    tutor: tutorFilter, cover: "", school: schoolFilter, sortBy, query };
   const list = applyUnitFilters(inCourse, filters, today);
   const courseById = Object.fromEntries(store.courses.map(c => [c.id, c]));
   return (
@@ -11355,7 +11468,7 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
         units={store.units} inCourse={inCourse} courses={store.courses} today={today}
         f={{ ...filters, shown: list.length }}
         on={{ course: setCourseFilter, year: setYearFilter, term: setTermFilter, status: setStatusFilter,
-              tutor: setTutorFilter, sortBy: setSortBy, query: setQuery }}
+              tutor: setTutorFilter, school: setSchoolFilter, sortBy: setSortBy, query: setQuery }}
         showCover={false}
       />
       <p className="mb-3 text-[11px] text-slate-500">Units come from the Registers section — add or edit them there. Open one to define its assessments and enter marks.</p>
@@ -11400,10 +11513,15 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
 function AssessmentsOverview({ store }) {
   const ov = store.assessmentOverview;
   const [query, setQuery] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school
+  // Hooks stay above the loading guard — see the HndPercentages comment.
+  const schools = useSchoolOptions();
   if (!ov) return <div className="skeleton h-64 rounded-2xl" />;
   const o = ov.overall;
   const ql = query.trim().toLowerCase();
-  const rows = ov.units.filter(m => !ql || m.code.toLowerCase().includes(ql) || m.name.toLowerCase().includes(ql));
+  // The overview's unit aggregates carry no school; the store's unit rows do.
+  const schoolByUnit = Object.fromEntries(store.units.map(u => [u.id, u.academicDepartmentId]));
+  const rows = ov.units.filter(m => matchesSchool(schoolFilter, schoolByUnit[m.id]) && (!ql || m.code.toLowerCase().includes(ql) || m.name.toLowerCase().includes(ql)));
   const exportCSV = () => {
     downloadCSV("assessment-averages.csv", [
       { key: "code", label: "Unit code" }, { key: "name", label: "Unit" }, { key: "students", label: "Students" },
@@ -11422,6 +11540,7 @@ function AssessmentsOverview({ store }) {
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search course…" className="w-44 bg-transparent text-sm outline-none sm:w-56" /></div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
         <div className="ml-auto flex items-center gap-3">
           <span className="hidden items-center gap-2 text-[11px] font-semibold text-slate-400 sm:flex">
             {GRADE_BANDS.map(b => <span key={b} className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: gradeTone(b).colour }} />{b}</span>)}
@@ -11911,6 +12030,8 @@ function AssessmentRecords({ store }) {
   const courseById = useMemo(() => Object.fromEntries(store.courses.map(p => [p.id, p])), [store.courses]);
   const [fCourse, setFCourse] = useState("");
   const [fUnit, setFUnit] = useState("");
+  const [fSchool, setFSchool] = useState(""); // "" = every school; see SchoolFilter
+  const schools = useSchoolOptions();
   const [query, setQuery] = useState("");
   const [records, setRecords] = useState([]);
   const [meta, setMeta] = useState({ total: 0, capped: false });
@@ -11956,8 +12077,12 @@ function AssessmentRecords({ store }) {
   };
 
   const ql = query.trim().toLowerCase();
-  const list = records.filter(r => !ql || r.student.name.toLowerCase().includes(ql) || r.student.studentRef.includes(ql) || r.assessment.title.toLowerCase().includes(ql));
-  const paged = usePaged(list, 15, `${fCourse}|${fUnit}|${ql}`);
+  // The record's light student summary has no school; the store's student rows do.
+  const schoolByStudent = Object.fromEntries(store.students.map(s => [s.id, s.academicDepartmentId]));
+  const list = records
+    .filter(r => matchesSchool(fSchool, schoolByStudent[r.studentId]))
+    .filter(r => !ql || r.student.name.toLowerCase().includes(ql) || r.student.studentRef.includes(ql) || r.assessment.title.toLowerCase().includes(ql));
+  const paged = usePaged(list, 15, `${fCourse}|${fUnit}|${ql}|${fSchool}`);
   const editStudent = edit ? store.students.find(s => s.id === edit.studentId) || edit.student : null;
   const formValid = form.courseId && form.unitId && form.assessmentId && form.studentId && form.marks !== "" && Number(form.marks) >= 0 && Number(form.marks) <= maxMarks;
 
@@ -11972,6 +12097,7 @@ function AssessmentRecords({ store }) {
           <option value="">All units{fCourse ? " in course" : ""}</option>
           {(fCourse ? coursesInProg(fCourse) : store.units).map(m => <option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}
         </select>
+        <SchoolFilter schools={schools} value={fSchool} onChange={setFSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search student or assessment…" className="w-40 bg-transparent text-sm outline-none sm:w-52" /></div>
         <PrimaryBtn className="ml-auto" onClick={openAdd}><Plus size={16} /> Add grade record</PrimaryBtn>
       </div>
@@ -12114,6 +12240,8 @@ function AdminPAT({ store }) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [followFilter, setFollowFilter] = useState("all"); // all | required | none
+  const [schoolFilter, setSchoolFilter] = useState("");    // "" = every school
+  const schools = useSchoolOptions();
   const [busy, setBusy] = useState(false);
   // The meeting a referral is being raised from: { student, interactionId }. Held as
   // one object rather than two pieces of state because they must move together — a
@@ -12174,10 +12302,13 @@ function AdminPAT({ store }) {
     if (typeFilter && it.queryType !== typeFilter) return false;
     if (followFilter === "required" && !it.followUpRequired) return false;
     if (followFilter === "none" && it.followUpRequired) return false;
+    // The interaction's student summary has no school; the picker rows (either the
+    // store's students or the roster fallback) do.
+    if (!matchesSchool(schoolFilter, studentsById[it.studentId]?.academicDepartmentId)) return false;
     if (!ql) return true;
     return (it.student?.name || "").toLowerCase().includes(ql) || (it.student?.studentRef || "").includes(ql) || (it.summary || "").toLowerCase().includes(ql) || it.queryType.toLowerCase().includes(ql);
   });
-  const paged = usePaged(list, 12, `${ql}|${typeFilter}|${followFilter}`);
+  const paged = usePaged(list, 12, `${ql}|${typeFilter}|${followFilter}|${schoolFilter}`);
 
   // Stats
   const total = store.interactions.length;
@@ -12240,6 +12371,7 @@ function AdminPAT({ store }) {
             <button key={f.k} onClick={() => setFollowFilter(f.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${followFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={followFilter === f.k ? { background: NAVY } : {}}>{f.l}</button>
           ))}
         </div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <span className="ml-auto text-xs font-semibold text-slate-400">{list.length} of {total}</span>
       </div>
 
@@ -13862,6 +13994,10 @@ function AdminStaff({ store }) {
   const [query, setQuery] = useState("");
   const [deptFilter, setDeptFilter] = useState("");     // "" = all departments
   const [siteFilter, setSiteFilter] = useState("");     // "" = all sites
+  // The SCHOOL filter — the AcademicDepartment membership, NOT `dept` above, which is
+  // the free-text HR string the chips filter on. Two boundaries, one English word.
+  const [schoolFilter, setSchoolFilter] = useState("");
+  const schools = useSchoolOptions();
   const [hoursStaff, setHoursStaff] = useState(null);   // staff whose monthly-hours breakdown is open
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -13892,9 +14028,16 @@ function AdminStaff({ store }) {
   const filtered = store.staff.filter(s => {
     if (deptFilter && s.dept !== deptFilter) return false;
     if (siteFilter && s.site !== siteFilter) return false;
+    // Staff belong to schools many-to-many, so this checks membership rather than a
+    // single column. "Not assigned" = no memberships at all, which includes the
+    // college-wide staff — no school is the wider setting, not a restriction.
+    if (schoolFilter) {
+      const ids = s.academicDepartmentIds || [];
+      if (schoolFilter === "none" ? ids.length > 0 : !ids.includes(schoolFilter)) return false;
+    }
     return !ql || s.name.toLowerCase().includes(ql) || (s.email || "").toLowerCase().includes(ql) || (s.role || "").toLowerCase().includes(ql) || (s.dept || "").toLowerCase().includes(ql);
   });
-  const paged = usePaged(filtered, 12, `${ql}|${deptFilter}|${siteFilter}`);
+  const paged = usePaged(filtered, 12, `${ql}|${deptFilter}|${siteFilter}|${schoolFilter}`);
 
   const total = store.staff.length;
   const adminCount = store.staff.filter(s => s.accountRole === "ADMIN").length;
@@ -13968,6 +14111,7 @@ function AdminStaff({ store }) {
             {HOME_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <span className="ml-auto text-xs font-semibold text-slate-400">{filtered.length} of {total}</span>
       </div>
 
@@ -14487,6 +14631,11 @@ function AdminSlc({ store }) {
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  // A record reaches a school only through its LINKED student (the server derives
+  // academicDepartmentId from that link). Most rows are unlinked until the backfill
+  // tool has run, and those land under "Not assigned" — honestly, not as a bug.
+  const [schoolFilter, setSchoolFilter] = useState("");
+  const schools = useSchoolOptions();
   const [modal, setModal] = useState(false);   // false | "add" | <id> (editing)
   const [form, setForm] = useState(blankSlc);
   const [saving, setSaving] = useState(false);
@@ -14536,7 +14685,9 @@ function AdminSlc({ store }) {
   const counts = {}; rows.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
   const applied = rows.filter(r => r.status !== "Not applied").length;
   const q = query.trim().toLowerCase();
-  const filtered = rows.filter(r => (!statusFilter || r.status === statusFilter) && (!q || `${r.studentName} ${r.studentRef} ${r.course} ${r.crn}`.toLowerCase().includes(q)));
+  const filtered = rows.filter(r => (!statusFilter || r.status === statusFilter)
+    && matchesSchool(schoolFilter, r.academicDepartmentId)
+    && (!q || `${r.studentName} ${r.studentRef} ${r.course} ${r.crn}`.toLowerCase().includes(q)));
 
   const exportCsv = () => {
     const cols = ["studentName", "studentRef", "course", "intake", "status", "loanType", "crn", "applicationDate", "decisionDate", "amount", "notes", "updatedBy"];
@@ -14571,6 +14722,7 @@ function AdminSlc({ store }) {
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-sm text-slate-500"><b className="text-slate-700">{applied}</b> of {rows.length} have applied</span>
             <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, ID, course, CRN…" className="w-56 bg-transparent text-sm outline-none" /></div>
+            <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
             {statusFilter && <button onClick={() => setStatusFilter("")} className="text-xs font-semibold text-blue-600">Clear filter</button>}
           </div>
 
@@ -14707,6 +14859,8 @@ function AdminAttendanceEmails({ store }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [bandFilter, setBandFilter] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school
+  const schools = useSchoolOptions();
   const [query, setQuery] = useState("");
   const [showConfig, setShowConfig] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -14871,7 +15025,7 @@ function AdminAttendanceEmails({ store }) {
   const withData = students.filter(s => s.bandKey);
   const noData = students.length - withData.length;
   const qq = query.trim().toLowerCase();
-  const shown = students.filter(s => s.bandKey && (!bandFilter || s.bandKey === bandFilter) && (!qq || `${s.name} ${s.email} ${s.programme}`.toLowerCase().includes(qq)));
+  const shown = students.filter(s => s.bandKey && (!bandFilter || s.bandKey === bandFilter) && matchesSchool(schoolFilter, s.academicDepartmentId) && (!qq || `${s.name} ${s.email} ${s.programme}`.toLowerCase().includes(qq)));
 
   return (
     <>
@@ -14934,6 +15088,7 @@ function AdminAttendanceEmails({ store }) {
             <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
               <Search size={15} className="text-slate-400" />
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, programme…" className="w-full bg-transparent text-sm outline-none" />
+              <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} />
               {bandFilter && <button onClick={() => setBandFilter("")} className="shrink-0 text-xs font-semibold text-blue-600">Clear filter</button>}
             </div>
             <div className="overflow-x-auto">
@@ -15546,6 +15701,8 @@ function AdminIsm({ store }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school
+  const schools = useSchoolOptions();
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blankIsm);
@@ -15587,8 +15744,12 @@ function AdminIsm({ store }) {
 
   const ismName = (r) => (r.applicant?.name || r.name || "—");
   const ql = query.trim().toLowerCase();
-  const list = rows.filter(r => !ql || ismName(r).toLowerCase().includes(ql) || (r.applicant?.course || "").toLowerCase().includes(ql) || (r.interviewerName || "").toLowerCase().includes(ql));
-  const paged = usePaged(list, 10, ql);
+  // The school comes from the linked applicant's linked student, derived server-side.
+  // Unlinked interviews — the common case until the backfill tool has run — sit under
+  // "Not assigned", which is honest rather than a gap.
+  const list = rows.filter(r => matchesSchool(schoolFilter, r.academicDepartmentId))
+    .filter(r => !ql || ismName(r).toLowerCase().includes(ql) || (r.applicant?.course || "").toLowerCase().includes(ql) || (r.interviewerName || "").toLowerCase().includes(ql));
+  const paged = usePaged(list, 10, `${ql}|${schoolFilter}`);
 
   return (
     <>
@@ -15602,6 +15763,7 @@ function AdminIsm({ store }) {
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, course or interviewer…" className="w-60 bg-transparent text-sm outline-none" />
         </div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       {loading ? <div className="skeleton h-64 rounded-2xl" /> : (
@@ -15704,6 +15866,8 @@ function AdminAdmissions({ store }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
+  const [schoolFilter, setSchoolFilter] = useState(""); // "" = every school
+  const schools = useSchoolOptions();
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blankAdmission);
@@ -15833,13 +15997,17 @@ function AdminAdmissions({ store }) {
 
   const ql = query.trim().toLowerCase();
   const list = rows.filter(r => {
+    // The school of an application is its LINKED student's, derived server-side.
+    // Unlinked applications — most, until the backfill tool has run — sit under
+    // "Not assigned".
+    if (!matchesSchool(schoolFilter, r.academicDepartmentId)) return false;
     if (!ql) return true;
     return admissionName(r).toLowerCase().includes(ql)
       || (r.email || "").toLowerCase().includes(ql)
       || (r.phone || "").toLowerCase().includes(ql)
       || (r.course || "").toLowerCase().includes(ql);
   });
-  const paged = usePaged(list, 10, ql);
+  const paged = usePaged(list, 10, `${ql}|${schoolFilter}`);
 
   // ---- selection (checkboxes) ----
   // "Select all" spans every application in the current (filtered) list, not just the
@@ -15918,6 +16086,7 @@ function AdminAdmissions({ store }) {
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, phone or course…" className="w-60 bg-transparent text-sm outline-none" />
         </div>
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       {/* Bulk action bar — shown only while one or more applications are ticked. */}

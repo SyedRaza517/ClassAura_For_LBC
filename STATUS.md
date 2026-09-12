@@ -16,6 +16,17 @@ not been run since the change as this was written.*
 first run to cover the de-tenanted code. The three assertions that carry §3.10 were each
 proved able to fail by reintroducing the bug they guard.*
 
+*12 Sep 2026: a school (AcademicDepartment) filter was added to every admin list that
+can reach one — students, attendance, courses, units, sessions, groups, sign-ups, PAT,
+queries, reviews, mitigations, prediction, staff, attendance emails, assessments,
+admissions, SLC and ISM. Backed by a run: the whole suite passed on the local
+`edtech_dev` (35 passed, 0 failed, 1 skipped, plus 1,622 unit tests), and the new
+assertions in `smoke-academic-departments.mjs` were proved able to fail by re-gating
+the endpoint they guard. Note that this file still has no section describing the
+academic-departments feature itself (it landed after the last full pass); the filter is
+a view, not a boundary — scoping is described in `.claude/rules/` and enforced
+server-side.*
+
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
 

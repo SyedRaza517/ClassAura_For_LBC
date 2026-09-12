@@ -309,6 +309,9 @@ async function computeCurrentTermAttendance(term, bandList) {
       lastName: s.lastName,
       name: `${s.firstName} ${s.lastName}`,
       email: s.email,
+      // The school, for the admin screen's school filter. Already on the row this
+      // function read; null means "not assigned" and is a real answer.
+      academicDepartmentId: s.academicDepartmentId ?? null,
       // Course comes from the units the student is actually taking this term (many students
       // have no cohort→course link); fall back to the cohort's course if there is one.
       programme: [...new Set([...courseNames].map(cleanProgramme).filter(Boolean))].join(", ") || cleanProgramme(s.cohort?.course?.name) || "",

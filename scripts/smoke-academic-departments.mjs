@@ -98,6 +98,7 @@ const { boss, plain } = people;
 let createdCourseId = null, movedStudentId = null, originalCohortId = null;
 let mappingCourseIds = [], mappingCohortId = null, mappingStudentId = null;
 let handMadeCourseId = null, handMadeCohortId = null, handMadeStudentId = null;
+let optionsStudentId = null;
 const confineIds = { courses: [], cohorts: [], students: [] };
 
 try {
@@ -784,10 +785,118 @@ try {
     assert.equal(cat.splitAcross?.length, 2, "the split was not reported");
     return "split across 2";
   });
+  /* -------------------------------------------------------------------------- */
+  /* The /options vocabulary route, and the school FILTER on the prediction API  */
+  /* -------------------------------------------------------------------------- */
+
+  // A page-scoped admin holding NEITHER "settings" NOR "scheduling" — the two grants
+  // behind the existing school lists. The whole reason /options exists is this account:
+  // every school-filter dropdown reads it, and before it existed the filter silently
+  // vanished for exactly this person. "prediction" is granted so the same fixture can
+  // exercise the prediction filter below.
+  const narrow = { name: "Prediction-only Admin", email: `ad.narrow.${stamp}@edtech.co.uk`, pw: "NarrowPass123!" };
+  // Registered for cleanup BEFORE creation is attempted, so a half-made fixture is
+  // still deleted by the shared finally below.
+  people.narrow = narrow;
+  await check("fixture: an admin holding only the prediction page", async () => {
+    const made = await call("/staff", { method: "POST", token: adminToken, body: { name: narrow.name, email: narrow.email, password: narrow.pw } });
+    assert.ok(made.body?.id, "could not create the fixture");
+    narrow.id = made.body.id;
+    await db.staff.update({
+      where: { id: narrow.id },
+      data: { accountRole: "ADMIN", adminPages: JSON.stringify(["prediction"]), mustChangePassword: false },
+    });
+    const login = await call("/auth/login", { method: "POST", body: { email: narrow.email, password: narrow.pw } });
+    assert.ok(login.body?.token, "could not sign in as the fixture");
+    narrow.token = login.body.token;
+    return narrow.email;
+  });
+
+  await check("/options is refused without a token", async () => {
+    const res = await call("/academic-departments/options");
+    assert.equal(res.status, 401, `expected 401, got ${res.status}`);
+    return "401";
+  });
+
+  // Breaks if: someone gates /options on a page. That failure is silent in the UI —
+  // the dropdown just never renders for a page-scoped admin — so it has to be loud here.
+  await check("a prediction-only admin reads the school vocabulary", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const res = await call("/academic-departments/options", { token: narrow.token });
+    assert.equal(res.status, 200, `expected 200, got ${res.status} — ${JSON.stringify(res.body)}`);
+    assert.ok(Array.isArray(res.body), "expected a bare array");
+    assert.ok(res.body.some((d) => d.id === biz.id), "this suite's own department is missing from the vocabulary");
+    return `${res.body.length} school(s)`;
+  });
+
+  // Breaks if: /options starts shipping `key`, `_count` or any new column. The boundary
+  // routes/timetabling.js draws — labels yes, membership and counts no — is asserted as
+  // an EXACT key set, because a test checking two names are absent passes when a third
+  // leaks.
+  await check("/options ships exactly id, name, colour, active", async () => {
+    const res = await call("/academic-departments/options", { token: narrow.token });
+    for (const row of res.body) {
+      assert.deepEqual(Object.keys(row).sort(), ["active", "colour", "id", "name"],
+        `unexpected key set: ${Object.keys(row).sort().join(", ")}`);
+    }
+    return "exact key set on every row";
+  });
+
+  // The negative control: /options must not have widened the settings surface. The same
+  // admin is still refused by the counted, settings-gated list.
+  await check("the same admin is still refused by the settings list", async () => {
+    const res = await call("/academic-departments", { token: narrow.token });
+    assert.equal(res.status, 403, `expected 403, got ${res.status}`);
+    return "403";
+  });
+
+  // ---- the prediction school filter — A FILTER, NOT A BOUNDARY ----
+  await check("prediction register filters by the student's school", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const cmp = list.body.departments.find((d) => d.key === CMP);
+    const s = await db.student.create({
+      data: {
+        firstName: "Filter", lastName: "Probe", studentRef: `FLT${stamp}`,
+        email: `filter.${stamp}@edtech.co.uk`, initials: "FP", colour: "#123456",
+        academicDepartmentId: biz.id,
+      },
+    });
+    optionsStudentId = s.id;
+    await db.studentPredictionCurrent.create({
+      data: {
+        studentId: s.id, missingAssessmentCount: 0, gradeTrend: "steady", interventionResponse: "none",
+        baseProgressionScore: 70, progressionScore: 70, baseRiskLevel: "GREEN", riskLevel: "GREEN",
+        directionOfTravel: "steady", overrideCodes: [], riskDriverCodes: [], positiveDriverCodes: [],
+        modelVersion: "test", lastCalculated: new Date(),
+      },
+    });
+    const inBiz = await call(`/prediction/students?academicDepartmentId=${biz.id}`, { token: narrow.token });
+    assert.equal(inBiz.status, 200, `expected 200, got ${inBiz.status}`);
+    assert.ok(inBiz.body.students.some((r) => r.student.id === s.id), "the student is missing from their own school's view");
+    const inCmp = await call(`/prediction/students?academicDepartmentId=${cmp.id}`, { token: narrow.token });
+    assert.ok(!inCmp.body.students.some((r) => r.student.id === s.id), "the filter leaked another school's student");
+    return "present in own school, absent from the other";
+  });
+
+  // Breaks if: an unrecognised id is DROPPED rather than passed through — the whole
+  // college would then render under a school heading, which is the failure the hnd.js
+  // helper's comment names.
+  await check("an unknown school id matches nothing rather than everything", async () => {
+    const res = await call(`/prediction/students?academicDepartmentId=not-a-school-${stamp}`, { token: narrow.token });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.students.length, 0, `an unknown id returned ${res.body.students.length} student(s)`);
+    return "0 rows";
+  });
 } finally {
   /* -------------------------------------------------------------------------- */
   /* Cleanup — in a finally, so a failed run leaves nothing behind               */
   /* -------------------------------------------------------------------------- */
+  if (optionsStudentId) {
+    await db.studentPredictionCurrent.deleteMany({ where: { studentId: optionsStudentId } }).catch(() => {});
+    await db.student.deleteMany({ where: { id: optionsStudentId } }).catch(() => {});
+  }
   if (confineIds.students.length) await db.student.deleteMany({ where: { id: { in: confineIds.students } } }).catch(() => {});
   if (confineIds.cohorts.length) await db.cohort.deleteMany({ where: { id: { in: confineIds.cohorts } } }).catch(() => {});
   if (confineIds.courses.length) await db.course.deleteMany({ where: { id: { in: confineIds.courses } } }).catch(() => {});

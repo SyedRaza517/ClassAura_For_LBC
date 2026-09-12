@@ -37,6 +37,37 @@ router.get("/", requireAuth, requirePage("settings"), async (_req, res) => {
 });
 
 /**
+ * The school list as a FILTER VOCABULARY — names, colours, active flags. Nothing else.
+ *
+ * GATED ON requireAuth ALONE, unlike everything else in this router, and that is the
+ * point of its existence. School-filter dropdowns now sit on admin screens across many
+ * different page grants — students, registers, prediction, admissions, PAT — and the
+ * two existing list routes each answer to one grant: GET / above needs "settings",
+ * /api/timetabling/departments needs "scheduling". A PAT admin holds neither, the
+ * fetch 403s, and the filter silently vanishes with nothing on screen saying why.
+ *
+ * The boundary routes/timetabling.js draws for its own copy holds here too: the list
+ * of school NAMES is a label vocabulary every staff member can already read off any
+ * student row (sStudent ships academicDepartmentId to any authenticated caller).
+ * MEMBERSHIP — who is in one, and the counts that reveal how many — stays behind
+ * "settings" and Super Admin above. `key` is withheld with the counts: it is the
+ * membership editor's stable handle, and no filter needs it.
+ *
+ * Retired schools are returned too, carrying `active`, exactly as the timetabling
+ * route argues: a filter (unlike a picker) must be able to find the students still
+ * attached to a school the college has stopped running.
+ */
+router.get("/options", requireAuth, async (_req, res) => {
+  // AcademicDepartment is declared UNSCOPED in academicScopeModels.js, so no
+  // withoutAcademicScope() wrapper — see GET / above.
+  const rows = await prisma.academicDepartment.findMany({
+    orderBy: [{ active: "desc" }, { name: "asc" }],
+    select: { id: true, name: true, colour: true, active: true },
+  });
+  res.json(rows);
+});
+
+/**
  * What the college has NOT finished configuring.
  *
  * BOTH NUMBERS ARE THE VISIBLE HALF OF A FAIL DIRECTION, and neither is allowed to be

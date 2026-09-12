@@ -177,7 +177,27 @@ const withDocs = { include: { documents: { orderBy: { uploadedAt: "asc" } } } };
 // intake), so no pagination on the server; the client paginates for display.
 router.get("/", async (_req, res) => {
   const rows = await prisma.admission.findMany({ orderBy: { createdAt: "desc" }, ...withDocs });
-  res.json(rows.map(sAdmission));
+  // The linked student's school, resolved as a second TOP-LEVEL query, never an include:
+  // Admission is UNSCOPED and Student is scoped, and a nested include is the leak
+  // smoke-academic-nested-reads.mjs exists to hold closed. Top-level, the student read
+  // stays inside the caller's scope, which fails in the safe direction. Rows with no
+  // linkedStudentId — the overwhelming case until the backfill tool has run, see
+  // prediction-tripwires — honestly land in the school filter's "Not assigned" bucket.
+  // Attached beside sAdmission rather than added to ADMISSION_OUT because it is not a
+  // column of this table: it is derived, and the allowlist should keep saying so.
+  const linkedIds = [...new Set(rows.map((r) => r.linkedStudentId).filter(Boolean))];
+  const deptByStudent = new Map(
+    linkedIds.length
+      ? (await prisma.student.findMany({
+          where: { id: { in: linkedIds } },
+          select: { id: true, academicDepartmentId: true },
+        })).map((s) => [s.id, s.academicDepartmentId])
+      : [],
+  );
+  res.json(rows.map((r) => ({
+    ...sAdmission(r),
+    academicDepartmentId: (r.linkedStudentId && deptByStudent.get(r.linkedStudentId)) || null,
+  })));
 });
 
 router.post("/", async (req, res) => {
