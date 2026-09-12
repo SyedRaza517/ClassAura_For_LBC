@@ -134,6 +134,17 @@ const FORMS = {
       { key: "rootFolder", label: "Root folder", placeholder: "(optional)" },
     ],
   },
+  teams: {
+    label: "Teams attendance",
+    blurb: "Reads who attended each online class from Microsoft Teams and fills the register automatically after the class ends. Read-only — nothing is written to Microsoft.",
+    secret: { key: "clientSecret", label: "Client secret", hint: "From the app registration you created in Microsoft Entra ID for Teams attendance (separate from SharePoint's). See TEAMS_SETUP.md." },
+    fields: [
+      { key: "tenantId", label: "Directory (tenant) ID" },
+      { key: "clientId", label: "Application (client) ID" },
+      { key: "organizerAccounts", label: "Organizer accounts", placeholder: "scheduling@yourcollege.ac.uk, dept2@yourcollege.ac.uk", hint: "The dedicated accounts that CREATE your online class meetings, comma-separated. Teachers join as co-organizers and are never read. Meetings must be scheduled (not “Meet now”) from these accounts at the timetabled class time." },
+    ],
+    note: "Your Microsoft 365 admin must grant the app three application permissions (Calendars.Read, OnlineMeetings.Read.All, OnlineMeetingArtifact.Read.All) and scope them to these accounts with the two access policies in TEAMS_SETUP.md. Until then, Test connection will say exactly which step is missing.",
+  },
 };
 
 function Row({ label, children, hint }) {

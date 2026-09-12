@@ -104,6 +104,30 @@ const PROVIDERS = {
     },
     describe: (s) => (s.siteHost ? s.siteHost + (s.sitePath || "") : "no site set"),
   },
+  // Microsoft Teams attendance. A SEPARATE app registration from SharePoint even
+  // though both talk to Graph, because the two need different application permissions
+  // (Sites.* vs Calendars.Read + OnlineMeetings.Read.All + OnlineMeetingArtifact.
+  // Read.All) and a college may legitimately grant one and not the other — one Test
+  // button must not vouch for two unrelated capabilities. The "tenant" note above
+  // sharepoint applies here unchanged: it is Microsoft's directory id.
+  //
+  // organizerAccounts is a comma-separated list of the dedicated scheduling accounts
+  // that CREATE every online class meeting (teachers are co-organizers and are never
+  // read). Graph exposes a meeting's attendance only through its organizer, which is
+  // why these accounts, and only these, are what the sync reads.
+  teams: {
+    label: "Teams attendance",
+    secretField: "clientSecret",
+    settingFields: ["tenantId", "clientId", "organizerAccounts"],
+    env: {
+      clientSecret: "TEAMS_CLIENT_SECRET", tenantId: "TEAMS_TENANT_ID",
+      clientId: "TEAMS_CLIENT_ID", organizerAccounts: "TEAMS_ORGANIZER_ACCOUNTS",
+    },
+    describe: (s) => {
+      const n = String(s.organizerAccounts || "").split(",").map((x) => x.trim()).filter(Boolean).length;
+      return n ? `${n} organizer account${n === 1 ? "" : "s"}` : "no organizer accounts set";
+    },
+  },
 };
 
 // Short, because a credential that was just corrected should take effect while the

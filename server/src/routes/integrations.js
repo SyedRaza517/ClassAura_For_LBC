@@ -149,6 +149,7 @@ router.post("/:provider/test", requireAuth, requirePage("settings"), async (req,
     : provider === "canvas" ? require("./../vle/canvas")
     : provider === "blackboard" ? require("./../vle/blackboard")
     : provider === "email" ? require("./../email")
+    : provider === "teams" ? require("./../teamsGraph")
     : require("./../sharepoint");
   // A provider's own failure is a RESULT here, not a 500 — "your client secret is
   // wrong" is the answer the caller asked for. Only an unexpected throw is an error,
