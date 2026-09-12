@@ -152,6 +152,36 @@ async function maybeSyncTeamsAttendance() {
   return true;
 }
 
+// The Teams MEETINGS poller (Phase A of Teams automation, distinct from the
+// attendance sync above). Runs at every hourly tick, the same as
+// maybeSyncTeamsAttendance, because its work is "events whose publish state or
+// content changed since we last looked" — naturally incremental, and cheap when
+// there are none, so there is nothing an overnight-only cadence would buy. Gated on
+// TeamsAutomationConfig.autoCreateMeetings (constraints.md: both switches default
+// false, off means no Graph calls at all) AND graph.isConfigured(), so a switch
+// flipped on with no Teams credentials yet saved does nothing rather than erroring
+// every hour. Dedupe: the engine's own in-process lock plus a 30-minute window
+// against TeamsProvisionSync, same shape as the attendance sync's own dedupe.
+async function maybeRunTeamsMeetings() {
+  const teamsGraph = require("./teamsGraph");
+  const teamsAutomationConfig = require("./teamsAutomationConfig");
+  const teamsMeetings = require("./teamsMeetings");
+  const cfg = require("./integrationConfig");
+  await cfg.load("teams");
+  const settings = await teamsAutomationConfig.get();
+  if (!settings.autoCreateMeetings) return false;
+  if (!teamsGraph.isConfigured() || teamsMeetings.isRunning()) return false;
+  await teamsMeetings.sweepStaleRuns();
+  const recent = await prisma.teamsProvisionSync.count({
+    where: { job: "meetings", mode: "scheduled", status: { in: ["ok", "failed"] }, startedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+  });
+  if (recent > 0) return false;
+  console.log("Scheduler: starting the Teams meetings sync");
+  const { summary } = await teamsMeetings.runMeetingsSync({ mode: "scheduled" });
+  console.log(`Scheduler: Teams meetings sync finished — ${summary.meetingsCreated} created, ${summary.meetingsUpdated} updated, ${summary.meetingsCancelled} cancelled`);
+  return true;
+}
+
 // Kick off the background scheduler. Hourly cadence; the guards inside each job
 // limit real work to its own day/hour. unref() so the timer never keeps the process
 // alive on its own.
@@ -169,10 +199,20 @@ function startScheduler() {
     // Moodle import either, so it is its own statement rather than chained onto them.
     maybeSyncTeamsAttendance()
       .catch((e) => console.error("Teams attendance sync failed:", e.message));
+    // Same reasoning again, for the Teams MEETINGS job added alongside the
+    // attendance sync above — its own statement so a failing meetings sync (a bad
+    // Graph credential, an event Graph rejects) never stops any of the others.
+    maybeRunTeamsMeetings()
+      .catch((e) => console.error("Teams meetings sync failed:", e.message));
   };
   run(); // run once on boot (covers a deploy that happens on the reminder day)
   setInterval(run, 60 * 60 * 1000).unref();
-  console.log(`Scheduler: timesheet month-end reminders active (checks hourly); Moodle import at ${SYNC_HOUR}:00`);
+  // Names all four jobs — a prior review flagged that this line still named only
+  // the reminders and the Moodle import after the Teams attendance sync was added.
+  console.log(`Scheduler: timesheet month-end reminders active (checks hourly); Moodle import at ${SYNC_HOUR}:00; Teams attendance sync hourly; Teams meetings sync hourly`);
 }
 
-module.exports = { startScheduler, sendTimesheetReminders, maybeSyncMoodle, maybeSyncTeamsAttendance, isDayBeforeMonthEnd, lastDayOfMonth };
+module.exports = {
+  startScheduler, sendTimesheetReminders, maybeSyncMoodle, maybeSyncTeamsAttendance,
+  maybeRunTeamsMeetings, isDayBeforeMonthEnd, lastDayOfMonth,
+};
