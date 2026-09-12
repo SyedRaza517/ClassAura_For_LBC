@@ -3,12 +3,12 @@ import {
   CheckCircle2, Clock3, CalendarCheck, CalendarDays, Nfc,
 } from "lucide-react";
 import { Screen, ErrBox, LoadingScreen, SectionTitle, Stat, Action, HeroTile } from "../ui";
-import { ACCENT, pctTone, gradeTone } from "../ui/tokens";
+import { ACCENT, ACCENT_TONE, attendanceTone, gradeTone, bandForPct, DEFAULT_ATTENDANCE_BANDS, toneVars } from "../ui/tokens";
 import { fmtDate } from "../utils";
-import { NAVY } from "../../branding";
+import { NAVY, alpha } from "../../branding";
 import { StudentCheckIn, anyCheckInWay, checkInSub } from "./CheckIn";
 
-export function Home({ user, attendance, results, queries, reviews, tapContext, busy, err, reload, setScreen, newReplies, newReviews }) {
+export function Home({ user, attendance, results, queries, reviews, tapContext, busy, err, reload, setScreen, newReplies, newReviews, bands }) {
   // Only blank the screen when nothing at all arrived. One failed call must not
   // hide the data that did load — that was the old silent-wrong-data bug inverted.
   if (err && !attendance && !results) return <Screen><ErrBox>{err}</ErrBox></Screen>;
@@ -26,13 +26,23 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
   // The server returns reviews newest-first, so the first one is the latest.
   const latestReview = (reviews || [])[0];
 
-  // One clear message about where they stand, in words rather than numbers.
-  const band = attPct == null ? null : attPct >= 85 ? { t: "Excellent attendance — keep it up.", c: "#059669" }
-    : attPct >= 70 ? { t: "Good, but there's room to improve.", c: "#d97706" }
-      : { t: "Your attendance needs attention.", c: "#e11d48" };
-
-  const attTone = pctTone(attPct);
+  const attTone = attendanceTone(attPct, bands);
   const avgTone = gradeTone(avgPct);
+
+  // One clear message about where they stand, in words rather than numbers. This used
+  // to be an inline 85/70 split invented just for this banner — a FOURTH scale next to
+  // pctTone, gradeTone and progressTone, and the one the original survey found hardest
+  // to spot because it lived nowhere near ui/tokens.js. It now reads straight off the
+  // ladder every other attendance figure on this app uses: the band's own label, plus a
+  // call to action chosen by RANK within the college's own list (best/second -> keep it
+  // up, worst/second-worst -> needs attention) rather than a percentage this file would
+  // otherwise have had to re-invent for a college that configures its own boundaries.
+  const bandList = Array.isArray(bands) && bands.length ? bands : DEFAULT_ATTENDANCE_BANDS;
+  const resolvedBand = bandForPct(attPct, bandList);
+  const bandIdx = resolvedBand ? bandList.indexOf(resolvedBand) : -1;
+  const band = attPct == null || !resolvedBand ? null : {
+    t: `${resolvedBand.label}. ${bandIdx <= 1 ? "Keep it up." : bandIdx >= bandList.length - 2 ? "Your attendance needs attention." : "There's room to improve."}`,
+  };
 
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
@@ -52,9 +62,9 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
       </div>
 
       {band && (
-        <div className="fade-up flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ring-1" style={{ background: band.c + "12", "--tw-ring-color": band.c + "33", animationDelay: "110ms" }}>
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl" style={{ background: band.c + "1f" }}><Sparkles size={14} style={{ color: band.c }} /></span>
-          <p className="text-[12px] font-bold leading-snug" style={{ color: band.c }}>{band.t}</p>
+        <div className="tone-panel fade-up flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ring-1" style={{ ...toneVars(attTone), animationDelay: "110ms" }}>
+          <span className="tone-soft flex h-7 w-7 shrink-0 items-center justify-center rounded-xl" style={toneVars(attTone)}><Sparkles size={14} /></span>
+          <p className="tone-text text-[12px] font-bold leading-snug" style={toneVars(attTone)}>{band.t}</p>
         </div>
       )}
 
@@ -67,41 +77,46 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
 
       {/* Latest reply, surfaced so it isn't missed */}
       {latestReply && (
-        <button onClick={() => setScreen("query")} className="press fade-up w-full rounded-3xl bg-white p-4 text-left shadow-card ring-1 ring-slate-200/60" style={{ animationDelay: "220ms" }}>
+        <button onClick={() => setScreen("query")} className="press fade-up w-full rounded-3xl bg-white p-4 text-left shadow-card ring-1 ring-slate-200/60 dark:bg-slate-800 dark:ring-slate-700/60" style={{ animationDelay: "220ms" }}>
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-xl" style={{ background: ACCENT.ask + "14" }}><MessageSquare size={14} style={{ color: ACCENT.ask }} /></span>
-            <p className="flex-1 text-[10px] font-extrabold uppercase tracking-widest" style={{ color: ACCENT.ask }}>Reply from the college</p>
+            <span className="tone-soft flex h-7 w-7 items-center justify-center rounded-xl" style={toneVars(ACCENT_TONE.ask)}><MessageSquare size={14} /></span>
+            <p className="tone-text flex-1 text-[10px] font-extrabold uppercase tracking-widest" style={toneVars(ACCENT_TONE.ask)}>Reply from the college</p>
             {newReplies > 0 && <span className="pop rounded-full bg-amber-400 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-slate-900">new</span>}
           </div>
-          <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-slate-600">{latestReply.response}</p>
-          <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold" style={{ color: ACCENT.ask }}>Read the conversation <ChevronRight size={12} /></p>
+          <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{latestReply.response}</p>
+          <p className="tone-text mt-1.5 flex items-center gap-1 text-[11px] font-bold" style={toneVars(ACCENT_TONE.ask)}>Read the conversation <ChevronRight size={12} /></p>
         </button>
       )}
 
       {/* A lecturer's review, surfaced the same way a college reply is. It carries the
           summary rather than the progress band: the band belongs on the screen that
-          also gives it the context of what was discussed and agreed. */}
+          also gives it the context of what was discussed and agreed.
+          NAVY is the college's own brand colour (a CSS var, "var(--brand-primary)"),
+          not a literal hex — `NAVY + "14"` used to build an invalid CSS colour string
+          ("var(--brand-primary)14"), the exact break branding.js#alpha's own comment
+          warns about. alpha() is the fix, and was already sitting unused in this
+          file's own NAVY import. */}
       {latestReview && (
-        <button onClick={() => setScreen("reviews")} className="press fade-up w-full rounded-3xl bg-white p-4 text-left shadow-card ring-1 ring-slate-200/60" style={{ animationDelay: "245ms" }}>
+        <button onClick={() => setScreen("reviews")} className="press fade-up w-full rounded-3xl bg-white p-4 text-left shadow-card ring-1 ring-slate-200/60 dark:bg-slate-800 dark:ring-slate-700/60" style={{ animationDelay: "245ms" }}>
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl" style={{ background: NAVY + "14" }}><Info size={14} style={{ color: NAVY }} /></span>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl" style={{ background: alpha(NAVY, 14), color: NAVY }}><Info size={14} /></span>
             <p className="flex-1 text-[10px] font-extrabold uppercase tracking-widest" style={{ color: NAVY }}>From your lecturer</p>
             {newReviews > 0 && <span className="pop shrink-0 rounded-full bg-amber-400 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-slate-900">{newReviews} new</span>}
           </div>
-          <p className="mt-2 truncate text-[11px] font-bold text-slate-400">{latestReview.unit?.code ? `${latestReview.unit.code} · ` : ""}{fmtDate(latestReview.date)}{latestReview.staffName ? ` · ${latestReview.staffName}` : ""}</p>
-          {latestReview.summary && <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-slate-600">{latestReview.summary}</p>}
+          <p className="mt-2 truncate text-[11px] font-bold text-slate-400 dark:text-slate-500">{latestReview.unit?.code ? `${latestReview.unit.code} · ` : ""}{fmtDate(latestReview.date)}{latestReview.staffName ? ` · ${latestReview.staffName}` : ""}</p>
+          {latestReview.summary && <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{latestReview.summary}</p>}
           <p className="mt-1.5 flex items-center gap-1 text-[11px] font-bold" style={{ color: NAVY }}>Read your reviews <ChevronRight size={12} /></p>
         </button>
       )}
 
       {pending > 0 && (
-        <button onClick={() => setScreen("assessments")} className="press fade-up flex w-full items-center gap-3 rounded-3xl bg-white p-3.5 text-left shadow-card ring-1 ring-slate-200/60" style={{ animationDelay: "265ms" }}>
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={{ background: ACCENT.results + "14" }}><Award size={17} style={{ color: ACCENT.results }} /></span>
+        <button onClick={() => setScreen("assessments")} className="press fade-up flex w-full items-center gap-3 rounded-3xl bg-white p-3.5 text-left shadow-card ring-1 ring-slate-200/60 dark:bg-slate-800 dark:ring-slate-700/60" style={{ animationDelay: "265ms" }}>
+          <span className="tone-soft flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl" style={toneVars(ACCENT_TONE.results)}><Award size={17} /></span>
           <span className="flex-1">
-            <span className="block text-[13px] font-extrabold text-slate-700">{pending} assessment{pending === 1 ? "" : "s"} awaiting marks</span>
-            <span className="block text-[11px] text-slate-400">{graded} of {totalAssess} marked so far</span>
+            <span className="block text-[13px] font-extrabold text-slate-700 dark:text-slate-200">{pending} assessment{pending === 1 ? "" : "s"} awaiting marks</span>
+            <span className="block text-[11px] text-slate-400 dark:text-slate-500">{graded} of {totalAssess} marked so far</span>
           </span>
-          <ChevronRight size={17} className="shrink-0 text-slate-300" />
+          <ChevronRight size={17} className="shrink-0 text-slate-300 dark:text-slate-600" />
         </button>
       )}
 

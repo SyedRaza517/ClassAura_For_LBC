@@ -1,6 +1,6 @@
 import { RefreshCw, CalendarDays, Clock3, User, MapPin } from "lucide-react";
 import { Screen, LoadingScreen, Card } from "../ui";
-import { ACCENT } from "../ui/tokens";
+import { ACCENT, ACCENT_TONE, toneVars } from "../ui/tokens";
 import { NAVY_DARK } from "../../branding";
 
 // 1 = Monday … 7 = Sunday (matches the server). Weekend days appear only if a slot
@@ -29,10 +29,10 @@ const ttDMY = (d) => { const [y, m, dd] = String(d || "").split("-"); return y ?
 // screen that paints them alike starts a support conversation from a false premise. Only
 // shown once a class has happened — an unmarked future class is not missing anything.
 const TT_MARK = {
-  P: { label: "Present", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-  L: { label: "Late", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
-  E: { label: "Excused", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
-  A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
+  P: { label: "Present", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800" },
+  L: { label: "Late", cls: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800" },
+  E: { label: "Excused", cls: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:ring-sky-800" },
+  A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800" },
 };
 
 // The Monday of a date's week, and the number of whole weeks between two dates.
@@ -86,7 +86,7 @@ function ModuleTimetable({ events, today }) {
 
   return (
     <>
-      {groups.map((g) => {
+      {groups.map((g, gi) => {
         // Hoisted only when EVERY class agrees. One room for eleven weeks and a different
         // room for the twelfth is exactly the week somebody turns up to the wrong door,
         // so a single exception keeps the column and shows it on every row.
@@ -100,7 +100,12 @@ function ModuleTimetable({ events, today }) {
         const course = one(g.items, (e) => e.course);
         const school = one(g.items, (e) => e.school);
         return (
-          <div key={g.key} className="mb-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
+          // fade-up + a stagger was missing here — every other card on this app
+          // arrives with the same entrance, and a module block that just appeared
+          // fully-formed while its neighbours on Home and Attendance eased in read as
+          // a different, less finished screen. Capped like Reviews' own stagger so a
+          // long timetable doesn't leave the last module waiting seconds to animate.
+          <div key={g.key} className="fade-up mb-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-800 dark:ring-slate-700/60" style={{ animationDelay: `${Math.min(gi, 6) * 55}ms` }}>
             <div className="px-3.5 py-3 text-white" style={{ background: g.colour }}>
               <p className="text-[15px] font-extrabold leading-tight">{g.title}</p>
               {/* WRAPPED, NOT TRUNCATED, and that is the width fix.
@@ -131,7 +136,7 @@ function ModuleTimetable({ events, today }) {
             </div>
             <table className="w-full border-collapse text-left">
               <thead>
-                <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:bg-slate-900/50 dark:text-slate-500">
                   <th scope="col" className="px-3 py-1.5">Wk</th>
                   <th scope="col" className="px-2 py-1.5">Date</th>
                   {!time && <th scope="col" className="px-2 py-1.5">Time</th>}
@@ -140,7 +145,7 @@ function ModuleTimetable({ events, today }) {
                   <th scope="col" className="px-2 py-1.5" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                 {g.items.map((ev, i) => {
                   const isToday = ev.date === today;
                   const past = ev.date < today;
@@ -160,7 +165,7 @@ function ModuleTimetable({ events, today }) {
                   // Check In is the screen with the action. What this column shows instead
                   // is what HAPPENED: the mark, or that nobody took the register.
                   return (
-                    <tr key={ev.id} className={isToday ? "bg-slate-50" : ""}>
+                    <tr key={ev.id} className={isToday ? "bg-slate-50 dark:bg-slate-700/40" : ""}>
                       {/* Numbered within the MODULE and FROM THE DATE, so "week 3" is the
                           third week this module runs — the way a student and a brief both
                           say it — and two classes on one day share a number instead of
@@ -170,20 +175,20 @@ function ModuleTimetable({ events, today }) {
                           day. A module with a morning and an afternoon session used to
                           print the same date twice, one under the other, which is the
                           repetition this screen was rebuilt to remove. */}
-                      <td className={`px-3 py-2 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>
+                      <td className={`px-3 py-2 text-[12px] tabular-nums ${past ? "text-slate-300 dark:text-slate-600" : "text-slate-500 dark:text-slate-400"}`}>
                         {firstOfDay ? weekNo : ""}
                       </td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>
+                      <td className={`whitespace-nowrap px-2 py-2 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400 dark:text-slate-600" : "text-slate-700 dark:text-slate-200"}`}>
                         {firstOfDay ? ttDMY(ev.date) : ""}
                       </td>
-                      {!time && <td className="whitespace-nowrap px-2 py-2 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
-                      {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{[ev.room ? `Room ${ev.room}` : null, ev.floor, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
-                      {!staff && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{(ev.staff || []).join(", ") || "—"}</td>}
+                      {!time && <td className="whitespace-nowrap px-2 py-2 text-[12px] tabular-nums text-slate-500 dark:text-slate-400">{ev.start}–{ev.end}</td>}
+                      {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500 dark:text-slate-400">{[ev.room ? `Room ${ev.room}` : null, ev.floor, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
+                      {!staff && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500 dark:text-slate-400">{(ev.staff || []).join(", ") || "—"}</td>}
                       <td className="px-2 py-2 text-right">
                         {ev.status
                           ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
                           : past || isToday
-                            ? <span className="text-[10px] text-slate-300">Not marked</span>
+                            ? <span className="text-[10px] text-slate-300 dark:text-slate-600">Not marked</span>
                             : null}
                       </td>
                     </tr>
@@ -218,7 +223,7 @@ export function TimetableScreen({ timetable, busy, reload }) {
     return (
       <Screen>
         <ModuleTimetable events={events} today={today} />
-        <p className="mt-1 px-1 text-center text-[11px] text-slate-400">
+        <p className="mt-1 px-1 text-center text-[11px] text-slate-400 dark:text-slate-500">
           Times and rooms are set by the college. If something looks wrong, message us from &ldquo;Ask the College&rdquo;.
         </p>
       </Screen>
@@ -229,10 +234,10 @@ export function TimetableScreen({ timetable, busy, reload }) {
     return (
       <Screen>
         <Card className="text-center">
-          <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl" style={{ background: ACCENT.timetable + "18" }}><CalendarDays size={26} style={{ color: ACCENT.timetable }} /></div>
-          <p className="text-base font-extrabold text-slate-800">No timetable yet</p>
-          <p className="mt-1 text-sm text-slate-500">Your timetable will appear here once the college publishes it for your course. Pull to refresh, or check back soon.</p>
-          <button onClick={reload} className="press mx-auto mt-3 flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600"><RefreshCw size={13} /> Refresh</button>
+          <div className="tone-soft mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl" style={toneVars(ACCENT_TONE.timetable)}><CalendarDays size={26} /></div>
+          <p className="text-base font-extrabold text-slate-800 dark:text-slate-100">No timetable yet</p>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Your timetable will appear here once the college publishes it for your course. Pull to refresh, or check back soon.</p>
+          <button onClick={reload} className="press mx-auto mt-3 flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300"><RefreshCw size={13} /> Refresh</button>
         </Card>
       </Screen>
     );
@@ -240,7 +245,7 @@ export function TimetableScreen({ timetable, busy, reload }) {
   return (
     <Screen>
       {stages.map((st, i) => <TimetableBlock key={`${st.courseId}|${st.year}|${st.termNumber}`} stage={st} i={i} />)}
-      <p className="px-1 text-center text-[11px] text-slate-400">Times and rooms are set by the college. If something looks wrong, message us from “Ask the College”.</p>
+      <p className="px-1 text-center text-[11px] text-slate-400 dark:text-slate-500">Times and rooms are set by the college. If something looks wrong, message us from “Ask the College”.</p>
     </Screen>
   );
 }
@@ -251,10 +256,10 @@ const ttFmtDate = (d, withYear) => { if (!d) return ""; const dt = new Date(d + 
 // out most, formative feedback next, teaching is the calm default.
 const activityStyle = (a) => {
   const s = String(a || "").toLowerCase();
-  if (s.includes("assessment") || s.includes("exam")) return "bg-rose-100 text-rose-700";
-  if (s.includes("feedback") || s.includes("formative")) return "bg-amber-100 text-amber-700";
-  if (s.includes("break") || s.includes("reading") || s.includes("extra")) return "bg-slate-100 text-slate-500";
-  return "bg-emerald-50 text-emerald-700";
+  if (s.includes("assessment") || s.includes("exam")) return "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300";
+  if (s.includes("feedback") || s.includes("formative")) return "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300";
+  if (s.includes("break") || s.includes("reading") || s.includes("extra")) return "bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400";
+  return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300";
 };
 
 function TimetableBlock({ stage, i }) {
@@ -282,19 +287,19 @@ function TimetableBlock({ stage, i }) {
       </div>
 
       {days.length > 0 && (
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-slate-100 dark:divide-slate-700">
           {days.map(d => (
             <div key={d} className="px-4 py-3">
               <p className="mb-2 text-[11px] font-extrabold uppercase tracking-widest" style={{ color: accent }}>{TT_DAYS[d]}</p>
               <div className="space-y-2">
                 {byDay[d].map(r => (
-                  <div key={r.id} className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
+                  <div key={r.id} className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70 dark:bg-slate-700/40 dark:ring-slate-700/60">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="min-w-0 break-words text-sm font-bold text-slate-800">{r.title}</p>
-                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">{periodOf(r.start)}</span>
+                      <p className="min-w-0 break-words text-sm font-bold text-slate-800 dark:text-slate-100">{r.title}</p>
+                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">{periodOf(r.start)}</span>
                     </div>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-500">
-                      <span className="flex items-center gap-1 font-semibold text-slate-600"><Clock3 size={12} /> {r.start} – {r.end}</span>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-slate-500 dark:text-slate-400">
+                      <span className="flex items-center gap-1 font-semibold text-slate-600 dark:text-slate-300"><Clock3 size={12} /> {r.start} – {r.end}</span>
                       {r.lecturer && <span className="flex items-center gap-1"><User size={12} /> {r.lecturer}</span>}
                       {r.room && <span className="flex items-center gap-1"><MapPin size={12} /> {r.room}</span>}
                     </div>
@@ -308,16 +313,16 @@ function TimetableBlock({ stage, i }) {
 
       {/* Academic calendar — the term's weekly structure (Week / Commencing / Activity). */}
       {weeks.length > 0 && (
-        <div className="border-t-4 border-slate-100 px-4 py-3">
+        <div className="border-t-4 border-slate-100 px-4 py-3 dark:border-slate-700">
           <p className="mb-2 text-[11px] font-extrabold uppercase tracking-widest" style={{ color: accent }}>Academic calendar</p>
-          <div className="overflow-x-auto rounded-xl ring-1 ring-slate-200">
+          <div className="overflow-x-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-700">
             <table className="w-full text-[12px]">
-              <thead><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400"><th className="px-3 py-2">Wk</th><th className="px-3 py-2">Commencing</th><th className="px-3 py-2">Activity</th></tr></thead>
+              <thead><tr className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:bg-slate-900/50 dark:text-slate-500"><th className="px-3 py-2">Wk</th><th className="px-3 py-2">Commencing</th><th className="px-3 py-2">Activity</th></tr></thead>
               <tbody>
                 {weeks.map((w, k) => (
-                  <tr key={k} className="border-t border-slate-100">
-                    <td className="px-3 py-2 font-bold text-slate-600">{w.n}</td>
-                    <td className="px-3 py-2 text-slate-500">{ttFmtDate(w.wc)}</td>
+                  <tr key={k} className="border-t border-slate-100 dark:border-slate-700">
+                    <td className="px-3 py-2 font-bold text-slate-600 dark:text-slate-300">{w.n}</td>
+                    <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{ttFmtDate(w.wc)}</td>
                     <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${activityStyle(w.activity)}`}>{w.activity || "Teaching"}</span></td>
                   </tr>
                 ))}

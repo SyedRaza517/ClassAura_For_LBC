@@ -13,7 +13,7 @@ import { clearPendingQr, stashScan } from "../../pendingQr";
 import { qrScanResult, qrScanRefusal, keepScanAfter } from "../../qrResultView";
 import QrScanner from "../../QrScanner";
 import { nfcStatus } from "../../nfc";
-import { ACCENT } from "../ui/tokens";
+import { ACCENT, ACCENT_TONE, toneVars } from "../ui/tokens";
 import { ttLongDate } from "../utils";
 
 /**
@@ -95,10 +95,10 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
   // An empty day is a real answer and deserves saying, not an absence to interpret.
   if (!today || !today.length) {
     return (
-      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Today</p>
-        <p className="mt-1.5 text-sm font-extrabold text-slate-800">No classes timetabled</p>
-        <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Today</p>
+        <p className="mt-1.5 text-sm font-extrabold text-slate-800 dark:text-slate-100">No classes timetabled</p>
+        <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
           Nothing is scheduled for you today. If you think that&rsquo;s wrong, ask the college —
           registers are created from each unit&rsquo;s teaching dates.
         </p>
@@ -109,15 +109,15 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
   // P and L are the two a tap can produce; E and A come from a lecturer. Kept in one
   // place so the words and the colours cannot drift apart.
   const MARK = {
-    P: { label: "Present", bg: "bg-emerald-50", text: "text-emerald-700", ring: "ring-emerald-200" },
-    L: { label: "Late", bg: "bg-amber-50", text: "text-amber-700", ring: "ring-amber-200" },
-    E: { label: "Excused", bg: "bg-sky-50", text: "text-sky-700", ring: "ring-sky-200" },
-    A: { label: "Absent", bg: "bg-rose-50", text: "text-rose-700", ring: "ring-rose-200" },
+    P: { label: "Present", bg: "bg-emerald-50 dark:bg-emerald-950/40", text: "text-emerald-700 dark:text-emerald-300", ring: "ring-emerald-200 dark:ring-emerald-800" },
+    L: { label: "Late", bg: "bg-amber-50 dark:bg-amber-950/40", text: "text-amber-700 dark:text-amber-300", ring: "ring-amber-200 dark:ring-amber-800" },
+    E: { label: "Excused", bg: "bg-sky-50 dark:bg-sky-950/40", text: "text-sky-700 dark:text-sky-300", ring: "ring-sky-200 dark:ring-sky-800" },
+    A: { label: "Absent", bg: "bg-rose-50 dark:bg-rose-950/40", text: "text-rose-700 dark:text-rose-300", ring: "ring-rose-200 dark:ring-rose-800" },
   };
 
   return (
     <div className="space-y-2.5">
-      <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+      <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         Today &middot; {today.length} class{today.length === 1 ? "" : "es"}
       </p>
       {/* SAID, NOT SWALLOWED. The server refuses a declaration for good reasons — the
@@ -125,7 +125,7 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
           and each is a different next step for the student. A button that simply did
           nothing would send them to the office to ask why. */}
       {failed && (
-        <p className="rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-200">
+        <p className="rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-700 ring-1 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800">
           {failed}
         </p>
       )}
@@ -145,8 +145,8 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
         return (
           <div
             key={c.id}
-            className={`fade-up overflow-hidden rounded-2xl bg-white transition ${
-              isNow ? "shadow-card ring-2" : "shadow-sm ring-1 ring-slate-200"
+            className={`fade-up overflow-hidden rounded-2xl bg-white transition dark:bg-slate-800 ${
+              isNow ? "shadow-card ring-2" : "shadow-sm ring-1 ring-slate-200 dark:ring-slate-700"
             } ${over && !mark ? "opacity-70" : ""}`}
             style={{ ...(isNow ? { "--tw-ring-color": ACCENT.checkin } : null), animationDelay: `${i * 60}ms` }}
           >
@@ -158,14 +158,14 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
             <div className="p-4">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className={`text-[15px] font-extrabold leading-tight ${over && !mark ? "text-slate-400" : "text-slate-800"}`}>
+                  <p className={`text-[15px] font-extrabold leading-tight ${over && !mark ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}>
                     {c.unitName || c.unitCode}
                   </p>
-                  <p className="mt-1 flex items-center gap-1.5 text-[12.5px] font-bold tabular-nums text-slate-600">
-                    <Clock3 size={12.5} className="shrink-0 text-slate-400" aria-hidden="true" />
+                  <p className="mt-1 flex items-center gap-1.5 text-[12.5px] font-bold tabular-nums text-slate-600 dark:text-slate-300">
+                    <Clock3 size={12.5} className="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                     {c.startTime}&ndash;{c.endTime}
-                    {c.checkedInAt && <span className="font-semibold text-emerald-600">&middot; in at {c.checkedInAt}</span>}
-                    {!c.termOpen && <span className="font-semibold text-amber-600">&middot; term closed</span>}
+                    {c.checkedInAt && <span className="font-semibold text-emerald-600 dark:text-emerald-400">&middot; in at {c.checkedInAt}</span>}
+                    {!c.termOpen && <span className="font-semibold text-amber-600 dark:text-amber-400">&middot; term closed</span>}
                   </p>
                   {/* WRAPPED, NOT TRUNCATED. On a phone the campus and the lecturer used
                       to fall off the end of the line — which is precisely the half that
@@ -174,18 +174,18 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
                       has not recorded it: an online class has no room, and "—" reads as a
                       room nobody knows. */}
                   {where && (
-                    <p className="mt-1.5 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500">
-                      <MapPin size={12.5} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" />
+                    <p className="mt-1.5 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500 dark:text-slate-400">
+                      <MapPin size={12.5} className="mt-0.5 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                       <span>{where}</span>
                     </p>
                   )}
                   {(c.staff || []).length > 0 && (
-                    <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500">
-                      <User size={12.5} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" />
+                    <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-slate-500 dark:text-slate-400">
+                      <User size={12.5} className="mt-0.5 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                       <span>{(c.staff || []).join(", ")}</span>
                     </p>
                   )}
-                  {about && <p className="mt-1.5 text-[11px] leading-snug text-slate-400">{about}</p>}
+                  {about && <p className="mt-1.5 text-[11px] leading-snug text-slate-400 dark:text-slate-500">{about}</p>}
                 </div>
 
                 <span className="shrink-0">
@@ -197,7 +197,7 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
                               that is true for the next hour and then stops being true. */}
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />On now
                         </span>
-                      : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">{over ? "Finished" : "Later"}</span>}
+                      : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400 dark:bg-slate-700 dark:text-slate-500">{over ? "Finished" : "Later"}</span>}
                 </span>
               </div>
 
@@ -218,7 +218,7 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
                   {canDeclare && (
                     <button onClick={() => declare(c)} disabled={marking === c.id}
                       className={`press flex items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold disabled:opacity-50 ${
-                        canScan ? "px-4 bg-white text-slate-700 ring-1 ring-slate-200" : "flex-1 text-white"
+                        canScan ? "px-4 bg-white text-slate-700 ring-1 ring-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600" : "flex-1 text-white"
                       }`}
                       style={canScan ? undefined : { background: ACCENT.checkin }}>
                       {marking === c.id ? "Marking…" : "I'm here"}
@@ -275,18 +275,18 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           and previously had to read three cards to find out. The state is said once, at
           the top, in the words the answer actually takes. */}
       {tapContext && (
-        <div className="overflow-hidden rounded-2xl" style={{ background: running ? ACCENT.checkin : "#ffffff" }}>
-          <div className={`px-4 py-3.5 ${running ? "text-white" : "ring-1 ring-slate-200"}`}>
-            <p className={`text-[11px] font-bold uppercase tracking-wider ${running ? "text-white/70" : "text-slate-400"}`}>
+        <div className="overflow-hidden rounded-2xl bg-white dark:bg-slate-800" style={running ? { background: ACCENT.checkin } : undefined}>
+          <div className={`px-4 py-3.5 ${running ? "text-white" : "ring-1 ring-slate-200 dark:ring-slate-700"}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-wider ${running ? "text-white/70" : "text-slate-400 dark:text-slate-500"}`}>
               {ttLongDate(tapContext.date)}
             </p>
-            <p className={`mt-0.5 text-[17px] font-extrabold leading-tight ${running ? "text-white" : "text-slate-800"}`}>
+            <p className={`mt-0.5 text-[17px] font-extrabold leading-tight ${running ? "text-white" : "text-slate-800 dark:text-slate-100"}`}>
               {running > 1 ? `${running} classes on now`
                 : running === 1 ? `${(tapContext.now[0].unitName || tapContext.now[0].unitCode)} is on now`
                 : next ? "No class on right now"
                 : "That's you done for today"}
             </p>
-            <p className={`mt-1 text-[12.5px] leading-snug ${running ? "text-white/85" : "text-slate-500"}`}>
+            <p className={`mt-1 text-[12.5px] leading-snug ${running ? "text-white/85" : "text-slate-500 dark:text-slate-400"}`}>
               {running
                 ? (canTap && qrEnabled ? "Scan the code on screen, or tap the sticker in your room."
                   : qrEnabled ? "Scan the code your lecturer has on screen."
@@ -301,9 +301,9 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
       )}
 
       {tapContext == null && (
-        <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200">
-          <Loader2 size={20} className="mx-auto animate-spin text-slate-300" />
-          <p className="mt-2 text-[13px] text-slate-500">Just a moment…</p>
+        <div className="rounded-2xl bg-white p-5 text-center ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+          <Loader2 size={20} className="mx-auto animate-spin text-slate-300 dark:text-slate-600" />
+          <p className="mt-2 text-[13px] text-slate-500 dark:text-slate-400">Just a moment…</p>
         </div>
       )}
 
@@ -316,12 +316,12 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           Reachable even with the tab hidden — a student who scans a projector code at a
           college that has since switched check-in off arrives straight here. */}
       {anyCheckInWay(tapContext) === false && (
-        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: ACCENT.checkin + "14" }}>
-            <Nfc size={19} style={{ color: ACCENT.checkin }} />
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+          <span className="tone-soft flex h-11 w-11 items-center justify-center rounded-2xl" style={toneVars(ACCENT_TONE.checkin)}>
+            <Nfc size={19} />
           </span>
-          <p className="mt-3 text-sm font-extrabold text-slate-800">Not switched on yet</p>
-          <p className="mt-1 text-[13px] leading-relaxed text-slate-500">
+          <p className="mt-3 text-sm font-extrabold text-slate-800 dark:text-slate-100">Not switched on yet</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
             Your college hasn&rsquo;t turned on self check-in. Your lecturer takes the register as usual.
           </p>
         </div>
@@ -346,14 +346,14 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
           how to tap a sticker to a browser that cannot read one is the same apology the
           banner above used to make, in three more lines. */}
       {canTap && (
-        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">How the sticker works</p>
-          <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600">
+        <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">How the sticker works</p>
+          <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
             <li>1. Hold your phone against the sticker in your classroom.</li>
             <li>2. The button turns blue for about a minute.</li>
             <li>3. Press it, and you&rsquo;re marked present with the time.</li>
           </ul>
-          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-400 dark:text-slate-500">
             It only works while your class is actually running.
           </p>
         </div>
@@ -376,11 +376,19 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
 // purpose: before this, every outcome was emerald or amber, so "you are marked absent"
 // and "you are checked in, late" were the same colour and differed only in wording.
 const QR_TONES = {
-  present: { bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-700", chip: "bg-emerald-100" },
-  late:    { bg: "bg-amber-50",   ring: "ring-amber-200",   text: "text-amber-700",   chip: "bg-amber-100" },
-  excused: { bg: "bg-sky-50",     ring: "ring-sky-200",     text: "text-sky-700",     chip: "bg-sky-100" },
-  absent:  { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
-  refused: { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100" },
+  present: { bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-700", chip: "bg-emerald-100 dark:bg-emerald-900/60" },
+  late:    { bg: "bg-amber-50",   ring: "ring-amber-200",   text: "text-amber-700",   chip: "bg-amber-100 dark:bg-amber-900/60" },
+  excused: { bg: "bg-sky-50",     ring: "ring-sky-200",     text: "text-sky-700",     chip: "bg-sky-100 dark:bg-sky-900/60" },
+  absent:  { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100 dark:bg-rose-900/60" },
+  refused: { bg: "bg-rose-50",    ring: "ring-rose-200",    text: "text-rose-700",    chip: "bg-rose-100 dark:bg-rose-900/60" },
+};
+// The tone's text colour, dark-mode paired — QR_TONES.* stays untouched above (the
+// modal's coloured icon chip is decorative, fine unchanged), but the HEADING text sits
+// directly on the sheet's own bg-white/dark:bg-slate-800 surface and needs the same
+// AA-nudged pair every other dynamic colour in this app now gets.
+const QR_TONE_TEXT_DARK = {
+  present: "dark:text-emerald-300", late: "dark:text-amber-300", excused: "dark:text-sky-300",
+  absent: "dark:text-rose-300", refused: "dark:text-rose-300",
 };
 
 /**
@@ -457,14 +465,15 @@ function QrCheckInCard({ qr, reload, onDone }) {
   if (state.phase === "sending") {
     body = (
       <div className="p-6 text-center">
-        <Loader2 size={26} className="mx-auto animate-spin text-slate-300" />
-        <p className="mt-3 text-sm font-bold text-slate-700">Checking you in…</p>
-        <p className="mt-1 text-[12.5px] text-slate-500">Hold on a moment.</p>
+        <Loader2 size={26} className="mx-auto animate-spin text-slate-300 dark:text-slate-600" />
+        <p className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-200">Checking you in…</p>
+        <p className="mt-1 text-[12.5px] text-slate-500 dark:text-slate-400">Hold on a moment.</p>
       </div>
     );
   } else if (state.phase === "done") {
     const v = qrScanResult(state.result);
     const tone = QR_TONES[v.tone] || QR_TONES.present;
+    const toneDark = QR_TONE_TEXT_DARK[v.tone] || QR_TONE_TEXT_DARK.present;
     const Icon = v.good ? CheckCircle2 : AlertTriangle;
     body = (
       <div className="p-5" role="status" aria-live="polite">
@@ -473,13 +482,13 @@ function QrCheckInCard({ qr, reload, onDone }) {
             the student across a lecture theatre is the shape and the colour — they read
             the sentence second. */}
         <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-3xl ${tone.chip}`}>
-          <Icon size={30} className={tone.text} />
+          <Icon size={30} className={`${tone.text} ${toneDark}`} />
         </div>
-        <p className={`mt-3.5 flex items-center justify-center gap-2 text-center text-[17px] font-extrabold ${tone.text}`}>
+        <p className={`mt-3.5 flex items-center justify-center gap-2 text-center text-[17px] font-extrabold ${tone.text} ${toneDark}`}>
           {v.heading}
-          {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200">{v.chip}</span>}
+          {v.chip && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/60 dark:text-amber-300 dark:ring-amber-800">{v.chip}</span>}
         </p>
-        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600">{v.detail}</p>
+        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{v.detail}</p>
         <button onClick={onDone} className="press mt-5 w-full rounded-xl py-3.5 text-[14px] font-bold text-white" style={{ background: ACCENT.checkin }}>Done</button>
       </div>
     );
@@ -488,14 +497,15 @@ function QrCheckInCard({ qr, reload, onDone }) {
     // check-in — the two used to differ only by the words in them.
     const v = qrScanRefusal(state.error);
     const tone = QR_TONES.refused;
+    const toneDark = QR_TONE_TEXT_DARK.refused;
     body = (
       <div className="p-5" role="alert" aria-live="assertive">
         <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-3xl ${tone.chip}`}>
-          <AlertTriangle size={28} className={tone.text} />
+          <AlertTriangle size={28} className={`${tone.text} ${toneDark}`} />
         </div>
-        <p className={`mt-3.5 text-center text-[17px] font-extrabold ${tone.text}`}>{v.heading}</p>
-        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600">{v.advice}</p>
-        <button onClick={onDone} className="press mt-5 w-full rounded-xl bg-white py-3.5 text-[14px] font-bold text-slate-700 ring-1 ring-slate-200">Dismiss</button>
+        <p className={`mt-3.5 text-center text-[17px] font-extrabold ${tone.text} ${toneDark}`}>{v.heading}</p>
+        <p className="mt-1.5 text-center text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{v.advice}</p>
+        <button onClick={onDone} className="press mt-5 w-full rounded-xl bg-white py-3.5 text-[14px] font-bold text-slate-700 ring-1 ring-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600">Dismiss</button>
       </div>
     );
   }
@@ -514,7 +524,7 @@ function QrCheckInCard({ qr, reload, onDone }) {
           the scanner stops itself before handing the code over — but ordering them
           leaves nothing to a mount race if that ever stops being true. */}
       <div
-        className="scale-in w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl"
+        className="scale-in w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-800"
         onClick={(e) => e.stopPropagation()}
       >
         {body}

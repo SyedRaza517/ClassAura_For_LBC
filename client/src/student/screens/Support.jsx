@@ -26,9 +26,9 @@ import { NAVY, MAROON } from "../../branding";
  */
 
 const REF_STATUS = {
-  open: { label: "Waiting to be picked up", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
-  accepted: { label: "Being worked on", cls: "bg-blue-50 text-blue-700 ring-blue-200" },
-  closed: { label: "Closed", cls: "bg-slate-100 text-slate-600 ring-slate-200" },
+  open: { label: "Waiting to be picked up", cls: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-800" },
+  accepted: { label: "Being worked on", cls: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-800" },
+  closed: { label: "Closed", cls: "bg-slate-100 text-slate-600 ring-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600" },
 };
 
 // The outcome CODE in the student's own terms. Codes, never the server's prose — the
@@ -115,23 +115,23 @@ function SupportList({ referrals, busy, departments, onNew, onOpen }) {
                   <div className="min-w-0">
                     {/* The NAME, resolved by the server. A slug is what the database
                         stores and is not something to show anybody about themselves. */}
-                    <p className="text-sm font-extrabold text-slate-800">{r.departmentName}</p>
-                    <p className="mt-0.5 text-[11px] text-slate-400">Referred {r.raisedOn}</p>
+                    <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{r.departmentName}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">Referred {r.raisedOn}</p>
                   </div>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${st.cls}`}>{st.label}</span>
                 </div>
                 {/* Their own words, read back — present only on a request they made. */}
                 {mine && r.reason && (
-                  <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600">{r.reason}</p>
+                  <p className="mt-2 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-600 dark:text-slate-300">{r.reason}</p>
                 )}
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                   {mine ? "You asked for this" : "Your tutor referred you"}
                   {mine && r.status !== "closed" ? " · tap to add to it" : ""}
                 </p>
                 {r.status === "closed" && (
-                  <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-100">
+                  <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-100 dark:bg-slate-700/60 dark:text-slate-300 dark:ring-slate-600">
                     {REF_OUTCOME[r.outcome] || "Closed"}
-                    {r.closedOn ? <span className="ml-1 font-normal text-slate-400">· {r.closedOn}</span> : null}
+                    {r.closedOn ? <span className="ml-1 font-normal text-slate-400 dark:text-slate-500">· {r.closedOn}</span> : null}
                   </p>
                 )}
                 </Row>
@@ -141,8 +141,8 @@ function SupportList({ referrals, busy, departments, onNew, onOpen }) {
         </>
       )}
 
-      <Card className="!bg-blue-50/70 !ring-blue-100">
-        <p className="flex items-start gap-2 text-[11px] leading-relaxed text-blue-800">
+      <Card className="!bg-blue-50/70 !ring-blue-100 dark:!bg-blue-950/30 dark:!ring-blue-900">
+        <p className="flex items-start gap-2 text-[11px] leading-relaxed text-blue-800 dark:text-blue-300">
           <Info size={13} className="mt-px shrink-0" />
           This shows which team you were referred to and where it got to. What you talk to that team about
           stays between you and them — it is not shown here and it is not shown to your tutor.
@@ -195,63 +195,63 @@ function SupportRequestForm({ departments, onSent, onCancel }) {
   return (
     <Screen>
       <Card>
-        <p className="text-sm font-extrabold text-slate-800">Ask for support</p>
-        <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
+        <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100">Ask for support</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
           Your request goes straight to the team you choose. They will pick it up and get in touch —
           you can see where it has got to on this screen at any time.
         </p>
 
         <div className="mt-3">
-          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Which team</label>
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Which team</label>
           <div className="mt-1.5 space-y-2">
             {departments.map((d) => (
               <button
                 key={d.key}
                 onClick={() => setDept(d.key)}
-                className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left ring-1 transition ${dept === d.key ? "bg-blue-50 ring-blue-300" : "bg-white ring-slate-200"}`}
+                className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left ring-1 transition ${dept === d.key ? "bg-blue-50 ring-blue-300 dark:bg-blue-950/30 dark:ring-blue-700" : "bg-white ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"}`}
               >
-                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${dept === d.key ? "ring-transparent" : "ring-slate-300"}`} style={dept === d.key ? { background: NAVY } : {}}>
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${dept === d.key ? "ring-transparent" : "ring-slate-300 dark:ring-slate-600"}`} style={dept === d.key ? { background: NAVY } : {}}>
                   {dept === d.key && <CheckCircle2 size={13} className="text-white" />}
                 </span>
-                <span className="text-sm font-bold text-slate-700">{d.name}</span>
+                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{d.name}</span>
               </button>
             ))}
           </div>
         </div>
 
         <div className="mt-3">
-          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">What do you need help with?</label>
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">What do you need help with?</label>
           <textarea
             value={reason} onChange={(e) => setReason(e.target.value)} disabled={busy} rows={6}
             placeholder="In your own words. As much or as little as you want to say."
-            className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2"
+            className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
             style={{ "--tw-ring-color": NAVY }}
           />
           {/* Said explicitly, because the difference between this and the case notes is
               invisible from here: what they write IS shown back to them, and it is the
               one field both sides of a referral can read. */}
-          <p className="mt-1 text-[11px] text-slate-400">
+          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
             {chosen ? `Only ${chosen.name} will see this.` : "Only the team you choose will see this."} You can read it back here afterwards.
           </p>
         </div>
 
         <button
           onClick={() => setUrgent((v) => !v)} disabled={busy}
-          className={`press mt-3 flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left ring-1 transition ${urgent ? "bg-rose-50 ring-rose-300" : "bg-white ring-slate-200"}`}
+          className={`press mt-3 flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left ring-1 transition ${urgent ? "bg-rose-50 ring-rose-300 dark:bg-rose-950/30 dark:ring-rose-700" : "bg-white ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"}`}
         >
-          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 ${urgent ? "ring-transparent" : "ring-slate-300"}`} style={urgent ? { background: "#e11d48" } : {}}>
+          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1 ${urgent ? "ring-transparent" : "ring-slate-300 dark:ring-slate-600"}`} style={urgent ? { background: "#e11d48" } : {}}>
             {urgent && <CheckCircle2 size={13} className="text-white" />}
           </span>
           <span>
-            <span className="block text-sm font-bold text-slate-700">This is urgent</span>
-            <span className="block text-[11px] text-slate-400">Moves it to the top of their list.</span>
+            <span className="block text-sm font-bold text-slate-700 dark:text-slate-200">This is urgent</span>
+            <span className="block text-[11px] text-slate-400 dark:text-slate-500">Moves it to the top of their list.</span>
           </span>
         </button>
 
-        {err && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</p>}
+        {err && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">{err}</p>}
 
         <div className="mt-4 flex gap-2">
-          <button onClick={onCancel} disabled={busy} className="press flex-1 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-500">Cancel</button>
+          <button onClick={onCancel} disabled={busy} className="press flex-1 rounded-xl bg-slate-100 py-3 text-sm font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">Cancel</button>
           <button
             onClick={send} disabled={busy || !valid}
             className="press flex flex-[2] items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow disabled:opacity-50"
@@ -266,9 +266,9 @@ function SupportRequestForm({ departments, onSent, onCancel }) {
           crisis, and a form that stays silent about that implies somebody is watching it
           right now. Last on the screen, so it is the thing still in view after they
           send. */}
-      <Card className="!bg-amber-50/70 !ring-amber-200">
-        <p className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-900">
-          <AlertTriangle size={13} className="mt-px shrink-0 text-amber-600" />
+      <Card className="!bg-amber-50/70 !ring-amber-200 dark:!bg-amber-950/30 dark:!ring-amber-800">
+        <p className="flex items-start gap-2 text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
+          <AlertTriangle size={13} className="mt-px shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
             <b>If you need help right now</b>, do not wait for a reply here — this is checked during college
             hours. Contact the college directly, call <b>111</b>, or in an emergency call <b>999</b>.
@@ -300,33 +300,33 @@ function SupportThread({ referral, onClose }) {
 
   return (
     <Screen>
-      <button onClick={onClose} className="press flex items-center gap-1 text-[12px] font-bold text-slate-500">
+      <button onClick={onClose} className="press flex items-center gap-1 text-[12px] font-bold text-slate-500 dark:text-slate-400">
         <ChevronLeft size={14} /> Back
       </button>
 
       <Card>
-        <p className="text-sm font-extrabold text-slate-800">{referral.departmentName}</p>
-        <p className="mt-0.5 text-[11px] text-slate-400">You asked on {referral.raisedOn}</p>
+        <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{referral.departmentName}</p>
+        <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">You asked on {referral.raisedOn}</p>
         {/* Their own words, read back. sReferralForStudent sends `reason` only on a
             self-referral — on a tutor's referral it is that tutor's account of them and
             never crosses. */}
         {referral.reason && (
-          <p className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600 ring-1 ring-slate-100">{referral.reason}</p>
+          <p className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600 ring-1 ring-slate-100 dark:bg-slate-700/60 dark:text-slate-300 dark:ring-slate-600">{referral.reason}</p>
         )}
       </Card>
 
-      {messages === null && <Card><div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-300" /></div></Card>}
+      {messages === null && <Card><div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-300 dark:text-slate-600" /></div></Card>}
       {messages && messages.length === 0 && (
         <Card className="!p-0"><Empty icon={MessageSquare} title="Nothing yet" msg="Anything you or the team add will appear here." /></Card>
       )}
       {messages && messages.length > 0 && (
         <div className="space-y-2">
           {messages.map((m) => (
-            <Card key={m.id} className={m.authorRole === "student" ? "!bg-blue-50 !ring-blue-100" : ""}>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+            <Card key={m.id} className={m.authorRole === "student" ? "!bg-blue-50 !ring-blue-100 dark:!bg-blue-950/30 dark:!ring-blue-800" : ""}>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
                 {m.authorRole === "student" ? "You" : referral.departmentName}
               </p>
-              <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">{m.body}</p>
+              <p className="mt-0.5 whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700 dark:text-slate-200">{m.body}</p>
             </Card>
           ))}
         </div>
@@ -334,12 +334,12 @@ function SupportThread({ referral, onClose }) {
 
       {referral.status !== "closed" ? (
         <Card>
-          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Add to your request</label>
+          <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Add to your request</label>
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy} rows={4}
             placeholder="Anything else they should know."
-            className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:ring-2"
+            className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
             style={{ "--tw-ring-color": NAVY }} />
-          {err && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{err}</p>}
+          {err && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">{err}</p>}
           <button onClick={send} disabled={busy || !draft.trim()}
             className="press mt-2 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white shadow disabled:opacity-50"
             style={{ background: NAVY }}>
@@ -347,8 +347,8 @@ function SupportThread({ referral, onClose }) {
           </button>
         </Card>
       ) : (
-        <Card className="!bg-slate-50">
-          <p className="text-[11px] leading-relaxed text-slate-500">
+        <Card className="!bg-slate-50 dark:!bg-slate-700/60">
+          <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
             This request has been closed. If you need something else, send a new one.
           </p>
         </Card>

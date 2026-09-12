@@ -8,7 +8,7 @@ import useReveal from "../../RevealButton";
 import ConfirmDialog from "../../ConfirmDialog";
 import { useBackHandler } from "../../backButton";
 import { api, setToken } from "../../api";
-import { NAVY, MAROON } from "../../branding";
+import { NAVY, MAROON, alpha } from "../../branding";
 import { BiometricSetting } from "../BiometricSetting";
 
 // What the More screen says about check-in, in every state. This exists so there is one
@@ -45,14 +45,18 @@ function CheckInStatusRow({ tapContext, setScreen }) {
       type="button"
       onClick={() => setScreen("checkin")}
       disabled={loading || off}
-      className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default"
+      className="press flex w-full items-start gap-3 rounded-2xl bg-white p-4 text-left ring-1 ring-slate-200 disabled:cursor-default dark:bg-slate-800 dark:ring-slate-700"
     >
-      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: off ? "#f1f5f9" : NAVY + "14" }}>
+      {/* NAVY is a CSS var (the college's brand colour); alpha() builds a valid
+          low-alpha tint from it the way `NAVY + "14"` cannot (see branding.js#alpha's
+          own comment — that string-append trick silently drops the whole background
+          declaration once the colour is a var()). */}
+      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-700" style={off ? {} : { background: alpha(NAVY, 14) }}>
         <Glyph size={17} style={{ color: off ? "#94a3b8" : NAVY }} />
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold text-slate-800">{title}</span>
-        <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500">{body}</span>
+        <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">{title}</span>
+        <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">{body}</span>
       </span>
     </button>
   );
@@ -95,9 +99,9 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
       {/* Profile */}
       <Card className="!p-5 text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-xl font-bold text-white shadow-lg" style={{ background: user.colour || MAROON }}>{user.initials || "S"}</div>
-        <p className="mt-2.5 text-base font-extrabold text-slate-800">{user.name}</p>
-        <p className="text-xs text-slate-400">{user.email}</p>
-        {user.studentRef && <span className="mt-2 inline-block rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500">Student · {user.studentRef}</span>}
+        <p className="mt-2.5 text-base font-extrabold text-slate-800 dark:text-slate-100">{user.name}</p>
+        <p className="text-xs text-slate-400 dark:text-slate-500">{user.email}</p>
+        {user.studentRef && <span className="mt-2 inline-block rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">Student · {user.studentRef}</span>}
       </Card>
 
       {/* Always present, in every state. The home card only appears when a class is
@@ -116,7 +120,7 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
         <Row Icon={HeartHandshake} label="Support referrals" sub="Teams you have been referred to" onClick={() => setScreen("support")} />
       </Card>
 
-      {pwOk && <div className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200"><CheckCircle2 size={15} /> Password changed.</div>}
+      {pwOk && <div className="flex items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-800"><CheckCircle2 size={15} /> Password changed.</div>}
 
       {/* Settings rows */}
       <Card className="!p-0 overflow-hidden">
@@ -124,11 +128,11 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
         <BiometricSetting owner={user.email} />
         <Row Icon={KeyRound} label="Change password" sub="Update your sign-in password" onClick={() => setOpenPw(v => !v)} open={openPw} />
         {openPw && (
-          <div className="space-y-2.5 border-t border-slate-100 bg-slate-50 p-3.5">
+          <div className="space-y-2.5 border-t border-slate-100 bg-slate-50 p-3.5 dark:border-slate-700 dark:bg-slate-700/40">
             <PwField label="Current password" value={cur} onChange={setCur} disabled={pwBusy} />
             <PwField label="New password" value={nw} onChange={setNw} disabled={pwBusy} />
             <PwField label="Confirm new password" value={cf} onChange={setCf} disabled={pwBusy} />
-            {pwErr && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{pwErr}</p>}
+            {pwErr && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">{pwErr}</p>}
             <button onClick={changePw} disabled={pwBusy || !cur || !nw} className="press flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow disabled:opacity-60" style={{ background: NAVY }}>
               {pwBusy ? <><Loader2 size={15} className="animate-spin" /> Saving…</> : <><Lock size={15} /> Update password</>}
             </button>
@@ -138,23 +142,23 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
       </Card>
 
       {/* Danger zone */}
-      <Card className="!p-0 overflow-hidden !ring-rose-200">
+      <Card className="!p-0 overflow-hidden !ring-rose-200 dark:!ring-rose-900">
         {!showDel ? (
           <Row Icon={Trash2} label="Delete my account" sub="Permanently remove your app access" danger onClick={() => setShowDel(true)} />
         ) : (
           <div className="space-y-2.5 p-3.5">
-            <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2.5 text-[11px] leading-relaxed text-rose-700 ring-1 ring-rose-200">
+            <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2.5 text-[11px] leading-relaxed text-rose-700 ring-1 ring-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-800">
               <AlertTriangle size={14} className="mt-px shrink-0" />
               This removes your sign-in access and personal login data. Your college records (attendance and results) are kept by the college. This cannot be undone.
             </p>
             <PwField label="Your password" value={delPw} onChange={setDelPw} disabled={delBusy} />
             <div>
-              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Type DELETE to confirm</label>
-              <input value={delConfirm} onChange={e => setDelConfirm(e.target.value)} disabled={delBusy} placeholder="DELETE" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2" style={{ "--tw-ring-color": MAROON }} />
+              <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Type DELETE to confirm</label>
+              <input value={delConfirm} onChange={e => setDelConfirm(e.target.value)} disabled={delBusy} placeholder="DELETE" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100" style={{ "--tw-ring-color": MAROON }} />
             </div>
-            {delErr && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600">{delErr}</p>}
+            {delErr && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">{delErr}</p>}
             <div className="flex gap-2">
-              <button onClick={() => { setShowDel(false); setDelErr(""); }} disabled={delBusy} className="press flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-500">Cancel</button>
+              <button onClick={() => { setShowDel(false); setDelErr(""); }} disabled={delBusy} className="press flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-500 dark:border-slate-600 dark:text-slate-400">Cancel</button>
               <button onClick={del} disabled={delBusy || !delPw} className="press flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow disabled:opacity-60" style={{ background: MAROON }}>
                 {delBusy ? <><Loader2 size={15} className="animate-spin" /> Deleting…</> : <><Trash2 size={15} /> Delete</>}
               </button>
@@ -163,7 +167,7 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
         )}
       </Card>
 
-      <p className="px-1 pb-2 text-center text-[10px] text-slate-400">EdTech · Student Hub</p>
+      <p className="px-1 pb-2 text-center text-[10px] text-slate-400 dark:text-slate-500">EdTech · Student Hub</p>
     </Screen>
   );
 }
@@ -173,9 +177,9 @@ function PwField({ label, value, onChange, disabled }) {
   const pw = useReveal();
   return (
     <div>
-      <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</label>
+      <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</label>
       <div className="relative mt-1">
-        <input type={pw.type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-11 text-sm outline-none focus:ring-2" style={{ "--tw-ring-color": NAVY }} />
+        <input type={pw.type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 pr-11 text-sm text-slate-800 outline-none focus:ring-2 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100" style={{ "--tw-ring-color": NAVY }} />
         {pw.button}
       </div>
     </div>
