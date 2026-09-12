@@ -7,16 +7,31 @@
 // credentials (cfg.peek("teams")) because the two app registrations carry different
 // permission grants — see integrationConfig.js.
 //
-// EVERYTHING here is read-only against Microsoft: calendars, meeting ids, attendance
-// reports. Nothing is ever written back.
+// Originally EVERYTHING here was read-only against Microsoft: calendars, meeting ids,
+// attendance reports, nothing ever written back. The Teams automation feature (class
+// meeting creation/update/cancellation, Team + channel provisioning, membership sync)
+// added the write operations below the read ones — same credentials, same app
+// registration, because Graph does not split "read a calendar" and "create an event"
+// across separate app registrations the way it splits Calendars vs Sites permissions.
 //
 // THE FIXTURES SEAM. When TEAMS_GRAPH_FIXTURES names a JSON file, every exported
 // call answers from that file and the network is never touched. This is how the
 // smoke suite drives the whole pipeline without a Microsoft tenant: the suite writes
 // fixtures, POSTs /teams-attendance/sync, and reads back what the API wrote. Read
 // FRESH on every call (no cache) so one suite can play several scenarios.
+//
+// THE JOURNAL. A fixture run has no real Graph to check against, so a write operation
+// in fixture mode also appends one JSON line `{ op, args }` to the file named by
+// TEAMS_GRAPH_JOURNAL (created if missing) — the smoke suite's only way to assert
+// "a meeting was created with these attendees" without a tenant to look inside. Reads
+// (getChannelEmail, resolveUserId, resolveCreatorId, resolveOrganizers) do not journal:
+// they observe state rather than change it, and journalling them would let a suite
+// mistake "we looked" for "we wrote". The production guard already lives on fixtures()
+// below (NODE_ENV === "production" forces it null) — every write op below reaches its
+// journal line only through that same fixtures() result, so there is exactly one guard
+// to keep correct, not two copies of it.
 const cfg = require("./integrationConfig");
-const { readFileSync } = require("node:fs");
+const { readFileSync, appendFileSync } = require("node:fs");
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const ZONE = require("./clock").ZONE;
@@ -43,6 +58,25 @@ function fixtures() {
   try { return JSON.parse(readFileSync(path, "utf8")); }
   catch (e) { throw new Error(`TEAMS_GRAPH_FIXTURES is set but unreadable: ${e.message}`); }
 }
+
+// Appends one write op to TEAMS_GRAPH_JOURNAL, if set. Only ever called from inside a
+// fixture-mode branch (i.e. after fixtures() has already returned non-null), which is
+// what makes the NODE_ENV guard on fixtures() sufficient here too — this function
+// itself carries no production check because it is unreachable in production by
+// construction, not by a second copy of the same test.
+function journal(op, args) {
+  const path = process.env.TEAMS_GRAPH_JOURNAL;
+  if (!path) return;
+  appendFileSync(path, JSON.stringify({ op, args }) + "\n");
+}
+
+// Fixture-mode fixed ids are derived from names rather than random, so a suite that
+// creates "Tuesday BTEC IT" twice (retry, or two runs against the same fixture file)
+// gets the same id back both times instead of silently multiplying fixture rows.
+const slug = (s) => String(s || "")
+  .toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "");
 
 function isConfigured() {
   return Boolean(TENANT_ID() && CLIENT_ID() && CLIENT_SECRET() && ORGANIZERS().length);
@@ -261,6 +295,230 @@ async function attendanceIntervals(organizerId, meetingId) {
   return [...byKey.values()];
 }
 
+// --- Write operations (Teams automation) ------------------------------------------
+// Everything below actually changes something in the tenant: a calendar event, a
+// Team, a channel, a membership. Each follows the same shape — fixture branch first
+// (fixed id, journal the call, return), real Graph call second — so a diff against
+// the read functions above stays easy to spot-check.
+
+/**
+ * Schedules one online class as a calendar event on the organizer's own calendar.
+ * `isOnlineMeeting` + `onlineMeetingProvider: "teamsForBusiness"` is what turns a
+ * plain event into a Teams meeting; Graph creates the underlying online meeting
+ * itself, so there is no separate POST to /onlineMeetings to make first.
+ */
+async function createClassMeeting({ organizerId, subject, date, startTime, endTime, attendeeEmails }) {
+  const fx = fixtures();
+  if (fx) {
+    const id = `cal-${slug(subject)}`;
+    const joinUrl = `https://teams.microsoft.com/l/meetup-join/fixture-${slug(subject)}`;
+    journal("createClassMeeting", { organizerId, subject, date, startTime, endTime, attendeeEmails });
+    return { calendarEventId: id, joinUrl };
+  }
+  const body = {
+    subject,
+    isOnlineMeeting: true,
+    onlineMeetingProvider: "teamsForBusiness",
+    start: { dateTime: `${date}T${startTime}:00`, timeZone: ZONE },
+    end: { dateTime: `${date}T${endTime}:00`, timeZone: ZONE },
+    attendees: (attendeeEmails || []).map((address) => ({ emailAddress: { address }, type: "required" })),
+  };
+  const event = await graphFetch(`/users/${organizerId}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let joinUrl = event.onlineMeeting && event.onlineMeeting.joinUrl;
+  if (!joinUrl) {
+    // Teams attaches the join URL to the event asynchronously on Microsoft's side —
+    // a request that wins the race can see the creation response come back before
+    // that happens. One re-GET catches the ordinary case; if it's STILL missing,
+    // something is actually wrong (the tenant rejected the online-meeting provider,
+    // say) and the caller needs to know rather than silently store an event nobody
+    // can join.
+    const refetched = await graphFetch(`/users/${organizerId}/events/${event.id}?$select=onlineMeeting`);
+    joinUrl = refetched.onlineMeeting && refetched.onlineMeeting.joinUrl;
+  }
+  if (!joinUrl) {
+    throw new Error(`Created the calendar event for "${subject}" but Microsoft never attached a Teams join URL to it.`);
+  }
+  return { calendarEventId: event.id, joinUrl };
+}
+
+/** Rewrites a class meeting this system created (time, subject or roster changed). */
+async function updateClassMeeting({ organizerId, calendarEventId, subject, date, startTime, endTime, attendeeEmails }) {
+  const fx = fixtures();
+  if (fx) {
+    journal("updateClassMeeting", { organizerId, calendarEventId, subject, date, startTime, endTime, attendeeEmails });
+    return;
+  }
+  const body = {
+    subject,
+    start: { dateTime: `${date}T${startTime}:00`, timeZone: ZONE },
+    end: { dateTime: `${date}T${endTime}:00`, timeZone: ZONE },
+    attendees: (attendeeEmails || []).map((address) => ({ emailAddress: { address }, type: "required" })),
+  };
+  await graphFetch(`/users/${organizerId}/events/${calendarEventId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Removes a class meeting this system created (the class was cancelled/rescheduled off it). */
+async function cancelClassMeeting({ organizerId, calendarEventId }) {
+  const fx = fixtures();
+  if (fx) {
+    journal("cancelClassMeeting", { organizerId, calendarEventId });
+    return;
+  }
+  try {
+    await graphFetch(`/users/${organizerId}/events/${calendarEventId}`, { method: "DELETE" });
+  } catch (e) {
+    // A 404 means the event is already gone — deleted by hand in Outlook, or this is
+    // a second cancel racing a first one that already succeeded. Either way the
+    // outcome the caller wants (no meeting left on the calendar) already holds, so
+    // this is success rather than failure. Anything else (wrong permissions, a Graph
+    // outage) is a real problem and still has to surface.
+    if (e.status !== 404) throw e;
+  }
+}
+
+/**
+ * Provisions a new Team from the standard template, owned by `ownerUserId`. Graph
+ * answers 202 with a Location header rather than the team itself, because team
+ * creation is genuinely asynchronous on Microsoft's side — the underlying Microsoft
+ * 365 Group, SharePoint site and Teams-specific resources are provisioned by a
+ * backend job, not inline in the request. So the group id has to be recovered by
+ * polling the operation Graph handed back, bounded to a handful of short waits: a
+ * real create finishes in a few seconds, and an unattended automation run should
+ * fail loudly rather than hang if that job stalls.
+ */
+async function createTeam({ displayName, ownerUserId }) {
+  const fx = fixtures();
+  if (fx) {
+    const groupId = `team-${slug(displayName)}`;
+    journal("createTeam", { displayName, ownerUserId });
+    return { groupId };
+  }
+  await cfg.load("teams");
+  const token = await getAccessToken();
+  const body = {
+    "template@odata.bind": "https://graph.microsoft.com/v1.0/teamsTemplates('standard')",
+    displayName,
+    members: [{
+      "@odata.type": "#microsoft.graph.aadUserConversationMember",
+      roles: ["owner"],
+      "user@odata.bind": `https://graph.microsoft.com/v1.0/users('${ownerUserId}')`,
+    }],
+  };
+  let res;
+  try {
+    res = await fetch(`${GRAPH_BASE}/teams`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error(`Could not reach Microsoft Graph (POST /teams) creating "${displayName}": ${e.message}`);
+  }
+  if (res.status !== 202) {
+    const raw = await res.text().catch(() => "");
+    throw new Error(`Creating the Team "${displayName}" failed (HTTP ${res.status}): ${raw.slice(0, 300)}`);
+  }
+  const location = res.headers.get("location");
+  if (!location) {
+    throw new Error(`Creating the Team "${displayName}" returned 202 but no Location header to poll for the result.`);
+  }
+  // graphFetch always prefixes GRAPH_BASE — strip it back off if Graph handed back an
+  // absolute URL (it does), so the poll below goes through the same helper (and its
+  // error surfacing) as everything else in this file rather than a second raw fetch.
+  let opPath = location.startsWith(GRAPH_BASE) ? location.slice(GRAPH_BASE.length) : location;
+  if (!opPath.startsWith("/")) opPath = `/${opPath}`;
+
+  const MAX_POLLS = 5;
+  for (let attempt = 1; attempt <= MAX_POLLS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const op = await graphFetch(opPath);
+    if (op && op.status === "succeeded" && op.targetResourceId) {
+      return { groupId: op.targetResourceId };
+    }
+    if (op && op.status === "failed") {
+      throw new Error(`Creating the Team "${displayName}" failed: ${(op.error && op.error.message) || "Graph reported failure with no further detail"}.`);
+    }
+    // status is "notStarted" or "running" — keep polling.
+  }
+  throw new Error(`Creating the Team "${displayName}" had not finished after ${MAX_POLLS} polls — check the Teams admin center for a stuck provisioning operation.`);
+}
+
+/** Adds a channel to an already-provisioned Team. */
+async function createChannel({ groupId, displayName }) {
+  const fx = fixtures();
+  if (fx) {
+    const channelId = `chan-${slug(displayName)}`;
+    journal("createChannel", { groupId, displayName });
+    return { channelId };
+  }
+  const channel = await graphFetch(`/teams/${groupId}/channels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName, membershipType: "standard" }),
+  });
+  return { channelId: channel.id };
+}
+
+/** A channel's own email address, for routing (e.g. forwarding). Read, not a write — no journal. */
+async function getChannelEmail({ groupId, channelId }) {
+  const fx = fixtures();
+  if (fx) return (fx.channelEmails || {})[channelId] ?? null;
+  const channel = await graphFetch(`/teams/${groupId}/channels/${channelId}?$select=email`);
+  return channel.email || null;
+}
+
+/** Adds one user to a Team, as owner or ordinary member. Additive-only — never removes anyone. */
+async function addTeamMember({ groupId, userId, owner }) {
+  const fx = fixtures();
+  if (fx) {
+    journal("addTeamMember", { groupId, userId, owner });
+    return;
+  }
+  const body = {
+    "@odata.type": "#microsoft.graph.aadUserConversationMember",
+    roles: owner ? ["owner"] : [],
+    "user@odata.bind": `https://graph.microsoft.com/v1.0/users('${userId}')`,
+  };
+  try {
+    await graphFetch(`/teams/${groupId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // Provisioning is additive-only and this runs on every sync (constraints.md), so
+    // the SAME roster gets re-added every time — a teacher's class list barely
+    // changes week to week, but this call fires for all of it regardless. Graph
+    // answers "already a member" with a 400 or a 409 depending on exactly how the
+    // duplicate collides, and both mean the desired end state (this person is a
+    // member) already holds. Treating them as failure would block everyone ELSE in
+    // the same batch behind someone who was already fine.
+    if (e.status === 400 || e.status === 409) return;
+    throw e;
+  }
+}
+
+/** An Entra user id from an email, or null if there is no such user. Read — no journal. */
+async function resolveUserId(email) {
+  const fx = fixtures();
+  if (fx) return (fx.users || {})[String(email || "").toLowerCase()] ?? null;
+  try {
+    const u = await graphFetch(`/users/${encodeURIComponent(email)}?$select=id`);
+    return u.id;
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
 /** The Settings screen's Test button: names the failing step, not just "failed". */
 async function testConnection() {
   if (!isConfigured()) return { ok: false, note: "Not configured — enter the tenant ID, client ID, client secret and at least one organizer account." };
@@ -279,4 +537,7 @@ async function testConnection() {
 module.exports = {
   isConfigured, describe, forgetCached, testConnection,
   resolveOrganizers, calendarView, resolveMeetingId, attendanceIntervals, graphFetch,
+  // Teams automation (Task 2): writes, plus the reads they depend on.
+  createClassMeeting, updateClassMeeting, cancelClassMeeting,
+  createTeam, createChannel, getChannelEmail, addTeamMember, resolveUserId,
 };
