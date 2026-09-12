@@ -1609,12 +1609,22 @@ router.post("/events/:id/repeat", async (req, res) => {
     // Same helper as the create handler, for the same reason: a nested create would
     // leave the join rows unstamped by db.js. A repeat is the call most likely to
     // have got this wrong quietly, because it writes a whole term at once.
+    //
+    // CONTROLLER RULING: teamsAutoMeeting propagates, teamsJoinUrl deliberately does
+    // NOT. `teamsJoinUrl` names ONE meeting — a link an administrator pasted for this
+    // specific occurrence — and copying it onto every repeated date would attach that
+    // single meeting to many classes, which is wrong in the same way double-booking a
+    // room is wrong. `teamsAutoMeeting` is the opposite kind of field: it carries no
+    // meeting identity at all, only the college's standing answer to "should this slot
+    // get its own Teams meeting", so copying it is what makes each repeated occurrence
+    // get its OWN meeting created for it, rather than none.
     await createEventWithAssignments({
       date, startTime: source.startTime, endTime: source.endTime,
       title: source.title, notes: source.notes,
       unitId: source.unitId, courseId: source.courseId,
       roomId: source.roomId, categoryId: source.categoryId,
       published: source.published,
+      teamsAutoMeeting: source.teamsAutoMeeting,
     }, staffIds, cohortIds, null);
     created++;
   }
