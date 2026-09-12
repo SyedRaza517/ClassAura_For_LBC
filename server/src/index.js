@@ -134,6 +134,9 @@ app.use("/api/applicant", wrapAsync(require("./routes/applicant")));
 app.use("/api/ism", wrapAsync(require("./routes/ism")));
 // This institution's own Moodle / SharePoint credentials.
 app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
+// The Teams attendance switch, threshold, manual sync and run history. Gated the same
+// way as every other Settings-screen control, on the "settings" admin page.
+app.use("/api/teams-attendance", wrapAsync(require("./routes/teamsAttendance")));
 // This institution's own name, colours and logo. GET is deliberately public — the
 // sign-in screen must be branded before anyone has signed in — and the router
 // enforces that split with an allowlist rather than trusting each handler.

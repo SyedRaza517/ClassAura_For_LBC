@@ -125,6 +125,33 @@ async function maybeSyncMoodle() {
   return true;
 }
 
+// The Teams attendance poller. Unlike the Moodle import it runs at EVERY hourly tick
+// rather than a fixed hour, because its work is "sessions that ended since last
+// look" — naturally incremental, and cheap when there are none. The switch is the
+// college's own (TeamsAttendanceConfig.enabled, shipped false); isConfigured() also
+// gates it, so an enabled switch with no credentials does nothing rather than erroring
+// hourly. Dedupe: the engine's own in-process lock plus a 30-minute window against
+// the run log, so a restart inside the hour cannot double-run.
+async function maybeSyncTeamsAttendance() {
+  const teamsGraph = require("./teamsGraph");
+  const teamsConfig = require("./teamsAttendanceConfig");
+  const teamsSync = require("./teamsSync");
+  const cfg = require("./integrationConfig");
+  await cfg.load("teams");
+  const settings = await teamsConfig.get();
+  if (!settings.enabled) return false;
+  if (!teamsGraph.isConfigured() || teamsSync.isRunning()) return false;
+  await teamsSync.sweepStaleRuns();
+  const recent = await prisma.teamsSync.count({
+    where: { mode: "scheduled", status: { in: ["ok", "failed"] }, startedAt: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
+  });
+  if (recent > 0) return false;
+  console.log("Scheduler: starting the Teams attendance sync");
+  const { summary } = await teamsSync.runSync({ mode: "scheduled" });
+  console.log(`Scheduler: Teams attendance sync finished — ${summary.marksCreated} mark(s) written, ${summary.reportsFetched} report(s) read`);
+  return true;
+}
+
 // Kick off the background scheduler. Hourly cadence; the guards inside each job
 // limit real work to its own day/hour. unref() so the timer never keeps the process
 // alive on its own.
@@ -138,10 +165,14 @@ function startScheduler() {
     // stop the reminders, which is why they were separate calls before too.
     maybeSyncMoodle()
       .catch((e) => console.error("nightly Moodle import failed:", e.message));
+    // Same reasoning again: a failing Teams sync must never stop the reminders or the
+    // Moodle import either, so it is its own statement rather than chained onto them.
+    maybeSyncTeamsAttendance()
+      .catch((e) => console.error("Teams attendance sync failed:", e.message));
   };
   run(); // run once on boot (covers a deploy that happens on the reminder day)
   setInterval(run, 60 * 60 * 1000).unref();
   console.log(`Scheduler: timesheet month-end reminders active (checks hourly); Moodle import at ${SYNC_HOUR}:00`);
 }
 
-module.exports = { startScheduler, sendTimesheetReminders, maybeSyncMoodle, isDayBeforeMonthEnd, lastDayOfMonth };
+module.exports = { startScheduler, sendTimesheetReminders, maybeSyncMoodle, maybeSyncTeamsAttendance, isDayBeforeMonthEnd, lastDayOfMonth };
