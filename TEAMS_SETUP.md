@@ -390,6 +390,103 @@ way until an administrator turns it on.
 
 ---
 
+## Step 13 — Teams automation: auto-creating meetings and provisioning class Teams
+
+Everything above sets up **reading** attendance from meetings a college already creates
+by hand. Teams automation is the opposite direction: the server itself **creates** the
+online meeting for a timetabled class (Phase A), and, separately, **creates the class's
+own Team and channels** (Phase B). Two independent switches on the same **Attendance
+settings** screen as Step 11, both shipped **off** — nothing in this step runs, and no
+extra permission below is actually exercised, until an administrator turns one of them
+on. This step is optional: a college that only wants attendance read (Steps 1–12) can
+stop there.
+
+### Phase A — auto-creating meetings: upgrade `Calendars.Read` to `Calendars.ReadWrite`
+
+Creating, rescheduling and cancelling a class's calendar event is a **write** to the
+organizer account's own calendar, which `Calendars.Read` (Step 4) cannot do by
+definition. Go back to **API permissions** on the same app registration, **remove**
+`Calendars.Read` and **add `Calendars.ReadWrite`** in its place, then **grant admin
+consent** again — `OnlineMeetings.Read.All` and `OnlineMeetingArtifact.Read.All` are
+untouched, because reading the attendance report afterwards is still only a read.
+
+**The Exchange application access policy from Step 6 needs nothing redone.**
+`New-ApplicationAccessPolicy` scopes an app's reach to a *mailbox*, not to a specific
+permission on that mailbox — the policy that already restricts this app to the
+organizer-accounts group restricts `Calendars.ReadWrite` to exactly the same group it
+restricted `Calendars.Read` to, automatically, the moment the permission is upgraded.
+Re-run `Test-ApplicationAccessPolicy` (Step 6.3) only if you want to double-check; you do
+not need to recreate the policy.
+
+**The creator account.** Every organizer account can still be *read* for attendance, but
+exactly one of them is the account that actually **creates** new class meetings and
+**owns** new class Teams — set this on the Settings screen as **Creator account**
+(`TEAMS_CREATOR_ACCOUNT` as an environment-variable fallback, same precedence as
+`TEAMS_ORGANIZER_ACCOUNTS`). Leave it blank and the server uses the **first** organizer
+account in your list, so a college that configured attendance before this feature
+existed needs to change nothing to keep working. A separate field rather than always
+"the first organizer account" exists because the account doing the *creating* (mailbox
+space, licensing, whose name students see as the organizer) is not always the account a
+college would pick first for *reading* calendars.
+
+### Phase B — provisioning class Teams: four tenant-wide permissions
+
+Provisioning goes further than any read or calendar write above: it creates a Microsoft
+Team per cohort, a channel per unit, and adds staff and students to it. Add these four
+**Application permissions** the same way as Step 4, and grant admin consent for them too:
+
+- **`Team.Create`** — creates the Microsoft 365 Group and Team for a cohort.
+- **`TeamMember.ReadWrite.All`** — adds staff as owners and students as members of a
+  Team the app created.
+- **`Group.ReadWrite.All`** — creates the channel under that Team (Microsoft models a
+  Team's channels as operations on its underlying Microsoft 365 Group).
+- **`User.Read.All`** — looks up a staff or student's Microsoft account by email, to
+  know whose id to add.
+
+**Say this plainly, because it would be dishonest not to: none of these four can be
+scoped down.** `Calendars.ReadWrite`, `OnlineMeetings.Read.All` and
+`OnlineMeetingArtifact.Read.All` above are all narrowed to the organizer-accounts group
+by an application access policy — Microsoft's mechanism for saying "this app, but only
+for these mailboxes". **No equivalent mechanism exists for Team creation, tenant-wide
+group membership or a tenant-wide user directory lookup.** Granting `Team.Create` means
+this app registration can create a Team anywhere in the tenant, not only for cohorts this
+platform knows about; `TeamMember.ReadWrite.All` and `Group.ReadWrite.All` mean it can
+add or remove members and channels on **any** Team in the organisation it has access to,
+not only the ones it created; `User.Read.All` means it can look up **any** user, not only
+staff and students. This is not a bug in this feature's design that a future version will
+close — it is the actual, honest shape of what Microsoft Graph offers, and turning Phase
+B on is a **deliberate tenant-wide trade** a college's administrator makes, the same way
+choosing to grant `Sites.ReadWrite.All` for SharePoint is a tenant-wide trade rather than
+a scoped one. If that trade is not acceptable, leave **Team provisioning** switched off
+and keep using Phase A (or attendance alone) — the two switches are independent
+precisely so a college can make this call separately from the others.
+
+### The channel-email caveat
+
+After creating a unit's channel, provisioning tries to read that channel's own Microsoft
+email address, so the meetings engine (Phase A) can invite it alongside staff — Teams
+then drops the join link straight into the channel with no extra step. **Some Microsoft
+365 tenants have channel email switched off tenant-wide** (Teams admin center →
+**Messaging policies** → "Owners can add channel email"), in which case Graph reports no
+address for any channel, ever, on that tenant. This is not treated as an error: the run
+log counts it (`channelEmailMissing`) and names the affected channel once, the first time
+it is confirmed absent — it is not re-asked on every later run, because a tenant setting
+does not change class to class. The meeting is still created either way, simply without
+the channel as an extra attendee. **The guaranteed way a student finds their class link
+either way is the student app**, which shows a session's join link straight from the
+register regardless of whether the channel ever got the invite — the channel-email path
+is a convenience on top of that, never the only route.
+
+### Where to paste the new credential
+
+**Creator account** is entered on the same **Settings → Connected systems → Teams
+attendance** card as the rest of this integration's credentials (Step 11.1) — there is no
+separate screen for automation's credentials, only for its two switches (on the
+Attendance settings page, alongside Step 11.3). See the summary table below for its
+environment-variable fallback.
+
+---
+
 ## Environment variables summary
 
 | Variable                     | Required?                          | What it is                                                                                  | Example                                                    |
@@ -398,11 +495,14 @@ way until an administrator turns it on.
 | `TEAMS_CLIENT_ID`             | **Yes**                             | This app's **Application (client) ID** (Step 3).                                             | `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`                      |
 | `TEAMS_CLIENT_SECRET`         | **Yes**                             | The client secret **Value** — a password (Step 5). **Not** the Secret ID.                    | `abc7Q~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`                  |
 | `TEAMS_ORGANIZER_ACCOUNTS`    | **Yes**                             | Comma-separated emails of the dedicated scheduling accounts (Step 6) — never a teacher's own mailbox. | `scheduling@yourcollege.ac.uk,dept2@yourcollege.ac.uk`      |
+| `TEAMS_CREATOR_ACCOUNT`       | No — only for Teams automation (Step 13) | Which organizer account creates class meetings and owns new class Teams. Blank uses the **first** `TEAMS_ORGANIZER_ACCOUNTS` entry, so attendance-only deployments need not set this at all. | `scheduling@yourcollege.ac.uk`                              |
 
-> **The short version:** all four rows are required for the environment-variable
-> fallback to work at all — unlike SharePoint's site-location rows, none of these are
+> **The short version:** the first four rows are required for the environment-variable
+> fallback to work at all — unlike SharePoint's site-location rows, none of those four are
 > optional, because there is no usable default for a tenant, an app, a secret or a list
-> of organizer accounts. As with every integration in this codebase, **the Settings
-> screen is preferred**; these four exist so a deployment configured entirely by
-> environment variables before anyone has opened Settings keeps working unchanged (see
-> Step 10 above and `server/.env.example`'s "Integration credentials" section).
+> of organizer accounts. `TEAMS_CREATOR_ACCOUNT` is the one genuinely optional row, and
+> only matters once Teams automation (Step 13) is in use. As with every integration in
+> this codebase, **the Settings screen is preferred**; these exist so a deployment
+> configured entirely by environment variables before anyone has opened Settings keeps
+> working unchanged (see Step 10 above and `server/.env.example`'s "Integration
+> credentials" section).

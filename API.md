@@ -817,6 +817,140 @@ by a 7-day retry window) rather than marking anybody, and a participant the repo
 but cannot match to a student gets no mark at all, counted in
 `participantsUnmatched` and named in `issues`, never guessed as absent.
 
+## Teams automation (auto-creating meetings, provisioning class Teams)
+
+The opposite direction from the section above: instead of reading meetings a college
+already created by hand, this **creates** them — one Teams meeting per timetabled online
+class (Phase A, `teamsMeetings.js`), and, separately, one Microsoft Team per cohort with
+a channel per unit and staff/students added as owners/members (Phase B,
+`teamsProvisioning.js`). Setup — the `Calendars.Read` → `Calendars.ReadWrite` upgrade,
+the four tenant-wide Phase B permissions, and the channel-email caveat — is
+`TEAMS_SETUP.md`'s Step 13. The credentials are the *same* Teams app registration as
+Teams auto-attendance above (`GET /integrations`, `PUT`/`DELETE /integrations/teams`),
+plus one more field, **`creatorAccount`** — the organizer account that actually creates
+meetings and owns new Teams, defaulting to the first organizer account when blank
+(`teamsGraph.js`'s `creatorEmail()`). This section covers only the endpoints specific to
+automation itself, mounted at `/api/teams-automation` (`routes/teamsAutomation.js`).
+
+**Two independent switches, both shipped off, and off means no Graph call at all** —
+`autoCreateMeetings` and `provisionTeams` on `TeamsAutomationConfig`, checked separately
+because a college may legitimately want one without the other (constraints.md). Neither
+switch being on is a prerequisite for the other; a college can run meeting creation for
+years without ever turning provisioning on.
+
+Every endpoint below sits behind `requireAuth` **and** `requirePage("attendance-settings")`
+— the identical grant as Teams auto-attendance's own endpoints, for the identical reason:
+these back a section on the same Attendance settings screen (`AdminNfcTags.jsx`), so
+whoever holds the grant that opens the screen is who every button on it needs to work
+for. The Teams *credentials* themselves (tenant ID, client ID, client secret, organizer
+accounts, creator account) stay behind `requirePage("settings")` on the generic
+`/integrations/teams` routes, same as attendance's own credentials.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| GET | `/teams-automation/settings` | — | `{ settings: { autoCreateMeetings, provisionTeams }, configured, meetingsRunning, provisioningRunning }` |
+| PUT | `/teams-automation/settings` | any of `{ autoCreateMeetings, provisionTeams }` | `{ settings }` |
+| POST | `/teams-automation/run-meetings` | — | `{ ok: true, summary, issues }` |
+| POST | `/teams-automation/run-provisioning` | — | `{ ok: true, summary, issues }` |
+| GET | `/teams-automation/runs` | — | `{ runs: [ {...row, job, summary, issues} ] }` (most recent 20, **both jobs together**) |
+
+`configured` is `teamsGraph.isConfigured()`, the same check Teams auto-attendance uses —
+one Teams app registration, one "is it connected at all" answer for both features.
+`meetingsRunning`/`provisioningRunning` are each engine's own in-process `isRunning()`
+flag, read separately because the two jobs run independently and one can be mid-run while
+the other sits idle. `GET /runs` returns **one shared list**, not one per job — the 20
+most recent `TeamsProvisionSync` rows regardless of `job`, discriminated by the `job`
+field on each row (`"meetings"` or `"provisioning"`) — so a college that runs one job far
+more often than the other still sees a genuinely recent history rather than the busier
+job crowding the other out of a per-job cap.
+
+`PUT` behaves as a PATCH, same idiom as Teams auto-attendance's own settings route: only
+the keys sent are changed, and the response is always the complete merged object.
+
+**`POST /run-meetings` and `POST /run-provisioning`** each run their pass immediately,
+same as `POST /teams-attendance/sync`. Three ways to fail before any Graph call is made,
+all **409**, checked in this order so the message always names the thing actually wrong:
+
+- Not configured — `{ error: "Teams automation is not configured — enter the credentials under Connected systems first." }`.
+- **That job's own switch is off** — `{ error: "Meeting creation is switched off — turn it on first." }` or
+  `{ error: "Team provisioning is switched off — turn it on first." }`. Checked *after* the
+  configured check, for the same reason Teams auto-attendance's own switched-off check is
+  — an administrator with nothing configured yet sees "not configured", the actionable
+  message for where they actually are, rather than "switched off", which reads as one
+  checkbox away from working. This is the proof that OFF means nothing runs even for a
+  manual "Run now" press, not only for the scheduler.
+- That job is already running — `{ error: "A meetings run is already running." }` or
+  `{ error: "A provisioning run is already running." }`. Each job's own in-process
+  boolean, same clustering caveat as every other lock in this codebase.
+
+A failure partway through answers **502** with `{ error: "The run failed: " + <message> }`.
+The `TeamsProvisionSync` row for that attempt is still written with `status: "failed"`
+and whatever `summary`/`issues` had accumulated first — one broken timetable event or
+cohort never stops the rest of the run (each is wrapped in its own `try`/`catch` and
+reported via `issues`, never allowed to abort the loop).
+
+`summary` differs by job: meetings runs carry `{ meetingsCreated, meetingsUpdated,
+meetingsCancelled }`; provisioning runs carry `{ teamsCreated, channelsCreated,
+ownersAdded, membersAdded, peopleUnmatched, channelEmailMissing }`. `issues` is the same
+shape as Teams auto-attendance's own — a plain array of human-readable strings, one per
+event or cohort that hit a problem, because "unmatched people are reported, never
+guessed" (constraints.md) needs somewhere a human actually reads it.
+
+**Meetings (Phase A) behaviour worth knowing from the API side:**
+
+- **A human's pasted `teamsJoinUrl` always wins.** An event with `teamsAutoMeeting` on
+  but a join link pasted by hand (no `teamsCalendarEventId`, meaning the machine did not
+  create it) is skipped entirely — never a second meeting created beside it.
+- **The machine only cancels a meeting it created.** Unpublishing an event, or clearing
+  its `teamsAutoMeeting` checkbox, cancels the calendar event **only** when
+  `teamsCalendarEventId` is set (this system's own mark of ownership) — a pasted link is
+  never touched by a cancel.
+- **Reconciliation is by a fingerprint, not `updatedAt`.** A meeting is only re-PATCHed
+  when the subject, date, time or attendee list actually changed since the last
+  successful create/update — a room or title-only edit that Graph was never told about
+  produces no PATCH and no re-notification of every attendee.
+- **The reconcile window is short on purpose:** yesterday through two weeks ahead, both
+  for `run-meetings` and the hourly scheduler — far enough back to still cancel a class
+  cancelled right after it ended, far enough ahead to be useful, no further because
+  nothing past that is actionable today.
+
+**Provisioning (Phase B) behaviour worth knowing from the API side:**
+
+- **Additive-only, always** (constraints.md) — a run never removes a member, a channel or
+  a Team, and never renames one after creation. Undoing any of that is a human's decision
+  in the Teams admin center, not something this run infers.
+- **Follows publication**, the same as the meetings engine: only cohorts that appear in a
+  **published** event's group list get a Team, and only units taught by a **published**
+  event get a channel.
+- **An unmatched person is a counted, named issue, never a guess** — a staff member or
+  student whose email does not resolve to a Microsoft account is skipped for that run,
+  counted in `peopleUnmatched`, and named in `issues`; they are retried automatically on
+  the next run once their Microsoft account exists.
+- **`teamsCreated`/`channelsCreated`/`ownersAdded`/`membersAdded` count new creations
+  only.** Re-adding the same roster on every run (required by additive-only) is not
+  counted as "added" a second time — only a **brand-new** Team's owners/members are
+  provably new, because Graph's own "add member" call cannot distinguish "just added"
+  from "was already one".
+
+### `teamsAutoMeeting` on timetable events
+
+`POST /api/timetabling/events`, `PUT /api/timetabling/events/:id` and
+`POST /api/timetabling/events/:id/repeat` accept a boolean `teamsAutoMeeting` — the
+"create the Teams meeting automatically" checkbox — with the same "undefined leaves the
+stored value alone" idiom every other optional field on these endpoints already follows.
+Setting it only records the administrator's intent; `teamsMeetings.js` above is what
+actually reads the column and calls Graph. It is serialised back on every event (`sEvent`
+in `timetabling/serialize.js`) alongside `teamsJoinUrl`.
+
+**`/repeat` propagates `teamsAutoMeeting` but deliberately *not* `teamsJoinUrl`.** The two
+fields are opposite kinds of value: `teamsJoinUrl` names **one specific meeting** — a
+link an administrator pasted for this one occurrence — and copying it onto every repeated
+date would attach that single meeting to many classes, the same class of error as
+double-booking a room. `teamsAutoMeeting` carries no meeting identity at all, only the
+college's standing answer to "should this slot get its own meeting", so copying it is
+what makes every repeated occurrence get **its own** meeting created for it, rather than
+none.
+
 ## Predictive analysis (progression risk)
 
 All of these sit behind `requireAuth` + `requirePage("prediction")`. A college that has
