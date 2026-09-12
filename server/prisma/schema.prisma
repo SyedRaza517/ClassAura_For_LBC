@@ -1402,6 +1402,17 @@ model AttendanceTapConfig {
   updatedAt DateTime @updatedAt
 }
 
+// Whether the Teams attendance sync runs, and what "present" requires. Same shape as
+// AttendanceTapConfig above (the reference implementation is AttendanceBandConfig):
+// defaults in code with enabled:false, one JSON column merged over them, constant
+// "singleton" key, allowlist on the way out, short cache invalidated on save.
+model TeamsAttendanceConfig {
+  id        String   @id @default("singleton")
+  settings  Json     @default("{}")
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
 // One line on a staff member's timesheet: a class or work session on a given day,
 // with its clock times, whether it was delivered on campus or online, and how many
 // minutes it ran. Entries start as "draft"; "Send timesheet" flips a whole month's
