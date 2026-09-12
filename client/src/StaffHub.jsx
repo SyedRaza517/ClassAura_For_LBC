@@ -27,7 +27,7 @@ import {
 } from "recharts";
 import { downloadCSV } from "./csv";
 import { groupNav } from "./navGroups";
-import { CHECK_IN_METHODS, selfCheckInMethod } from "./checkInMethods";
+import { CHECK_IN_METHODS, MACHINE_METHODS, selfCheckInMethod } from "./checkInMethods";
 import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
@@ -7214,16 +7214,32 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
               A COUNT, not a list, and deliberately so: the rows above already say WHICH
               students marked themselves, and a second copy of that list here would be the
               same caseload written twice. What the count adds is the shape of the
-              register as a whole — "eleven of these are claims, not observations". */}
+              register as a whole — "eleven of these are claims, not observations".
+
+              `self` is filtered on `checkInMethod`, NOT on `r.selfMarked` alone, and that
+              split is new. `selfMarked` is the server's `isSelfCheckIn` — frozen, and
+              deliberately not narrowed, because it answers "which capture method wrote
+              this row" and a Teams mark belongs in that map for reasons TEAMS_AUTO_STAMP's
+              own comment gives. But "claims, not observations" is a claim about THIS
+              sentence, not about that column, and a Teams mark is the one entry in
+              `selfMarked` that is not a claim: nobody pressed anything, a sync wrote it
+              from Microsoft's own record of the meeting. Before this split, a class taken
+              entirely from Teams attendance read as "N of these are claims, not
+              observations" — exactly backwards. `MACHINE_METHODS` is the same token-keyed
+              set the server derives `isStudentAction` from (attendanceTap.js), read here
+              off `r.checkInMethod` — the identifier the API already sends per row — rather
+              than by comparing against `takenBy`'s frozen English a third time. */}
           {data.taken && (() => {
             const staff = rows.find(r => r.takenBy && !r.selfMarked)?.takenBy || null;
-            const self = rows.filter(r => r.selfMarked);
+            const self = rows.filter(r => r.selfMarked && !MACHINE_METHODS.has(r.checkInMethod));
+            const machine = rows.filter(r => r.selfMarked && MACHINE_METHODS.has(r.checkInMethod));
             // COUNTED OVER THE TABLE, not over a hand-written pair. This listed "qr" and
             // "nfc" by name, so the declared check-in — the one method whose count an
             // administrator most needs in front of them, being the only one with nothing
             // behind it — was silently absent from the summary while its rows sat in the
             // register above. Any method the server learns now appears here on its own.
             const how = Object.keys(CHECK_IN_METHODS)
+              .filter((m) => !MACHINE_METHODS.has(m))
               .map((m) => ({ n: self.filter(r => r.checkInMethod === m).length, short: CHECK_IN_METHODS[m].short }))
               .filter(({ n }) => n > 0)
               .map(({ n, short }) => `${n} ${short}`)
@@ -7232,6 +7248,7 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
               <>
                 {staff ? ` Last taken by ${staff}.` : ""}
                 {self.length ? ` ${self.length} of these mark${self.length === 1 ? " was" : "s were"} made by the student${self.length === 1 ? "" : "s"} themselves${how ? ` (${how})` : ""}.` : ""}
+                {machine.length ? ` ${machine.length} recorded automatically from the online class.` : ""}
               </>
             );
           })()}

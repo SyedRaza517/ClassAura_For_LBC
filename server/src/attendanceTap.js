@@ -138,6 +138,44 @@ function isSelfCheckIn(takenBy) {
   return checkInMethod(takenBy) !== null;
 }
 
+/**
+ * Did the STUDENT THEMSELVES assert this, in the moment, with nothing standing
+ * between their action and the row? `isSelfCheckIn` answers a narrower question —
+ * "which capture method wrote this" — and on purpose does not distinguish a tap from a
+ * sync: TEAMS_AUTO_STAMP lives in the same map because the underlying fact (the student
+ * joined the meeting) is theirs. But two sentences that read `isSelfCheckIn` as "the
+ * student did this, personally, right now" already existed on this branch and both were
+ * wrong for a Teams-written mark: hnd.js's audit trail said an override "replaced a mark
+ * the student had made themselves" when what it replaced was a machine's report of
+ * Microsoft's record, and StaffHub's register footnote counted it into "N of these are
+ * claims, not observations" — the exact opposite of what a Teams mark is. Those two
+ * sentences needed a predicate `isSelfCheckIn` cannot honestly answer, so it gets one:
+ * everything `isSelfCheckIn` accepts, minus the methods in MACHINE_METHODS.
+ *
+ * Not a second frozen map — derived from the two structures that already exist, so a
+ * future capture method (student-side or machine-side) is classified correctly the
+ * moment it is added to SELF_CHECKIN_METHODS, without a third place remembering to
+ * agree.
+ */
+function isStudentAction(takenBy) {
+  const method = checkInMethod(takenBy);
+  return method !== null && !MACHINE_METHODS.has(method);
+}
+
+// Which entries in SELF_CHECKIN_METHODS are a MACHINE'S observation rather than the
+// student's own act, in the sense isStudentAction below needs: something the student
+// did themselves, at the moment the row was written, that nobody else could do for
+// them. "teams" is the one entry that fails that test — TEAMS_AUTO_STAMP's own comment
+// already explains why it sits in the map at all (the underlying fact, joining the
+// meeting, IS the student's action), but the ROW is written afterwards by a sync
+// process reading Microsoft's record of that fact, not by the student pressing
+// anything at the moment it is recorded. A derived Set, not a second hand-copied list
+// beside SELF_CHECKIN_METHODS: the map is the one place a new capture method is ever
+// added, and a future teams-shaped method (an LTI launch record, a card-swipe import)
+// would need adding here too if this were separately maintained — which is exactly the
+// two-hand-synced-copies shape the map itself exists to avoid one level up.
+const MACHINE_METHODS = new Set(["teams"]);
+
 /** "HH:MM" → minutes since midnight, or null when the string is not a time. */
 function toMins(hhmm) {
   const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm ?? ""));
@@ -275,5 +313,5 @@ function statusFor(session, now, settings) {
 module.exports = {
   addMinutes, subMinutes, resolveTapSession, statusFor, withinSessionWindow, termOpenOn, checkInClosesAt,
   SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP, TEAMS_AUTO_STAMP,
-  SELF_CHECKIN_STAMPS, isSelfCheckIn, checkInMethod,
+  SELF_CHECKIN_STAMPS, isSelfCheckIn, isStudentAction, checkInMethod,
 };

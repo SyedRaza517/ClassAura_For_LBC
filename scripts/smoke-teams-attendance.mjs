@@ -431,6 +431,22 @@ try {
   check("an administrator can save Teams credentials",
     savedIntegration.status === 200 && savedIntegration.data?.configured === true, `HTTP ${savedIntegration.status}`);
 
+  // THE WINDOW THIS FIX EXISTS FOR: credentials are saved and Graph now answers
+  // isConfigured() === true, but TeamsAttendanceConfig.enabled is still false —
+  // exactly the gap TEAMS_SETUP.md's own Step 11 walks an administrator through
+  // (save credentials, press Test connection, THEN switch the feature on). Before
+  // routes/teamsAttendance.js's `enabled` check existed, POST /sync in this exact
+  // window ran a real sync and wrote real marks, because the route only ever asked
+  // "is Teams configured", never "is Teams attendance switched on". A regression test
+  // for that gap has to run in this window specifically — asserting it only before
+  // credentials exist (the check above) or only after the switch is on (implicitly,
+  // by every assertion after this) would never re-exercise the branch that was
+  // missing, since both of those already answer 409/200 for other reasons.
+  const disabledSync = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
+  check("a sync is refused while configured but still switched off",
+    disabledSync.status === 409, `HTTP ${disabledSync.status}`);
+  check("...and says so", /switched off/i.test(disabledSync.data?.error || ""), disabledSync.data?.error);
+
   const enabledSettings = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { enabled: true } });
   check("and switch the sync on", enabledSettings.status === 200 && enabledSettings.data?.settings?.enabled === true,
     `HTTP ${enabledSettings.status} enabled=${enabledSettings.data?.settings?.enabled}`);

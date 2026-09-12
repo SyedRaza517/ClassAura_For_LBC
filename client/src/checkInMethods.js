@@ -56,6 +56,18 @@ export const CHECK_IN_METHODS = {
   },
 };
 
+// The one entry above that is a MACHINE'S observation, not the student pressing
+// anything — mirrors the server's own MACHINE_METHODS (attendanceTap.js), which is
+// where `checkInMethod` and its token are actually decided. Kept as a token-keyed Set,
+// never a comparison against `takenBy`'s prose, for the reason this whole module's
+// header explains: the stamp is frozen English that changes for reasons that have
+// nothing to do with what a screen should show, and a screen that compared strings to
+// tell a claim from an observation is exactly the bug this module was written to
+// remove. A row's `checkInMethod` token is what StaffHub's register footnote and the
+// live view both already receive from the server — this Set is how they answer "is
+// this one a student's own act" without re-deriving it a third way.
+export const MACHINE_METHODS = new Set(["teams"]);
+
 // A token this build has not been taught about — a newer API, or an older one that sends no
 // token at all. Still shown, still labelled as a self check-in, because it IS one and the
 // server said so; but described in the stamp's own words rather than illustrated with the

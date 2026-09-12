@@ -318,6 +318,7 @@ in the same `.env` file.
 TEAMS_TENANT_ID=<your-tenant-id>
 TEAMS_CLIENT_ID=<your-client-id>
 TEAMS_CLIENT_SECRET=<your-client-secret-value>
+TEAMS_ORGANIZER_ACCOUNTS=<comma-separated organizer account emails>
 ```
 
 **These environment variables are only ever the fallback.** The credentials are normally
@@ -325,9 +326,16 @@ entered on the Settings screen (Connected systems → Teams attendance), encrypt
 and require `CREDENTIALS_KEY` to be set on the server before they can be saved at all —
 see `server/.env.example`. The environment variables above exist for the same reason
 `SP_*` does: a deployment configured entirely by environment variables before anyone has
-opened Settings keeps working unchanged. **The organizer accounts themselves are entered
-on the Settings screen only** (comma-separated) — there is no environment-variable form
-of that list, because it is edited far more often than a tenant ID or secret ever is.
+opened Settings keeps working unchanged. **The organizer accounts DO have an
+environment-variable form**, `TEAMS_ORGANIZER_ACCOUNTS` (comma-separated) —
+`integrationConfig.js`'s registry maps it beside the other three (see the `env:` block
+for `teams` in that file) on exactly the same precedence as everything else here:
+whatever the college saved on the Settings screen wins, and the environment variable is
+read only when nothing has been saved yet. This paragraph used to say there was no
+environment-variable form for that list at all, which was wrong the day it was written —
+the mapping was already there — and is corrected here rather than quietly fixed, because
+a setup guide that once asserted a variable does not exist is exactly the kind of thing
+an administrator will trust and not go looking for again.
 
 ---
 
@@ -379,3 +387,22 @@ way until an administrator turns it on.
 - **Removing an organizer account** should happen in the same three places, in reverse,
   and promptly — Microsoft has no automatic expiry on either policy grant, so a leaver's
   account keeps being readable until someone removes it by hand.
+
+---
+
+## Environment variables summary
+
+| Variable                     | Required?                          | What it is                                                                                  | Example                                                    |
+| ----------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `TEAMS_TENANT_ID`             | **Yes**                             | Your organisation's **Directory (tenant) ID** (Step 3). Same shape as `SP_TENANT_ID`, but not the same value — a separate app registration. | `11111111-2222-3333-4444-555555555555`                     |
+| `TEAMS_CLIENT_ID`             | **Yes**                             | This app's **Application (client) ID** (Step 3).                                             | `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee`                      |
+| `TEAMS_CLIENT_SECRET`         | **Yes**                             | The client secret **Value** — a password (Step 5). **Not** the Secret ID.                    | `abc7Q~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`                  |
+| `TEAMS_ORGANIZER_ACCOUNTS`    | **Yes**                             | Comma-separated emails of the dedicated scheduling accounts (Step 6) — never a teacher's own mailbox. | `scheduling@yourcollege.ac.uk,dept2@yourcollege.ac.uk`      |
+
+> **The short version:** all four rows are required for the environment-variable
+> fallback to work at all — unlike SharePoint's site-location rows, none of these are
+> optional, because there is no usable default for a tenant, an app, a secret or a list
+> of organizer accounts. As with every integration in this codebase, **the Settings
+> screen is preferred**; these four exist so a deployment configured entirely by
+> environment variables before anyone has opened Settings keeps working unchanged (see
+> Step 10 above and `server/.env.example`'s "Integration credentials" section).

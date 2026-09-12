@@ -83,15 +83,31 @@ const sEvent = (e) => ({
   end: e.endTime,
   title: e.title,
   notes: e.notes || "",
-  // The rescue-hatch paste, back out to the planner that reads it — not a secret. It
-  // is the same join link the class's own students and staff already use to get into
-  // the meeting, so this being on sEvent (and therefore also on the staff/student read
-  // in routes/myTimetable.js, which shares this function) is the intended shape, not
-  // an oversight of the allowlist rule at the top of this file. Named here in the
-  // SAME change that adds the column to the update route, unlike academicDepartmentId
-  // below, whose reader guards on "the field is present at all" — that guard exists
-  // because that column shipped a release before its serialiser did; there is no such
-  // gap to guard against for a field introduced in one commit.
+  // The rescue-hatch paste, back out to the planner that reads it — not a secret in
+  // the sense that matters for that reader, since a lecturer pasting a link is trusted
+  // with it anyway. But sEvent is ALSO what routes/myTimetable.js's GET /events sends
+  // back, and that router is `requireAuth` only, no `requirePage` (see its own header:
+  // "every lecturer reads their own timetable" is meant literally, deliberately not
+  // gated the way admin pages are) — and its `type=all` scope (routes/myTimetable.js,
+  // `if (type === "all")`) returns EVERY published event with no staff filter at all,
+  // not only the caller's own teaching.
+  //
+  // So the TRUE fan-out is: a student's token cannot reach this at all — myTimetable.js
+  // is absent from `STUDENT_ROUTERS` in auth.js, so a student token is refused before
+  // any handler here runs — but ANY signed-in member of staff, teaching that class or
+  // not, can read every published class's Teams join URL by asking for `type=all`. That
+  // is a real widening from "the people already in the meeting", and it was WEIGHED,
+  // not missed: narrowing myTimetable's `type=all` scope to the caller's own teaching
+  // would break the deliberately broad staff-search behaviour documented on that route
+  // (looking up a colleague's, a room's or a named student's week is meant to be
+  // available to any member of staff, the same file's own comment says so at length),
+  // for a leak whose blast radius is bounded on both sides: this router is staff-only
+  // in the first place, and a Teams meeting enforces its own membership at the lobby
+  // regardless of who is holding the join link — unlike a password or a token, a link
+  // to a meeting the lobby will not admit you into is not itself the access. The same
+  // link already sits in every organizer and co-organizer's Outlook calendar, which is
+  // a wider readership than the staff list this API serves. Accepted deliberately, on
+  // those two grounds, rather than re-scoped.
   teamsJoinUrl: e.teamsJoinUrl || "",
   published: !!e.published,
   changedAt: e.changedAt,

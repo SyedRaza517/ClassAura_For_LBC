@@ -372,7 +372,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 const { isRealDate } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
-const { subMinutes, addMinutes, isSelfCheckIn, checkInMethod, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
+const { subMinutes, addMinutes, isSelfCheckIn, isStudentAction, checkInMethod, withinSessionWindow, termOpenOn, checkInClosesAt } = require("../attendanceTap");
 const { sharedDeviceGroups } = require("../sharedDevice");
 const { windowIndexFor, deriveCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
@@ -1891,7 +1891,21 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
   // was a student's own tap — which is precisely the fact a disputed mark turns on, and
   // precisely what the student will say when they appeal. It is one number and it costs
   // nothing to record.
-  const overrodeSelf = Object.keys(after).filter((id) => isSelfCheckIn(priorMarks.get(id)?.takenBy)).length;
+  //
+  // `isStudentAction`, not `isSelfCheckIn`, is what this sentence needs. The two used to
+  // be the same predicate, back when every entry in SELF_CHECKIN_METHODS was something a
+  // student pressed a button for; TEAMS_AUTO_STAMP broke that, because it is written by a
+  // sync process reading Microsoft's record, never by the student in the moment. Counting
+  // it under `isSelfCheckIn` here made the sentence say a lecturer's correction "replaced
+  // a mark the student had made themselves" when what it replaced was a machine's report
+  // — exactly backwards in the one document an appeal turns on. `overrodeMachine` gets its
+  // own count and its own honest clause instead of being silently folded into either the
+  // student's count or nothing at all.
+  const overrodeSelf = Object.keys(after).filter((id) => isStudentAction(priorMarks.get(id)?.takenBy)).length;
+  const overrodeMachine = Object.keys(after).filter((id) => {
+    const prior = priorMarks.get(id)?.takenBy;
+    return isSelfCheckIn(prior) && !isStudentAction(prior);
+  }).length;
   // Only the marks that actually MOVED. A register save re-sends the whole class, so
   // flagging every student on it would rescore the cohort every time a register is
   // opened and closed unchanged.
@@ -1902,6 +1916,7 @@ router.put("/sessions/:id/register", requireAuth, lecturerGate(["registers"]), a
       entity: "HndSession", entityId: session.id,
       summary: `${moved} attendance mark(s) changed on the ${session.date} register for ${session.unit?.code || "a unit"}` +
         (overrodeSelf ? `, ${overrodeSelf} of which replaced a mark the student had made themselves` : "") +
+        (overrodeMachine ? `, ${overrodeMachine} of which replaced a mark recorded automatically from the online class` : "") +
         (outOfTerm ? ` — an out-of-term correction made after ${term.name} closed on ${term.end}` : "") +
         ` by ${req.user?.name || "an administrator"}`,
       before, after,

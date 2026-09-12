@@ -775,10 +775,19 @@ writes Present, Late or Absent onto its register from how long a student was act
 the meeting, on the same never-overwrite, null-means-not-measurable, ships-off invariants
 NFC tap check-in already established for a feature that writes to the attendance record.
 
-**It ships switched off.** `enabled` is `false` in `teamsAttendanceSettings.js`'s
-platform defaults, and discovery and matching keep running in the background even while
-it is off — so a class already has its meeting matched by the time an administrator
-switches marking on, rather than starting cold. **No college has this today.**
+**It ships switched off, and off means nothing runs at all.** `enabled` is `false` in
+`teamsAttendanceSettings.js`'s platform defaults. This section used to say discovery and
+matching kept running in the background even while the switch was off, so a class was
+already matched by the time an administrator turned marking on — that described a real
+earlier design, and a real gap in it: `POST /sync` checked only whether Teams was
+*configured*, never whether it was *enabled*, and the setup guide's own Step 11 walks an
+administrator through saving credentials and pressing Test connection **before** ever
+switching this on — exactly the window in which `isConfigured()` already answers true.
+A "Sync now" press in that window ran a real sync against a real Microsoft tenant and
+wrote real marks, while the college had, by its own choice, left the feature off. Fixed:
+`POST /sync` now refuses with 409 while `enabled` is `false`, so nothing — no calendar
+read, no matching, no mark — happens until the switch is on. Matching begins on the
+**first sync after switch-on**, not before it. **No college has this today.**
 
 | Piece | Where | What it does |
 |---|---|---|
@@ -800,7 +809,7 @@ proved versus what reading the code establishes:
 | | |
 |---|---|
 | `teamsAttendance.test.js`, `teamsAttendanceSettings.test.js` | **Code-read as present and passing at commit time** — the matcher's date/time/title tiebreaks and ambiguity refusal, the interval-clip-and-merge arithmetic, and the threshold's exact rounding boundary, all pure and all database-free |
-| `scripts/smoke-teams-attendance.mjs` | Written by a concurrent task on this branch and **not run by this task**. Weighted, per the spec's own emphasis, toward the refusals: a sync while unconfigured or already running (409), a failed Graph call writing no marks (502, nothing written), a mark that already stands surviving a sync untouched, an unmatched participant appearing in `issues` and `participantsUnmatched` rather than as a guessed Absent, and the feature doing nothing at all while `enabled` is `false`. Whether it actually passes against a live `edtech_dev` is proven by the next full test run, not by this entry |
+| `scripts/smoke-teams-attendance.mjs` | Weighted, per the spec's own emphasis, toward the refusals: a sync while unconfigured (409) — the "already running" 409 is a real branch in the route but the suite does not exercise it, so it is not claimed here — a failed Graph call writing no marks (502, nothing written), a mark that already stands surviving a sync untouched, an unmatched participant appearing in `issues` and `participantsUnmatched` rather than as a guessed Absent, and — the fix-wave assertion that closes the gap this section used to describe wrongly — `POST /sync` answering 409 with `/switched off/i` once Teams is configured but before `enabled` is set true, proving OFF means nothing runs even when Graph credentials are already valid. Confirmed by the full test run this fix wave records (see the verification log) |
 | Client | **Builds** (`npm run --workspace client build`) — this task's own check. There is still no client test framework, so "builds" and "renders once the server answers" is the whole claim; the settings section has not been clicked in a browser |
 | In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant, a real organizer account, or a real online class — every claim above is a code read or a unit test, never a live Graph call |
 

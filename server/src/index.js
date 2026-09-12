@@ -134,8 +134,13 @@ app.use("/api/applicant", wrapAsync(require("./routes/applicant")));
 app.use("/api/ism", wrapAsync(require("./routes/ism")));
 // This institution's own Moodle / SharePoint credentials.
 app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
-// The Teams attendance switch, threshold, manual sync and run history. Gated the same
-// way as every other Settings-screen control, on the "settings" admin page.
+// The Teams attendance switch, threshold, manual sync and run history. Gated on
+// "attendance-settings" — the same page as the NFC/QR/geofence controls beside it on
+// AdminNfcTags.jsx, NOT the generic "settings" page (that gates the Teams *credentials*
+// instead, on the separate /integrations/teams routes). See the router's own header
+// comment in routes/teamsAttendance.js for why the split is deliberate rather than an
+// oversight: "settings" would let someone connect the college's Microsoft tenant
+// without being able to touch the switch this router guards, or vice versa.
 app.use("/api/teams-attendance", wrapAsync(require("./routes/teamsAttendance")));
 // This institution's own name, colours and logo. GET is deliberately public — the
 // sign-in screen must be branded before anyone has signed in — and the router

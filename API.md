@@ -723,12 +723,18 @@ secret, organizer accounts) are entered like any other integration, through the 
 routes (`routes/integrations.js`) rather than through anything below — this section
 covers only the four endpoints specific to Teams attendance itself.
 
-**It ships off.** `enabled` defaults to `false` for every college, the same reason NFC
-tap check-in and Attendance Emails do: a feature that writes to the attendance record
-must not switch itself on at every college on the next deploy. Until an administrator
-switches it on from the Teams online-classes section of the attendance settings screen,
-discovery and matching still run in the background (so a class is already matched by the
-time it is switched on) but nothing is ever marked.
+**It ships off, and off means NOTHING runs.** `enabled` defaults to `false` for every
+college, the same reason NFC tap check-in and Attendance Emails do: a feature that writes
+to the attendance record must not switch itself on at every college on the next deploy.
+While it is off, `POST /sync` itself refuses with 409 (see below) — no calendars are
+read, no meetings are matched to classes, and nothing is ever marked. This used to read
+"discovery and matching still run in the background… but nothing is ever marked", which
+described a real earlier design and a real bug at once: the setup guide (`TEAMS_SETUP.md`
+Step 11) walks an administrator through saving credentials and pressing **Test
+connection** *before* ever switching this on, and in that window `graph.isConfigured()`
+already answers true — so a "Sync now" press in exactly that window ran a real sync and
+wrote real marks while the college had, by its own choice, left the feature off.
+Matching now begins on the **first sync after switch-on**, not before.
 
 All four endpoints below sit behind `requireAuth` **and** `requirePage("attendance-settings")`
 — the same grant as the NFC/QR/geofence controls on the same screen (`AdminNfcTags.jsx`),
@@ -764,10 +770,16 @@ merged object, never a partial one, so the caller can see exactly what was store
 **`POST /sync`** runs a pass immediately rather than only starting one, unlike
 `POST /moodle/sync` — a person pressing this is usually checking a class right after it
 ended and wants the answer on this screen, and a run is bounded by the organizer
-accounts' calendars plus the sessions in the retry window, not a whole VLE. Two ways to
-fail before any Graph call is made, both **409** (not run, nothing to retry):
+accounts' calendars plus the sessions in the retry window, not a whole VLE. Three ways to
+fail before any Graph call is made, all **409** (not run, nothing to retry):
 
 - Teams attendance is not configured — `{ error: "Teams attendance is not configured — enter the credentials under Connected systems first." }`.
+- Teams attendance is switched off — `{ error: "Teams attendance is switched off — turn it on under Attendance settings first." }`.
+  Checked *after* the configured check, deliberately: an administrator who has entered no
+  credentials at all gets told that, rather than being told to flip a switch that cannot
+  yet be flipped. This is the check that makes "it ships off" (above) actually true for
+  the manual button, not only for the scheduler — see the WHY comment on this check in
+  `routes/teamsAttendance.js`.
 - A sync is already running — `{ error: "A sync is already running." }`. The lock is a
   module-level boolean (`teamsSync.js`'s `running`), in-process like every other lock in
   this codebase — correct for the one Node process a deployment is, and a clustered

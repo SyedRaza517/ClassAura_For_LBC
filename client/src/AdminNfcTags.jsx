@@ -689,9 +689,11 @@ function TeamsAttendance() {
             Teams auto-attendance is {settings.enabled ? "ON" : "OFF"}
           </span>
           <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
-            While this is off, meetings are still discovered and matched to classes in
-            the background, but nothing is written to any register until you switch this
-            on. {!configured && "It cannot be switched on until Teams is connected."}
+            While this is off, nothing runs at all — no calendars are read, no meetings
+            are matched to classes, and nothing is written to any register. Matching
+            begins on the first sync after you switch this on, so the first run may take
+            a little longer than the hourly ones after it.
+            {!configured && " It cannot be switched on until Teams is connected."}
           </span>
         </span>
       </label>

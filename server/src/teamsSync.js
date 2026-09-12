@@ -214,7 +214,21 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
           try { await prisma.student.update({ where: { id: s.id }, data: { msUserId: p.msUserId } }); }
           catch (e) { if (e?.code !== "P2002") throw e; note(`Microsoft account ${p.email} appears to belong to two students — id not cached.`); }
         }
-        attendedBy.set(s.id, p);
+        // CONCATENATE, don't replace. Graph can hand back TWO participant entries for
+        // the same person — a rejoin under a slightly different identity record is the
+        // observed case, but the report's shape does not promise exactly one row per
+        // attendee — and `attendedBy` is keyed by studentId, so a plain `.set()` here
+        // would let the second entry silently discard the first one's intervals rather
+        // than adding to them. attendedMinutes() already merges overlapping intervals
+        // (join, drop, rejoin) into one span, so handing it the union of both entries'
+        // intervals is exactly what it is for; the failure mode of NOT concatenating is
+        // silent and one-directional — a student's attended minutes only ever come out
+        // LOWER than reality, trending every borderline case toward the wrong side of
+        // the threshold: an Absent or a Late that a fuller reading of the report would
+        // have cleared to Present. That is the "guessed wrong toward the worse outcome"
+        // failure this feature exists to refuse, arriving through a different door.
+        const prev = attendedBy.get(s.id);
+        attendedBy.set(s.id, prev ? { ...p, intervals: [...prev.intervals, ...p.intervals] } : p);
       }
 
       // Decide every rostered student, then write ONLY where no mark stands.

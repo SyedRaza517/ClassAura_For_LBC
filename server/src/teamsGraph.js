@@ -28,6 +28,16 @@ const ORGANIZERS = () => String(cfg.peek("teams").organizerAccounts || "")
   .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 
 function fixtures() {
+  // Unreachable in production, whatever the environment happens to carry. This seam
+  // REPLACES Graph authentication entirely — every exported call below answers from a
+  // JSON file instead of asking Microsoft anything — so a production process that
+  // somehow inherited a stray TEAMS_GRAPH_FIXTURES (a copy-pasted .env, a variable left
+  // set on a service after a smoke run) must not be able to have every "real" sync
+  // silently answer from a file on disk and write fabricated marks onto real students'
+  // registers. NODE_ENV, not a config flag, because it is the one signal that cannot be
+  // saved through Settings by anyone — the same reason auth.js refuses to start without
+  // a JWT_SECRET only in production rather than trusting a value that could be toggled.
+  if (process.env.NODE_ENV === "production") return null;
   const path = process.env.TEAMS_GRAPH_FIXTURES;
   if (!path) return null;
   try { return JSON.parse(readFileSync(path, "utf8")); }
