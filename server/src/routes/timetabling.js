@@ -24,6 +24,8 @@ const { parseJoinUrl } = require("../teamsAttendance");
 const departments = require("../academicDepartments");
 const audit = require("../audit");
 const { randomUUID } = require("node:crypto");
+const { notifyStudent } = require("../notify");
+const { localDate, localTime } = require("../clock");
 
 router.use(requireAuth, requirePage("scheduling"));
 
@@ -931,7 +933,7 @@ router.delete("/groups/:id", async (req, res) => {
 /* ----------------------------------------------------------------- events -- */
 
 const { findClashes } = require("../timetabling/overlap");
-const { syncEventRegisters } = require("../timetabling/registers");
+const { syncEventRegisters, rosterForSession } = require("../timetabling/registers");
 
 /**
  * Build the registers for many events and fold the outcomes into one report.
@@ -1482,6 +1484,36 @@ router.post("/events", async (req, res) => {
   });
 });
 
+// Whether a class starting at `dateStr`/`timeStr` (London wall clock, as every
+// TimetableEvent field is) falls within 48 real hours of the moment this runs —
+// used only to decide whether a date/time/room edit is urgent enough to page a
+// whole roster, so it asks "is the class coming up soon", not "how many teaching
+// hours does the timetable show between now and then".
+//
+// That distinction matters because it is the OPPOSITE of minutesOf() in
+// prediction/timetable.js, which deliberately avoids `Date` arithmetic: a lesson
+// listed 09:00-14:00 is five teaching hours whatever the clocks did that morning,
+// so measuring it in elapsed real time would be wrong twice a year. Here the
+// question genuinely IS elapsed real time — "will 48 hours have passed before this
+// starts" — so `Date` subtraction is the right tool, not the wrong one.
+//
+// `now` and the event's date+time are both read as Europe/London wall-clock
+// strings (clock.js / the event's own columns) and parsed as `...Z`, i.e. as if
+// they were UTC. That is an approximation — London is not UTC for most of the
+// year — but the SAME approximation is applied to both sides of the subtraction,
+// so the college's real offset from UTC cancels out as long as today and the
+// class fall on the same side of a clock-change weekend, which is every day but
+// two a year. Being off by the one hour BST adds on those two days changes
+// nothing about a yes/no gate this wide (48 hours), and a college-specific
+// IANA-zone conversion is more machinery than a notification trigger earns.
+function withinFortyEightHours(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return false;
+  const now = new Date(`${localDate()}T${localTime()}:00Z`);
+  const at = new Date(`${dateStr}T${timeStr}:00Z`);
+  if (Number.isNaN(at.getTime())) return false;
+  return Math.abs(at.getTime() - now.getTime()) <= 48 * 3600 * 1000;
+}
+
 router.put("/events/:id", async (req, res) => {
   const { data, error } = parseEvent(req.body, true);
   if (error) return res.status(400).json({ error });
@@ -1553,6 +1585,68 @@ router.put("/events/:id", async (req, res) => {
   const registers = await syncEventRegisters(existing.id);
 
   res.json({ event: sEvent(row), warnings, registers });
+
+  // Page the roster when a PUBLISHED class moved AND either its old or its new time
+  // falls inside the next 48 hours — checking BOTH sides of the edit, not just the
+  // new one, because a class pulled forward from next Thursday to tomorrow is exactly
+  // as disruptive to a student who had planned around Thursday as one pushed out of a
+  // window they were already relying on. An unpublished event has no roster reading
+  // it yet (registerAction in registers.js gates on the same `published` flag), so
+  // nothing here fires for a draft still being built.
+  //
+  // Fire-and-forget: everything below is best-effort exactly as notify.js documents
+  // itself to be, and an administrator who has just moved a class must not wait on a
+  // notification fan-out — nor should a Teams/push hiccup make the save LOOK like it
+  // failed when the room, in fact, already changed.
+  (async () => {
+    if (!row.published || !moved) return;
+    if (!withinFortyEightHours(existing.date, existing.startTime) && !withinFortyEightHours(candidate.date, candidate.startTime)) return;
+
+    // What changed, in one clause, so the push itself says something useful rather
+    // than "your class changed" — the thing every student with more than one class
+    // that day would have to tap through to find out.
+    const changes = [];
+    if (candidate.date !== existing.date) changes.push("date");
+    if (candidate.startTime !== existing.startTime || candidate.endTime !== existing.endTime) changes.push("time");
+    if (roomId !== existing.roomId) changes.push("room");
+    const what = changes.length ? changes.join("/") : "details";
+
+    // Every register this event now has, one HndSession row per group (or one with a
+    // null cohortId for an event with none) — exactly what syncEventRegisters just
+    // built or confirmed above, read back rather than threaded through its return
+    // value because `registers` only carries counts and frozen/skipped reasons, never
+    // the rows themselves.
+    const sessions = await prisma.hndSession.findMany({
+      where: { timetableEventId: existing.id },
+      select: { unitId: true, cohortId: true },
+    });
+
+    // Deduped ACROSS registers, not just within one: a merged class (two intakes
+    // sharing a room and time — see registers.js) has one register per group, and a
+    // student on both would otherwise be paged twice for the one class that moved.
+    const studentIds = new Set();
+    for (const session of sessions) {
+      // Shadowing the module-level `ids()` array-sanitising helper here would be an
+      // easy mistake to make and hard to notice, so the destructured name is spelled
+      // out in full.
+      const { studentIds: rosterStudentIds } = await rosterForSession(session);
+      for (const studentId of rosterStudentIds) studentIds.add(studentId);
+    }
+
+    // NO CAP HERE, DELIBERATELY. Every other trigger in this file notifies one
+    // student at a time; this one is meant to reach everyone on the class that just
+    // moved, which for a single register is a cohort or a unit's enrolment — tens of
+    // students, not the institution — and paging all of them IS the feature a
+    // 48-hour timetable change exists to deliver, not a fan-out to guard against.
+    const className = row.unit?.code || row.title || "class";
+    for (const studentId of studentIds) {
+      notifyStudent(studentId, {
+        type: "info",
+        message: `Your ${className} — ${what} changed`,
+        link: "timetable",
+      });
+    }
+  })().catch((e) => console.error(`[notify] timetable-change fan-out failed for event ${existing.id}:`, e.message));
 });
 
 router.delete("/events/:id", async (req, res) => {

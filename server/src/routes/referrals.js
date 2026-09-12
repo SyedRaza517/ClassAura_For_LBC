@@ -24,6 +24,7 @@ const audit = require("../audit");
 const email = require("../email");
 const mailFrom = require("../mailFrom");
 const branding = require("../branding");
+const { notifyStudent } = require("../notify");
 
 // THE DEPARTMENT LIST IS MOUNTED ABOVE THE ROUTER GUARD, DELIBERATELY.
 //
@@ -303,6 +304,20 @@ router.put("/:id/accept", async (req, res) => {
     summary: label(row, await departments.byKey(row.department)) + " picked up by " + (updated.acceptedBy || "a member of staff"),
   });
   res.json(sReferralForDepartment(updated));
+
+  // GET /api/student/me/referrals (routes/student.js) shows `status` on every row
+  // with studentNotified true — regardless of selfReferred, unlike the message
+  // thread above, because sReferralForStudent's `status`/`outcome` fields carry no
+  // case content, only WHERE the referral got to. Gated on the same flag that route's
+  // WHERE clause reads, so a referral the student was never told about (studentNotified
+  // false — the tickbox's default) can never surface a status ping either.
+  if (updated.studentNotified) {
+    notifyStudent(updated.studentId, {
+      type: "info",
+      message: `${(await departments.byKey(updated.department))?.name || updated.department} has picked up your referral`,
+      link: "support",
+    });
+  }
 });
 
 // PUT /api/referrals/:id/notes — the receiving team's own record.
@@ -356,6 +371,20 @@ router.put("/:id/close", async (req, res) => {
       " by " + (updated.closedBy || "a member of staff"),
   });
   res.json(sReferralForDepartment(updated));
+
+  // sReferralForStudent ships `status` and `outcome` (the CODE, same as the audit
+  // summary above — never `outcomeDetail`, which is the prose the code exists to keep
+  // out of both places). "Closed" is the one status change a student who asked for
+  // help is actively waiting on, so this fires even though nobody tapped a "reply"
+  // button — the WHY comment on the accept handler above about the studentNotified
+  // gate applies identically here.
+  if (updated.studentNotified) {
+    notifyStudent(updated.studentId, {
+      type: "info",
+      message: `Your referral to ${(await departments.byKey(updated.department))?.name || updated.department} has been closed`,
+      link: "support",
+    });
+  }
 });
 
 /* -------------------------------------------------------------------------- */
@@ -478,6 +507,22 @@ router.put("/:id/transfer", async (req, res) => {
   // carries across because it is a property of the student's situation, not of which
   // team happens to be holding the case.
   notifyDepartment(toKey, to.name, { urgent: updated.urgency === "urgent", verb: "Transferred referral" }).catch(() => {});
+
+  // A transfer changes both `department` and `status` on the row sReferralForStudent
+  // serialises (department back to "open" — see `data` above), and departmentName is
+  // one of the eight fields that serialiser ships, so a student watching their own
+  // referral would otherwise see it silently reappear under a new team's name with no
+  // notification pointing at why. The receiving team's name only — never `to` vs
+  // `from`, which would tell the student which desk is done with them, a fact this
+  // router keeps for staff (label() above) precisely because it names the confidential
+  // routing, not the outcome.
+  if (updated.studentNotified) {
+    notifyStudent(updated.studentId, {
+      type: "info",
+      message: `Your referral has moved to ${to.name}`,
+      link: "support",
+    });
+  }
 });
 
 // GET /api/referrals/:id/history — where this case has been.
@@ -580,14 +625,39 @@ router.post("/:id/messages", async (req, res) => {
 
   res.status(201).json(sReferralMessage(created));
 
-  // Only a REFERRER's message needs a notification: the department is looking at its
-  // queue, while the tutor is not — they raised this weeks ago and moved on. A
-  // department's reply reaches the tutor through Sent by me, which is where they go to
-  // find out what happened anyway.
+  // A REFERRER's message needs a notification to the DEPARTMENT: the department is
+  // looking at its queue, while the tutor is not — they raised this weeks ago and
+  // moved on. A department's reply reaches the tutor through Sent by me, which is
+  // where they go to find out what happened anyway.
   if (isReferrer) {
     (async () => {
       const dept = await departments.byKey(row.department);
       await notifyDepartment(row.department, dept?.name || row.department, { verb: "Referral reply" });
+    })().catch(() => {});
+  } else if (onCurrent && row.selfReferred && row.studentNotified) {
+    // A DEPARTMENT's reply needs a notification to the STUDENT — but only when the
+    // student can actually open it. GET /api/student/me/referrals/:id/messages
+    // (routes/student.js) hands back exactly the rows this insert just added — same
+    // referralId, same department — but filtered on `selfReferred: true`, because a
+    // TUTOR-raised referral's thread is a conversation between the tutor and the
+    // department that the student was never party to (that file's own comment: "two
+    // people who did not know the student would read it"), even when studentNotified
+    // is true and the referral's STATUS is shown to them. So this checks selfReferred
+    // here too, not just studentNotified — a message the student cannot open would
+    // be a notification pointing at nothing.
+    //
+    // A tutor's own reply (the `isReferrer` branch above) can never reach here: a
+    // self-referred row has `raisedBy: null` (see routes/student.js POST
+    // /me/referrals), which cannot equal any signed-in staff member's name, so
+    // `isReferrer` is always false on a self-referred case and this is the only
+    // branch a department's reply to one can take.
+    (async () => {
+      const dept = await departments.byKey(row.department);
+      notifyStudent(row.studentId, {
+        type: "info",
+        message: `${dept?.name || row.department} replied to your request`,
+        link: "support",
+      });
     })().catch(() => {});
   }
 });

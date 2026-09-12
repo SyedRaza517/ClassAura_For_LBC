@@ -12,6 +12,7 @@ const prisma = require("../db");
 const { requireAuth, hasPage } = require("../auth");
 const { isRealDate, isString } = require("../validate");
 const audit = require("../audit");
+const { notifyStudent } = require("../notify");
 
 // Who the review is about and who wrote it — never what it says. A progress review
 // is a lecturer's candid account of a named student, and the audit trail is read on
@@ -297,6 +298,20 @@ router.post("/", async (req, res) => {
     after: { studentId: row.studentId, staffId: row.staffId, date: row.date, followUpDate: row.followUpDate },
   });
   res.status(201).json(sReview(row));
+
+  // One call per POST — this handler creates exactly one StudentReview row per
+  // request, never a batch, so there is no loop to dedupe. Named by the unit when the
+  // review is tied to one (most are not — see the roster comment above, only 4/136
+  // students have a cohort at the moment this was written, and a unit is optional on
+  // the form), otherwise by the generic phrase. Never the review's own content: a
+  // review can carry a wellbeing or attendance concern, and a push notification's
+  // lock-screen text is the wrong place for it — the student opens the app to read it,
+  // same reason srLabel() above keeps what a review SAYS out of the audit trail.
+  notifyStudent(row.studentId, {
+    type: "info",
+    message: row.unit ? `A new progress review has been added for ${row.unit.code}` : "A new progress review has been added to your record",
+    link: "reviews",
+  });
 });
 
 // The author may correct their own; an admin may correct any.

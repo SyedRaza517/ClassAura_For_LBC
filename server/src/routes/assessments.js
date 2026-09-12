@@ -7,6 +7,7 @@ const { requireAuth, requireAdmin, requirePage, requireAnyPage } = require("../a
 const { isRealDate } = require("../validate");
 const audit = require("../audit");
 const predictionRunner = require("../prediction/runner");
+const { notifyStudent } = require("../notify");
 
 /**
  * Flag every student whose progression score an assessment-level change invalidates.
@@ -468,6 +469,27 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
 
   const saved = await prisma.assessmentGrade.findMany({ where: { assessmentId: a.id } });
   res.json({ ok: true, saved: saved.length });
+
+  // ONE notification per student per SAVE, not per row and never per keystroke. A
+  // register screen resubmits every student on the unit whether or not their own row
+  // changed, so `after` — already built above from `moved`, keyed by studentId, one
+  // entry per student whose mark actually changed in THIS save — is the dedupe: a
+  // 40-student bulk save fires at most 40 calls, one each, never one per cell edit
+  // the browser made getting there.
+  //
+  // Only a mark CLEARED to null is skipped. "Released" means a student now has
+  // something to see; a cleared mark is the opposite event and Object.keys(after)
+  // includes it (prior !== null path above), so it must be filtered out here rather
+  // than left to notify.js, which cannot tell a released mark from a retracted one —
+  // only this route knows which direction the change went.
+  for (const studentId of Object.keys(after)) {
+    if (after[studentId] === null) continue;
+    notifyStudent(studentId, {
+      type: "success",
+      message: `Your mark for "${a.title}" has been released`,
+      link: "assessments",
+    });
+  }
 });
 
 /* ============================== analytics ============================== */

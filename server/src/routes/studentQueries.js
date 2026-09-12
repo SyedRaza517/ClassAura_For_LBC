@@ -6,6 +6,11 @@ const { sStudentQuery } = require("../serializers");
 const { requireAuth, requireAnyPage } = require("../auth");
 const { localDate } = require("../clock");
 const audit = require("../audit");
+// STATUS.md:229 records the gap this closes — this file wrote an answer to the
+// query row and told nobody. A student who is not told an answer exists has to
+// remember to reopen the app and check, which is the same failure the whole
+// notification system exists to remove.
+const { notifyStudent } = require("../notify");
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 const guard = requireAnyPage(["studentqueries"]);
@@ -41,6 +46,18 @@ router.put("/:id/respond", requireAuth, guard, async (req, res) => {
     after: { status: "answered", respondedBy: req.user.name, respondedAt: updated.respondedAt, studentId: updated.studentId },
   });
   res.json(sStudentQuery(updated));
+
+  // One call, at the point the query actually becomes "answered" — never inside a
+  // loop, because this route only ever answers one query at a time. Named by its
+  // subject (falling back to a generic phrase for the rare row with none), never by
+  // the response text: the notification is a pointer back into the app, not a second
+  // copy of the answer sitting in a push payload a lock screen might show. notify.js
+  // never throws into this handler, so this runs after the response is already sent.
+  notifyStudent(updated.studentId, {
+    type: "success",
+    message: updated.subject ? `Your query "${updated.subject}" has been answered` : "Your query has been answered",
+    link: "query",
+  });
 });
 
 module.exports = router;
