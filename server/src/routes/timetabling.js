@@ -1178,6 +1178,16 @@ function parseEvent(body, partial) {
     }
   }
   if (body?.published !== undefined) data.published = !!body.published;
+  // The "create the Teams meeting automatically" checkbox. Same idiom as `published`
+  // immediately above — undefined leaves the stored value alone, present-and-falsy
+  // switches it off — and for the same reason `createRegisters` needs no handling
+  // here at all: this is a plain scalar column on TimetableEvent, so once it is in
+  // `data` it is already series-aware. The series loop below builds every occurrence
+  // from `{ ...data, date, startTime, endTime, seriesId }`, so a value set once on the
+  // form is copied onto all of them without this function knowing a series is being
+  // made. teamsMeetings.js (the Phase A reconciler) is what actually reads this column
+  // and calls Graph — flipping it here only records the administrator's intent.
+  if (body?.teamsAutoMeeting !== undefined) data.teamsAutoMeeting = !!body.teamsAutoMeeting;
 
   // Nullable relations. An empty string clears the link; that is how a screen says
   // "no room" without a separate verb.

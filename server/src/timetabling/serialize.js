@@ -109,6 +109,14 @@ const sEvent = (e) => ({
   // a wider readership than the staff list this API serves. Accepted deliberately, on
   // those two grounds, rather than re-scoped.
   teamsJoinUrl: e.teamsJoinUrl || "",
+  // Allowlisted like everything else here: this is what hydrates the edit form's
+  // "create the Teams meeting automatically" checkbox, and — being a plain boolean
+  // rather than a secret link — carries none of the fan-out weighing teamsJoinUrl's
+  // comment above works through. Coerced with `!!` because the column is non-nullable
+  // with a default, but a row written before this column existed (or read through a
+  // stale Prisma client) could still hand back `undefined`, and this is a checkbox,
+  // never tri-state.
+  teamsAutoMeeting: !!e.teamsAutoMeeting,
   published: !!e.published,
   changedAt: e.changedAt,
 

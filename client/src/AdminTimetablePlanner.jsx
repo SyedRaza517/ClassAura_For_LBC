@@ -1407,7 +1407,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
     if (start && end) b.sessions = [{ start, end }, b.sessions[1]];
     return {
       academicDepartmentId: "", showAllSchools: false,
-      cohortIds: [], notes: "", teamsJoinUrl: "", published: false,
+      cohortIds: [], notes: "", teamsJoinUrl: "", teamsAutoMeeting: false, published: false,
       blocks: [b],
     };
   };
@@ -1631,6 +1631,12 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         cohortIds: editing.cohortIds || [],
         notes: editing.notes || "",
         teamsJoinUrl: editing.teamsJoinUrl || "",
+        // Shared across every module in the series, same as `teamsJoinUrl` and
+        // `published` immediately beside it: the checkbox is asked once, at the top of
+        // the form, and the server copies it onto every row a series produces (see
+        // parseEvent's comment in routes/timetabling.js for why that needs nothing
+        // special here — the field just rides along in the body).
+        teamsAutoMeeting: !!editing.teamsAutoMeeting,
         published: !!editing.published,
         title: (b.title || "").trim(),
         unitId: b.unitId || "",
@@ -2109,6 +2115,16 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                     />
                   </Field>
                 </div>
+                {/* Same idiom as `published` beside it: a plain checkbox, coerced with
+                    `!!` because a class saved before this column existed hydrates as
+                    `undefined`, not `false`, and a checkbox is never tri-state. Off by
+                    default and off means no Graph calls at all — see constraints.md —
+                    so leaving this unticked is the same as the feature not existing for
+                    this class. */}
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
+                  <input type="checkbox" checked={!!editing.teamsAutoMeeting} onChange={(e) => setEditing({ ...editing, teamsAutoMeeting: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                  Online class — create the Teams meeting automatically
+                </label>
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
                   <input type="checkbox" checked={!!editing.published} onChange={(e) => setEditing({ ...editing, published: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                   Published — visible to staff
@@ -2357,6 +2373,14 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                       />
                     </Field>
                   </div>
+                  {/* Asked once, applied to every module below — same idiom as the Teams
+                      link and Published beside it, and the same reason: a series is one
+                      submission, so the college's answer to "should these meet online" is
+                      one decision, not one per module. */}
+                  <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
+                    <input type="checkbox" checked={!!editing.teamsAutoMeeting} onChange={(e) => setEditing({ ...editing, teamsAutoMeeting: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                    Online class — create the Teams meeting automatically
+                  </label>
                   <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 sm:col-span-2">
                     <input type="checkbox" checked={!!editing.published} onChange={(e) => setEditing({ ...editing, published: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                     Published — visible to staff
