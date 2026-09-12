@@ -524,7 +524,23 @@ async function addTeamMember({ groupId, userId, owner }) {
     // duplicate collides, and both mean the desired end state (this person is a
     // member) already holds. Treating them as failure would block everyone ELSE in
     // the same batch behind someone who was already fine.
-    if (e.status === 400 || e.status === 409) return;
+    //
+    // BUT A 400 IS NOT ALWAYS THAT ONE THING, and swallowing every 400 here (as this
+    // used to) hides a real failure mode: a STALE CACHED msUserId. resolveAndCacheMsId
+    // resolves a person's email to a Microsoft user id once and caches it; if that
+    // Entra account is later deleted or replaced (a leaver, a re-provisioned account),
+    // Graph answers 400 for "user@odata.bind does not resolve to a member of this
+    // tenant" — a genuine failure that means this person was NEVER added, not that they
+    // already were. Swallowing that unconditionally would have this run report success
+    // while quietly adding nobody, for as long as the stale id stays cached. So only a
+    // 400 whose Graph error TEXT actually reads as a duplicate is treated as the
+    // harmless case; anything else throws, and resolveAndCacheMsId's caller reports it
+    // in `issues` (constraints.md: "unmatched people are reported, never guessed") so a
+    // human sees the stale id rather than a false all-clear. 409 stays unconditional —
+    // Graph does not appear to use it for anything else on this endpoint, so there is
+    // no ambiguous case on that status code to guard against.
+    if (e.status === 409) return;
+    if (e.status === 400 && /already|duplicate|conflict/i.test(e.message || "")) return;
     throw e;
   }
 }

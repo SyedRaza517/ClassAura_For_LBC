@@ -942,6 +942,14 @@ Setting it only records the administrator's intent; `teamsMeetings.js` above is 
 actually reads the column and calls Graph. It is serialised back on every event (`sEvent`
 in `timetabling/serialize.js`) alongside `teamsJoinUrl`.
 
+**`PUT /api/timetabling/events/:id` refuses a pasted `teamsJoinUrl` while the event
+still carries `teamsCalendarEventId`** (400, "Untick 'Online class' and save first"),
+because the reconciler's cancel branch blanks `teamsJoinUrl` unconditionally and would
+otherwise destroy the paste on its next tick; and **`DELETE /api/timetabling/events/:id`
+best-effort cancels a machine-owned meeting** (`teamsCalendarEventId` set) before
+removing the row, logging rather than blocking the delete on a Graph failure, since a
+deleted row is the last pointer that meeting will ever have.
+
 **`/repeat` propagates `teamsAutoMeeting` but deliberately *not* `teamsJoinUrl`.** The two
 fields are opposite kinds of value: `teamsJoinUrl` names **one specific meeting** — a
 link an administrator pasted for this one occurrence — and copying it onto every repeated

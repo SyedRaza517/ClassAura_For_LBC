@@ -33,7 +33,10 @@
 // THE FIXTURES SEAM, extended for writes. TEAMS_GRAPH_FIXTURES answers `users` (email ->
 // Entra id) exactly as smoke-teams-attendance.mjs's fixtures do; neither engine here ever
 // calls calendarView, resolveMeetingId or attendanceIntervals, so this suite's fixtures
-// file carries only the one key both engines actually read. TEAMS_GRAPH_JOURNAL is new
+// file carries only two keys: `users`, and (fix 8, engine review) `channelEmails` —
+// chan-<slug> -> address, read once per channel by teamsProvisioning.js's
+// getChannelEmail() so scenario 9 below can prove the address it learns is actually
+// invited to a class meeting, not merely resolved and cached. TEAMS_GRAPH_JOURNAL is new
 // for this suite: every write op (createClassMeeting, updateClassMeeting,
 // cancelClassMeeting, createTeam, createChannel, addTeamMember) appends one JSON line
 // `{ op, args }`, which is the only way to prove "a meeting was created with these
@@ -151,6 +154,26 @@ const PASTED_URL = `https://teams.microsoft.com/l/meetup-join/19%3ameeting_${RUN
 const T_A = { start: "09:15", end: "10:45" }; // event A — created, rescheduled, cancelled
 const T_A2 = { start: "09:45", end: "11:15" }; // event A after its one reschedule
 const T_B = { start: "13:20", end: "14:50" }; // event B — the pasted-link event, never touched
+const T_C = { start: "15:35", end: "17:05" }; // event C — scenario 9's own, added once a channel exists to invite
+
+// This suite's own unit, named AHEAD of creating it. teamsProvisioning.js's channel
+// display name (fix 3, engine review) is "<code> — <name>", truncateName'd to Graph's
+// 50-char channel limit — short enough here to never hit that cap, the same "reproduced
+// short enough to never truncate" idiom expectedTeamName below already relies on for the
+// Team's own name. Named ahead of the seed step because the fixture channel-email map
+// below (CHANNEL_ID) has to be written to disk BEFORE the API process — and therefore
+// createChannel — ever starts, and createChannel's own fixture id is deterministic from
+// exactly this string.
+const UNIT_CODE = `TMA${RUN}`.slice(0, 12);
+const UNIT_NAME = `Teams Automation Unit ${RUN}`;
+const CHANNEL_DISPLAY_NAME = [UNIT_CODE, UNIT_NAME].filter(Boolean).join(" — ");
+const CHANNEL_ID = `chan-${slugify(CHANNEL_DISPLAY_NAME)}`;
+// The address getChannelEmail() answers for THIS suite's own channel, once provisioning
+// creates it (scenario 7) — every OTHER channel in this run gets the fixture default of
+// null ("this tenant has no channel email"; see teamsGraph.js's getChannelEmail), so
+// keying this to CHANNEL_ID is what singles this one channel out for scenario 9 to
+// actually exercise the invite.
+const CHANNEL_EMAIL = `channel-${RUN}@x.ac.uk`;
 
 const made = { events: [] };
 let unit = null, cohort = null, course = null, teacher = null;
@@ -279,6 +302,9 @@ try {
       [S2_EMAIL.toLowerCase()]: S2_ID,
       // S3_EMAIL is deliberately absent — see its declaration above.
     },
+    // Channel-email invite coverage (fix 8, engine review) — see CHANNEL_ID/CHANNEL_EMAIL's
+    // own comments above for why this is keyed and written before provisioning ever runs.
+    channelEmails: { [CHANNEL_ID]: CHANNEL_EMAIL },
   };
   writeFileSync(FIXTURES_PATH, JSON.stringify(fixtures, null, 2));
 
@@ -347,7 +373,7 @@ try {
   course = await db.course.create({ data: { name: `Teams Automation Course ${RUN}` } });
   cohort = await db.cohort.create({ data: { courseId: course.id, name: `Teams Automation Intake ${RUN}` } });
   unit = await db.unit.create({ data: {
-    code: `TMA${RUN}`.slice(0, 12), name: `Teams Automation Unit ${RUN}`, courseId: course.id,
+    code: UNIT_CODE, name: UNIT_NAME, courseId: course.id,
     startDate: D7, endDate: D7,
   } });
 
@@ -634,6 +660,41 @@ try {
   check("exactly one CohortTeam row still exists — additive-only means updated, never duplicated", cohortTeam2.length === 1, `${cohortTeam2.length}`);
   const unitChannels2 = await db.unitChannel.findMany({ where: { cohortTeamId: cohortTeam1?.id } });
   check("...and exactly one UnitChannel row", unitChannels2.length === 1, `${unitChannels2.length}`);
+
+  /* ====================================================================== */
+  console.log("\n--- scenario 9: the unit's own channel email is invited to a new meeting for it ---");
+  // Provisioning (scenario 7) fetched and cached THIS channel's own address via the
+  // fixtures.channelEmails map above. That alone only proves the address landed in
+  // UnitChannel.channelEmail — teamsMeetings.js's channelEmailsFor() has to be the one
+  // that actually reads it back and hands it to createClassMeeting as an attendee, for
+  // the same cohort+unit shape (exactly one cohort group, a real unitId) its own
+  // comment requires. A fresh event is needed rather than reusing A or B: A is
+  // cancelled and unpublished, and B's pasted link means it never calls
+  // createClassMeeting at all.
+  /* ====================================================================== */
+
+  const titleC = `Teams Automation Channel Invite ${RUN}`;
+  const createdC = await call("/timetabling/events", {
+    method: "POST", token: adminToken,
+    body: {
+      date: D7, start: T_C.start, end: T_C.end, title: titleC,
+      unitId: unit.id, courseId: course.id, cohortIds: [cohort.id], staffIds: [teacher.id],
+      published: true, teamsAutoMeeting: true,
+    },
+  });
+  check("event C is created", createdC.status === 201, `HTTP ${createdC.status} ${JSON.stringify(createdC.data)}`);
+  const eventCId = createdC.data?.event?.id;
+  made.events.push(eventCId);
+
+  const sync6 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  check("the sixth meetings sync answers 200", sync6.status === 200, `HTTP ${sync6.status} ${sync6.data?.error || ""}`);
+  check("it created exactly one new meeting — event C, the only event still wanting one it doesn't already have",
+    sync6.data?.summary?.meetingsCreated === 1, JSON.stringify(sync6.data?.summary));
+
+  const createLinesC = readJournal().filter((j) => j.op === "createClassMeeting" && j.args?.subject === titleC);
+  check("the journal recorded creating event C's meeting, exactly once", createLinesC.length === 1, `${createLinesC.length}`);
+  check("...addressed to the unit's own channel, not just the teacher — the channel-email invite actually fired",
+    (createLinesC[0]?.args?.attendeeEmails || []).includes(CHANNEL_EMAIL), JSON.stringify(createLinesC[0]?.args?.attendeeEmails));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

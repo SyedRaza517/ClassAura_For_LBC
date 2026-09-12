@@ -213,7 +213,17 @@ async function runProvisioning({ mode = "manual", startedBy = null } = {}) {
           }
           try {
             const unit = await prisma.unit.findUnique({ where: { id: unitId }, select: { code: true, name: true } });
-            const displayName = truncateName(unit?.name || unit?.code || "Unit", MAX_CHANNEL_NAME);
+            // "<code> — <name>" — the same "code, dash, name" shape units are named
+            // everywhere else on this screen (the planner's own module dropdown reads
+            // identically, `u.code ? \`${u.code} — ${u.name}\` : u.name\`), which the
+            // channel name did not previously match: it showed the name alone (or the
+            // code alone with no name), so a channel list in Teams read differently
+            // from the module list an administrator was just looking at. `.filter(Boolean)`
+            // covers both a unit fetched with no code and, in principle, one Prisma could
+            // not find at all (unitId stale between the taughtUnits query above and this
+            // read) — either way this still names the channel something rather than
+            // throwing mid-run for one unit while the rest of the sync carries on.
+            const displayName = truncateName([unit?.code, unit?.name].filter(Boolean).join(" — ") || "Unit", MAX_CHANNEL_NAME);
             const { channelId } = await graph.createChannel({ groupId: cohortTeam.groupId, displayName });
             // Written IMMEDIATELY, with channelEmail left at its "" (never fetched)
             // default, rather than after the getChannelEmail call below. The

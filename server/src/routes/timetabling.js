@@ -1489,6 +1489,23 @@ router.put("/events/:id", async (req, res) => {
   const existing = await prisma.timetableEvent.findUnique({ where: { id: req.params.id }, include: EVENT_INCLUDE });
   if (!existing) return res.status(404).json({ error: "Event not found" });
 
+  // A PASTE IS REFUSED WHILE A MACHINE-OWNED MEETING STANDS. parseEvent (above) is pure
+  // and has no way to know whether this event already carries a Teams meeting the
+  // automation created, so that half of the check happens here, against the row this
+  // handler already had to load anyway. teamsMeetings.js's cancel branch blanks
+  // teamsJoinUrl UNCONDITIONALLY the moment it cancels the meeting it owns — that is
+  // what keeps "a human's pasted link always wins" true once the checkbox comes off.
+  // Letting a paste land here WHILE teamsCalendarEventId is still set would store it
+  // beside a meeting the reconciler still thinks it owns, and the very next tick would
+  // cancel that meeting and wipe the paste along with it — destroying the link the
+  // admin just typed, not honouring it. Refusing up front, before the paste is ever
+  // written, is the only way to keep both halves of the promise true at once. The
+  // create path (POST /events) can never hit this: a brand-new event has no
+  // teamsCalendarEventId yet for a paste to collide with.
+  if (data.teamsJoinUrl && existing.teamsCalendarEventId) {
+    return res.status(400).json({ error: "This class has an automatically created Teams meeting. Untick 'Online class' and save first — the automation will cancel its meeting — then paste your own link." });
+  }
+
   // Assignments are replaced wholesale when sent, and untouched when omitted. A
   // screen that only moves the time must not silently drop the staff on the event.
   const staffIds = req.body?.staffIds === undefined ? (existing.staff || []).map((s) => s.staffId) : ids(req.body.staffIds);
@@ -1540,6 +1557,42 @@ router.put("/events/:id", async (req, res) => {
 
 router.delete("/events/:id", async (req, res) => {
   try {
+    // Read first, select-only, purely to learn whether Teams automation owns a
+    // meeting on this row before it is gone — the delete below does not otherwise
+    // need this query at all.
+    const existing = await prisma.timetableEvent.findUnique({ where: { id: req.params.id }, select: { teamsCalendarEventId: true } });
+    if (!existing) return res.status(404).json({ error: "Event not found" });
+
+    // A DELETED ROW IS THE LAST POINTER TO THE MEETING. teamsMeetings.js's reconciler
+    // works entirely from TimetableEvent rows still in the database — once this one is
+    // gone, nothing will ever ask Microsoft to cancel a meeting this system created for
+    // it. Left alone, that meeting sits on the creator's calendar forever with the
+    // invite still sitting in every attendee's mailbox for a class that no longer
+    // appears anywhere. Best-effort and NEVER BLOCKING, on purpose: deleting a
+    // timetable row is a far more routine action than this branch is even reachable
+    // (most events have no owned meeting at all), and a Graph outage at the moment of
+    // deletion must not stop an administrator doing something this ordinary. Lazily
+    // required — this route's module is loaded on every boot, and Teams automation is
+    // off by default (constraints.md), so most installs never need either module at all.
+    if (existing.teamsCalendarEventId) {
+      try {
+        const cfg = require("../integrationConfig");
+        const graph = require("../teamsGraph");
+        await cfg.load("teams"); // resolveCreatorId() reads cfg.peek() synchronously — see teamsGraph.js
+        if (graph.isConfigured()) {
+          const organizerId = await graph.resolveCreatorId();
+          if (organizerId) {
+            await graph.cancelClassMeeting({ organizerId, calendarEventId: existing.teamsCalendarEventId });
+          }
+        }
+      } catch (e) {
+        // Logged, never thrown further — see the "never blocking" note above. This is
+        // the run log's only record of a meeting that may now be orphaned; nothing
+        // else will retry it, because the event this cancel needed is about to be gone.
+        console.error(`Failed to cancel the Teams meeting for deleted event ${req.params.id}: ${e.message}`);
+      }
+    }
+
     // The join rows go with it — those FKs are Cascade, unlike room and category,
     // because an assignment has no meaning without the event it assigns to.
     await prisma.timetableEvent.delete({ where: { id: req.params.id } });
