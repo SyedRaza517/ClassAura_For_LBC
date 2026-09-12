@@ -150,7 +150,14 @@ const FORMS = {
       { key: "organizerAccounts", label: "Organizer accounts", placeholder: "scheduling@yourcollege.ac.uk, dept2@yourcollege.ac.uk", hint: "The dedicated accounts that CREATE your online class meetings, comma-separated. Teachers join as co-organizers and are never read. Meetings must be scheduled (not “Meet now”) from these accounts at the timetabled class time." },
       { key: "creatorAccount", label: "Creator account", placeholder: "scheduling@yourcollege.ac.uk", hint: "Which organizer account creates meetings and owns new class Teams. Leave blank to use the first organizer account." },
     ],
-    note: "Your Microsoft 365 admin must grant the app three application permissions (Calendars.Read, OnlineMeetings.Read.All, OnlineMeetingArtifact.Read.All) and scope them to these accounts with the two access policies in TEAMS_SETUP.md. Until then, Test connection will say exactly which step is missing.",
+    // Extended for the Teams automation feature (2026-09-12): auto-creating meetings
+    // needs a WRITE permission the read-only attendance path never did (Calendars.Read
+    // is not enough to create or cancel a calendar event), and provisioning a Team per
+    // cohort needs four further grants that, unlike the calendar ones, Microsoft gives
+    // no way to scope to specific accounts at all — turning Phase B on is a deliberate
+    // tenant-wide trade an administrator makes, which is why TEAMS_SETUP.md says so in
+    // bold rather than folding it quietly into this one line.
+    note: "Your Microsoft 365 admin must grant the app three application permissions (Calendars.Read, OnlineMeetings.Read.All, OnlineMeetingArtifact.Read.All) and scope them to these accounts with the two access policies in TEAMS_SETUP.md. Until then, Test connection will say exactly which step is missing. If you turn on auto-creating meetings, Calendars.Read must be upgraded to Calendars.ReadWrite. If you turn on class Team provisioning, your admin must also grant four further, tenant-wide permissions (Team.Create, TeamMember.ReadWrite.All, Group.ReadWrite.All, User.Read.All) that cannot be scoped to specific accounts the way the calendar ones are — see TEAMS_SETUP.md for what each one is for.",
   },
 };
 

@@ -1955,6 +1955,11 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                                 being invisible to staff that is the exceptional state
                                 worth pointing at. */}
                             {!e.published && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">Draft</span>}
+                            {/* The spec promises the screen SAYS pending until the reconciler runs — a published,
+                                auto-meeting class with no join url yet is not broken, it just hasn't had its hourly
+                                tick — and a bare row that looks identical to one nobody ever ticked the checkbox for
+                                reads as the feature having silently done nothing. */}
+                            {e.teamsAutoMeeting && e.published && !e.teamsJoinUrl && <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-sky-700">Teams meeting pending</span>}
                           </span>
                           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                             {/* Each fact is DROPPED when it is absent rather than printed
