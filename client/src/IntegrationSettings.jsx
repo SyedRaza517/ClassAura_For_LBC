@@ -136,7 +136,13 @@ const FORMS = {
   },
   teams: {
     label: "Teams attendance",
-    blurb: "Reads who attended each online class from Microsoft Teams and fills the register automatically after the class ends. Read-only — nothing is written to Microsoft.",
+    // Was "Read-only — nothing is written to Microsoft" until the Teams automation
+    // feature (2026-09-12): once the automation switches on Attendance settings are on,
+    // these SAME credentials also create meetings and class Teams — real writes, not a
+    // read path any more. Left un-narrowed to "read-only" and corrected instead, because
+    // this blurb describes what these credentials CAN be used for, not just what today's
+    // switches happen to have on.
+    blurb: "Reads who attended each online class from Microsoft Teams and fills the register automatically after the class ends. When the Teams automation switches on Attendance settings are turned on, these credentials are also used to create meetings and class Teams.",
     secret: { key: "clientSecret", label: "Client secret", hint: "From the app registration you created in Microsoft Entra ID for Teams attendance (separate from SharePoint's). See TEAMS_SETUP.md." },
     fields: [
       { key: "tenantId", label: "Directory (tenant) ID" },

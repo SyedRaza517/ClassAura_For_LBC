@@ -142,6 +142,11 @@ app.use("/api/integrations", wrapAsync(require("./routes/integrations")));
 // oversight: "settings" would let someone connect the college's Microsoft tenant
 // without being able to touch the switch this router guards, or vice versa.
 app.use("/api/teams-attendance", wrapAsync(require("./routes/teamsAttendance")));
+// The two Teams automation switches (auto-create meetings, provision class Teams),
+// their manual "Run now" and their shared run history. Same "attendance-settings" gate
+// as the mount above, for the same reason — see routes/teamsAutomation.js's own header
+// comment.
+app.use("/api/teams-automation", wrapAsync(require("./routes/teamsAutomation")));
 // This institution's own name, colours and logo. GET is deliberately public — the
 // sign-in screen must be branded before anyone has signed in — and the router
 // enforces that split with an allowlist rather than trusting each handler.

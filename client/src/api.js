@@ -234,6 +234,17 @@ export const api = {
   saveTeamsAttendanceSettings: (patch) => request("/teams-attendance/settings", { method: "PUT", body: patch }),
   syncTeamsAttendance: () => request("/teams-attendance/sync", { method: "POST", timeoutMs: 120000 }),
   teamsAttendanceRuns: () => request("/teams-attendance/runs"),
+  // Teams automation: the two independent switches (auto-create meetings, provision
+  // class Teams) live on their own settings row (teamsAutomationConfig.js), separate
+  // from both the `teams` integration credentials and the attendance settings above.
+  // Each run-now gets the longer timeout for the same reason syncTeamsAttendance does
+  // — a manual press waits for the run and shows its result on this screen, rather than
+  // polling.
+  teamsAutomationSettings: () => request("/teams-automation/settings"),
+  saveTeamsAutomationSettings: (patch) => request("/teams-automation/settings", { method: "PUT", body: patch }),
+  runTeamsMeetings: () => request("/teams-automation/run-meetings", { method: "POST", timeoutMs: 120000 }),
+  runTeamsProvisioning: () => request("/teams-automation/run-provisioning", { method: "POST", timeoutMs: 120000 }),
+  teamsAutomationRuns: () => request("/teams-automation/runs"),
   // The institution's own name, colours and logo. getBranding (public) is fetched by
   // branding.js at boot; these are the administrator's read/write views.
   getBrandingAll: () => request("/branding/all"),

@@ -19,6 +19,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Nfc, Plus, Loader2, AlertTriangle, CheckCircle2, Copy, Power, RefreshCw,
   ScanLine, Clock3, ShieldCheck, X, Wifi, MapPin, Crosshair, Video, History,
+  CalendarClock, Users,
 } from "lucide-react";
 import { api } from "./api";
 import { nfcStatus, scanOnce } from "./nfc";
@@ -95,6 +96,7 @@ export default function AdminNfcTags() {
 
       <TapSettings settings={settings} onSaved={(s) => setSettings(s)} />
       <TeamsAttendance />
+      <TeamsAutomation />
       <RegisterTag onCreated={load} />
 
       <section className="rounded-2xl border border-slate-200 bg-white">
@@ -791,6 +793,244 @@ function TeamsAttendance() {
                       read back from the row rather than session state — this is what
                       makes an hourly SCHEDULED run's unmatched people visible at all,
                       since nobody was watching this screen when it ran. */}
+                  {r.issues?.length > 0 && (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
+                      {r.issues.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------- Teams automation ---------------------------- */
+
+// A readable label from a summary counter's camelCase key — "meetingsCreated" becomes
+// "Meetings Created" — because the meetings job and the provisioning job produce
+// entirely different counter shapes (task-5-brief.md: meetingsCreated/Updated/
+// Cancelled; task-6-brief.md: teamsCreated, channelsCreated, ownersAdded, membersAdded,
+// peopleUnmatched, channelEmailMissing) and this card shows both jobs in one shared
+// runs list. Naming every field for both jobs here would mean this file has to change
+// every time either engine adds a counter; reading the keys generically means it
+// doesn't, at the cost of a label that is derived rather than hand-written. `sRun` on
+// the server still allowlists the row itself — this is a display choice about values
+// already judged safe to reach the browser, not a second copy of that allowlist.
+const labelFor = (key) => key.replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+
+// Two independent switches (auto-create meetings, provision class Teams) sharing one
+// card because they share a settings row (TeamsAutomationConfig) and a run log
+// (TeamsProvisionSync, discriminated by `job`) — see routes/teamsAutomation.js's header
+// comment for why one router and one settings row cover both. Kept as a SEPARATE card
+// from TeamsAttendance above rather than folded into it: that one reads a Teams
+// attendance report after a class ends, this one calls Graph to CREATE meetings and
+// Teams before/while a class runs — different direction of data flow, different Graph
+// permissions, and a college may trust one enough to switch on long before the other.
+function TeamsAutomation() {
+  // { settings, configured, meetingsRunning, provisioningRunning } — see GET
+  // /teams-automation/settings. Two "running" flags, not one, because the two jobs run
+  // independently: a nightly provisioning sweep should not make the meetings button
+  // read "already running" (and vice versa) for a job it has nothing to do with.
+  const [state, setState] = useState(null);
+  const [runs, setRuns] = useState(null);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Local "a request from THIS click is in flight" flags, kept apart from the server's
+  // own meetingsRunning/provisioningRunning the same way TeamsAttendance's `syncing`
+  // is kept apart from `running`: the server flag only updates once `load()` re-fetches
+  // after the button's own request resolves, and the button needs to disable itself the
+  // instant it is pressed, not one round trip later.
+  const [runningMeetings, setRunningMeetings] = useState(false);
+  const [runningProvisioning, setRunningProvisioning] = useState(false);
+  // What just happened, from a run started IN THIS SESSION — kept apart from `runs`
+  // (the server's permanent record) for the same reason TeamsAttendance's `syncMsg` is.
+  const [meetingsMsg, setMeetingsMsg] = useState(null);
+  const [provisioningMsg, setProvisioningMsg] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [s, r] = await Promise.all([api.teamsAutomationSettings(), api.teamsAutomationRuns()]);
+      setState(s); setRuns(r.runs); setErr("");
+    } catch (e) { setErr(e?.message || "Could not load the Teams automation settings."); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // EVERY hook above this line — see TapSettings's own comment on React #310.
+  if (!state) return err ? <div className="rounded-2xl border border-slate-200 bg-white p-5"><Banner tone="rose" Icon={AlertTriangle}>{err}</Banner></div> : null;
+
+  const { settings, configured, meetingsRunning, provisioningRunning } = state;
+
+  const save = async (patch) => {
+    setSaving(true); setErr("");
+    try {
+      const { settings: saved } = await api.saveTeamsAutomationSettings(patch);
+      setState((s) => ({ ...s, settings: saved }));
+    } catch (e) { setErr(e?.message || "Could not save."); }
+    finally { setSaving(false); }
+  };
+
+  const runMeetings = async () => {
+    setRunningMeetings(true); setMeetingsMsg(null); setErr("");
+    try {
+      const r = await api.runTeamsMeetings();
+      setMeetingsMsg(r);
+      load(); // picks up meetingsRunning having cleared, plus the run just written
+    } catch (e) {
+      // 409 (switched off, unconfigured, or already running) and 502 (the Graph call
+      // itself failed) both land here as an ordinary message — the server already chose
+      // the words, same idiom as TeamsAttendance's sync().
+      setMeetingsMsg({ ok: false, note: e?.message || "The run failed." });
+    } finally { setRunningMeetings(false); }
+  };
+
+  const runProvisioning = async () => {
+    setRunningProvisioning(true); setProvisioningMsg(null); setErr("");
+    try {
+      const r = await api.runTeamsProvisioning();
+      setProvisioningMsg(r);
+      load();
+    } catch (e) {
+      setProvisioningMsg({ ok: false, note: e?.message || "The run failed." });
+    } finally { setRunningProvisioning(false); }
+  };
+
+  // A run's outcome, rendered generically from whatever counters its job produced (see
+  // labelFor above) plus the "reported, never guessed" issues lines every job carries.
+  const RunOutcome = ({ msg }) => (
+    <div className={`mt-3 rounded-xl px-3.5 py-3 text-[13px] ring-1 ${msg.ok ? "bg-slate-50 text-slate-700 ring-slate-200" : "bg-rose-50 text-rose-800 ring-rose-200"}`}>
+      {msg.ok ? (
+        <>
+          <p className="font-semibold text-emerald-700">Run finished.</p>
+          <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[12px] text-slate-600 sm:grid-cols-3">
+            {Object.entries(msg.summary || {}).map(([k, v]) => <li key={k}>{labelFor(k)}: <b>{v}</b></li>)}
+          </ul>
+          {msg.issues?.length > 0 && (
+            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
+              {msg.issues.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          )}
+        </>
+      ) : (
+        <p>{msg.note}</p>
+      )}
+    </div>
+  );
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+      <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-800">
+        <CalendarClock size={16} style={{ color: NAVY }} />Teams automation
+      </h3>
+      <p className="mb-4 text-[12px] leading-relaxed text-slate-500">
+        Creates Microsoft Teams meetings and class spaces from the timetable, so nobody
+        has to book them by hand. Two independent switches — a college may want one
+        without the other.
+      </p>
+
+      {!configured && (
+        <div className="mb-4">
+          <Banner tone="amber" Icon={AlertTriangle}>
+            Not connected yet. Enter the Teams credentials and organizer accounts under
+            Connected systems, then come back here to switch either of these on.
+          </Banner>
+        </div>
+      )}
+      {err && <div className="mb-3"><Banner tone="rose" Icon={AlertTriangle}>{err}</Banner></div>}
+
+      <label className="mb-3 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+        <input
+          type="checkbox" checked={settings.autoCreateMeetings} disabled={saving || !configured}
+          onChange={(e) => save({ autoCreateMeetings: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="block text-[13px] font-semibold text-slate-800">
+            Meeting creation is {settings.autoCreateMeetings ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            Classes marked online get their Teams meeting created automatically at the
+            timetabled time.
+            {!configured && " It cannot be switched on until Teams is connected."}
+          </span>
+        </span>
+      </label>
+
+      <label className="mb-4 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+        <input
+          type="checkbox" checked={settings.provisionTeams} disabled={saving || !configured}
+          onChange={(e) => save({ provisionTeams: e.target.checked })}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>
+          <span className="block text-[13px] font-semibold text-slate-800">
+            Team provisioning is {settings.provisionTeams ? "ON" : "OFF"}
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+            Each cohort gets a class Team with a channel per unit, teachers as owners,
+            students as members.
+            {!configured && " It cannot be switched on until Teams is connected."}
+          </span>
+        </span>
+      </label>
+
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          type="button" onClick={runMeetings}
+          disabled={runningMeetings || meetingsRunning || !configured || !settings.autoCreateMeetings}
+          className="press flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+          style={{ background: NAVY }}
+        >
+          {runningMeetings || meetingsRunning ? <Loader2 size={15} className="animate-spin" /> : <CalendarClock size={15} />}
+          {meetingsRunning ? "Already running…" : runningMeetings ? "Running…" : "Run meetings now"}
+        </button>
+        <button
+          type="button" onClick={runProvisioning}
+          disabled={runningProvisioning || provisioningRunning || !configured || !settings.provisionTeams}
+          className="press flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+          style={{ background: NAVY }}
+        >
+          {runningProvisioning || provisioningRunning ? <Loader2 size={15} className="animate-spin" /> : <Users size={15} />}
+          {provisioningRunning ? "Already running…" : runningProvisioning ? "Running…" : "Provision Teams now"}
+        </button>
+      </div>
+
+      {meetingsMsg && <RunOutcome msg={meetingsMsg} />}
+      {provisioningMsg && <RunOutcome msg={provisioningMsg} />}
+
+      <div className="mt-5 border-t border-slate-100 pt-4">
+        <h4 className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+          <History size={13} />Recent runs
+        </h4>
+        {!runs ? (
+          <p className="text-[12px] text-slate-400">Loading…</p>
+        ) : !runs.length ? (
+          <p className="text-[12px] text-slate-500">No runs yet — meetings run hourly and provisioning runs nightly once switched on.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {runs.map((r) => {
+              const tone = r.status === "ok" ? "emerald" : r.status === "failed" ? "rose" : "slate";
+              return (
+                <li key={r.id} className="px-3.5 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                      {r.job === "provisioning" ? "Provisioning" : "Meetings"}
+                    </span>
+                    <span className="text-[12px] font-semibold text-slate-700">{fmtWhen(r.startedAt)}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ${TONES[tone]}`}>{r.status}</span>
+                    <span className="text-[11px] text-slate-400">
+                      {r.mode === "scheduled" ? "scheduled" : "manual"}{r.startedBy ? ` · ${r.startedBy}` : ""}
+                    </span>
+                  </div>
+                  {Object.keys(r.summary || {}).length > 0 && (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {Object.entries(r.summary).map(([k, v]) => `${labelFor(k)}: ${v}`).join(" · ")}
+                    </p>
+                  )}
+                  {r.error && <p className="mt-1 text-[11px] font-medium text-rose-600">{r.error}</p>}
                   {r.issues?.length > 0 && (
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11px] text-slate-500">
                       {r.issues.map((s, i) => <li key={i}>{s}</li>)}
