@@ -149,6 +149,17 @@ const MODEL_SCOPE = {
   // rather than this map, because only a settings-page admin (college-wide, by
   // definition) ever reads a sync log.
   TeamsSync: "UNSCOPED",
+  // Same run-log reasoning as TeamsSync directly above, for the meeting/provisioning
+  // automations instead of the attendance sync.
+  TeamsProvisionSync: "UNSCOPED",
+  // Provisioning metadata: which Microsoft group/channel a cohort/unit was mapped to.
+  // Reachable through Cohort/Unit, both of which already carry academicDepartmentId,
+  // but declared UNSCOPED rather than `via` because nothing filters it yet — only
+  // teamsProvisioning.js reads these rows, running college-wide like every other sync
+  // job, and a `via` path with no smoke assertion behind it is exactly the "claim
+  // nothing tests" this file's header warns against.
+  CohortTeam: "UNSCOPED",
+  UnitChannel: "UNSCOPED",
 
   /* ---- Institution-wide for now: attendance hardware ---------------------- */
   AttendanceTag: "UNSCOPED",
@@ -160,6 +171,10 @@ const MODEL_SCOPE = {
   // through. Every config table in this file is UNSCOPED for that reason -- a college's
   // switches and thresholds describe the college, not a department within it.
   TeamsAttendanceConfig: "UNSCOPED",
+  // Config table, same reasoning as TeamsAttendanceConfig directly above: one
+  // settings row for the whole institution, switching on the meeting/provisioning
+  // automations rather than the attendance sync.
+  TeamsAutomationConfig: "UNSCOPED",
 
   /* ---- Institution-wide for now: timetabling ------------------------------ */
   Room: "UNSCOPED",

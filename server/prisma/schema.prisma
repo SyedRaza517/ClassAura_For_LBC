@@ -401,7 +401,13 @@ model Staff {
   timetableEvents  TimetableEventStaff[]
   timetablePref    TimetableUserPref[]
 
+  // The Microsoft (Entra) user this staff member was matched to by Teams provisioning
+  // (added to a cohort's Team, a unit's channel), so later runs re-use the match instead
+  // of re-resolving by email every time. Same job, same reasoning, as Student.msUserId.
+  msUserId String?
+
   @@unique([email])
+  @@unique([msUserId])
 }
 
 // A phone (or browser) registered to receive push notifications.
@@ -762,6 +768,12 @@ model Cohort {
   // HndSession.cohortId.
   registers       HndSession[]
 
+  // The Microsoft Team provisioned for this cohort, if Teams provisioning has run for
+  // it. Optional to-one: most cohorts have none until the automation is switched on
+  // and reaches them, and the field stays null forever for a college that never
+  // configures the automation at all.
+  teamsTeam CohortTeam?
+
   /// Which academic department runs this intake. Denormalised from the course, exactly as
   /// Student.academicDepartmentId is denormalised through the cohort.
   ///
@@ -883,6 +895,10 @@ model Unit {
   timetableSlots TimetableSlot[] @relation("UnitTimetable")
 
   timetableEvents TimetableEvent[]
+
+  // The Teams channel provisioned for this unit within its cohort's Team, if
+  // provisioning has reached it. See CohortTeam/UnitChannel.
+  teamsChannels UnitChannel[]
 
   /// Which academic department teaches this unit. Denormalised from the course, exactly as
   /// Student.academicDepartmentId is denormalised through the cohort.
@@ -1481,6 +1497,70 @@ model TeamsSync {
   error      String?
 
   @@index([startedAt])
+}
+
+// One provisioned class space per cohort. Additive-only: rows are created and
+// updated by teamsProvisioning.js and never deleted by it — deleting the row would
+// orphan the Team in Microsoft with nothing linking it back.
+model CohortTeam {
+  id           String    @id @default(cuid())
+  cohort       Cohort    @relation(fields: [cohortId], references: [id], onDelete: Cascade)
+  cohortId     String
+  // Microsoft's group id (the Team's underlying group) — the handle every later
+  // channel/membership call addresses.
+  groupId      String
+  displayName  String
+  createdAt    DateTime  @default(now())
+  lastSyncedAt DateTime?
+  channels     UnitChannel[]
+
+  @@unique([cohortId])
+}
+
+// One channel per unit inside a cohort's Team. channelEmail is cached because it is
+// how the meeting invite reaches the channel (app-only cannot post messages), and
+// null records "this tenant has channel email disabled" after one failed read —
+// distinct from "never fetched", which is the empty string default's job.
+model UnitChannel {
+  id           String     @id @default(cuid())
+  cohortTeam   CohortTeam @relation(fields: [cohortTeamId], references: [id], onDelete: Cascade)
+  cohortTeamId String
+  unit         Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  unitId       String
+  channelId    String
+  channelEmail String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([cohortTeamId, unitId])
+}
+
+// Run log for both automations — `job` says which. Mirror of TeamsSync above.
+model TeamsProvisionSync {
+  id         String    @id @default(cuid())
+  job        String // "meetings" | "provisioning"
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  status     String    @default("running") // running | ok | failed
+  mode       String    @default("manual") // manual | scheduled
+  startedBy  String? // admin name, or null for the scheduled run
+  // Counters, as JSON — shape depends on `job`, exactly as TeamsSync.summary above.
+  summary    String    @default("{}")
+  // Anything skipped or unmatched, as a JSON array of readable messages.
+  issues     String    @default("[]")
+  error      String?
+
+  @@index([startedAt])
+}
+
+// Whether the Teams meeting/provisioning automations run, and their settings. Same
+// shape as TeamsAttendanceConfig above: defaults in code with enabled:false, one JSON
+// column merged over them, constant "singleton" key, allowlist on the way out, short
+// cache invalidated on save.
+model TeamsAutomationConfig {
+  id        String   @id @default("singleton")
+  settings  Json     @default("{}")
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }
 
 // A completed staff review — the Strategic Lecturer Self-Reflection, the Monthly
@@ -3434,6 +3514,21 @@ model TimetableEvent {
   // calendar matching could not place the meeting. Carried down to this event's
   // registers on publish, where an explicit paste always beats the matcher.
   teamsJoinUrl String @default("")
+
+  // Whether the Teams meeting automation should create (and later cancel) a calendar
+  // event for this timetable event. Defaults false: see constraints.md — the switch
+  // is off unless a college has turned it on, and off means no Graph calls at all.
+  teamsAutoMeeting     Boolean   @default(false)
+  // The Graph calendar event id the automation created, so a later run can find it
+  // again to update or cancel it. Set only by the machine, on the run that created
+  // the meeting — see the CohortTeam/UnitChannel comment on additive-only writes,
+  // which this mirrors: the machine only ever cancels a meeting IT created, never one
+  // it merely matched, and this column is how it tells the two apart.
+  teamsCalendarEventId String?
+  // When the meeting was last created or updated by the automation. Null means never
+  // synced — distinct from teamsAutoMeeting being false, which means "don't sync",
+  // so the two together answer both "should we?" and "did we, and when?".
+  teamsMeetingSyncedAt DateTime?
 
   // NULLABLE, and that nullability is the point of this table. An exam, a workshop,
   // a study-support session or a staff meeting belongs to no module -- which is
