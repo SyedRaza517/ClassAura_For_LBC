@@ -760,11 +760,11 @@ function HomeGrid({ setScreen, store, me }) {
           </button>
         )}
       </div>
-      <div className="mb-4 grid grid-cols-3 gap-2 fade-up">
-        <MiniStat label="Status" value={myToday ? (myToday.out ? "Done" : "In") : "Out"} tone={myToday && !myToday.out ? "green" : "grey"} Icon={myToday && !myToday.out ? UserCheck : Clock} />
-        <MiniStat label="Holiday left" value={`${left}d`} tone="navy" Icon={Plane} />
-        <MiniStat label="Pending" value={pending} tone={pending ? "amber" : "grey"} Icon={Inbox} />
-      </div>
+      {/* The three MiniStat tiles that sat here (Status / Holiday left / Pending) were
+          removed 13 Sep 2026: they repeated, word for word, the three facts the hero
+          band above them already states — the same information twice within one
+          screenful is a row of chrome the sections below had to scroll past. MiniStat
+          itself is kept for the day a stat exists that the hero does not carry. */}
       {/* NEEDS ATTENTION — the to-do framing of facts already on this screen, and only
           the ones this person can act on with one tap. Deliberately NOT a general task
           inbox: referral queues and intervention reviews are behind admin page grants
@@ -778,7 +778,10 @@ function HomeGrid({ setScreen, store, me }) {
         setScreen={setScreen}
       />
       <MyDaySection myDay={myDay} setScreen={setScreen} />
-      <p className="mb-3 text-center text-sm font-semibold italic text-slate-500" style={{ fontFamily: "'Lora', serif" }}>Please select one of the buttons below</p>
+      {/* A section label like MY DAY's and NEEDS ATTENTION's, not the italic serif
+          "Please select one of the buttons below" this replaced — an instruction
+          nobody needed, in a typeface nothing else on the screen used. */}
+      <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">All tools</p>
       <div className="grid grid-cols-2 gap-3">
         {/* The Manager Approval tile needs a LEAVE page, not merely being an admin.
             Gated on store.isAdmin, a page-scoped admin (e.g. finance, timesheets-only)

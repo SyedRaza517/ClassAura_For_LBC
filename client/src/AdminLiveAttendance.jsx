@@ -818,11 +818,14 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
         </section>
       )}
 
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+      {/* One row on a phone, not a 2×2 of cards. Four big tiles pushed the first
+          student below the fold, and the list is what a lecturer opened this for —
+          the counts are a glance, not the content. */}
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
         <Tally n={counts.P} label="Present" colour="#059669" />
         <Tally n={counts.L} label="Late" colour="#d97706" />
         <Tally n={counts.A} label="Absent" colour="#e11d48" />
-        <Tally n={counts.notMarked} label="No mark yet" colour="#94a3b8" />
+        <Tally n={counts.notMarked} label="No mark" colour="#94a3b8" />
       </div>
       {/* THE REGISTER.
           Design notes, because "make it nicer" is not a specification and the next
@@ -1279,11 +1282,13 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
   );
 }
 
+// Compact and centred on a phone, roomier and left-aligned from sm up — the same
+// component, so the two form factors cannot drift apart in what they count.
 function Tally({ n, label, colour }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-      <p className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: colour }}>{n}</p>
-      <p className="mt-1 text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+    <div className="rounded-xl border border-slate-200 bg-white px-1.5 py-2 text-center sm:px-4 sm:py-3 sm:text-left">
+      <p className="text-lg font-extrabold tabular-nums leading-none sm:text-2xl" style={{ color: colour }}>{n}</p>
+      <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px] sm:tracking-wider">{label}</p>
     </div>
   );
 }
