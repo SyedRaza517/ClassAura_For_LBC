@@ -202,6 +202,21 @@
      dark wash below is untouched — the complaint was about light mode. */
   background: #ffffff;
 }
+/* The PAGE behind the student app, theme-correct (13 Sep 2026). A device screenshot
+   showed a white band above the header in DARK mode: on a phone, the region behind
+   and around the app's 100dvh root — the status-bar strip under overlaysWebView,
+   any inset the layout maths misses — is painted by the BODY, and the body's
+   browser-default background is white regardless of scheme. Scoped with :has() to
+   sessions that actually render the student app, so the staff app's body (which
+   paints its own full-viewport backgrounds and has no dark theme) is untouched. */
+body:has(.student-bg) {
+  background: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  body:has(.student-bg) {
+    background: #0b1220;
+  }
+}
 @media (prefers-color-scheme: dark) {
   /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
      legible as "loading" on a white card, invisible as "loading" on a dark one.

@@ -196,7 +196,7 @@ function PullToRefresh({ scrollRef, onRefresh, children }) {
  * The header keeps its own styling in both modes; this component only decides
  * between "decorative phone on a desktop page" and "fill the device screen".
  */
-export default function PhoneShell({ header, children, onRefresh, refreshing, darkCapable = false }) {
+export default function PhoneShell({ header, footer, children, onRefresh, refreshing, darkCapable = false }) {
   const handset = useIsHandset();
   const scrollRef = useRef(null);
   // Never armed while a refresh from elsewhere (the header's spinner) is already
@@ -221,13 +221,22 @@ export default function PhoneShell({ header, children, onRefresh, refreshing, da
         <div
           ref={scrollRef}
           className={`relative flex-1 overflow-y-auto bg-slate-50 ${dark("dark:bg-slate-900")}`}
-          // Clear of the home indicator, with momentum scrolling on iOS.
-          style={{ paddingBottom: "env(safe-area-inset-bottom)", WebkitOverflowScrolling: "touch" }}
+          // Momentum scrolling on iOS. The home-indicator inset used to be padded
+          // HERE as well as on the tab bar — with the bar now a footer row below
+          // this scrollport (13 Sep 2026), the bar is the element that meets the
+          // indicator and carries the one env() pad; a second one here only opened
+          // a gap under the bar.
+          style={{ WebkitOverflowScrolling: "touch" }}
         >
           <PullToRefresh scrollRef={scrollRef} onRefresh={effectiveOnRefresh}>
             {children}
           </PullToRefresh>
         </div>
+        {/* The footer row (the student tab bar). A fixed row of this flex column,
+            BELOW the scrollport: it cannot float off the bottom and nothing can
+            render underneath it, which is exactly the pair of defects the sticky
+            in-scrollport version produced on a real handset. */}
+        {footer && <div className="shrink-0">{footer}</div>}
       </div>
     );
   }
@@ -244,6 +253,7 @@ export default function PhoneShell({ header, children, onRefresh, refreshing, da
               {children}
             </PullToRefresh>
           </div>
+          {footer && <div className="shrink-0">{footer}</div>}
         </div>
       </div>
     </div>

@@ -339,6 +339,21 @@ export default function StudentApp({ user, logout }) {
   return (
     <PhoneShell
       header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} unread={unread} />}
+      // The tab bar is the shell's FOOTER, not the last child of the scroll area
+      // (13 Sep 2026). It used to render inside the scrollport as `sticky bottom-0`,
+      // and a device screenshot showed both failure modes at once: content (the
+      // Delete-account row) peeking out UNDERNEATH the bar, and the bar itself
+      // floating above the physical bottom edge — sticky positioning answers to the
+      // scrollport's geometry, which on a phone with native insets is not the same
+      // thing as the visible screen. A footer row in the shell's fixed column cannot
+      // do either: nothing is ever after it, and it is flush with the bottom on
+      // every screen by construction.
+      // `=== false` rather than `!` on hideCheckIn: anyCheckInWay is null until the
+      // first load answers, and treating "not told yet" as "off" would drop the tab
+      // on every app open and put it back half a second later.
+      footer={<TabBar screen={screen} setScreen={setScreen} newReplies={newReplies}
+        codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)}
+        hideCheckIn={anyCheckInWay(tapContext) === false} />}
       onRefresh={load} refreshing={busy}
       // The ONLY caller that passes this — see PhoneShell.jsx's own comment on the
       // prop. StaffHub.jsx's call site is untouched, which is what keeps dark mode
@@ -379,13 +394,6 @@ export default function StudentApp({ user, logout }) {
           {screen === "mitigations" && <MitigationsScreen />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
         </div>
-        {/* `=== false` rather than `!`: anyCheckInWay is null until the first load
-            answers, and treating "not told yet" as "off" would drop the tab out of
-            the bar on every app open and put it back half a second later — a visible
-            jump, on the majority of colleges, where the tab belongs. */}
-        <TabBar screen={screen} setScreen={setScreen} newReplies={newReplies}
-          codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)}
-          hideCheckIn={anyCheckInWay(tapContext) === false} />
       </div>
     </PhoneShell>
   );
@@ -416,7 +424,12 @@ export default function StudentApp({ user, logout }) {
 function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn = false }) {
   const tabs = hideCheckIn ? TABS.filter((t) => t.key !== "checkin") : TABS;
   return (
-    <nav className="sticky bottom-0 z-30 mt-2 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/90" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
+    // No `sticky` and no positioning at all — this renders as PhoneShell's footer
+    // row, below the scrollport, so flush-bottom is a property of the layout rather
+    // than of scroll geometry. The safe-area padding stays HERE (not on the
+    // scrollport): the bar is now the element that actually meets the home
+    // indicator, and having both pad for it was doubling the gap.
+    <nav className="z-30 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/90" style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
       {tabs.map(({ key, label, Icon: TabIcon }) => {
         const on = screen === key;
         const Icon = key === "checkin" && codesOnly ? QrCode : TabIcon;
