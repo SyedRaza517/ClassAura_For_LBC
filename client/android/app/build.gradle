@@ -100,9 +100,18 @@ android {
         // in the .pbxproj during every cloud build. A number committed here would be
         // discarded before the archive, so hardcoding one would only create a value that
         // disagrees with what actually ships. Bump Android by hand; let Codemagic count
-        // for iOS.
-        versionCode 3
-        versionName "1.0.0"
+        // for iOS. (The MARKETING version is the exception: it IS committed, in the
+        // .pbxproj's MARKETING_VERSION, and moves with versionName below.)
+        //
+        // 4 (13 Sep 2026), and versionName 1.0.0 -> 1.1.0 with it: a new build train
+        // carries the first FEATURE release since launch — student push notifications
+        // and the in-app inbox, mitigating-circumstances self-service, streaks and
+        // badges, the Due-next agenda, Teams join links, dark mode and the design
+        // refresh. The build number climbs because it always climbs; the marketing
+        // version climbs because this is the first time the app's capabilities changed
+        // rather than its fixes.
+        versionCode 4
+        versionName "1.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
