@@ -195,7 +195,12 @@
    Tailwind `dark:` classes on the very same screen switched correctly, and this one
    rule silently kept painting the light gradient under a dark card the whole time. */
 .student-bg {
-  background: linear-gradient(180deg, #f6f8fc 0%, #eef2f9 60%, #f6f8fc 100%);
+  /* Pure white since 13 Sep 2026, at the user's request — this was a pale blue-grey
+     gradient (#f6f8fc → #eef2f9 → #f6f8fc) and read as dull next to the white cards.
+     White-on-white still separates because every Card carries its own border and
+     shadow; the gradient was doing no work the borders were not already doing. The
+     dark wash below is untouched — the complaint was about light mode. */
+  background: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
