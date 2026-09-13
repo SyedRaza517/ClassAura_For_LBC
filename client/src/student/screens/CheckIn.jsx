@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { api } from "../../api";
 import CheckInCard from "../../CheckInCard";
 import {
-  Loader2, CheckCircle2, AlertTriangle, MapPin, Nfc, ScanLine, Clock3, User,
+  Loader2, CheckCircle2, AlertTriangle, MapPin, Nfc, ScanLine, Clock3, User, Video,
 } from "lucide-react";
 
 import { NAVY } from "../../branding";
@@ -14,7 +14,30 @@ import { qrScanResult, qrScanRefusal, keepScanAfter } from "../../qrResultView";
 import QrScanner from "../../QrScanner";
 import { nfcStatus } from "../../nfc";
 import { ACCENT, ACCENT_TONE, toneVars } from "../ui/tokens";
-import { ttLongDate } from "../utils";
+import { ttLongDate, openExternalLink } from "../utils";
+
+/**
+ * sessionId -> teamsJoinUrl, built from the TIMETABLE's own events rather than a new
+ * server call.
+ *
+ * tap-context's `today` list (sTapSession, routes/student.js) never carries
+ * teamsJoinUrl — it is built from candidateSessions(), which selects nothing of the
+ * kind. The timetable's events DO (studentEvents() reads it off the register itself,
+ * see that function's own comment on why the session's copy outranks the event's).
+ * Both name the same HndSession by id: a `today` row's own `id` IS that session's id
+ * (sTapSession: `id: s.id`), and an event's `sessionId` is the same session (`id:
+ * sessionFor.get(e.id)?.id`). So this looks the link up from data the shell already
+ * fetched for the Timetable screen, rather than asking the server for a field this
+ * screen's own endpoint does not serialise — no server change, and no second source
+ * of truth for what is, after all, the same class.
+ */
+function joinUrlsBySessionId(timetable) {
+  const map = new Map();
+  for (const e of timetable?.events || []) {
+    if (e.sessionId && e.teamsJoinUrl) map.set(e.sessionId, e.teamsJoinUrl);
+  }
+  return map;
+}
 
 /**
  * Is there ANY way for this student to check themselves in?
@@ -61,7 +84,7 @@ export function checkInSub(tapContext) {
 // "what have I got today and when" — whether or not the college taps stickers. It also
 // makes the check-in card legible: a row marked NOW is the one the button will mark, and
 // a row already carrying P or L is one nobody needs to think about again.
-function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan }) {
+function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan, joinUrls }) {
   // Which class is mid-request, and what the last attempt said. Above the early return
   // with every other hook: the rule is positional, and a hook below `if (loading)` runs a
   // different number of times on the render after the data lands.
@@ -142,6 +165,7 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
         const actionable = isNow && !mark && (canScan || canDeclare);
         const where = [c.room ? `Room ${c.room}` : null, c.floor, c.campus].filter(Boolean).join(" · ");
         const about = [c.unitCode, c.course, c.school].filter(Boolean).join(" · ");
+        const joinUrl = joinUrls?.get(c.id) || null;
         return (
           <div
             key={c.id}
@@ -186,6 +210,22 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
                     </p>
                   )}
                   {about && <p className="mt-1.5 text-[11px] leading-snug text-slate-400 dark:text-slate-500">{about}</p>}
+                  {/* Present whether or not the class is running right now — the
+                      register's own join link, once set, is not something a student
+                      should only see for the hour it is actually on: joining a
+                      couple of minutes early is normal, and a link that vanished
+                      the moment `state` left "now" would have taught them not to
+                      trust it being there. Not gated on `actionable` below: joining
+                      an online class and marking a register are two independent
+                      actions, and a class already marked (or over) can still be
+                      one a student wants to open, e.g. for a recording. */}
+                  {joinUrl && (
+                    <button onClick={() => openExternalLink(joinUrl)}
+                      className="tone-soft press mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold"
+                      style={toneVars(ACCENT_TONE.checkin)}>
+                      <Video size={12} aria-hidden="true" /> Join online class
+                    </button>
+                  )}
                 </div>
 
                 <span className="shrink-0">
@@ -234,9 +274,13 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
   );
 }
 
-export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
+export function CheckInScreen({ tapContext, timetable, reload, pendingQr, onQrDone }) {
   const enabled = tapContext?.enabled;
   const qrEnabled = tapContext?.qrEnabled;
+  // Recomputed on every render rather than useMemo'd: `timetable` only actually
+  // changes on a reload (a handful of times per session), and a Map over a day's
+  // worth of events is not expensive enough to be worth the extra hook for.
+  const joinUrls = joinUrlsBySessionId(timetable);
   const running = (tapContext?.now || []).length;
   // The in-app scanner. A decoded code is stashed exactly as a scanned link would be,
   // and the app's own listener turns it into the card above — one road for both.
@@ -339,7 +383,7 @@ export function CheckInScreen({ tapContext, reload, pendingQr, onQrDone }) {
 
       <TodaysClasses today={tapContext?.today} loading={tapContext == null}
         canDeclare={tapContext?.declareEnabled === true} onDeclared={reload}
-        canScan={qrEnabled === true} onScan={() => setScanning(true)} />
+        canScan={qrEnabled === true} onScan={() => setScanning(true)} joinUrls={joinUrls} />
 
       {/* The sticker flow has real steps (arm, wait for the button, press), so its
           walkthrough stays — but only for somebody who can actually follow it. Explaining

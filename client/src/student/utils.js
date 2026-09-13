@@ -23,3 +23,39 @@ export const ttLongDate = (d) => {
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   return `${DAYS[new Date(Date.UTC(y, m - 1, dd)).getUTCDay()]} ${dd} ${MONTHS[m - 1]}`;
 };
+
+// The college's own wall-clock reading, right now — read through an EXPLICIT
+// `timeZone: "Europe/London"`, the same trick StudentApp.jsx's Header greeting
+// already uses for its "Good morning/afternoon/evening". This is not the host-clock
+// rule conventions.md warns against ("never use the host clock for a user-facing
+// date"): that rule is about a STORED calendar date/time being silently re-zoned by
+// whatever timezone the device happens to be set to (attendance dates, term dates —
+// values the server already decided). `Date.now()` itself is a correct, zone-agnostic
+// instant; reinterpreting it in a fixed, explicit zone is the opposite of that bug —
+// it is what stops a student's phone set to a different timezone (travelling, or
+// simply misconfigured) from shifting what "next 48 hours" means for a college that
+// is not in whatever zone the phone currently reports.
+//
+// Used by dueNext.js's caller (Home.jsx) rather than by dueNext.js itself, which
+// stays pure and takes `now` as a plain argument (see that file's own comment).
+export function londonNow() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const get = (t) => parts.find((p) => p.type === t)?.value;
+  return { date: `${get("year")}-${get("month")}-${get("day")}`, time: `${get("hour")}:${get("minute")}` };
+}
+
+// Open a link WITHOUT navigating this page away from the app — matches the
+// convention TwoFactor.jsx/StaffHub.jsx already use ("_system" hands it to the
+// native OS on a packaged app; a new tab does the same on the web, where there is no
+// "_system" to hand it to). Pulled out here because THREE places in the student app
+// now open a Teams join link this same way (CheckIn's TodaysClasses, Timetable's
+// module rows, Home's Due-next card) and a fourth copy of the native-platform sniff
+// is exactly how these three drift apart.
+export function openExternalLink(url) {
+  if (!url) return;
+  const native = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
+  try { window.open(url, native ? "_system" : "_blank", "noopener,noreferrer"); } catch (_) { /* no handler available — nothing else to do */ }
+}

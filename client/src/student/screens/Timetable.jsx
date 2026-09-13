@@ -1,7 +1,8 @@
-import { RefreshCw, CalendarDays, Clock3, User, MapPin } from "lucide-react";
+import { RefreshCw, CalendarDays, Clock3, User, MapPin, Video } from "lucide-react";
 import { Screen, LoadingScreen, Card } from "../ui";
 import { ACCENT, ACCENT_TONE, toneVars } from "../ui/tokens";
 import { NAVY_DARK } from "../../branding";
+import { openExternalLink } from "../utils";
 
 // 1 = Monday … 7 = Sunday (matches the server). Weekend days appear only if a slot
 // actually lands on one.
@@ -185,11 +186,31 @@ function ModuleTimetable({ events, today }) {
                       {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500 dark:text-slate-400">{[ev.room ? `Room ${ev.room}` : null, ev.floor, ev.campus].filter(Boolean).join(" · ") || "—"}</td>}
                       {!staff && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500 dark:text-slate-400">{(ev.staff || []).join(", ") || "—"}</td>}
                       <td className="px-2 py-2 text-right">
-                        {ev.status
-                          ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
-                          : past || isToday
-                            ? <span className="text-[10px] text-slate-300 dark:text-slate-600">Not marked</span>
-                            : null}
+                        {/* Both can appear together — a class already marked can
+                            still be one a student wants to open again (a recording,
+                            or checking they have the right link before it starts),
+                            so this is never an either/or with the mark pill below
+                            it. Shown for EVERY date carrying a link, past or future:
+                            a term of dates is a reference document (Timetable.jsx's
+                            own file header), and a rescheduled class that dropped
+                            the link on just one date must be able to show that by
+                            simply not rendering the button on that one row, which a
+                            module-wide "does this module have online classes" switch
+                            could not do. */}
+                        <div className="flex flex-col items-end gap-1">
+                          {ev.teamsJoinUrl && (
+                            <button onClick={() => openExternalLink(ev.teamsJoinUrl)}
+                              className="tone-soft press inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+                              style={toneVars(ACCENT_TONE.timetable)}>
+                              <Video size={10} aria-hidden="true" /> Join
+                            </button>
+                          )}
+                          {ev.status
+                            ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${TT_MARK[ev.status].cls}`}>{TT_MARK[ev.status].label}</span>
+                            : past || isToday
+                              ? <span className="text-[10px] text-slate-300 dark:text-slate-600">Not marked</span>
+                              : null}
+                        </div>
                       </td>
                     </tr>
                   );
