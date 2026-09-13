@@ -20,8 +20,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..");
 const server = join(here, "..", "server");
 const require = createRequire(pathToFileURL(join(server, "package.json")));
+const { readFileSync } = require("node:fs");
 
 // API_URL, not API_BASE — the runner sets API_URL and the port moves per suite.
 const BASE = process.env.API_URL || "http://localhost:4000/api";
@@ -83,7 +85,7 @@ function expectedSummary(marks) {
 // Everything this run creates, so the finally block can put the database back exactly
 // as the seed left it — eight suites share one seeded database and the seed is not
 // re-run between them.
-const made = { queries: [], reviews: [], assessments: [], slots: [], units: [], courses: [], enrolments: [] };
+const made = { queries: [], reviews: [], assessments: [], slots: [], units: [], courses: [], enrolments: [], sessions: [], events: [] };
 
 async function cleanup() {
   try {
@@ -92,6 +94,9 @@ async function cleanup() {
     // Grades cascade with their assessment.
     for (const id of made.assessments) await db.assessment.delete({ where: { id } }).catch(() => {});
     for (const id of made.slots) await db.timetableSlot.delete({ where: { id } }).catch(() => {});
+    // Sessions before the events they belong to, events before the unit/enrolments.
+    for (const id of made.sessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
+    for (const id of made.events) await db.timetableEvent.delete({ where: { id } }).catch(() => {});
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
     for (const id of made.units) await db.unit.delete({ where: { id } }).catch(() => {});
     for (const id of made.courses) await db.course.delete({ where: { id } }).catch(() => {});
@@ -212,8 +217,14 @@ try {
     !!first?.module && first.module.id === first.unit.id);
 
   console.log("\n--- assessments: marks, bands and the average ---");
-  const mkAssessment = async (unitId, title, maxMarks) => {
-    const a = await db.assessment.create({ data: { unitId, title, type: "Assignment", maxMarks, weight: 25, dueDate: "2026-05-01" } });
+  // weight DEFAULTS TO 0, not the old literal 25 — matching the schema's own default
+  // and studentAssessmentAverage.js's own comment that an ordinary college's papers
+  // (and every Moodle-synced one) carry a literal 0, never a real weight, until an
+  // administrator sets one deliberately. Fixtures below that need a REAL weight pass
+  // it explicitly, so the two cases stay visibly different in this file rather than
+  // both reading as "25" the way the old fixture accidentally made them look.
+  const mkAssessment = async (unitId, title, maxMarks, weight = 0) => {
+    const a = await db.assessment.create({ data: { unitId, title, type: "Assignment", maxMarks, weight, dueDate: "2026-05-01" } });
     made.assessments.push(a.id);
     return a;
   };
@@ -253,6 +264,72 @@ try {
   check("work not yet marked shows as unmarked, not as zero", ung?.marks === null && ung?.pct === null && ung?.grade === null, `marks=${ung?.marks} pct=${ung?.pct}`);
   check("the average counts only graded work", asr.data?.graded === 3 && asr.data?.averagePct === 73 && asr.data?.averageGrade === "Distinction",
     `graded=${asr.data?.graded} avg=${asr.data?.averagePct} ${asr.data?.averageGrade}`);
+
+  console.log("\n--- the average: identical to the plain mean with no weights, then genuinely weighted ---");
+  // EVERY assessment above carries weight 0 — the literal an ordinary college's papers
+  // (and every Moodle-synced one, per studentAssessmentAverage.js's own comment) carry
+  // until somebody sets one deliberately. So averageIsWeighted must read FALSE here,
+  // and 73 — already asserted above — IS the plain mean of 70/49/100, proving weight:0
+  // folds to equal weighting rather than a real weight of zero (which would divide by
+  // a weight-sum of 0 and turn every college's average into NaN the day this shipped).
+  check("with nothing weighted, averageIsWeighted reports false — this IS the plain mean",
+    asr.data?.averageIsWeighted === false, `averageIsWeighted=${asr.data?.averageIsWeighted}`);
+
+  // Now give ONE assessment a real, lopsided weight and a mark far from the other
+  // three's. If the route is actually wiring weight through to the average (rather
+  // than the uniform-25 fixture this replaced, which could not tell "weighted" from
+  // "coincidentally equal" apart), the average must move a long way toward this mark,
+  // not sit near the plain mean of all four.
+  const aWeighted = await mkAssessment("m-obm", `SP Weighted ${RUN}`, 100, 300);
+  await grade(aWeighted.id, 10);
+  const asrWeighted = await call("/student/me/assessments", { token: sToken });
+  const plainMeanOfFour = Math.round(((70 + 49 + 100 + 10) / 4) * 10) / 10; // 57.3
+  // effectiveWeight: 70,49,100 fold to 1 each (weight 0); the new item's weight is 300.
+  // (70+49+100+10*300) / (1+1+1+300) = 3219/303 = 10.6 to one decimal place.
+  const expectedWeighted = Math.round((3219 / 303) * 10) / 10;
+  check("a real, lopsided weight pulls the average sharply toward that item, not the plain mean",
+    asrWeighted.data?.graded === 4 && asrWeighted.data?.averagePct === expectedWeighted && asrWeighted.data.averagePct !== plainMeanOfFour,
+    `avg=${asrWeighted.data?.averagePct} (expected ${expectedWeighted}, plain mean would be ${plainMeanOfFour})`);
+  check("...and averageIsWeighted now reports true", asrWeighted.data?.averageIsWeighted === true, `averageIsWeighted=${asrWeighted.data?.averageIsWeighted}`);
+
+  console.log("\n--- attendance bands: the resolved ladder, and a drift-guard against the client's own mirror ---");
+  const bandsResp = await call("/student/me/attendance-bands", { token: sToken });
+  check("GET /me/attendance-bands succeeds with a non-empty ladder",
+    bandsResp.status === 200 && Array.isArray(bandsResp.data?.bands) && bandsResp.data.bands.length > 0, `HTTP ${bandsResp.status}`);
+  // ALLOWLISTED DOWN TO key/label/min/colour — narrower than attendanceBandConfig's own
+  // BAND_FIELDS. `max` is redundant (bandForPct only ever reads the NEXT band's min) and
+  // `emailTrigger` is a staff fact about whether the automated warning letter fires; a
+  // response carrying either is the allowlist quietly widening back toward a blocklist.
+  const bandKeys = Object.keys(bandsResp.data.bands[0] || {}).sort();
+  check("each band is allowlisted to key/label/min/colour — no max, no emailTrigger",
+    JSON.stringify(bandKeys) === JSON.stringify(["colour", "key", "label", "min"]), bandKeys.join(","));
+
+  // THE DRIFT-GUARD, carried over from the Task 6 review. client/src/student/ui/tokens.js
+  // cannot `import` server/src/attendanceBands.js across the client/server boundary
+  // (CommonJS, and a different bundle entirely), so it keeps its own literal copy of
+  // DEFAULT_ATTENDANCE_BANDS "mirrored rather than imported" (that file's own comment) —
+  // and a comment is not a compiler. This suite is what actually reads both files and
+  // fails if they disagree on what a student is SHOWN: key (so a saved template still
+  // resolves), label, min (the boundary bandForPct walks) and colour. `max` and
+  // `emailTrigger` are deliberately excluded from the comparison because the client
+  // copy never carries them at all (same reasoning as the allowlist check above).
+  const serverBands = require(join(server, "src", "attendanceBands.js"));
+  const clientTokensSrc = readFileSync(join(root, "client", "src", "student", "ui", "tokens.js"), "utf8");
+  const clientMatch = clientTokensSrc.match(/DEFAULT_ATTENDANCE_BANDS\s*=\s*(\[[\s\S]*?\n\]);/);
+  check("the client's DEFAULT_ATTENDANCE_BANDS literal is found — the drift-guard can only run if it is",
+    !!clientMatch);
+  if (clientMatch) {
+    // Function(), not eval(): this parses a literal array out of a client source file
+    // this suite just read off disk, never caller-supplied input, and does so without
+    // handing that code access to this scope the way eval() would.
+    const clientBands = Function(`"use strict"; return (${clientMatch[1]});`)();
+    const narrow = (b) => ({ key: b.key, label: b.label, min: b.min, colour: b.colour });
+    const serverDefaults = serverBands.DEFAULT_BANDS.map(narrow);
+    const clientDefaults = clientBands.map(narrow);
+    check("the client's mirrored default bands match the server's DEFAULT_BANDS on key/label/min/colour",
+      JSON.stringify(clientDefaults) === JSON.stringify(serverDefaults),
+      JSON.stringify({ server: serverDefaults, client: clientDefaults }).slice(0, 400));
+  }
 
   console.log("\n--- queries: what the student sends, and what comes back ---");
   const tooShort = await call("/student/me/query", { method: "POST", token: sToken, body: { message: "hi" } });
@@ -345,6 +422,54 @@ try {
   check("an unpublished draft row is not shown to the student",
     stage?.rows?.length === 1 && stage.rows[0].title === `SP Published ${RUN}` && !JSON.stringify(tt.data).includes(`SP Draft ${RUN}`),
     `${stage?.rows?.length} rows`);
+
+  console.log("\n--- timetable events: the register's OWN teamsJoinUrl, not the event's paste ---");
+  // student.js's own comment on this field: TimetableEvent.teamsJoinUrl is the admin's
+  // rescue-hatch paste, "carried down to this event's registers on publish" — so once a
+  // class has a register at all, the SESSION's own copy is the per-class truth, and this
+  // is the round-trip proving the app actually reads that copy rather than the event's,
+  // which publish can supersede on a reschedule (STATUS.md's own words for the promise
+  // this was not keeping until now: "the guaranteed route for a student to find their
+  // class link is the student app reading the session's own teamsJoinUrl").
+  //
+  // Dated a couple of days out rather than on a fixed calendar date, because studentEvents
+  // windows to [-28, +84] days from TODAY (localDate()) — a literal date would fall
+  // outside that window on any day but the one this file happened to be written on.
+  const ttDate = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  const JOIN_URL = `https://teams.microsoft.com/l/meetup-join/19%3ameeting_${RUN}%40thread.v2/0`;
+  const ttEvent = await db.timetableEvent.create({ data: {
+    unitId: ttUnit.id, courseId: course.id, date: ttDate, startTime: "10:00", endTime: "11:00",
+    title: `SP Teams Class ${RUN}`, published: true, publishedAt: new Date(),
+  } });
+  made.events.push(ttEvent.id);
+  const ttSession = await db.hndSession.create({ data: {
+    unitId: ttUnit.id, timetableEventId: ttEvent.id, date: ttDate, startTime: "10:00", endTime: "11:00",
+    description: `SP Teams Class ${RUN}`, teamsJoinUrl: JOIN_URL,
+  } });
+  made.sessions.push(ttSession.id);
+  // A second class, same shape, with NO join link — a room-only or never-synced class —
+  // so "null when there is nothing" is checked alongside "the real url when there is one"
+  // rather than trusting an all-populated fixture to say anything about the null branch.
+  const ttEventNoJoin = await db.timetableEvent.create({ data: {
+    unitId: ttUnit.id, courseId: course.id, date: ttDate, startTime: "14:00", endTime: "15:00",
+    title: `SP No-Join Class ${RUN}`, published: true, publishedAt: new Date(),
+  } });
+  made.events.push(ttEventNoJoin.id);
+  const ttSessionNoJoin = await db.hndSession.create({ data: {
+    unitId: ttUnit.id, timetableEventId: ttEventNoJoin.id, date: ttDate, startTime: "14:00", endTime: "15:00",
+    description: `SP No-Join Class ${RUN}`,
+  } });
+  made.sessions.push(ttSessionNoJoin.id);
+
+  const ttWithEvents = await call("/student/me/timetable", { token: sToken });
+  const joinEvent = (ttWithEvents.data?.events || []).find((e) => e.id === ttEvent.id);
+  const noJoinEvent = (ttWithEvents.data?.events || []).find((e) => e.id === ttEventNoJoin.id);
+  check("a class with a Teams link round-trips the SESSION's own teamsJoinUrl",
+    joinEvent?.teamsJoinUrl === JOIN_URL && joinEvent?.sessionId === ttSession.id,
+    `teamsJoinUrl=${joinEvent?.teamsJoinUrl}`);
+  check("a class with no Teams link serialises teamsJoinUrl as null, never a dash or empty string",
+    noJoinEvent && noJoinEvent.teamsJoinUrl === null,
+    `teamsJoinUrl=${JSON.stringify(noJoinEvent?.teamsJoinUrl)}`);
 
   console.log("\n--- session revocation ---");
   // tokenVersion is bumped by a password change and by the student deleting their app
