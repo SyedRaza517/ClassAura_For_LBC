@@ -792,29 +792,43 @@ function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
         setScreen={setScreen}
       />
       <MyDaySection myDay={myDay} setScreen={setScreen} />
-      {/* QUICK ACTIONS, not the 14-tile wall this replaced (13 Sep 2026). Every tool
-          still exists — grouped, labelled and searchable by eye on the More tab —
-          but a home screen is for what today needs, and fourteen equal tiles made
-          the four things a person does daily no easier to find than the two they do
-          annually. One row of the daily four; the tab bar carries the rest. */}
-      <SectionLabel>Quick actions</SectionLabel>
+      {/* ALL TOOLS, on the first page — the user's ruling (13 Sep 2026), reversing
+          the brief experiment of exiling them to the More tab. What did NOT come
+          back is the old wall of huge two-column cards: the full set renders in the
+          compact four-column style, short labels, every gate as before, so the whole
+          menu costs four rows instead of seven screens-worth. The More tab keeps its
+          grouped directory too — two roads to the same screens is fine when both are
+          honest; a home page missing the options people expect is not. */}
+      <SectionLabel>All tools</SectionLabel>
       <div className="grid grid-cols-4 gap-2">
         {[
+          { key: "checkin", label: "Clock in", Icon: Clock },
           { key: "timetable", label: "Timetable", Icon: CalendarDays },
-          { key: "request", label: "Leave", Icon: Plane, badge: pending },
+          ...(teaches ? [
+            { key: "classes", label: "Classes", Icon: Radio },
+            { key: "announce", label: "Announce", Icon: Send },
+          ] : []),
+          { key: "balance", label: "Holidays", Icon: Plane },
+          { key: "calendar", label: "Calendar", Icon: Calendar },
+          { key: "request", label: "Leave", Icon: Plus, badge: pending },
+          ...(canDecideLeave ? [
+            { key: "approval", label: "Approvals", Icon: ThumbsUp, badge: store.leave.filter(l => l.status === "pending").length },
+          ] : []),
           { key: "timesheet", label: "Timesheet", Icon: ClipboardList },
-          teaches
-            ? { key: "announce", label: "Announce", Icon: Send }
-            : { key: "documents", label: "Documents", Icon: FileText },
+          { key: "summary", label: "Summary", Icon: UserPlus },
+          { key: "onsite", label: "On site", Icon: Users },
+          { key: "documents", label: "Documents", Icon: FileText },
+          { key: "reflection", label: "Reflection", Icon: Award },
+          { key: "studentreview", label: "Reviews", Icon: MessageSquare },
         ].map((t, i) => (
           <button key={t.key} onClick={() => setScreen(t.key)}
             className="press relative flex flex-col items-center gap-1.5 rounded-2xl bg-white py-3 shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md pop"
-            style={{ animationDelay: `${i * 50}ms` }}>
+            style={{ animationDelay: `${i * 35}ms` }}>
             {t.badge > 0 && <span className="pop absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900">{t.badge}</span>}
             <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: alpha(NAVY, 10) }}>
               <t.Icon size={19} style={{ color: NAVY }} strokeWidth={2.2} />
             </span>
-            <span className="text-[10px] font-bold text-slate-600">{t.label}</span>
+            <span className="max-w-full truncate px-1 text-[10px] font-bold text-slate-600">{t.label}</span>
           </button>
         ))}
       </div>
