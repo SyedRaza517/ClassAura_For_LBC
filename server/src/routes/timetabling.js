@@ -1506,12 +1506,27 @@ router.post("/events", async (req, res) => {
 // two a year. Being off by the one hour BST adds on those two days changes
 // nothing about a yes/no gate this wide (48 hours), and a college-specific
 // IANA-zone conversion is more machinery than a notification trigger earns.
+//
+// SIGNED, not `Math.abs` — a final-review fix. The gate is "is this occurrence
+// COMING UP within the next 48 hours", and `Math.abs(at - now) <= 48h` answered a
+// different question: it also fired for an occurrence up to 48 hours in the PAST,
+// because a class that happened yesterday sits exactly as close to `now` on the
+// number line as one happening tomorrow. The caller below checks the OLD time OR
+// the NEW time (never neither) precisely so a class moved between two future slots
+// still pages a roster either way round — but with `Math.abs`, a class whose old
+// AND new times were BOTH already over (an administrator correcting a stale entry
+// weeks after the fact, say) still satisfied "old OR new is within 48h", because
+// "48 hours ago" passed the same test as "48 hours from now". That paged a roster
+// about a class that had already happened, which is not what "urgent enough to
+// notify" was ever meant to mean. The fix is the sign: only an occurrence that has
+// NOT YET happened, and starts within the next 48 hours, counts.
 function withinFortyEightHours(dateStr, timeStr) {
   if (!dateStr || !timeStr) return false;
   const now = new Date(`${localDate()}T${localTime()}:00Z`);
   const at = new Date(`${dateStr}T${timeStr}:00Z`);
   if (Number.isNaN(at.getTime())) return false;
-  return Math.abs(at.getTime() - now.getTime()) <= 48 * 3600 * 1000;
+  const msUntil = at.getTime() - now.getTime();
+  return msUntil >= 0 && msUntil <= 48 * 3600 * 1000;
 }
 
 router.put("/events/:id", async (req, res) => {

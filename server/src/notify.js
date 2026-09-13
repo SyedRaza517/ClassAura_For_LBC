@@ -21,6 +21,16 @@ const { sendPush } = require("./push");
 // as they did before this change; "ClassAura" for students, the student app's own
 // name, never the staff product's, because a college that has branded nothing must
 // not title a student's push after a screen the student has never opened.
+//
+// THAT STUDENT FALLBACK WAS UNREACHABLE UNTIL A FINAL-REVIEW FIX. `displayName` has to
+// arrive here already falsy for "ClassAura" to ever fire, but branding.get() — the
+// obvious thing to read it from — bakes its OWN "Staff Hub" fallback in before
+// returning, so a caller reading `(await branding.get()).displayName` could never hand
+// this function a falsy value: "nothing configured" and "resolved to Staff Hub" were
+// the same string by the time it got here. pushToStudentDevices below now reads
+// branding.rawDisplayName() instead — the same resolution, minus that one fallback —
+// which is what lets an unbranded college's students actually see "ClassAura". See
+// branding.js's own comment on rawDisplayName() for the full story.
 function titleFor(displayName, audience) {
   return displayName || (audience === "student" ? "ClassAura" : "Staff Hub");
 }
@@ -54,11 +64,21 @@ async function pushToDevices(staffId, { type, message, link }) {
 // other, never both — see the exactly-one-owner comment there), and its title falls
 // back to "ClassAura" rather than "Staff Hub" when the college has configured no
 // branding, via the same titleFor() the staff path uses.
+//
+// Reads branding.rawDisplayName() HERE, not branding.get().displayName the way
+// pushToDevices (staff) does two lines up. get().displayName already has "Staff Hub"
+// baked in for a college that configured nothing, so titleFor's student branch —
+// "fall back to ClassAura, never Staff Hub" — could never actually fire: by the time
+// this function saw the string, "unconfigured" and "genuinely resolved to Staff Hub"
+// were already the same value. rawDisplayName() is the pre-fallback chain (env/saved
+// name, else the institution's own name, else null) that lets titleFor tell those two
+// cases apart. See branding.js's own comment on the function for the full story —
+// this was a final-review finding, not a design that changed.
 async function pushToStudentDevices(studentId, { type, message, link }) {
   const devices = await prisma.deviceToken.findMany({ where: { studentId } });
   if (!devices.length) return;
-  const brand = await require("./branding").get();
-  const title = titleFor(brand.displayName, "student");
+  const raw = await require("./branding").rawDisplayName();
+  const title = titleFor(raw, "student");
   await Promise.all(devices.map(async (d) => {
     const res = await sendPush(d.token, {
       title,

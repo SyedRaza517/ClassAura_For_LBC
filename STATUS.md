@@ -922,6 +922,18 @@ student's own rows, nothing is stored); an email leg for student notifications (
 channel row above); and a markup change anywhere in the Task 3 split (verified by diff,
 not by inspection).
 
+**Also deliberately not built: self-service mitigating circumstances (above) carries no
+per-unit or per-assessment linkage.** The spec this task worked from listed it — a
+student raising a claim could, in principle, name which unit or which assessment the
+circumstance covers, the same way a staff-filed claim's `adjustments` rows can name an
+`assessmentId`. This v1 dropped it: `POST /api/student/me/mitigations` takes a window
+(`coversFrom`/`coversTo`) and a category, nothing narrower, and a student cannot attach
+their self-raised claim to a specific unit or assessment the way staff can when writing
+adjustments after the fact. Not a bug and not an oversight caught by review — a scope
+cut, recorded here rather than silently dropped, because the college may reasonably ask
+for it as a follow-up and the honest map this file is meant to be should say what was
+asked for and not shipped, not just what was shipped.
+
 ### 3.7 Business rules that are actually enforced
 
 - Leave allowance is checked **server-side at approval**, inside a per-staff lock, with

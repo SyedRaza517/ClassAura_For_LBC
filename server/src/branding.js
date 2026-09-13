@@ -174,12 +174,47 @@ async function get() {
   }
 
   const resolved = { ...DEFAULTS, ...fromEnv(), ...present(row) };
+  // The chain BEFORE the "Staff Hub" fallback two lines down is kept apart — see
+  // rawDisplayName() below for why. Not stored on `value` (the object returned to
+  // ordinary callers, several of which spread it wholesale into a response — see
+  // conventions.md's allowlist rule): this is an internal detail of what get() just
+  // resolved, not a field the college's own branding config gained.
+  const raw = resolved.displayName || institutionName || null;
   if (!resolved.displayName) resolved.displayName = institutionName || "Staff Hub";
   if (!resolved.shortName) resolved.shortName = resolved.displayName;
   if (!resolved.wordmarkTop) resolved.wordmarkTop = String(resolved.shortName).toUpperCase();
   const value = { ...resolved, mailFrom: mailFromFor(row, resolved) };
-  cached = { value, at: Date.now() };
+  cached = { value, at: Date.now(), raw };
   return value;
+}
+
+/**
+ * The college's own display name, resolved exactly as get() resolves it, but WITHOUT
+ * get()'s "Staff Hub" fallback baked in — env/saved branding, else the institution's
+ * own name (`Tenant.name`), else null when truly nothing is configured.
+ *
+ * WHY THIS EXISTS: notify.js's titleFor gives a student push a DIFFERENT neutral
+ * fallback than a staff one ("ClassAura", never "Staff Hub" — a screen the student has
+ * never opened), and that fallback can only fire on a falsy displayName. Every caller
+ * that read `(await get()).displayName` before this function existed was reading a
+ * string that get() had ALREADY defaulted to "Staff Hub" the moment nothing was
+ * configured — so titleFor's student branch was correct code sitting behind a
+ * condition that could never be true, tested only with a directly-passed argument
+ * (notify.test.js) that never went through get() at all. This is the "smallest honest
+ * change": get() keeps its one public shape for every existing caller (the staff
+ * subject line, the client branding endpoint, the PDF letters — all of which WANT
+ * "Staff Hub" when nothing is configured, unchanged), and this second function exposes
+ * the one intermediate value a caller genuinely needs to tell "nothing configured"
+ * apart from "resolved to the literal string Staff Hub" (which a college's own
+ * configured displayName can never actually equal, since "Staff Hub" is not written
+ * anywhere in DEFAULTS — but titleFor should not have to know that to be correct).
+ *
+ * Reuses get()'s own cache (calling get() first) rather than re-querying, so this can
+ * never disagree with what get() itself just resolved for the exact same request.
+ */
+async function rawDisplayName() {
+  await get();
+  return cached ? cached.raw : null;
 }
 
 /**
@@ -192,4 +227,4 @@ async function get() {
  */
 const invalidate = () => { cached = null; };
 
-module.exports = { get, invalidate, DEFAULTS, isHex };
+module.exports = { get, rawDisplayName, invalidate, DEFAULTS, isHex };

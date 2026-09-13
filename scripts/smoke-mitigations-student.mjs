@@ -46,6 +46,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -334,6 +335,48 @@ try {
     !decidedKeys.includes("decisionNote"), decidedKeys.join(","));
   check("...and decidedBy is absent too — who decided is staff's business, not the student's",
     !decidedKeys.includes("decidedBy"), decidedKeys.join(","));
+
+  /* ====================================================================== */
+  console.log("\n--- drift-guard: the category list is the SAME nine values everywhere it is copied ---");
+  /* ====================================================================== */
+
+  // Three hand-maintained copies exist — Mitigations.jsx's own file header says so in
+  // as many words ("THE CATEGORY LIST IS A LITERAL COPY of MIT_CATEGORIES in
+  // StaffHub.jsx (itself a copy of CATEGORIES in routes/mitigations.js)") — because the
+  // staff bundle and the student bundle share no import path to make it one copy. A
+  // list nobody checks for drift is a list that drifts silently: a category renamed or
+  // reordered on the server would make a student's (or an admin's) dropdown offer a
+  // value the server 400s on, or accept one the server no longer recognises as
+  // canonical, and nothing in either build would fail.
+  //
+  // routes/mitigations.js's CATEGORIES is a plain CommonJS export, required directly
+  // here rather than parsed as text — there is no reason to approximate the real array
+  // when requiring it is one line.
+  const { CATEGORIES: serverCategories } = require(join(server, "src", "routes", "mitigations.js"));
+
+  // The two client copies ARE parsed as text, the same way smoke-studentportal.mjs's
+  // own DEFAULT_ATTENDANCE_BANDS drift-guard parses the client's mirrored band ladder:
+  // find the literal array in the source, hand it to `Function()` — not `eval()`, so
+  // the parsed value has no access to this scope — rather than trust by inspection
+  // that hand-maintained copies still agree.
+  const studentSrc = readFileSync(join(root, "client", "src", "student", "screens", "Mitigations.jsx"), "utf8");
+  const studentMatch = studentSrc.match(/MIT_CATEGORIES\s*=\s*(\[[\s\S]*?\n\]);/);
+  check("the student screen's MIT_CATEGORIES literal is found — the drift-guard can only run if it is", !!studentMatch);
+
+  const staffSrc = readFileSync(join(root, "client", "src", "StaffHub.jsx"), "utf8");
+  const staffMatch = staffSrc.match(/MIT_CATEGORIES\s*=\s*(\[[\s\S]*?\n\]);/);
+  check("StaffHub's MIT_CATEGORIES literal is found — the drift-guard can only run if it is", !!staffMatch);
+
+  if (studentMatch && staffMatch) {
+    const studentCategories = Function(`"use strict"; return (${studentMatch[1]});`)();
+    const staffCategories = Function(`"use strict"; return (${staffMatch[1]});`)();
+    check("the student app's MIT_CATEGORIES matches routes/mitigations.js's CATEGORIES exactly, in order",
+      JSON.stringify(studentCategories) === JSON.stringify(serverCategories),
+      JSON.stringify({ server: serverCategories, student: studentCategories }));
+    check("StaffHub's MIT_CATEGORIES matches routes/mitigations.js's CATEGORIES exactly, in order",
+      JSON.stringify(staffCategories) === JSON.stringify(serverCategories),
+      JSON.stringify({ server: serverCategories, staff: staffCategories }));
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

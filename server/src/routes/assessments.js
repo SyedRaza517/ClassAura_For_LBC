@@ -484,9 +484,18 @@ router.put("/:id/grades", requireAuth, requireAdmin, async (req, res) => {
   // only this route knows which direction the change went.
   for (const studentId of Object.keys(after)) {
     if (after[studentId] === null) continue;
+    // "Released" versus "updated" — `before[studentId]` (built above, one entry per
+    // student whose mark actually moved) is already in scope, and it is exactly the
+    // prior value: null/undefined for a student who had no mark before this save, the
+    // old number for one who did. A student who already had a mark and had it quietly
+    // revised is not being told about a mark for the first time — announcing a
+    // correction as "released" reads as the FIRST notice of a result that has, in
+    // fact, already been seen and possibly acted on (queried, appealed, celebrated),
+    // which is the wrong fact for a push notification to assert about itself.
+    const wasMarked = before[studentId] !== null && before[studentId] !== undefined;
     notifyStudent(studentId, {
       type: "success",
-      message: `Your mark for "${a.title}" has been released`,
+      message: `Your mark for "${a.title}" has been ${wasMarked ? "updated" : "released"}`,
       link: "assessments",
     });
   }

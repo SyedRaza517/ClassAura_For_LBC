@@ -316,12 +316,24 @@ router.put("/:id/accept", async (req, res) => {
   // case content, only WHERE the referral got to. Gated on the same flag that route's
   // WHERE clause reads, so a referral the student was never told about (studentNotified
   // false — the tickbox's default) can never surface a status ping either.
+  // Harnessed: an unhandled rejection out here, AFTER res.json above has already sent
+  // the response, reaches Express's default error handling with headers already sent
+  // — which either crashes the request or logs a confusing "can't set headers" error
+  // that has nothing to do with what actually failed. The async IIFE + .catch(() => {})
+  // is the same pattern the transfer (~522) and messages (~655) handlers below already
+  // use for the identical reason: `await departments.byKey(...)` here is exactly the
+  // kind of post-response await that needs it, and notify.js's own notifications are
+  // already best-effort by design — this just makes sure a rejection ANYWHERE in this
+  // block (not only inside notifyStudent) is swallowed the same way.
   if (updated.studentNotified) {
-    notify.notifyStudent(updated.studentId, {
-      type: "info",
-      message: `${(await departments.byKey(updated.department))?.name || updated.department} has picked up your referral`,
-      link: "support",
-    });
+    (async () => {
+      const dept = await departments.byKey(updated.department);
+      notify.notifyStudent(updated.studentId, {
+        type: "info",
+        message: `${dept?.name || updated.department} has picked up your referral`,
+        link: "support",
+      });
+    })().catch(() => {});
   }
 });
 
@@ -383,12 +395,18 @@ router.put("/:id/close", async (req, res) => {
   // help is actively waiting on, so this fires even though nobody tapped a "reply"
   // button — the WHY comment on the accept handler above about the studentNotified
   // gate applies identically here.
+  // Harnessed for the same reason as the accept handler above: a rejection out here
+  // runs AFTER res.json has already sent the response, and would otherwise reach
+  // Express's error handling with headers already sent.
   if (updated.studentNotified) {
-    notify.notifyStudent(updated.studentId, {
-      type: "info",
-      message: `Your referral to ${(await departments.byKey(updated.department))?.name || updated.department} has been closed`,
-      link: "support",
-    });
+    (async () => {
+      const dept = await departments.byKey(updated.department);
+      notify.notifyStudent(updated.studentId, {
+        type: "info",
+        message: `Your referral to ${dept?.name || updated.department} has been closed`,
+        link: "support",
+      });
+    })().catch(() => {});
   }
 });
 
