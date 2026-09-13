@@ -1,14 +1,22 @@
+import { useEffect } from "react";
 import {
   Percent, Award, MessageSquare, ChevronRight, Info, Settings, Sparkles,
-  CheckCircle2, Clock3, CalendarCheck, CalendarDays, Nfc,
+  CheckCircle2, Clock3, CalendarCheck, CalendarDays, Nfc, Flame, Video, AlertTriangle,
 } from "lucide-react";
-import { Screen, ErrBox, LoadingScreen, SectionTitle, Stat, Action, HeroTile } from "../ui";
+import { Screen, ErrBox, LoadingScreen, SectionTitle, Stat, Action, HeroTile, Empty, toneFromColour } from "../ui";
 import { ACCENT, ACCENT_TONE, attendanceTone, gradeTone, bandForPct, DEFAULT_ATTENDANCE_BANDS, toneVars } from "../ui/tokens";
-import { fmtDate } from "../utils";
+import { fmtDate, londonNow, openExternalLink } from "../utils";
+import { dueNext } from "../dueNext";
 import { NAVY, alpha } from "../../branding";
 import { StudentCheckIn, anyCheckInWay, checkInSub } from "./CheckIn";
 
-export function Home({ user, attendance, results, queries, reviews, tapContext, busy, err, reload, setScreen, newReplies, newReviews, bands }) {
+export function Home({ user, attendance, results, queries, reviews, timetable, tapContext, busy, err, reload, setScreen, newReplies, newReviews, bands, streaks, refreshInbox }) {
+  // Targeted refetch of the inbox on Home mounting — this screen's own answer to
+  // "did anything arrive since the shell's last load()", same reasoning as
+  // Inbox.jsx's own mount effect. Home is remounted every time a student switches
+  // back to this tab (StudentApp.jsx renders it conditionally rather than keeping it
+  // mounted off-screen), so this fires on every visit, not only the very first.
+  useEffect(() => { refreshInbox?.(); }, [refreshInbox]);
   // Only blank the screen when nothing at all arrived. One failed call must not
   // hide the data that did load — that was the old silent-wrong-data bug inverted.
   if (err && !attendance && !results) return <Screen><ErrBox>{err}</ErrBox></Screen>;
@@ -44,6 +52,12 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
     t: `${resolvedBand.label}. ${bandIdx <= 1 ? "Keep it up." : bandIdx >= bandList.length - 2 ? "Your attendance needs attention." : "There's room to improve."}`,
   };
 
+  // "Due next" — assessments still awaiting a mark, interleaved with classes in the
+  // next 48 hours, soonest first (dueNext.js, tested on its own in dueNext.test.js).
+  // Only the top 4 are shown: this is a glance card, not the Results/Timetable
+  // screens it links out to, and a student who wants the full list already has both.
+  const upcoming = dueNext({ assessments: results?.assessments, events: timetable?.events, now: londonNow() }).slice(0, 4);
+
   return (
     <div className="space-y-3.5 px-4 pb-8 pt-5">
       {/* Check-in sits ABOVE the headline numbers on purpose: it is the one thing on
@@ -65,6 +79,37 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
         <div className="tone-panel fade-up flex items-center gap-2.5 rounded-2xl px-3.5 py-3 ring-1" style={{ ...toneVars(attTone), animationDelay: "110ms" }}>
           <span className="tone-soft flex h-7 w-7 shrink-0 items-center justify-center rounded-xl" style={toneVars(attTone)}><Sparkles size={14} /></span>
           <p className="tone-text text-[12px] font-bold leading-snug" style={toneVars(attTone)}>{band.t}</p>
+        </div>
+      )}
+
+      {/* Due next — coming up in the next couple of days. Rendered whether or not the
+          list is empty (an accessible empty state, not a card that silently vanishes
+          when there is nothing due — a student checking "am I clear this week" needs
+          that answered as much as one who has five things due). */}
+      <SectionTitle colour={ACCENT.results}>Coming up next</SectionTitle>
+      <div className="overflow-hidden rounded-3xl bg-white shadow-card ring-1 ring-slate-200/60 dark:bg-slate-800 dark:ring-slate-700/60">
+        {upcoming.length === 0
+          ? <Empty icon={CheckCircle2} title="Nothing due" msg="No assessments or classes coming up in the next two days." />
+          : upcoming.map((it, i) => <DueNextRow key={it.id} item={it} i={i} setScreen={setScreen} />)}
+      </div>
+
+      {/* Attendance streak — current run + personal best. Hidden until /me/streaks
+          answers (null, not 0 — see StudentApp.jsx's own comment on why this starts
+          null) rather than flashing "0-day streak" at every student for the instant
+          before the real figure lands. The badge INVENTORY lives on the Attendance
+          screen, not here — this is a glance, that is the record. */}
+      {streaks && (
+        <div className="fade-up flex items-center gap-3 rounded-3xl bg-white p-4 shadow-card ring-1 ring-slate-200/60 dark:bg-slate-800 dark:ring-slate-700/60">
+          <span className="tone-soft flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl" style={toneVars(toneFromColour("#ea580c"))}>
+            <Flame size={19} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-extrabold text-slate-700 dark:text-slate-200">
+              {streaks.current > 0 ? `${streaks.current} day${streaks.current === 1 ? "" : "s"} attendance streak` : "No streak running right now"}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">Best so far: {streaks.best} day{streaks.best === 1 ? "" : "s"}</p>
+          </div>
+          <button onClick={() => setScreen("attendance")} aria-label="See your badges" className="press shrink-0 text-slate-300 dark:text-slate-600"><ChevronRight size={17} /></button>
         </div>
       )}
 
@@ -142,6 +187,43 @@ export function Home({ user, attendance, results, queries, reviews, tapContext, 
         <Action onClick={() => setScreen("query")} Icon={MessageSquare} label="Ask the College" sub={newReplies ? `${newReplies} new repl${newReplies === 1 ? "y" : "ies"}` : "Send a query"} c={ACCENT.ask} badge={newReplies} i={4} />
         <Action onClick={() => setScreen("more")} Icon={Settings} label="More" sub="Account & settings" c={ACCENT.more} i={5} />
       </div>
+    </div>
+  );
+}
+
+// One row of the Due-next card — an assessment awaiting a mark, one already overdue,
+// or a class in the next 48h. Kept local to Home.jsx: nothing else on this app
+// renders a dueNext.js item, so there is no seam to promote this to yet.
+function DueNextRow({ item, i, setScreen }) {
+  const isClass = item.kind === "class";
+  const overdue = item.kind === "overdue";
+  // Overdue is ROSE regardless of what the item would otherwise be — the same rule
+  // ATT's own Absent colour follows (never sharing a colour with something that is
+  // merely "on time but not great"), because an overdue assessment is a different
+  // kind of fact from one due Thursday.
+  const tone = toneFromColour(overdue ? "#e11d48" : isClass ? ACCENT.timetable : ACCENT.results);
+  const Icon = overdue ? AlertTriangle : isClass ? CalendarDays : Award;
+  const sub = isClass
+    ? `${fmtDate(item.date)} · ${item.start}${item.end ? `–${item.end}` : ""}`
+    : `${overdue ? "Was due" : "Due"} ${fmtDate(item.dueDate)}${item.unitCode ? ` · ${item.unitCode}` : ""}`;
+  return (
+    <div className="fade-up flex items-center gap-2 border-t border-slate-100 px-3.5 py-3 first:border-t-0 dark:border-slate-700" style={{ animationDelay: `${i * 55}ms` }}>
+      <button onClick={() => setScreen(isClass ? "timetable" : "assessments")} className="press flex min-w-0 flex-1 items-center gap-3 text-left">
+        <span className="tone-soft flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={toneVars(tone)}><Icon size={16} /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-bold text-slate-700 dark:text-slate-200">{item.title}</span>
+          <span className={`block truncate text-[11px] ${overdue ? "font-bold text-rose-600 dark:text-rose-400" : "text-slate-400 dark:text-slate-500"}`}>{overdue ? `Overdue · ${sub}` : sub}</span>
+        </span>
+      </button>
+      {/* Same join affordance CheckIn.jsx's TodaysClasses and Timetable.jsx's module
+          rows offer — a class within the next two days is exactly the kind of thing
+          this card exists to surface, and a link that only worked from two other
+          screens would be a trap for whoever opened Home first. */}
+      {isClass && item.teamsJoinUrl && (
+        <button onClick={() => openExternalLink(item.teamsJoinUrl)} className="press flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-bold text-white" style={{ background: ACCENT.timetable }}>
+          <Video size={12} /> Join
+        </button>
+      )}
     </div>
   );
 }
