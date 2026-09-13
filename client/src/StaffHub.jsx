@@ -517,6 +517,21 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
   const isHandsetApp = useIsHandset();
   const [showNotes, setShowNotes] = useState(false);
 
+  // The whole "my sessions today" answer, lifted OUT of the home screen (13 Sep 2026)
+  // because two consumers now need it: My Day renders from it, and the tab bar's
+  // Classes tab exists only for somebody it says teaches. Refetched each time the
+  // home tab is returned to, which is what remounting HomeGrid used to do for free.
+  const [myDay, setMyDay] = useState(null);
+  useEffect(() => {
+    if (screen !== "home" && myDay !== null) return undefined;
+    let on = true;
+    api.mySessionsToday().then((r) => { if (on) setMyDay(r || null); }).catch(() => { /* not a lecturer, or offline */ });
+    return () => { on = false; };
+  }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const teaches = myDay?.teaches === true;
+  const canDecideLeave = canDecideLeaveFor(store.currentUser);
+  const approvalsWaiting = canDecideLeave ? store.leave.filter(l => l.status === "pending").length : 0;
+
   // Android back: close the notifications panel first, else a sub-screen returns home.
   useBackHandler(showNotes, () => { setShowNotes(false); return true; });
   useBackHandler(!showNotes && screen !== "home", () => { setScreen("home"); return true; });
@@ -566,8 +581,10 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
   }
 
   return (
-    <PhoneShell header={header}>
-      {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} />}
+    <PhoneShell header={header} footer={
+      <StaffTabBar screen={screen} setScreen={setScreen} teaches={teaches} moreBadge={approvalsWaiting} />
+    }>
+      {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} myDay={myDay} canDecideLeave={canDecideLeave} />}
       {screen === "checkin" && <CheckInScreen store={store} me={me} />}
       {screen === "timetable" && <MyTimetable />}
       {/* The lecturer's live view, exactly the console's: the server admits the tutor of
@@ -585,7 +602,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
       {screen === "timesheet" && <TimesheetScreen store={store} me={me} />}
       {screen === "reflection" && <SelfReflectionScreen store={store} me={me} />}
       {screen === "studentreview" && <StudentReviewScreen store={store} me={me} />}
-      {screen === "more" && <MoreScreen store={store} me={me} logout={logout} onChangePassword={onChangePassword} onSwitchToAdmin={onSwitchToAdmin} />}
+      {screen === "more" && <MoreScreen store={store} me={me} logout={logout} onChangePassword={onChangePassword} onSwitchToAdmin={onSwitchToAdmin} setScreen={setScreen} teaches={teaches} canDecideLeave={canDecideLeave} approvalsWaiting={approvalsWaiting} />}
 
       {showNotes && <NotePanel store={store} onClose={() => setShowNotes(false)} />}
     </PhoneShell>
@@ -627,7 +644,10 @@ function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, sho
           both are sized to Apple's 44pt / Android's 48dp minimum touch target. They
           were 30-32px, about a third under, which produces mis-taps. */}
       <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-        {screen !== "home" ? (
+        {/* Tabs get the logo; only PUSHED screens get a back arrow — the tab bar is
+            how you leave a tab, and a back arrow beside it says the navigation model
+            is something it is not. */}
+        {!["home", "classes", "checkin", "more"].includes(screen) ? (
           <button onClick={() => setScreen("home")} aria-label="Back to Staff Hub" className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"><ChevronLeft size={22} /></button>
         ) : (
           <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-md bg-white px-1"><Logo small /></div>
@@ -684,25 +704,31 @@ function NotePanel({ store, onClose }) {
   );
 }
 
-const TILES = [
-  { key: "checkin", label: "Daily Check-In", Icon: Clock, sub: "Clock in & out" },
-  { key: "timetable", label: "My Timetable", Icon: CalendarDays, sub: "Where you're teaching" },
-  // Only for staff recorded as the tutor of a unit (HomeGrid asks the server). The
-  // lecturer's own registers: today's classes, the QR code, who has scanned.
-  { key: "classes", label: "My Classes", Icon: Radio, sub: "Today's registers & QR code" },
-  // Same gate as My Classes: the server's answer to "do they teach", not a guess.
-  { key: "announce", label: "Announce", Icon: Send, sub: "Message a class you teach" },
-  { key: "balance", label: "Holiday Balance", Icon: Check, sub: "Days remaining" },
-  { key: "calendar", label: "Holiday Calendar", Icon: Calendar, sub: "Who's off & when" },
-  { key: "request", label: "Request Leave", Icon: Plus, sub: "Book time off" },
-  { key: "documents", label: "Documents", Icon: FileText, sub: "Policies & forms" },
-  { key: "approval", label: "Manager Approval", Icon: ThumbsUp, sub: "Review requests" },
-  { key: "summary", label: "Staff Daily Summary", Icon: UserPlus, sub: "Log your day" },
-  { key: "onsite", label: "Staff on Site", Icon: Users, sub: "Who's in today" },
-  { key: "timesheet", label: "Send Timesheet", Icon: ClipboardList, sub: "Log hours & submit" },
-  { key: "reflection", label: "Self-Reflection", Icon: Award, sub: "Strategic lecturer review" },
-  { key: "studentreview", label: "Student Review", Icon: MessageSquare, sub: "Review a student's progress" },
-  { key: "more", label: "More", Icon: ArrowRight, sub: "Profile & settings" },
+// The TILES constant that lived here — fourteen home-screen tiles, one per screen —
+// went with the tile wall on 13 Sep 2026. The full tool list is now MORE_GROUPS on
+// the More tab, grouped by what a person is trying to do rather than flattened into
+// one grid of equals.
+const MORE_GROUPS = [
+  { title: "My work", items: [
+    { key: "timetable", label: "My Timetable", Icon: CalendarDays, sub: "Where you're teaching" },
+    { key: "announce", label: "Announce", Icon: Send, sub: "Message a class you teach", needsTeaches: true },
+    { key: "summary", label: "Daily Summary", Icon: UserPlus, sub: "Log your day" },
+    { key: "onsite", label: "Staff on Site", Icon: Users, sub: "Who's in today" },
+  ]},
+  { title: "Time off", items: [
+    { key: "balance", label: "Holiday Balance", Icon: Plane, sub: "Days remaining" },
+    { key: "calendar", label: "Holiday Calendar", Icon: Calendar, sub: "Who's off & when" },
+    { key: "request", label: "Request Leave", Icon: Plus, sub: "Book time off" },
+    { key: "approval", label: "Manager Approval", Icon: ThumbsUp, sub: "Review your team's requests", needsApprover: true, badge: "approvals" },
+  ]},
+  { title: "Hours & records", items: [
+    { key: "timesheet", label: "Send Timesheet", Icon: ClipboardList, sub: "Log hours & submit" },
+    { key: "documents", label: "Documents", Icon: FileText, sub: "Policies & forms" },
+  ]},
+  { title: "Reviews", items: [
+    { key: "reflection", label: "Self-Reflection", Icon: Award, sub: "Strategic lecturer review" },
+    { key: "studentreview", label: "Student Review", Icon: MessageSquare, sub: "Review a student's progress" },
+  ]},
 ];
 const STAFF_TIPS = [
   "Check in each morning so your team knows you're on site.",
@@ -718,22 +744,10 @@ const STAFF_TIPS = [
 // hit a 403). Used by HomeGrid and ApprovalScreen.
 const canDecideLeaveFor = (user) => ["requests", "approvals", "calendar"].some(p => canAccessPage(user, p));
 
-function HomeGrid({ setScreen, store, me }) {
+// `myDay` arrives from StaffApp, which owns the fetch now (the tab bar needs its
+// `teaches` answer too — see the comment there).
+function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
   const today = todayISO();
-  const canDecideLeave = canDecideLeaveFor(store.currentUser);
-  // The whole "my sessions today" answer, not just the `teaches` flag this used to
-  // keep: the My Day section renders from the same response that gates the Classes
-  // tile, so one request serves both and they can never disagree about whether this
-  // person teaches. `teaches` is still the server's answer, not a guess from the staff
-  // list, because unit records are admin-only and the app never loads them. Null until
-  // answered (or on failure), so for the majority of staff — who teach nothing — the
-  // home screen stays a menu rather than flashing an empty "My day" panel.
-  const [myDay, setMyDay] = useState(null);
-  useEffect(() => {
-    let on = true;
-    api.mySessionsToday().then((r) => { if (on) setMyDay(r || null); }).catch(() => { /* not a lecturer, or offline: no section, no tile */ });
-    return () => { on = false; };
-  }, []);
   const teaches = myDay?.teaches === true;
   const myToday = store.checkins.find(c => c.staffId === me.id && c.date === today && c.in);
   const pending = store.leave.filter(l => l.staffId === me.id && l.status === "pending").length;
@@ -778,28 +792,31 @@ function HomeGrid({ setScreen, store, me }) {
         setScreen={setScreen}
       />
       <MyDaySection myDay={myDay} setScreen={setScreen} />
-      {/* A section label like MY DAY's and NEEDS ATTENTION's, not the italic serif
-          "Please select one of the buttons below" this replaced — an instruction
-          nobody needed, in a typeface nothing else on the screen used. */}
-      <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">All tools</p>
-      <div className="grid grid-cols-2 gap-3">
-        {/* The Manager Approval tile needs a LEAVE page, not merely being an admin.
-            Gated on store.isAdmin, a page-scoped admin (e.g. finance, timesheets-only)
-            saw the tile, opened an empty/misleading queue, and every Approve/Decline
-            tap 403'd — a dead-end button. canDecideLeave mirrors the server guard. */}
-        {TILES.filter(t => (t.key !== "approval" || canDecideLeave) && ((t.key !== "classes" && t.key !== "announce") || teaches)).map((t, i) => {
-          const badge = t.key === "approval" ? store.leave.filter(l => l.status === "pending").length : t.key === "request" ? pending : 0;
-          return (
-            <button key={t.key} onClick={() => setScreen(t.key)} className="shine hover-lift group relative flex flex-col items-center justify-center gap-2.5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:shadow-xl hover:ring-blue-200 active:scale-95 pop" style={{ animationDelay: `${i * 60}ms` }}>
-              {badge > 0 && <span className="pop absolute right-2.5 top-2.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-900 shadow-sm ring-2 ring-amber-200">{badge}</span>}
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl shadow-sm transition-all duration-300 group-hover:scale-110 group-hover:-rotate-6 group-active:scale-95" style={{ background: "linear-gradient(135deg, rgba(26,58,143,0.12), rgba(158,27,50,0.07))" }}>
-                <t.Icon size={26} style={{ color: NAVY }} strokeWidth={2.2} />
-              </span>
-              <span className="text-center text-[13px] font-bold leading-tight" style={{ color: NAVY }}>{t.label}</span>
-              <span className="text-center text-[10px] font-medium leading-tight text-slate-400">{t.sub}</span>
-            </button>
-          );
-        })}
+      {/* QUICK ACTIONS, not the 14-tile wall this replaced (13 Sep 2026). Every tool
+          still exists — grouped, labelled and searchable by eye on the More tab —
+          but a home screen is for what today needs, and fourteen equal tiles made
+          the four things a person does daily no easier to find than the two they do
+          annually. One row of the daily four; the tab bar carries the rest. */}
+      <SectionLabel>Quick actions</SectionLabel>
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { key: "timetable", label: "Timetable", Icon: CalendarDays },
+          { key: "request", label: "Leave", Icon: Plane, badge: pending },
+          { key: "timesheet", label: "Timesheet", Icon: ClipboardList },
+          teaches
+            ? { key: "announce", label: "Announce", Icon: Send }
+            : { key: "documents", label: "Documents", Icon: FileText },
+        ].map((t, i) => (
+          <button key={t.key} onClick={() => setScreen(t.key)}
+            className="press relative flex flex-col items-center gap-1.5 rounded-2xl bg-white py-3 shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md pop"
+            style={{ animationDelay: `${i * 50}ms` }}>
+            {t.badge > 0 && <span className="pop absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900">{t.badge}</span>}
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: alpha(NAVY, 10) }}>
+              <t.Icon size={19} style={{ color: NAVY }} strokeWidth={2.2} />
+            </span>
+            <span className="text-[10px] font-bold text-slate-600">{t.label}</span>
+          </button>
+        ))}
       </div>
       {/* Tip of the day */}
       <div className="mt-4 flex items-start gap-2.5 rounded-2xl bg-blue-50/70 p-3 ring-1 ring-blue-100 fade-up">
@@ -807,6 +824,53 @@ function HomeGrid({ setScreen, store, me }) {
         <div><p className="text-[11px] font-bold uppercase tracking-wide text-blue-800/70">Tip of the day</p><p className="text-[12px] text-slate-600">{tip}</p></div>
       </div>
     </div>
+  );
+}
+
+// The student app's SectionTitle, restated for the staff shell (which has no dark
+// mode by ruling): a short accent rule and wide-tracked caps, so every section on
+// every staff screen is headed the same way.
+function SectionLabel({ children, className = "" }) {
+  return (
+    <div className={`mb-2 flex items-center gap-2 px-1 ${className}`}>
+      <span className="h-3.5 w-1 rounded-full" style={{ background: NAVY }} />
+      <p className="text-[11px] font-extrabold uppercase tracking-widest text-slate-500">{children}</p>
+    </div>
+  );
+}
+
+// The staff app's bottom navigation, in the student TabBar's exact visual language
+// (frosted bar, tinted pill on the active tab) so the two halves of the product
+// stop looking like different generations. Classes appears only for somebody the
+// server says teaches; More carries a badge for approvals waiting on a manager.
+const STAFF_TABS = [
+  { key: "home", label: "Home", Icon: LayoutDashboard },
+  { key: "classes", label: "Classes", Icon: Radio },
+  { key: "checkin", label: "Clock in", Icon: Clock },
+  { key: "more", label: "More", Icon: MoreHorizontal },
+];
+function StaffTabBar({ screen, setScreen, teaches, moreBadge = 0 }) {
+  const tabs = STAFF_TABS.filter((t) => t.key !== "classes" || teaches);
+  return (
+    <nav className="z-30 flex border-t border-slate-200/80 bg-white/90 backdrop-blur-xl"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -6px 20px -12px rgba(15,23,42,.25)" }}>
+      {tabs.map(({ key, label, Icon: TabIcon }) => {
+        const on = screen === key;
+        return (
+          <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
+            className="press relative flex flex-1 flex-col items-center gap-1 py-2">
+            <span className="relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200"
+              style={on ? { background: alpha(NAVY, 14) } : undefined}>
+              <TabIcon size={20} strokeWidth={on ? 2.6 : 2} style={{ color: on ? NAVY : "#9aa5b8" }} />
+              {key === "more" && moreBadge > 0 && (
+                <span className="pop absolute right-1.5 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-extrabold text-slate-900 ring-2 ring-white">{moreBadge}</span>
+              )}
+            </span>
+            <span className="max-w-full truncate px-0.5 text-[10px] font-bold tracking-tight" style={{ color: on ? NAVY : "#9aa5b8" }}>{label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 // See the comment at the call site for why this is deliberately slim.
@@ -824,7 +888,7 @@ function NeedsAttention({ registersToTake, approvalsWaiting, setScreen }) {
   const tones = { amber: "bg-amber-50 text-amber-800 ring-amber-200", navy: "bg-blue-50 text-blue-900 ring-blue-200" };
   return (
     <div className="mb-4 fade-up">
-      <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Needs attention</p>
+      <SectionLabel>Needs attention</SectionLabel>
       <div className="space-y-2">
         {items.map(({ key, Icon, tone, screen, label }) => (
           <button key={key} onClick={() => setScreen(screen)}
@@ -860,8 +924,8 @@ function MyDaySection({ myDay, setScreen }) {
   const t = myDay.totals || {};
   return (
     <div className="mb-4 fade-up">
-      <div className="mb-2 flex items-center justify-between px-1">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">My day · {sessions.length} class{sessions.length === 1 ? "" : "es"}</p>
+      <div className="mb-2 flex items-center justify-between pr-1">
+        <SectionLabel className="!mb-0">My day · {sessions.length} class{sessions.length === 1 ? "" : "es"}</SectionLabel>
         {/* notMarked null is "roster unknown", never zero — a day of unsized classes
             cannot claim "all marked", so it claims nothing. */}
         {t.notMarked != null && (
@@ -2257,11 +2321,15 @@ function TimesheetScreen({ store, me }) {
 }
 
 /* ----- More ----- */
-function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
+function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setScreen, teaches, canDecideLeave, approvalsWaiting = 0 }) {
   const [toggles, setToggles] = useState({ notif: true, reminders: true, biometric: false });
   const [showDelete, setShowDelete] = useState(false);
   const [confirmOut, setConfirmOut] = useState(false);
-  const items = [{ I: Users, label: "My Profile" }, { I: MapPin, label: "Campus Map" }, { I: Coffee, label: "Staff Room Booking" }, { I: Mail, label: "Contact HR" }];
+  // The four demo rows that sat here — My Profile, Campus Map, Staff Room Booking,
+  // Contact HR — were removed 13 Sep 2026. Each was a button whose entire behaviour
+  // was a toast saying "Opening…": a control that promises a feature and delivers a
+  // sentence teaches people not to press things. They come back when they do
+  // something. The tool directory (MORE_GROUPS) took their place.
   // Read-only profile stats, all safe.
   const myLeaveCount = store.leave.filter(l => l.staffId === me.id).length;
   const myCheckins = store.checkins.filter(c => c.staffId === me.id && c.in).length;
@@ -2280,6 +2348,36 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
           <div className="py-2.5"><p className="text-base font-extrabold text-emerald-600">{myCheckins}</p><p className="text-[10px] text-slate-400">Check-ins</p></div>
         </div>
       </Card>
+      {/* THE TOOL DIRECTORY — every screen the home grid used to flatten into equal
+          tiles, grouped by intent. Gating matches the old grid exactly: Announce for
+          teachers, Manager Approval for someone the server will let decide. */}
+      {MORE_GROUPS.map((g) => {
+        const items = g.items.filter((it) => (!it.needsTeaches || teaches) && (!it.needsApprover || canDecideLeave));
+        if (!items.length) return null;
+        return (
+          <div key={g.title} className="mb-3">
+            <SectionLabel>{g.title}</SectionLabel>
+            <Card className="!p-0 overflow-hidden">
+              {items.map((it) => (
+                <button key={it.key} onClick={() => setScreen(it.key)}
+                  className="press flex w-full items-center gap-3 border-t border-slate-100 px-3.5 py-3 text-left first:border-t-0">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: alpha(NAVY, 8) }}>
+                    <it.Icon size={16} style={{ color: NAVY }} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-bold text-slate-700">{it.label}</span>
+                    <span className="block truncate text-[11px] text-slate-400">{it.sub}</span>
+                  </span>
+                  {it.badge === "approvals" && approvalsWaiting > 0 && (
+                    <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-900">{approvalsWaiting}</span>
+                  )}
+                  <ChevronRight size={15} className="shrink-0 text-slate-300" />
+                </button>
+              ))}
+            </Card>
+          </div>
+        );
+      })}
       <p className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Preferences</p>
       <Card className="!p-0 mb-3">
         {[["notif", "Push notifications"], ["reminders", "Check-in reminders"]].map(([k, label], i) => (
@@ -2293,9 +2391,6 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin }) {
         {/* A real setting, unlike the two above: it drives the app lock. Always
             renders something — the options, or why they aren't available. */}
         <BiometricSetting owner={me.email} />
-      </Card>
-      <Card className="!p-0">
-        {items.map((it, i) => <button key={it.label} onClick={() => store.notify(`Opening ${it.label}…`)} className={`group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 active:scale-[0.99] ${i < items.length - 1 ? "border-b border-slate-100" : ""}`}><it.I size={18} className="transition-transform group-hover:scale-110" style={{ color: NAVY }} /><span className="flex-1 text-sm font-semibold text-slate-700">{it.label}</span><ChevronRight size={16} className="text-slate-300 transition-transform group-hover:translate-x-1 group-hover:text-slate-400" /></button>)}
       </Card>
       <p className="mb-2 mt-4 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">App info</p>
       <div className="animated-gradient relative overflow-hidden rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 50%, ${MAROON} 140%)`, backgroundSize: "200% 200%" }}>
