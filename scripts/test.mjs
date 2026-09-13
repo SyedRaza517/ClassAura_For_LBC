@@ -238,11 +238,14 @@ if (runUnit) {
   //   scanLink      — whether this screen may draw a code at all. Inside the packaged
   //     app the page's own address is the device, so a lecturer presenting from it
   //     would fill a projector with a code the whole room fails to open.
+  //   dueNext       — the Home screen's interleave of unmarked assessments and
+  //     next-48h classes into one soonest-first list; the rule that fails silently is
+  //     an overdue item not sorting ahead of everything still in the future.
   // client/package.json is "type": "module", so node runs them directly.
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js", "src/pendingQr.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js", "src/pendingQr.test.js", "src/student/dueNext.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }

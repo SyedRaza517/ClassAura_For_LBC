@@ -2,6 +2,8 @@
 // top-level StudentApp.jsx (mechanical move, Task 3 — MARKUP UNCHANGED). Kept
 // separate from ui/tokens.js because these are plain formatters, not the
 // ACCENT/tone-table colour system that a later task rewrites.
+import { isNativeApp } from "../PhoneShell";
+
 export const fmtPct = (p) => (p == null ? "—" : `${p}%`);
 export const fmtDate = (iso) => { if (!iso) return null; const [y, m, d] = iso.split("-"); const mm = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m) - 1] || m; return `${Number(d)} ${mm} ${y}`; };
 
@@ -52,10 +54,17 @@ export function londonNow() {
 // native OS on a packaged app; a new tab does the same on the web, where there is no
 // "_system" to hand it to). Pulled out here because THREE places in the student app
 // now open a Teams join link this same way (CheckIn's TodaysClasses, Timetable's
-// module rows, Home's Due-next card) and a fourth copy of the native-platform sniff
+// module rows, Home's Due-next card) and a fourth copy of the native-platform check
 // is exactly how these three drift apart.
+//
+// `isNativeApp()` is IMPORTED from `../PhoneShell` rather than re-sniffed here — an
+// earlier version of this function re-tested `window.Capacitor?.isNativePlatform?.()`
+// by hand, which is narrower than PhoneShell's own check (that one also treats the
+// `capacitor://` protocol as native, for the case a WebView reports the platform API
+// late) and could hand a genuinely native session `"_blank"` instead of `"_system"`.
+// StudentApp.jsx already imports the same thing from the same place, so there is no
+// cross-boundary dependency being created here that didn't already exist.
 export function openExternalLink(url) {
   if (!url) return;
-  const native = typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
-  try { window.open(url, native ? "_system" : "_blank", "noopener,noreferrer"); } catch (_) { /* no handler available — nothing else to do */ }
+  try { window.open(url, isNativeApp() ? "_system" : "_blank", "noopener,noreferrer"); } catch (_) { /* no handler available — nothing else to do */ }
 }
