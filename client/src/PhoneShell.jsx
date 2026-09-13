@@ -165,19 +165,38 @@ function PullToRefresh({ scrollRef, onRefresh, children }) {
 }
 
 /**
- * header    — the app's coloured top bar (supplies its own background)
- * children  — the scrolling body
- * onRefresh — optional. When given, the scrollport grows a custom pull-to-refresh
- *             gesture (see usePullToRefresh above); omitted, PhoneShell behaves
- *             exactly as before. Only the student app passes it today.
- * refreshing— optional, whether a refresh triggered elsewhere (the header's own
- *             refresh button) is already in flight, so the gesture does not start a
- *             second overlapping one and its indicator does not lag reality.
+ * header      — the app's coloured top bar (supplies its own background)
+ * children    — the scrolling body
+ * onRefresh   — optional. When given, the scrollport grows a custom pull-to-refresh
+ *               gesture (see usePullToRefresh above); omitted, PhoneShell behaves
+ *               exactly as before. Only the student app passes it today.
+ * refreshing  — optional, whether a refresh triggered elsewhere (the header's own
+ *               refresh button) is already in flight, so the gesture does not start a
+ *               second overlapping one and its indicator does not lag reality.
+ * darkCapable — optional, default false. Gates the FOUR `dark:` utility classes below
+ *               (the shell's own background colours — the PullToRefresh indicator's
+ *               own dark: classes never reach StaffHub regardless, because they only
+ *               render once `onRefresh` is passed, which StaffHub does not do). Before
+ *               this prop existed those four classes were unconditional, which is a
+ *               real bug the final review caught rather than a hypothetical one:
+ *               `darkMode: "media"` (Task 6, the student visual kit) means dark mode
+ *               is driven by the OS/browser's own `prefers-color-scheme`, a setting
+ *               that belongs to the person at the keyboard, not to which app they have
+ *               open — so a member of staff whose OS is set to dark got a half-dark
+ *               PhoneShell (this file's own background flipping) around an app,
+ *               StaffHub, that was never designed, reviewed or tested against a dark
+ *               palette. Reading `isNativeApp()`/a route to decide instead of taking
+ *               an explicit prop was rejected: PhoneShell is used on the web by BOTH
+ *               apps (the decorative-phone branch below), so neither "am I native" nor
+ *               "am I handset" can tell student and staff apart — only the caller
+ *               knows which app it is, which is exactly what a prop is for. StaffHub's
+ *               own call site is unchanged; leaving `darkCapable` off is what keeps it
+ *               that way.
  *
  * The header keeps its own styling in both modes; this component only decides
  * between "decorative phone on a desktop page" and "fill the device screen".
  */
-export default function PhoneShell({ header, children, onRefresh, refreshing }) {
+export default function PhoneShell({ header, children, onRefresh, refreshing, darkCapable = false }) {
   const handset = useIsHandset();
   const scrollRef = useRef(null);
   // Never armed while a refresh from elsewhere (the header's spinner) is already
@@ -185,16 +204,23 @@ export default function PhoneShell({ header, children, onRefresh, refreshing }) 
   // that guard only exists once a drag has already started; this stops one starting
   // at all while `refreshing` is already true from the outside.
   const effectiveOnRefresh = refreshing ? undefined : onRefresh;
+  // Returns `cls` only for the caller that opted in. The literal `dark:` strings still
+  // have to appear somewhere in this file for Tailwind's JIT scanner to generate the
+  // rules at all (it reads source text, not runtime values) — passing them through a
+  // function rather than deleting them is what keeps the CSS available for
+  // `darkCapable` callers while keeping it OUT of a non-`darkCapable` one's className
+  // altogether, not merely overridden by a later rule.
+  const dark = (cls) => (darkCapable ? cls : "");
 
   if (handset) {
     return (
       // Fills whatever height the parent gives it, so it can sit under the app's
       // top bar without the two together overflowing the screen.
-      <div className="flex h-full w-full flex-col overflow-hidden bg-white dark:bg-slate-950">
+      <div className={`flex h-full w-full flex-col overflow-hidden bg-white ${dark("dark:bg-slate-950")}`}>
         <div className="shrink-0">{header}</div>
         <div
           ref={scrollRef}
-          className="relative flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-900"
+          className={`relative flex-1 overflow-y-auto bg-slate-50 ${dark("dark:bg-slate-900")}`}
           // Clear of the home indicator, with momentum scrolling on iOS.
           style={{ paddingBottom: "env(safe-area-inset-bottom)", WebkitOverflowScrolling: "touch" }}
         >
@@ -209,11 +235,11 @@ export default function PhoneShell({ header, children, onRefresh, refreshing }) 
   // Desktop: the decorative phone.
   return (
     <div className="flex justify-center py-6">
-      <div className="scale-in relative w-[390px] max-w-full overflow-hidden rounded-[2.6rem] border-[10px] border-slate-900 bg-white shadow-2xl ring-1 ring-slate-900/5 dark:bg-slate-950" style={{ height: 820 }}>
+      <div className={`scale-in relative w-[390px] max-w-full overflow-hidden rounded-[2.6rem] border-[10px] border-slate-900 bg-white shadow-2xl ring-1 ring-slate-900/5 ${dark("dark:bg-slate-950")}`} style={{ height: 820 }}>
         <div className="absolute left-1/2 top-0 z-30 h-6 w-36 -translate-x-1/2 rounded-b-2xl bg-slate-900" />
         <div className="flex h-full flex-col">
           <div className="shrink-0">{header}</div>
-          <div ref={scrollRef} className="relative flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-900">
+          <div ref={scrollRef} className={`relative flex-1 overflow-y-auto bg-slate-50 ${dark("dark:bg-slate-900")}`}>
             <PullToRefresh scrollRef={scrollRef} onRefresh={effectiveOnRefresh}>
               {children}
             </PullToRefresh>

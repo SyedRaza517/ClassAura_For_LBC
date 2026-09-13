@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Bell, Info, CheckCircle2, AlertTriangle, XCircle, CheckCheck } from "lucide-react";
 import { Screen, Card, Empty, toneFromColour, toneVars } from "../ui";
-import { fmtDate } from "../utils";
+import { fmtDate, KNOWN_LINKS } from "../utils";
 
 // One tone + icon per Notification.type (notify.js's own default is "info"; the
 // other three are what routes/*.js actually sends — see the grep across
@@ -19,14 +19,8 @@ const NOTIF_TONE = {
 };
 const toneFor = (type) => NOTIF_TONE[type] || NOTIF_TONE.info;
 
-// Every screen key a notification's `link` can actually name — see the grep across
-// the trigger sites (studentQueries.js -> "query", studentReviews.js -> "reviews",
-// assessments.js -> "assessments", timetabling.js -> "timetable", referrals.js ->
-// "support", mitigations.js -> "mitigations"). Checked against an allowlist rather
-// than handed to setScreen unconditionally: `link` is a plain string column with no
-// foreign-key discipline behind it, and a future trigger that typos or repurposes it
-// must not be able to route this screen to a screen key that no longer exists.
-const KNOWN_LINKS = new Set(["query", "reviews", "assessments", "timetable", "support", "mitigations"]);
+// KNOWN_LINKS now lives in ../utils (moved so StudentApp.jsx's push:open listener can
+// share it) — see that file's own comment for why this screen no longer defines it.
 
 // "5m ago" / "3h ago" / "2d ago", falling back to a plain date beyond a week.
 //

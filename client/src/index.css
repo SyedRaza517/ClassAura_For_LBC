@@ -199,8 +199,20 @@
 }
 @media (prefers-color-scheme: dark) {
   /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
-     legible as "loading" on a white card, invisible as "loading" on a dark one. */
-  .skeleton {
+     legible as "loading" on a white card, invisible as "loading" on a dark one.
+     SCOPED to `.student-bg .skeleton` — final-review fix. `.skeleton` is a bare,
+     unnamespaced class StaffHub.jsx also paints on its own loading placeholders (two
+     dozen call sites), and this rule used to match every one of them unconditionally:
+     a member of staff whose OS/browser was set to `prefers-color-scheme: dark` got a
+     skeleton that suddenly painted itself in slate greys on StaffHub's own light
+     background — a shell that was never given a dark palette to sit inside (see
+     PhoneShell.jsx's own comment on the identical bug for its background colours).
+     `.student-bg` (declared above, StudentApp.jsx's own content wrapper) is the one
+     ancestor every student screen sits inside and no staff screen ever does, so
+     scoping the selector to it is the same fix as PhoneShell's `darkCapable` prop —
+     "only reachable from the student app" — expressed in CSS rather than a JS prop
+     because this rule has no component boundary to hang a prop on. */
+  .student-bg .skeleton {
     background: linear-gradient(100deg, #1e293b 30%, #334155 48%, #1e293b 66%);
     background-size: 220% 100%;
   }

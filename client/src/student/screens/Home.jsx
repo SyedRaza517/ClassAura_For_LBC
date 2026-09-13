@@ -41,15 +41,29 @@ export function Home({ user, attendance, results, queries, reviews, timetable, t
   // to be an inline 85/70 split invented just for this banner — a FOURTH scale next to
   // pctTone, gradeTone and progressTone, and the one the original survey found hardest
   // to spot because it lived nowhere near ui/tokens.js. It now reads straight off the
-  // ladder every other attendance figure on this app uses: the band's own label, plus a
-  // call to action chosen by RANK within the college's own list (best/second -> keep it
-  // up, worst/second-worst -> needs attention) rather than a percentage this file would
-  // otherwise have had to re-invent for a college that configures its own boundaries.
+  // ladder every other attendance figure on this app uses: a call to action chosen by
+  // RANK within the college's own list (best/second -> keep it up, worst/second-worst
+  // -> needs attention) rather than a percentage this file would otherwise have had to
+  // re-invent for a college that configures its own boundaries.
+  //
+  // `resolvedBand.label` DELIBERATELY DOES NOT APPEAR IN THIS SENTENCE — final-review
+  // fix. A band's label ("Risk Student", "High Risk", whatever the college has typed
+  // into Settings) is a staff-facing category-fact about the student, the same class
+  // of thing as the `emailTrigger` flag `GET /me/attendance-bands` already strips from
+  // the ladder this screen reads (see StudentApp.jsx's own comment on that endpoint):
+  // it tells a student they have been SORTED into a named risk category, not merely
+  // that their attendance is low, which is a harsher and more clinical fact than a
+  // welcome-screen banner should be breaking to them unprompted. The band's COLOUR
+  // (attTone, used below) and this rank-derived advisory sentence carry the same
+  // information a student actually needs to act on, without the staff label attached.
+  // The Attendance screen is deliberately left alone: it shows the label beside the
+  // number it describes, in a place a student went looking for detail rather than one
+  // that greets them with it.
   const bandList = Array.isArray(bands) && bands.length ? bands : DEFAULT_ATTENDANCE_BANDS;
   const resolvedBand = bandForPct(attPct, bandList);
   const bandIdx = resolvedBand ? bandList.indexOf(resolvedBand) : -1;
   const band = attPct == null || !resolvedBand ? null : {
-    t: `${resolvedBand.label}. ${bandIdx <= 1 ? "Keep it up." : bandIdx >= bandList.length - 2 ? "Your attendance needs attention." : "There's room to improve."}`,
+    t: bandIdx <= 1 ? "Keep it up." : bandIdx >= bandList.length - 2 ? "Your attendance needs attention." : "There's room to improve.",
   };
 
   // "Due next" — assessments still awaiting a mark, interleaved with classes in the

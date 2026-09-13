@@ -39,3 +39,10 @@ client.zip
 # Backfill proposals are per-database and contain student identifiers — they belong
 # in a scratch directory a person reads, never in version control.
 student-link-proposals-*.csv
+
+# Playwright visual-check output (see the "Visual check with Playwright" memory note) —
+# screenshots and result logs of a real, running app, written to a scratch folder at
+# the repo root by design so they are easy to find, but never meant to be committed.
+_e2e-shots/
+_e2e-*.json
+_e2e-*.ndjson

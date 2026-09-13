@@ -16,6 +16,7 @@ import {
 import { NAVY, NAVY_DARK, MAROON, alpha } from "../branding";
 import { DEFAULT_ATTENDANCE_BANDS } from "./ui/tokens";
 
+import { KNOWN_LINKS } from "./utils";
 import Home from "./screens/Home";
 import CheckInScreen, { anyCheckInWay } from "./screens/CheckIn";
 import AttendanceScreen from "./screens/Attendance";
@@ -180,6 +181,32 @@ export default function StudentApp({ user, logout }) {
     return () => window.removeEventListener("edtech:pending-qr", onScan);
   }, []);
 
+  // Tapping a push notification opens the screen it refers to — the `link` the
+  // server attached (notify.js's pushToStudentDevices carries the SAME `link` value
+  // the Notification row was created with). This is the seam the final review caught:
+  // auth.jsx has dispatched `window` CustomEvent("push:open", { detail: link }) since
+  // the push channel itself was built (auth.jsx:111, registerForPush's onOpen), but
+  // only StaffHub.jsx (line ~532) was ever listening for it — the student side of that
+  // channel and the inbox that gives `link` its meaning were built in the same wave by
+  // two different tasks, and neither one owned wiring the shell up to the event the
+  // other had already started firing. A student tapping a push before this fix landed
+  // on the same screen they had the app already open on, silently, with no error.
+  //
+  // KNOWN_LINKS (moved to utils.js for exactly this reuse) is the same allowlist
+  // Inbox.jsx's own onOpen checks before calling setScreen — a tapped push is not
+  // trusted any further than a tapped inbox row is, for the identical reason: `link`
+  // is a bare string column, not a foreign key, and a future trigger that typos it
+  // must fail closed (silently do nothing) rather than hand setScreen a key with no
+  // matching screen in the render below.
+  useEffect(() => {
+    const onOpen = (e) => {
+      const link = e.detail;
+      if (link && KNOWN_LINKS.has(link)) setScreen(link);
+    };
+    window.addEventListener("push:open", onOpen);
+    return () => window.removeEventListener("push:open", onOpen);
+  }, []);
+
   // Refetches JUST the inbox, separately from the big `load()` below.
   //
   // The bell's badge has to stay honest between the shell's own loads — a query
@@ -313,6 +340,10 @@ export default function StudentApp({ user, logout }) {
     <PhoneShell
       header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} unread={unread} />}
       onRefresh={load} refreshing={busy}
+      // The ONLY caller that passes this — see PhoneShell.jsx's own comment on the
+      // prop. StaffHub.jsx's call site is untouched, which is what keeps dark mode
+      // out of the staff handset shell now that this app's `dark:` classes are real.
+      darkCapable
     >
       <div className="flex min-h-full flex-col">
         {/* .student-bg (index.css) replaces an inline linear-gradient literal so dark

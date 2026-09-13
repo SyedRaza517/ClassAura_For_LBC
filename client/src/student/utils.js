@@ -9,6 +9,22 @@ export const fmtDate = (iso) => { if (!iso) return null; const [y, m, d] = iso.s
 
 export const unitOf = (mr) => mr.unit || mr.module || {};
 
+// Every screen key a notification's `link` can actually name — see the grep across
+// the trigger sites (studentQueries.js -> "query", studentReviews.js -> "reviews",
+// assessments.js -> "assessments", timetabling.js -> "timetable", referrals.js ->
+// "support", mitigations.js -> "mitigations"). Checked against an allowlist rather
+// than handed to setScreen unconditionally: `link` is a plain string column with no
+// foreign-key discipline behind it, and a future trigger that typos or repurposes it
+// must not be able to route this screen to a screen key that no longer exists.
+//
+// MOVED HERE from Inbox.jsx (originally the only reader) so StudentApp.jsx's own
+// `push:open` listener can share the same allowlist — a tapped push notification
+// carries exactly the same `link` values a Notification row does (notify.js's
+// `pushToStudentDevices` sends `data: { link }` straight off the row it just wrote),
+// so validating a tapped push against a SECOND, hand-maintained list would have been
+// the two-copies-drift bug this file's own house style warns against elsewhere.
+export const KNOWN_LINKS = new Set(["query", "reviews", "assessments", "timetable", "support", "mitigations"]);
+
 // "Thursday 11 September" — for the one place a date is a heading rather than a cell.
 // Built from the date STRING, never from a Date the browser re-zones: the college's day is
 // already decided by the server and re-deriving it locally is how a screen shows yesterday

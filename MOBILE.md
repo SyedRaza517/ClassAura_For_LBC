@@ -135,7 +135,15 @@ a referral they were told about changes status. **The lock-screen title now diff
 audience** (`server/src/notify.js#titleFor`): the college's own display name where
 branded, else `"Staff Hub"` for a staff recipient and `"ClassAura"` for a student one —
 never the other product's name, since a student has never opened the staff app and
-should not see it named on their own lock screen.
+should not see it named on their own lock screen. **This sentence describes titleFor
+correctly and described the shipped BEHAVIOUR incorrectly until a final-review fix**:
+the student fallback read from `branding.get().displayName`, which bakes its own
+`"Staff Hub"` default in before returning anything — so an unbranded college's students
+actually saw `"Staff Hub"` on their lock screen, not `"ClassAura"`, the whole time this
+sentence said otherwise. `pushToStudentDevices` now reads the new
+`branding.rawDisplayName()` instead (the same resolution without that one fallback
+baked in), which is what makes this paragraph true rather than aspirational — see
+`branding.js`'s and `notify.js`'s own comments on `rawDisplayName`/`titleFor`.
 
 ### Turning it on
 
@@ -223,8 +231,20 @@ Covered by `scripts/smoke-push.mjs` (24 checks).
 
 ## Student app native chrome (status bar, pull-to-refresh)
 
-Added 12 Sep 2026, and scoped to `client/src/student/StudentApp.jsx` only — `PhoneShell.jsx`
-is shared with the staff app, so neither change reaches it.
+Added 12 Sep 2026, and scoped to `client/src/student/StudentApp.jsx` only for the status
+bar. **This used to say "and `PhoneShell.jsx` is shared with the staff app, so neither
+change reaches it" — that was already half wrong the day it was written (the
+pull-to-refresh bullet below says outright that `PhoneShell` grows new props) and the
+other half went wrong shortly after: the dark-mode work landed in the same file with
+its `dark:` classes unconditional, which DID reach the staff app, invisibly, for any
+member of staff whose OS was set to `prefers-color-scheme: dark`.** The final review
+caught it — see `PhoneShell.jsx`'s own comment on the `darkCapable` prop and
+`index.css`'s comment on the matching `.student-bg .skeleton` scope. The honest version:
+`PhoneShell.jsx` IS touched by this work (an optional `onRefresh`/`refreshing` prop pair
+for pull-to-refresh, and dark-mode classes now gated behind an optional `darkCapable`
+prop), and StaffHub's own call site stays unaffected only because it never passes
+`darkCapable` and never passed `onRefresh` — opt-in props on a shared component, not an
+untouched file.
 
 - **Status bar overlay.** `capacitor.config.json` sets `StatusBar.overlaysWebView: true`
   (the `backgroundColor` key was dropped alongside it — the plugin does nothing with it
