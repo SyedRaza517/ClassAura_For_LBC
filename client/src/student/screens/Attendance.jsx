@@ -1,8 +1,22 @@
-import { CalendarCheck } from "lucide-react";
-import { Screen, LoadingScreen, ErrBox, SectionTitle, Card, Ring, StatusBar, Empty } from "../ui";
+import { CalendarCheck, Flame, Award, CalendarDays } from "lucide-react";
+import { Screen, LoadingScreen, ErrBox, SectionTitle, Card, Ring, StatusBar, Empty, toneFromColour } from "../ui";
 import { ACCENT, attendanceTone, ATT, MOTION_MS, toneVars } from "../ui/tokens";
 import { fmtPct, fmtDate, unitOf } from "../utils";
 import { NAVY, NAVY_DARK } from "../../branding";
+
+// The six badges GET /me/streaks can hand back (studentStreaks.js's own module
+// header names all six and the exact rule each one fires on). Worded here in plain
+// language for a student who has never seen the words "trailing streak" or "closed
+// ISO week" and never needs to — `desc` is what shows while a badge is UNEARNED; the
+// server's own `earnedOn` date takes over once it is.
+const BADGES = [
+  { key: "streak5", label: "5-day streak", desc: "Attend 5 teaching days in a row.", Icon: Flame },
+  { key: "streak10", label: "10-day streak", desc: "Attend 10 teaching days in a row.", Icon: Flame },
+  { key: "streak25", label: "25-day streak", desc: "Attend 25 teaching days in a row.", Icon: Flame },
+  { key: "perfectWeek", label: "Perfect week", desc: "A full week with no absences.", Icon: CalendarDays },
+  { key: "perfectMonth", label: "Perfect month", desc: "A full month with no absences.", Icon: CalendarCheck },
+  { key: "perfectUnit", label: "Perfect unit", desc: "Fully attend one of your units.", Icon: Award },
+];
 
 function UnitAtt({ mr, ended, bands }) {
   const s = mr.summary || {}; const t = attendanceTone(s.pct, bands); const u = unitOf(mr);
@@ -27,7 +41,7 @@ function UnitAtt({ mr, ended, bands }) {
   );
 }
 
-export function AttendanceScreen({ attendance, busy, err, bands }) {
+export function AttendanceScreen({ attendance, busy, err, bands, streaks }) {
   // The screen's OWN data decides; a failure elsewhere shows as text in its place.
   if (!attendance) return busy ? <LoadingScreen /> : <Screen><ErrBox>{err || "Could not load attendance."}</ErrBox></Screen>;
   const cur = attendance.current || {};
@@ -71,6 +85,36 @@ export function AttendanceScreen({ attendance, busy, err, bands }) {
         </div>
         <p className="mt-2.5 text-[10px] leading-relaxed text-slate-400 dark:text-slate-500">Present scores 2, Late and Excused score 1, Absent scores 0. Only sessions that have been marked are counted.</p>
       </div>
+
+      {/* Badges — the full inventory, earned and not. Home's own streak card is the
+          GLANCE (current + best); this is the RECORD, which is why it lives here
+          rather than being duplicated onto Home. Rendered only once /me/streaks has
+          actually answered (streaks starts null, never []) — an unearned badge is a
+          real thing to show, an unknown one is not. */}
+      {streaks && (
+        <>
+          <SectionTitle colour={ACCENT.attendance}>Badges</SectionTitle>
+          <div className="grid grid-cols-2 gap-2.5">
+            {BADGES.map((b) => {
+              const earned = (streaks.badges || []).find((x) => x.key === b.key);
+              const tone = toneFromColour(ACCENT.attendance);
+              return (
+                <div key={b.key} className={`rounded-2xl p-3.5 text-center ring-1 ${earned ? "tone-soft" : "bg-slate-50 ring-slate-200/70 dark:bg-slate-700/30 dark:ring-slate-700/60"}`} style={earned ? toneVars(tone) : undefined}>
+                  {/* Unearned is GREYED, never hidden — a badge you cannot see is not
+                      a goal, it is a secret. Opacity, not a different icon set: the
+                      same glyph earned and not is what makes "not yet" read as a
+                      step ahead rather than a different, lesser feature. */}
+                  <span className={`mx-auto flex h-9 w-9 items-center justify-center rounded-xl ${earned ? "tone-soft" : "bg-slate-200/70 dark:bg-slate-600/40"}`} style={earned ? toneVars(tone) : undefined}>
+                    <b.Icon size={16} className={earned ? undefined : "text-slate-400 dark:text-slate-500"} />
+                  </span>
+                  <p className={`mt-2 text-[11.5px] font-extrabold ${earned ? "tone-text" : "text-slate-400 dark:text-slate-500"}`} style={earned ? toneVars(tone) : undefined}>{b.label}</p>
+                  <p className="mt-0.5 text-[10px] leading-snug text-slate-400 dark:text-slate-500">{earned ? `Earned ${fmtDate(earned.earnedOn)}` : b.desc}</p>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

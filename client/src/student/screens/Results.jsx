@@ -1,5 +1,5 @@
 import { Award } from "lucide-react";
-import { Screen, LoadingScreen, ErrBox, SectionTitle, Card, Ring, Empty } from "../ui";
+import { Screen, LoadingScreen, ErrBox, SectionTitle, Card, Ring, Empty, toneFromColour } from "../ui";
 import { ACCENT, gradeTone, MOTION_MS, toneVars } from "../ui/tokens";
 import { fmtDate } from "../utils";
 import { NAVY, NAVY_DARK } from "../../branding";
@@ -20,7 +20,14 @@ export function ResultsScreen({ results, busy, err }) {
     <div className="space-y-3.5 px-4 pb-8 pt-5">
       <div className="tone-panel fade-up rounded-3xl p-5 shadow-card-lg ring-1" style={toneVars(avgTone)}>
         <div className="flex flex-col items-center">
-          <Ring pct={results.averagePct ?? null} label="average" tone={avgTone} />
+          {/* "weighted average" only when it actually IS one — averageIsWeighted is
+              true only when at least one GRADED item carries a real, college-set
+              weight (see /me/assessments's own comment: 0/missing weight is the
+              equal-weighting fallback wearing the same field name, never a true
+              weight of zero). A college that has set no weights at all gets the
+              plain "average" label it always has, rather than a word implying a
+              maths it isn't doing. */}
+          <Ring pct={results.averagePct ?? null} label={results.averageIsWeighted ? "weighted average" : "average"} tone={avgTone} />
           <span className="tone-soft mt-2 rounded-xl px-3 py-1 text-sm font-extrabold ring-1" style={toneVars(avgTone)}>
             {results.averageGrade || "Not graded yet"}
           </span>
@@ -48,7 +55,27 @@ export function ResultsScreen({ results, busy, err }) {
               <div className="flex items-start gap-2.5">
                 <span className="mt-0.5 flex h-8 w-12 shrink-0 items-center justify-center rounded-xl text-[10px] font-extrabold text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>{(a.unitCode || a.moduleCode || "?").slice(0, 5)}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="break-words text-[13px] font-extrabold text-slate-700 dark:text-slate-200">{a.title}</p>
+                  <p className="flex flex-wrap items-center gap-1.5 break-words text-[13px] font-extrabold text-slate-700 dark:text-slate-200">
+                    {a.title}
+                    {/* HIDDEN AT 1% AND AT "NOT SET", judged rather than specified.
+                        Assessment.weight is an Int that DEFAULTS TO 0 for "the
+                        college has not set one" (schema.prisma), so 0 is never a
+                        real 0% weighting — it is silence, and printing "0% weight"
+                        would read as "this counts for nothing", which is false (it
+                        falls back to equal weighting in the average, per
+                        averageIsWeighted's own comment). A weight of exactly 1 is
+                        kept out for the same reason on the other end: weights are
+                        college-set percentages that are meant to describe a real
+                        share of the unit (and typically sum to 100 across it), and
+                        "1%" is far more likely a leftover default from an import
+                        than a college's genuine choice — showing it would read as a
+                        real, deliberately tiny weighting when it almost certainly
+                        is not. Any other value, including small genuine ones like
+                        5%, is shown as typed. */}
+                    {a.weight != null && a.weight !== 0 && a.weight !== 1 && (
+                      <span className="tone-soft rounded-full px-1.5 py-0.5 text-[9.5px] font-bold" style={toneVars(toneFromColour(ACCENT.results))}>{a.weight}% weight</span>
+                    )}
+                  </p>
                   <p className="truncate text-[11px] text-slate-400 dark:text-slate-500">{a.unitName || a.moduleName} · {a.type}{a.dueDate ? ` · due ${fmtDate(a.dueDate)}` : ""}</p>
                 </div>
                 {done
