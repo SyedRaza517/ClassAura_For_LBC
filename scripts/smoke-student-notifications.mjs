@@ -59,6 +59,15 @@ const SEED_PASSWORD = process.env.SEED_PASSWORD || "test-seed-password-2026";
 const CREDENTIALS_KEY = randomBytes(32).toString("base64");
 const JWT_SECRET = "student-notif-smoke-secret-not-for-production";
 
+// London wall-clock date arithmetic, matching smoke-teams-attendance.mjs's own helper —
+// timetabling.js's 48-hour gate (withinFortyEightHours) is computed from clock.js's
+// localDate()/localTime(), which read Europe/London, not the host's raw UTC clock. A
+// plain `new Date(Date.now() + n*86400000).toISOString()` can name the WRONG calendar
+// day near a UTC midnight that London has not yet reached (or already has), so "tomorrow"
+// is asked for the same way the server would answer it.
+const ZONE = process.env.APP_TIMEZONE || "Europe/London";
+const isoOffset = (days) => new Date(Date.now() + days * 86400000).toLocaleDateString("en-CA", { timeZone: ZONE });
+
 const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
 let pass = 0, fail = 0;
@@ -110,7 +119,12 @@ const B_EMAIL = `snotif-b-${RUN}@x.ac.uk`;
 const A_PW = "student-notif-suite-2026";
 const B_PW = "student-notif-suite-2026";
 
-const made = { students: [], course: null, unit: null, enrolments: [], assessments: [], queries: [], devices: [] };
+const made = {
+  students: [], course: null, unit: null, enrolments: [], assessments: [], queries: [], devices: [],
+  // The timetable-change fan-out fixture (a separate course/unit/cohort from the one
+  // above, so the two scenarios' cleanups can never collide over a shared row).
+  ttSessions: [], ttEvents: [], ttEnrolments: [], ttCohort: null, ttUnit: null, ttCourse: null,
+};
 
 async function cleanup() {
   try {
@@ -121,6 +135,13 @@ async function cleanup() {
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
     if (made.unit) await db.unit.delete({ where: { id: made.unit } }).catch(() => {});
     if (made.course) await db.course.delete({ where: { id: made.course } }).catch(() => {});
+    // Sessions before the event they belong to; the event before the unit/cohort/course.
+    for (const id of made.ttSessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
+    for (const id of made.ttEvents) await db.timetableEvent.delete({ where: { id } }).catch(() => {});
+    for (const id of made.ttEnrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
+    if (made.ttUnit) await db.unit.delete({ where: { id: made.ttUnit } }).catch(() => {});
+    if (made.ttCohort) await db.cohort.delete({ where: { id: made.ttCohort } }).catch(() => {});
+    if (made.ttCourse) await db.course.delete({ where: { id: made.ttCourse } }).catch(() => {});
     // Notification.studentId cascades with the student anyway; deleting the student
     // is enough, and is done LAST so every assertion above has a row to read.
     for (const id of made.students) await db.student.delete({ where: { id } }).catch(() => {});
@@ -340,6 +361,113 @@ try {
   await settle();
   const c4 = await db.notification.count({ where: { studentId: a.id } });
   check("clearing a mark to null is NOT treated as a release", c4 === c3, `still ${c4}`);
+
+  /* ====================================================================== */
+  console.log("\n--- trigger: a moved class pages its roster EXACTLY ONCE per student ---");
+  /* ====================================================================== */
+
+  // THE ONE TRIGGER WHOSE SHAPE DIFFERS FROM EVERY OTHER ONE ABOVE. Every other
+  // notifyStudent call in this codebase fires for ONE student per event (a query
+  // answered, a mark released). This one is a loop over a ROSTER, built by unioning
+  // rosterForSession() across every HndSession row an event owns — and
+  // timetabling.js's own comment on that loop says why a plain per-session fan-out
+  // would double-notify: "a merged class... has one register per group, and a
+  // student on both would otherwise be paged twice for the one class that moved."
+  //
+  // A "merged class" is ordinarily two cohorts sharing a room and time. Reproducing
+  // that literally is not possible with one test student, because Student.cohortId
+  // is a single column — nobody can BE in two cohorts at once. So this fixture
+  // reaches the identical fan-out shape the way registers.js's own file header
+  // describes it actually happening on one hand-created module: ONE event, TWO
+  // HndSession rows sharing it — one grouped (cohortId set, roster = the group), one
+  // UNGROUPED (cohortId null, roster = the unit's whole enrolment, per
+  // rosterForSession's own early return) — with the test student reachable through
+  // BOTH: they are a member of the group AND separately enrolled on the same unit.
+  // rosterForSession bounds a grouped register strictly to its own cohort (roster.js's
+  // own comment: "the roster is bounded by the cohort in every branch, deliberately
+  // and without exception"), so this is the one legitimate way for a single student
+  // to appear on two different registers of the same event.
+  const ttCourse = await db.course.create({ data: { name: `Notif Suite TT Course ${RUN}` } });
+  made.ttCourse = ttCourse.id;
+  // No Moodle ids — enrolmentIsAuthoritativeFor() reads false, so the grouped
+  // register's roster is the WHOLE cohort (deriveRoster's "cohort-over-partial-
+  // enrolment" branch) rather than cohort ∩ enrolment, keeping this fixture's roster
+  // math simple: cohort membership alone decides register 1, unit enrolment alone
+  // decides register 2.
+  const ttUnit = await db.unit.create({ data: { code: `NTT${RUN}`.slice(0, 12), name: `Notif Suite TT Unit ${RUN}`, courseId: ttCourse.id } });
+  made.ttUnit = ttUnit.id;
+  const ttCohort = await db.cohort.create({ data: { courseId: ttCourse.id, name: `Notif Suite TT Cohort ${RUN}` } });
+  made.ttCohort = ttCohort.id;
+
+  // onBoth: in the cohort (register 1) AND enrolled on the unit (register 2) — the
+  // one student this whole section exists to prove gets paged once, not twice.
+  const onBoth = await db.student.create({ data: {
+    firstName: "TTNotif", lastName: `OnBoth${RUN}`, studentRef: `TTB${RUN}`, email: `ttnotif-onboth-${RUN}@x.ac.uk`,
+    initials: "OB", colour: "#1a73e8", cohortId: ttCohort.id,
+  } });
+  made.students.push(onBoth.id);
+  const ttEnrolOnBoth = await db.enrolment.create({ data: { studentId: onBoth.id, unitId: ttUnit.id } });
+  made.ttEnrolments.push(ttEnrolOnBoth.id);
+
+  // onNeither: no cohort, no enrolment on this unit at all — the cheap negative this
+  // section also owes an answer to.
+  const onNeither = await db.student.create({ data: {
+    firstName: "TTNotif", lastName: `OnNeither${RUN}`, studentRef: `TTN${RUN}`, email: `ttnotif-onneither-${RUN}@x.ac.uk`,
+    initials: "ON", colour: "#1a73e8",
+  } });
+  made.students.push(onNeither.id);
+
+  // Dated "tomorrow" (London wall-clock, via isoOffset) rather than a fixed calendar
+  // date, so this fixture is inside the route's own 48-hour gate (withinFortyEightHours)
+  // on whatever day the suite runs, rather than only on the day this file was written.
+  const ttDate = isoOffset(1);
+  const ttEvent = await db.timetableEvent.create({ data: {
+    unitId: ttUnit.id, courseId: ttCourse.id, date: ttDate, startTime: "09:00", endTime: "10:00",
+    title: `Notif Suite TT Class ${RUN}`, published: true, publishedAt: new Date(),
+  } });
+  made.ttEvents.push(ttEvent.id);
+
+  // The two registers, built directly rather than through syncEventRegisters — that
+  // function only ever produces ONE null-cohort register per event when it has NO
+  // groups at all, never a grouped register alongside an ungrouped one on the same
+  // event. This suite is testing what the FAN-OUT does with whatever HndSession rows
+  // an event owns, not how they normally come to exist, so writing them directly
+  // (the same idiom smoke-teams-attendance.mjs and smoke-studentportal.mjs already
+  // use for HndSession fixtures) is the honest way to build this shape.
+  const ttSessionGrouped = await db.hndSession.create({ data: {
+    unitId: ttUnit.id, timetableEventId: ttEvent.id, cohortId: ttCohort.id,
+    date: ttDate, startTime: "09:00", endTime: "10:00", description: `Notif Suite TT Class ${RUN} (group)`,
+  } });
+  made.ttSessions.push(ttSessionGrouped.id);
+  const ttSessionUngrouped = await db.hndSession.create({ data: {
+    unitId: ttUnit.id, timetableEventId: ttEvent.id, cohortId: null,
+    date: ttDate, startTime: "09:00", endTime: "10:00", description: `Notif Suite TT Class ${RUN} (ungrouped)`,
+  } });
+  made.ttSessions.push(ttSessionUngrouped.id);
+
+  const beforeOnBoth = await db.notification.count({ where: { studentId: onBoth.id } });
+  const beforeOnNeither = await db.notification.count({ where: { studentId: onNeither.id } });
+
+  // MOVE IT — a time change only (same date), which is enough on its own to set
+  // `moved` and, since the class is already tomorrow, keeps both the old and the new
+  // time inside the 48-hour window regardless of which side of it the route checks.
+  // Body keys are `start`/`end` (parseEvent's own field names), not startTime/endTime.
+  const movedResp = await call(`/timetabling/events/${ttEvent.id}`, {
+    method: "PUT", token: adminToken, body: { start: "13:00", end: "14:00" },
+  });
+  check("staff can move the class", movedResp.status === 200, `HTTP ${movedResp.status} ${JSON.stringify(movedResp.data).slice(0, 200)}`);
+  await settle();
+
+  const afterOnBoth = await db.notification.count({ where: { studentId: onBoth.id } });
+  const afterOnNeither = await db.notification.count({ where: { studentId: onNeither.id } });
+  check("a student on BOTH registers of the moved class is paged EXACTLY ONCE, not twice",
+    afterOnBoth === beforeOnBoth + 1, `before=${beforeOnBoth} after=${afterOnBoth}`);
+  check("a student on NEITHER register receives nothing",
+    afterOnNeither === beforeOnNeither, `before=${beforeOnNeither} after=${afterOnNeither}`);
+
+  const ttNotif = await db.notification.findFirst({ where: { studentId: onBoth.id }, orderBy: { createdAt: "desc" } });
+  check("...and it links back to the timetable, naming what changed",
+    ttNotif?.link === "timetable" && /changed/i.test(ttNotif?.message || ""), JSON.stringify(ttNotif));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;
