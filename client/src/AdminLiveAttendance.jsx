@@ -415,9 +415,25 @@ function Banner({ tone, Icon, children }) {
  * one is about the student and the other is about the class -- and a screen that paints
  * them alike is the reason somebody chases the wrong person.
  */
-function StudentHistory({ sessionId, studentId, onClose }) {
+function StudentHistory({ sessionId, studentId, row = null, onClose }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  // The second tab: this student's conduct history. Fetched LAZILY on first switch —
+  // the common gesture is a glance at attendance and close, and the register polls
+  // behind this sheet, so an eager second request per open would be paid mostly for
+  // nothing. "denied" is a real state, not an error: the conduct read is gated on
+  // teaching the student, and an attendance-page admin who teaches nobody is entitled
+  // to this sheet but not to that tab's content — the tab says so instead of erroring.
+  const [tab, setTab] = useState("attendance");
+  const [conduct, setConduct] = useState(null); // null | rows[] | "denied" | "failed"
+  const openConduct = () => {
+    setTab("conduct");
+    if (conduct === null) {
+      api.conductEventsFor(studentId)
+        .then((r) => setConduct(r?.events || []))
+        .catch((e) => setConduct(e?.status === 403 ? "denied" : "failed"));
+    }
+  };
   useEffect(() => {
     let alive = true;
     setData(null); setErr("");
@@ -447,7 +463,13 @@ function StudentHistory({ sessionId, studentId, onClose }) {
               style={{ background: s.colour || "#94a3b8" }}>{s.initials}</span>
           )}
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[15px] font-extrabold">{s?.name || "Attendance"}</p>
+            <p className="flex items-center gap-1.5">
+              <span className="truncate text-[15px] font-extrabold">{s?.name || "Attendance"}</span>
+              {/* From the roster row the sheet was opened from — the same figures the
+                  list already showed, so no second fetch and no way to disagree with it. */}
+              {row?.risk && <RiskChip risk={row.risk} />}
+              {row && <ConductChip points={row.conductPoints} />}
+            </p>
             <p className="truncate text-[12px] text-white/80">
               {s?.studentRef}{data?.unit ? ` · ${data.unit.code} ${data.unit.name}` : ""}
             </p>
@@ -479,7 +501,53 @@ function StudentHistory({ sessionId, studentId, onClose }) {
               </span>
             </div>
 
-            <div className="max-h-[55vh] overflow-y-auto">
+            <div className="flex gap-1 border-b border-slate-100 px-4 pt-2">
+              {[["attendance", "Attendance"], ["conduct", "Conduct"]].map(([k, label]) => (
+                <button key={k} onClick={() => (k === "conduct" ? openConduct() : setTab(k))}
+                  aria-pressed={tab === k}
+                  className={`press rounded-t-lg px-3 py-1.5 text-[12px] font-bold transition ${
+                    tab === k ? "bg-slate-100 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tab === "conduct" && (
+              <div className="max-h-[55vh] overflow-y-auto p-4">
+                {conduct === null && <div className="flex justify-center py-8"><Loader2 className="animate-spin text-slate-300" size={20} /></div>}
+                {conduct === "denied" && (
+                  <p className="py-6 text-center text-xs text-slate-400">Conduct history is visible to this student's own lecturers.</p>
+                )}
+                {conduct === "failed" && (
+                  <p className="py-6 text-center text-xs text-rose-500">Could not load the conduct history.</p>
+                )}
+                {Array.isArray(conduct) && !conduct.length && (
+                  <p className="py-6 text-center text-xs text-slate-400">Nothing recorded — no merits, no concerns.</p>
+                )}
+                {Array.isArray(conduct) && conduct.length > 0 && (
+                  <div className="space-y-2">
+                    {conduct.map((e) => (
+                      <div key={e.id} className={`flex items-start gap-2.5 rounded-xl p-3 ring-1 ${
+                        e.tone === "positive" ? "bg-emerald-50/60 ring-emerald-100" : "bg-rose-50/60 ring-rose-100"}`}>
+                        <span className={`mt-0.5 shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums ring-1 ${
+                          e.tone === "positive" ? "text-emerald-700 ring-emerald-200" : "text-rose-700 ring-rose-200"}`}>
+                          {e.points > 0 ? `+${e.points}` : e.points}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-bold text-slate-700">{e.label}</p>
+                          {e.note && <p className="mt-0.5 text-[12px] text-slate-500">{e.note}</p>}
+                          <p className="mt-0.5 text-[11px] text-slate-400">
+                            {e.staffName || "—"} · {new Date(e.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className={tab === "attendance" ? "max-h-[55vh] overflow-y-auto" : "hidden"}>
               <table className="w-full border-collapse text-left">
                 <thead className="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                   <tr className="shadow-[inset_0_-1px_0_0_#e2e8f0]">
@@ -967,7 +1035,9 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
             onClose={() => setAwardFor(null)} onLogged={load} />
         )}
         {historyFor && (
-          <StudentHistory sessionId={sessionId} studentId={historyFor} onClose={() => setHistoryFor(null)} />
+          <StudentHistory sessionId={sessionId} studentId={historyFor}
+            row={rows.find((r) => r.student.id === historyFor) || null}
+            onClose={() => setHistoryFor(null)} />
         )}
 
         {counts.notMarked > 0 && data?.canClose !== false && (
