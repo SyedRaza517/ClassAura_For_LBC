@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import Capacitor
 
 @UIApplicationMain
@@ -9,6 +10,33 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
         return true
+    }
+
+    // Stop the WKWebView's own rubber-band bounce (13 Sep 2026). A hard downward drag
+    // rubber-banded the ENTIRE page — header included — and the strip dragged into
+    // view above it is painted by the webview's native backing (the static white from
+    // capacitor.config.json's backgroundColor), which no CSS can theme: in dark mode
+    // that is a white flash above a dark screen, the exact defect a device screenshot
+    // showed. The CSS half of the defence (overscroll-behavior-y: none on <body>,
+    // index.css) does not reach this layer — the bounce belongs to the webview's
+    // UIScrollView, not to the document.
+    //
+    // Turning bounces off loses nothing the app relies on: pull-to-refresh here is a
+    // hand-built gesture on the app's INNER scrollport (PhoneShell.jsx), which scrolls
+    // and refreshes exactly as before — only the outer shell stops moving, which is
+    // how a native app's chrome behaves.
+    //
+    // Done here in the app delegate, rather than in a CAPBridgeViewController
+    // subclass, on purpose: a subclass must also be added to the Xcode project file
+    // and wired into Main.storyboard, and a hand-edited project.pbxproj is the kind
+    // of change that silently breaks the next `npx cap sync`. applicationDidBecomeActive
+    // fires after the storyboard's bridge controller has loaded its webview, and
+    // re-applying an already-false flag on every foreground is free.
+    private func disableWebViewBounce() {
+        guard let bridgeVC = window?.rootViewController as? CAPBridgeViewController,
+              let scrollView = bridgeVC.webView?.scrollView else { return }
+        scrollView.bounces = false
+        scrollView.alwaysBounceVertical = false
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -27,6 +55,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        disableWebViewBounce()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

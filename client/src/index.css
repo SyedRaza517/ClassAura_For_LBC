@@ -131,9 +131,13 @@
      classes are the alternative: the calling component sets `--tone`/`--tone-*` as
      inline CSS custom properties (student/ui/tokens.js#toneFromColour computes both
      the light and dark values), and this stylesheet — not JavaScript — decides which
-     pair applies, via the same prefers-color-scheme media query darkMode:"media"
-     compiles `dark:` into. One rule, everywhere a runtime colour is drawn, instead of
-     each screen re-deciding how to keep its own hex legible on a dark card. */
+     pair applies, via the same `.dark` root class darkMode:"class" compiles `dark:`
+     into (this used to say "the same prefers-color-scheme media query" — the 13 Sep
+     2026 appearance toggle moved the whole scheme decision onto the class, and these
+     rules moved with it or the tones would have kept following the phone while every
+     dark: utility on the same screen followed the toggle). One rule, everywhere a
+     runtime colour is drawn, instead of each screen re-deciding how to keep its own
+     hex legible on a dark card. */
   .tone-soft {
     background: var(--tone-bg);
     color: var(--tone-text);
@@ -155,21 +159,19 @@
      stylesheet does not otherwise control (Ring's headline number, drawn over
      whatever panel the caller placed it on). */
   .tone-text { color: var(--tone-text); }
-  @media (prefers-color-scheme: dark) {
-    .tone-soft {
-      background: var(--tone-bg-dark, var(--tone-bg));
-      color: var(--tone-text-dark, var(--tone-text));
-      --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
-    }
-    .tone-panel {
-      background: var(--tone-panel-bg-dark, var(--tone-panel-bg));
-      color: var(--tone-text-dark, var(--tone-text));
-      --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
-    }
-    .tone-text { color: var(--tone-text-dark, var(--tone-text)); }
-    /* A solid fill keeps its own colour in dark mode — it is not sitting on the card
-       surface the AA nudge above was computed against, so nothing needs to change. */
+  .dark .tone-soft {
+    background: var(--tone-bg-dark, var(--tone-bg));
+    color: var(--tone-text-dark, var(--tone-text));
+    --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
   }
+  .dark .tone-panel {
+    background: var(--tone-panel-bg-dark, var(--tone-panel-bg));
+    color: var(--tone-text-dark, var(--tone-text));
+    --tw-ring-color: var(--tone-ring-dark, var(--tone-ring));
+  }
+  .dark .tone-text { color: var(--tone-text-dark, var(--tone-text)); }
+  /* A solid fill keeps its own colour in dark mode — it is not sitting on the card
+     surface the AA nudge above was computed against, so nothing needs to change. */
 }
 
 /* Respect the OS setting: anyone who asks for less motion gets none of it. */
@@ -193,7 +195,11 @@
    media query. Getting this backwards (the unconditional rule AFTER the dark one) is
    exactly the bug the Task 6 AA spot-check caught: the media query matched, the
    Tailwind `dark:` classes on the very same screen switched correctly, and this one
-   rule silently kept painting the light gradient under a dark card the whole time. */
+   rule silently kept painting the light gradient under a dark card the whole time.
+   (Since the 13 Sep 2026 move to `.dark`-scoped overrides the dark rule also outranks
+   this one on specificity, but the ordering is kept correct anyway — a future edit
+   that flattens a selector should not be one specificity point away from reviving
+   the bug.) */
 .student-bg {
   /* Pure white since 13 Sep 2026, at the user's request — this was a pale blue-grey
      gradient (#f6f8fc → #eef2f9 → #f6f8fc) and read as dull next to the white cards.
@@ -205,42 +211,47 @@
 /* The PAGE behind the student app, theme-correct (13 Sep 2026). A device screenshot
    showed a white band above the header in DARK mode: on a phone, the region behind
    and around the app's 100dvh root — the status-bar strip under overlaysWebView,
-   any inset the layout maths misses — is painted by the BODY, and the body's
-   browser-default background is white regardless of scheme. Scoped with :has() to
-   sessions that actually render the student app, so the staff app's body (which
-   paints its own full-viewport backgrounds and has no dark theme) is untouched. */
+   any inset the layout maths misses, and the strip a native over-scroll bounce drags
+   into view above the header — is painted by the BODY (and, where the body's paint
+   runs out, the HTML canvas behind it, which is why both are set: the canvas
+   background is what WebKit extends into the rubber-band region). Both defaults are
+   white regardless of scheme. Scoped with :has() to sessions that actually render
+   the student app, so the staff app's body (which paints its own full-viewport
+   backgrounds and has no dark theme) is untouched. Dark is `.dark`-scoped rather
+   than the prefers-color-scheme media query it launched with — the appearance
+   toggle (student/theme.js) owns the scheme now. */
+html:has(.student-bg),
 body:has(.student-bg) {
   background: #ffffff;
 }
-@media (prefers-color-scheme: dark) {
-  body:has(.student-bg) {
-    background: #0b1220;
-  }
+html.dark:has(.student-bg),
+.dark body:has(.student-bg) {
+  background: #0b1220;
 }
-@media (prefers-color-scheme: dark) {
-  /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
-     legible as "loading" on a white card, invisible as "loading" on a dark one.
-     SCOPED to `.student-bg .skeleton` — final-review fix. `.skeleton` is a bare,
-     unnamespaced class StaffHub.jsx also paints on its own loading placeholders (two
-     dozen call sites), and this rule used to match every one of them unconditionally:
-     a member of staff whose OS/browser was set to `prefers-color-scheme: dark` got a
-     skeleton that suddenly painted itself in slate greys on StaffHub's own light
-     background — a shell that was never given a dark palette to sit inside (see
-     PhoneShell.jsx's own comment on the identical bug for its background colours).
-     `.student-bg` (declared above, StudentApp.jsx's own content wrapper) is the one
-     ancestor every student screen sits inside and no staff screen ever does, so
-     scoping the selector to it is the same fix as PhoneShell's `darkCapable` prop —
-     "only reachable from the student app" — expressed in CSS rather than a JS prop
-     because this rule has no component boundary to hang a prop on. */
-  .student-bg .skeleton {
-    background: linear-gradient(100deg, #1e293b 30%, #334155 48%, #1e293b 66%);
-    background-size: 220% 100%;
-  }
-  /* A pale blue-grey wash in light mode reads as a smudge on a dark phone, so dark
-     mode gets its own deep slate wash instead of the same three stops darkened. */
-  .student-bg {
-    background: linear-gradient(180deg, #0b1220 0%, #0f172a 60%, #0b1220 100%);
-  }
+/* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
+   legible as "loading" on a white card, invisible as "loading" on a dark one.
+   SCOPED to `.student-bg .skeleton` — final-review fix. `.skeleton` is a bare,
+   unnamespaced class StaffHub.jsx also paints on its own loading placeholders (two
+   dozen call sites), and this rule used to match every one of them unconditionally:
+   a member of staff whose OS/browser was set to `prefers-color-scheme: dark` got a
+   skeleton that suddenly painted itself in slate greys on StaffHub's own light
+   background — a shell that was never given a dark palette to sit inside (see
+   PhoneShell.jsx's own comment on the identical bug for its background colours).
+   `.student-bg` (declared above, StudentApp.jsx's own content wrapper) is the one
+   ancestor every student screen sits inside and no staff screen ever does, so
+   scoping the selector to it is the same fix as PhoneShell's `darkCapable` prop —
+   "only reachable from the student app" — expressed in CSS rather than a JS prop
+   because this rule has no component boundary to hang a prop on. (The staff-side
+   protection is now doubled: these rules moved from the prefers-color-scheme media
+   query onto `.dark`, a class only the student app's theme.js ever sets.) */
+.dark .student-bg .skeleton {
+  background: linear-gradient(100deg, #1e293b 30%, #334155 48%, #1e293b 66%);
+  background-size: 220% 100%;
+}
+/* A pale blue-grey wash in light mode reads as a smudge on a dark phone, so dark
+   mode gets its own deep slate wash instead of the same three stops darkened. */
+.dark .student-bg {
+  background: linear-gradient(180deg, #0b1220 0%, #0f172a 60%, #0b1220 100%);
 }
 
 /* Mobile-app behaviours that a plain web page doesn't need.

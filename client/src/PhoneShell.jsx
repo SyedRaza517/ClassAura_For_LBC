@@ -179,13 +179,17 @@ function PullToRefresh({ scrollRef, onRefresh, children }) {
  *               render once `onRefresh` is passed, which StaffHub does not do). Before
  *               this prop existed those four classes were unconditional, which is a
  *               real bug the final review caught rather than a hypothetical one:
- *               `darkMode: "media"` (Task 6, the student visual kit) means dark mode
- *               is driven by the OS/browser's own `prefers-color-scheme`, a setting
- *               that belongs to the person at the keyboard, not to which app they have
- *               open — so a member of staff whose OS is set to dark got a half-dark
- *               PhoneShell (this file's own background flipping) around an app,
- *               StaffHub, that was never designed, reviewed or tested against a dark
- *               palette. Reading `isNativeApp()`/a route to decide instead of taking
+ *               under the original `darkMode: "media"` (Task 6, the student visual
+ *               kit) dark mode was driven by the OS/browser's own
+ *               `prefers-color-scheme`, a setting that belongs to the person at the
+ *               keyboard, not to which app they have open — so a member of staff
+ *               whose OS is set to dark got a half-dark PhoneShell (this file's own
+ *               background flipping) around an app, StaffHub, that was never
+ *               designed, reviewed or tested against a dark palette. (13 Sep 2026:
+ *               darkMode is "class" now and only the student app's theme.js ever
+ *               sets the root class, which closes that hole a second way — the prop
+ *               stays, because "student-only" being enforced twice is how it stops
+ *               regressing when either half moves.) Reading `isNativeApp()`/a route to decide instead of taking
  *               an explicit prop was rejected: PhoneShell is used on the web by BOTH
  *               apps (the decorative-phone branch below), so neither "am I native" nor
  *               "am I handset" can tell student and staff apart — only the caller
@@ -211,6 +215,13 @@ export default function PhoneShell({ header, footer, children, onRefresh, refres
   // `darkCapable` callers while keeping it OUT of a non-`darkCapable` one's className
   // altogether, not merely overridden by a later rule.
   const dark = (cls) => (darkCapable ? cls : "");
+  // The scrollport's own background — the strip a pull-to-refresh drag reveals above
+  // the content, and whatever shows if a screen ever comes up short. The student app
+  // (the one darkCapable caller) gets pure white: `.student-bg` went pure white on
+  // 13 Sep 2026 and a slate-50 reveal strip against it read as a grey flash at the
+  // top of every pull — the exact "background is grey" complaint. Staff keeps
+  // slate-50, which is the ground its screens were designed on.
+  const scrollBg = darkCapable ? "bg-white dark:bg-slate-900" : "bg-slate-50";
 
   if (handset) {
     return (
@@ -220,7 +231,7 @@ export default function PhoneShell({ header, footer, children, onRefresh, refres
         <div className="shrink-0">{header}</div>
         <div
           ref={scrollRef}
-          className={`relative flex-1 overflow-y-auto bg-slate-50 ${dark("dark:bg-slate-900")}`}
+          className={`relative flex-1 overflow-y-auto ${scrollBg}`}
           // Momentum scrolling on iOS. The home-indicator inset used to be padded
           // HERE as well as on the tab bar — with the bar now a footer row below
           // this scrollport (13 Sep 2026), the bar is the element that meets the
@@ -248,7 +259,7 @@ export default function PhoneShell({ header, footer, children, onRefresh, refres
         <div className="absolute left-1/2 top-0 z-30 h-6 w-36 -translate-x-1/2 rounded-b-2xl bg-slate-900" />
         <div className="flex h-full flex-col">
           <div className="shrink-0">{header}</div>
-          <div ref={scrollRef} className={`relative flex-1 overflow-y-auto bg-slate-50 ${dark("dark:bg-slate-900")}`}>
+          <div ref={scrollRef} className={`relative flex-1 overflow-y-auto ${scrollBg}`}>
             <PullToRefresh scrollRef={scrollRef} onRefresh={effectiveOnRefresh}>
               {children}
             </PullToRefresh>

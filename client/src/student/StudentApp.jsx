@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PhoneShell, { isNativeApp } from "../PhoneShell";
 import { BrandMark } from "../Brand";
 import { useBackHandler } from "../backButton";
+import { useEdgeSwipeBack } from "../edgeSwipeBack";
+import { useApplyTheme } from "./theme";
 import { peekPendingQr } from "../pendingQr";
 import { api, API_BASE, getToken } from "../api";
 // Aliased to StatusBarStyle so it never reads as this file's own ui/StatusBar.jsx
@@ -95,7 +97,46 @@ export default function StudentApp({ user, logout }) {
   const [pendingQr, setPendingQr] = useState(() => peekPendingQr());
   // A student who arrives holding a scan is standing in a running class — land them on
   // the check-in screen the mark belongs to, not the home screen.
-  const [screen, setScreen] = useState(pendingQr ? "checkin" : "home");
+  const [screen, setScreenState] = useState(pendingQr ? "checkin" : "home");
+  // Where the student has BEEN, so "back" (the Android button, and the left-edge
+  // swipe below) can return to the screen they actually came from — More → Support →
+  // back lands on More, where the old `setScreen("home")` handler teleported them to
+  // Home and made the gesture feel broken. Home is the ROOT: navigating to it clears
+  // the trail, so back from Home always minimises (Android) or does nothing (swipe)
+  // instead of replaying the session backwards — the convention every tabbed app on
+  // both platforms follows. A ref, not state: the trail must be readable and
+  // writable inside stable callbacks without re-rendering anything, and nothing
+  // renders it.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const historyRef = useRef([]);
+  // Same signature as the bare setter it replaces, so every existing call site —
+  // tabs, header, pushes, deep links, screens' own setScreen props — records the
+  // trail without knowing it exists. The push happens HERE, outside the state
+  // updater: React (StrictMode especially) may run an updater function twice, and a
+  // side effect inside one would record every navigation twice.
+  const setScreen = useCallback((next) => {
+    const prev = screenRef.current;
+    if (next === prev) return;
+    if (next === "home") historyRef.current = [];
+    else {
+      historyRef.current.push(prev);
+      // A cap nobody should ever hit — it only exists so a session left open for a
+      // term cannot grow an unbounded array.
+      if (historyRef.current.length > 20) historyRef.current.shift();
+    }
+    setScreenState(next);
+  }, []);
+  // Returns true when it navigated (the contract useBackHandler expects), false at
+  // the root so Android's default minimise still happens. Goes through
+  // setScreenState directly — going BACK must never push onto the trail it is
+  // consuming.
+  const goBack = useCallback(() => {
+    const prev = historyRef.current.pop();
+    if (prev) { setScreenState(prev); return true; }
+    if (screenRef.current !== "home") { setScreenState("home"); return true; }
+    return false;
+  }, []);
   const [queries, setQueries] = useState([]);
   const [attendance, setAttendance] = useState(null);
   const [results, setResults] = useState(null);
@@ -128,8 +169,17 @@ export default function StudentApp({ user, logout }) {
   const [bands, setBands] = useState(DEFAULT_ATTENDANCE_BANDS);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(true);
-  // Android back returns to the home screen from any other tab.
-  useBackHandler(screen !== "home", () => { setScreen("home"); return true; });
+  // Android back retraces the trail above (it used to jump straight home).
+  useBackHandler(screen !== "home", goBack);
+  // And the same "back" from a left-edge swipe, on BOTH platforms — the iOS gesture
+  // a WKWebView app otherwise simply doesn't have (see edgeSwipeBack.js for why the
+  // web layer is the right place to build it).
+  useEdgeSwipeBack(goBack);
+  // The appearance choice (More → Appearance): applies/removes the `.dark` root
+  // class, follows the phone while the choice is "system", and cleans the class off
+  // on unmount so nothing after logout inherits it. Mounted here because dark mode
+  // is a student-app feature by ruling — see theme.js's file comment.
+  useApplyTheme();
 
   // The native status bar. Guarded on isNativeApp(): the staff app never runs inside
   // Capacitor (it is reached from a browser, same as every other non-student screen),

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import {
   KeyRound, Lock, Trash2, AlertTriangle, LogOut, CheckCircle2, Loader2, CalendarDays, Info,
-  HeartHandshake, HeartPulse, QrCode, Nfc,
+  HeartHandshake, HeartPulse, QrCode, Nfc, Sun, Moon, MonitorSmartphone,
 } from "lucide-react";
 import { Screen, Card, Row } from "../ui";
+import { useThemePref } from "../theme";
 import useReveal from "../../RevealButton";
 import ConfirmDialog from "../../ConfirmDialog";
 import { useBackHandler } from "../../backButton";
@@ -59,6 +60,45 @@ function CheckInStatusRow({ tapContext, setScreen }) {
         <span className="mt-0.5 block text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">{body}</span>
       </span>
     </button>
+  );
+}
+
+// The light/dark/auto switch (13 Sep 2026, asked for by name). A three-way segmented
+// control rather than the literal "one toggle button" of the request: a two-state
+// toggle cannot express "follow my phone", and silently dropping the follow-the-phone
+// behaviour every student had until today would flip dark-phone users to permanent
+// light the moment they touched the switch, with no way back to what they had. "Auto"
+// (the default, stored as an absence — theme.js) IS what they had.
+function AppearanceSetting() {
+  const [pref, setPref] = useThemePref();
+  const options = [
+    { key: "light", label: "Light", Icon: Sun },
+    { key: "dark", label: "Dark", Icon: Moon },
+    { key: "system", label: "Auto", Icon: MonitorSmartphone },
+  ];
+  return (
+    // Carries the divider itself (border-b): BiometricSetting below has no border-t
+    // of its own — it was this card's first row until today — and its several render
+    // branches make adding one there a four-place edit for a one-pixel line.
+    <div className="border-b border-slate-100 px-3.5 py-3.5 dark:border-slate-700">
+      <p className="text-[13px] font-bold text-slate-700 dark:text-slate-200">Appearance</p>
+      <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">Auto follows your phone&rsquo;s light or dark setting.</p>
+      <div role="radiogroup" aria-label="Appearance" className="mt-2.5 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-700/50">
+        {options.map(({ key, label, Icon }) => {
+          const on = pref === key;
+          return (
+            <button
+              key={key} type="button" role="radio" aria-checked={on} onClick={() => setPref(key)}
+              className={`press flex items-center justify-center gap-1.5 rounded-lg py-2 text-[12px] font-bold transition-colors ${on
+                ? "bg-white text-slate-800 shadow ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:ring-slate-600"
+                : "text-slate-500 dark:text-slate-400"}`}
+            >
+              <Icon size={14} /> {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -129,6 +169,7 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
 
       {/* Settings rows */}
       <Card className="!p-0 overflow-hidden">
+        <AppearanceSetting />
         {/* Always renders something — the options, or why they aren't available. */}
         <BiometricSetting owner={user.email} />
         <Row Icon={KeyRound} label="Change password" sub="Update your sign-in password" onClick={() => setOpenPw(v => !v)} open={openPw} />

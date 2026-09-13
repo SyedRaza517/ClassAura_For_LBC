@@ -4,13 +4,19 @@
 // for a local demo, fatal inside a packaged mobile app that must work offline.
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx}"],
-  // "media" rather than "class": there is no in-app toggle anywhere in this product —
-  // dark mode has always meant "the OS/browser asked for it", via prefers-color-scheme.
-  // A "class" strategy would need a switch to flip a root class, plus somewhere to
-  // remember the choice, for a preference the OS already tracks. Task 6 (the student
-  // app's visual kit) is what actually renders any dark:* variant this produces; staff
-  // screens carry none yet, so this is a no-op for them until they do.
-  darkMode: "media",
+  // "class" since 13 Sep 2026, reversing the "media" choice below — the reasoning that
+  // justified "media" ("there is no in-app toggle anywhere in this product") stopped
+  // being true the day the student app grew an Appearance setting (More → Appearance,
+  // src/student/theme.js). "media" cannot express "the phone is dark but the student
+  // chose light": prefers-color-scheme belongs to the OS and a media query cannot be
+  // overridden from JavaScript. With "class", dark:* only ever applies under a `.dark`
+  // class on <html>, and theme.js is the ONE writer of that class — it resolves the
+  // student's stored choice (system/light/dark) against prefers-color-scheme itself.
+  // A useful side effect: the staff app never sets the class, so the stray dark:*
+  // utilities on staff-reachable screens (TwoFactor, AdminLiveAttendance) can no longer
+  // half-darken a shell that was never designed for it when the OS asks for dark —
+  // the exact bug PhoneShell's darkCapable prop was added to stop.
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
