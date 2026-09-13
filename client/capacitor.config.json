@@ -8,7 +8,7 @@
     "allowMixedContent": false
   },
   "ios": {
-    "contentInset": "always",
+    "contentInset": "never",
     "backgroundColor": "#ffffffff"
   },
   "plugins": {

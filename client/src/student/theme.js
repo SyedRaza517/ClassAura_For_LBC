@@ -61,7 +61,18 @@ export const resolveDark = (pref) => pref === "dark" || (pref === "system" && sy
 export function useApplyTheme() {
   useEffect(() => {
     const root = document.documentElement;
-    const apply = () => root.classList.toggle("dark", resolveDark(getThemePref()));
+    // `student-app` marks the ROOT while this app is mounted, so index.css can theme
+    // the <html> canvas — the surface an over-scroll rubber-band reveals — with a plain
+    // CLASS selector (html.student-app) instead of html:has(.student-bg). `:has()` was
+    // the sole mechanism, and it does not exist before Safari 15.4 / the matching iOS
+    // WebView: on an older phone the canvas stayed the browser-default WHITE and every
+    // over-scroll flashed a white band, in the very place this was meant to prevent it.
+    // A class is universally supported. Removed on unmount (logout) alongside `.dark`,
+    // so a staff session on the same web origin never inherits a themed canvas.
+    const apply = () => {
+      root.classList.add("student-app");
+      root.classList.toggle("dark", resolveDark(getThemePref()));
+    };
     apply();
     let mq;
     window.addEventListener(EVT, apply);
@@ -75,6 +86,7 @@ export function useApplyTheme() {
       window.removeEventListener(EVT, apply);
       if (mq) { if (mq.removeEventListener) mq.removeEventListener("change", apply); else mq.removeListener(apply); }
       root.classList.remove("dark");
+      root.classList.remove("student-app");
     };
   }, []);
 }

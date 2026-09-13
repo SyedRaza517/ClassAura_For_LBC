@@ -208,24 +208,35 @@
      dark wash below is untouched — the complaint was about light mode. */
   background: #ffffff;
 }
-/* The PAGE behind the student app, theme-correct (13 Sep 2026). A device screenshot
-   showed a white band above the header in DARK mode: on a phone, the region behind
-   and around the app's 100dvh root — the status-bar strip under overlaysWebView,
-   any inset the layout maths misses, and the strip a native over-scroll bounce drags
-   into view above the header — is painted by the BODY (and, where the body's paint
-   runs out, the HTML canvas behind it, which is why both are set: the canvas
-   background is what WebKit extends into the rubber-band region). Both defaults are
-   white regardless of scheme. Scoped with :has() to sessions that actually render
-   the student app, so the staff app's body (which paints its own full-viewport
-   backgrounds and has no dark theme) is untouched. Dark is `.dark`-scoped rather
-   than the prefers-color-scheme media query it launched with — the appearance
-   toggle (student/theme.js) owns the scheme now. */
-html:has(.student-bg),
-body:has(.student-bg) {
+/* The PAGE behind the student app, theme-correct (13 Sep 2026, reworked). A device
+   screenshot showed a white band on over-scroll: on a phone the region behind and
+   around the app's 100dvh root — the status-bar strip under overlaysWebView, and the
+   strip a rubber-band drags into view above the header — is painted by the BODY and,
+   where the body's paint runs out, the HTML canvas behind it (the canvas colour is
+   what WebKit extends into the rubber-band region). Both default to white in every
+   scheme, hence both are set here.
+
+   KEYED ON A CLASS (html.student-app), NOT :has(). The first cut used
+   html:has(.student-bg) — but `:has()` does not exist before Safari 15.4 / the
+   matching iOS WebView, so on an older phone the rule never matched, the canvas
+   stayed white, and the band appeared anyway: a fix that failed on exactly the
+   platform it was for. theme.js now stamps `student-app` on <html> for the life of
+   the student session (and removes it on logout), which every engine supports and
+   which is equally scoped — the staff app never sets it, so its own full-viewport
+   backgrounds are untouched. Dark is `.dark`-scoped; the appearance toggle
+   (student/theme.js) owns the scheme now, not prefers-color-scheme.
+
+   The native app has its own, separate defence for the rubber-band specifically
+   (AppDelegate.swift turns the WKWebView's bounce and content-inset off), because
+   that region is painted by the webview's native backing, which no CSS reaches. This
+   rule is what covers the web build, the PWA, and any drag the native layer lets
+   through. */
+html.student-app,
+html.student-app body {
   background: #ffffff;
 }
-html.dark:has(.student-bg),
-.dark body:has(.student-bg) {
+html.student-app.dark,
+html.student-app.dark body {
   background: #0b1220;
 }
 /* The skeleton's light-sweep gradient (`ui/Skeleton.jsx`) is two near-white greys —
@@ -262,9 +273,14 @@ html.dark:has(.student-bg),
     -webkit-text-size-adjust: 100%;
   }
 
+  /* No rubber-band bounce past the top/bottom, which reads as "broken" in a packaged
+     app where there is no browser chrome to bounce against. On HTML as well as BODY:
+     depending on the engine the scrolling root is one or the other, and setting only
+     body left the document itself free to bounce on some WebKit builds. (The native
+     iOS bounce is a separate UIScrollView property CSS cannot touch — AppDelegate.swift
+     handles that; this is for the web build and the PWA.) */
+  html,
   body {
-    /* No rubber-band bounce past the top/bottom, which reads as "broken" in a
-       packaged app where there is no browser chrome to bounce against. */
     overscroll-behavior-y: none;
   }
 

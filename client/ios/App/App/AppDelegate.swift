@@ -8,35 +8,60 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Suppress the over-scroll white band from the first frame, not just from the
+        // first foreground — see disableWebViewBounce below.
+        disableWebViewBounceWithRetry()
         return true
     }
 
-    // Stop the WKWebView's own rubber-band bounce (13 Sep 2026). A hard downward drag
-    // rubber-banded the ENTIRE page — header included — and the strip dragged into
-    // view above it is painted by the webview's native backing (the static white from
-    // capacitor.config.json's backgroundColor), which no CSS can theme: in dark mode
-    // that is a white flash above a dark screen, the exact defect a device screenshot
-    // showed. The CSS half of the defence (overscroll-behavior-y: none on <body>,
-    // index.css) does not reach this layer — the bounce belongs to the webview's
-    // UIScrollView, not to the document.
+    // Kill the white band the WKWebView's own scroll view shows on over-scroll
+    // (13 Sep 2026, hardened). TWO native causes, both outside anything CSS can reach —
+    // the region belongs to the webview's UIScrollView, not to the document, so
+    // overscroll-behavior on <body> and a themed <html> background never touch it:
     //
-    // Turning bounces off loses nothing the app relies on: pull-to-refresh here is a
-    // hand-built gesture on the app's INNER scrollport (PhoneShell.jsx), which scrolls
-    // and refreshes exactly as before — only the outer shell stops moving, which is
-    // how a native app's chrome behaves.
+    //   1. THE RUBBER-BAND BOUNCE. A hard downward drag rubber-bands the whole webview
+    //      and drags a strip into view above the header, painted by the webview's native
+    //      backing — the static white from capacitor.config.json's backgroundColor. In
+    //      dark mode that is a white flash over a dark screen. `bounces = false` removes
+    //      the bounce, so no strip is ever revealed and the backing colour never shows.
     //
-    // Done here in the app delegate, rather than in a CAPBridgeViewController
-    // subclass, on purpose: a subclass must also be added to the Xcode project file
-    // and wired into Main.storyboard, and a hand-edited project.pbxproj is the kind
-    // of change that silently breaks the next `npx cap sync`. applicationDidBecomeActive
-    // fires after the storyboard's bridge controller has loaded its webview, and
-    // re-applying an already-false flag on every foreground is free.
+    //   2. THE CONTENT-INSET ADJUSTMENT. iOS auto-insets a full-screen scroll view for
+    //      the safe area; under overlaysWebView:true this app already pays the inset
+    //      itself in CSS (the header's env(safe-area-inset-top) padding), so the native
+    //      adjustment is a SECOND inset — a persistent white band at the top, present
+    //      without any drag at all. `contentInsetAdjustmentBehavior = .never` hands the
+    //      inset wholly to CSS. (capacitor.config.json's ios.contentInset is also set to
+    //      "never" for the same reason; this is the belt to that suspenders, because the
+    //      config value has been observed not to stick on every Capacitor version.)
+    //
+    // Neither costs anything the app uses: pull-to-refresh is a hand-built gesture on the
+    // INNER scrollport (PhoneShell.jsx), which scrolls and refreshes exactly as before —
+    // only the outer webview chrome stops moving, which is how a native app behaves.
+    //
+    // In the app delegate rather than a CAPBridgeViewController subclass, on purpose: a
+    // subclass must also be wired into the Xcode project and Main.storyboard, and a
+    // hand-edited project.pbxproj silently breaks the next `npx cap sync`. Applied on
+    // didFinishLaunching (with a short retry, because the bridge's webview is created
+    // slightly after launch and the first read can miss it) AND re-applied on every
+    // didBecomeActive — idempotent, so re-applying a flag already set is free.
     private func disableWebViewBounce() {
         guard let bridgeVC = window?.rootViewController as? CAPBridgeViewController,
               let scrollView = bridgeVC.webView?.scrollView else { return }
         scrollView.bounces = false
         scrollView.alwaysBounceVertical = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+    }
+
+    // The webview is built a beat after launch; the first read can find no scrollView.
+    // Retry a few times over the first second so a cold launch is covered without waiting
+    // for the user to background and foreground the app once.
+    private func disableWebViewBounceWithRetry(_ attempts: Int = 8) {
+        disableWebViewBounce()
+        guard attempts > 0,
+              (window?.rootViewController as? CAPBridgeViewController)?.webView?.scrollView == nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.disableWebViewBounceWithRetry(attempts - 1)
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
