@@ -398,6 +398,7 @@ model Staff {
   unitsTaught      Unit[]                @relation("UnitTutor")
   unitsLed         Unit[]                @relation("UnitLeader")
   announcements    Announcement[]        @relation("AnnouncementSender")
+  conductLogged    ConductEvent[]        @relation("ConductLogger")
   // Timetabled events this person teaches, and their own display settings.
   timetableEvents  TimetableEventStaff[]
   timetablePref    TimetableUserPref[]
@@ -1078,6 +1079,7 @@ model Student {
   referrals         Referral[]
   grades            AssessmentGrade[]
   queries           StudentQuery[]
+  conductEvents     ConductEvent[]
   reviews           StudentReview[]
   submissions       AssessmentSubmission[]
   // Progression risk. `prediction` is at most one row — the latest score — while
@@ -1252,6 +1254,7 @@ model HndSession {
   createdAt       DateTime @default(now())
 
   marks AttendanceMark[]
+  conductEvents ConductEvent[]
 
   // The timetabled event this register was built from. NULL for every register created
   // by the three-hour-block generator in routes/hnd.js and by the Moodle import, which
@@ -2075,6 +2078,58 @@ model AttendanceBandConfig {
 
   updatedAt DateTime @updatedAt
   updatedBy String?
+}
+
+// The behaviour/merit vocabulary a lecturer taps in class — the tenth table of the
+// constant-key shape (configuration.md). One JSON column holding the whole list of
+// { key, label, points, tone, notifyStudent, active }, because the list is only
+// valid as a SET (keys unique, at least one active) and one column replaces it
+// atomically. Defaults, validation and the allowlist live in src/conductConfig.js.
+model ConductVocabularyConfig {
+  id         String   @id @default("singleton")
+  vocabulary Json
+  updatedAt  DateTime @updatedAt
+  updatedBy  String?
+}
+
+// One tap of the conduct sheet: a behaviour/merit event against one student.
+//
+// key/label/points/tone are FROZEN COPIES of the vocabulary entry at log time,
+// never a join back through ConductVocabularyConfig: relabelling "Merit" to "House
+// point" tomorrow must not rewrite what a student was actually given today, and a
+// deleted entry's events still have to render. Same reasoning as
+// Announcement.audienceLabel and Referral.department.
+//
+// staffId is SET NULL, with staffName frozen beside it — the OPPOSITE of
+// Announcement's cascade, deliberately: an announcement is the sender's own record
+// and leaves with them, but a conduct event is part of the STUDENT's record, and a
+// lecturer resigning must not erase a term of merits from the students who earned
+// them. sessionId is SET NULL for the same reason pointed at registers: sessions
+// are regenerated and deleted as timetables change, and the event outlives the
+// class it was logged in.
+model ConductEvent {
+  id        String  @id @default(cuid())
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentId String
+
+  staff     Staff?  @relation("ConductLogger", fields: [staffId], references: [id], onDelete: SetNull)
+  staffId   String?
+  staffName String
+
+  key    String
+  label  String
+  points Int
+  tone   String // "positive" | "negative"
+
+  note String @default("")
+
+  session   HndSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  sessionId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([studentId, createdAt])
+  @@index([staffId])
 }
 
 // A ledger of one-off automated emails already sent, used purely to de-duplicate the

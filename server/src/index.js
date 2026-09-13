@@ -124,6 +124,9 @@ app.use("/api/referrals", wrapAsync(require("./routes/referrals")));
 // Identity-gated, no page: a lecturer announcing to a unit that names them. See the
 // header of the file for why that is the whole v1 audience.
 app.use("/api/announcements", wrapAsync(require("./routes/announcements")));
+// Conduct points: logging is identity-gated (the students of classes that name the
+// caller); the vocabulary edit is the settings page. See the router's header.
+app.use("/api/conduct", wrapAsync(require("./routes/conduct")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
 app.use("/api/admission-stats", wrapAsync(require("./routes/admissionStats")));

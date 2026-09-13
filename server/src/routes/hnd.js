@@ -2449,7 +2449,7 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   const predCfg = await predictionSettings.get();
   const showRiskBands = predCfg.showBandToLecturers === true;
 
-  const [unitMarkAgg, cohortRows, deptRows, bandRows] = await Promise.all([
+  const [unitMarkAgg, cohortRows, deptRows, bandRows, conductAgg] = await Promise.all([
     studentIds.length
       ? prisma.attendanceMark.groupBy({
           by: ["studentId", "status"],
@@ -2470,6 +2470,13 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     showRiskBands && studentIds.length
       ? prisma.studentPredictionCurrent.findMany({ where: { studentId: { in: studentIds } }, select: { studentId: true, riskLevel: true } })
       : [],
+    // Net conduct points per student, all-time, for the chip beside the name. A
+    // groupBy returns rows only for students WITH events, which is the distinction
+    // the screen needs: no row is "nothing recorded" (no chip), a row summing to 0
+    // is a real zero (merits and demerits netting out) and shows as one.
+    studentIds.length
+      ? prisma.conductEvent.groupBy({ by: ["studentId"], where: { studentId: { in: studentIds } }, _sum: { points: true } })
+      : [],
   ]);
   const tallies = new Map();
   for (const r of unitMarkAgg) {
@@ -2480,6 +2487,7 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   const cohortById = new Map(cohortRows.map((c) => [c.id, c]));
   const deptById = new Map(deptRows.map((d) => [d.id, d]));
   const bandByStudent = new Map(bandRows.map((b) => [b.studentId, b.riskLevel]));
+  const conductByStudent = new Map(conductAgg.map((c) => [c.studentId, c._sum.points ?? 0]));
   // The college's OWN label for each band key, from the same settings row that owns
   // the switch — a college that renamed R3 to "Amber" must see "Amber" here, not the
   // platform default the key happened to start life as.
@@ -2536,6 +2544,11 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
       sharedDeviceWith: sharedDevices.get(s.id)?.length || 0,
 
       enrolled: enrolments.some((e) => e.studentId === s.id),
+
+      // Null when NOTHING has ever been recorded for this student (no chip), a
+      // number — including a real 0 of merits and demerits netting out — when
+      // something has. The distinction is the groupBy's row-existence, see above.
+      conductPoints: conductByStudent.has(s.id) ? conductByStudent.get(s.id) : null,
 
       // ABSENT (not null) when the college has not switched showBandToLecturers on —
       // absent is "this screen does not carry bands", null is "bands are on and this

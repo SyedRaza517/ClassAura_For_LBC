@@ -52,6 +52,9 @@ const MODEL_SCOPE = {
   Interaction: { via: "student" },
   StudentQuery: { via: "student" },
   StudentReview: { via: "student" },
+  // A behaviour/merit event is a pastoral record of one student, so it follows the
+  // student's own department exactly as the interaction and review beside it do.
+  ConductEvent: { via: "student" },
   AssessmentGrade: { via: "student" },
   AssessmentSubmission: { via: "student" },
   VleEngagement: { via: "student" },
@@ -127,6 +130,8 @@ const MODEL_SCOPE = {
   // only ever scoped by senderId — the sender's identity, not a department — and the
   // delivery rows are Notifications, already classified above.
   Announcement: "UNSCOPED",
+  // Configuration, like every other constant-key table above.
+  ConductVocabularyConfig: "UNSCOPED",
   CheckIn: "UNSCOPED",
   Leave: "UNSCOPED",
   Adjustment: "UNSCOPED",

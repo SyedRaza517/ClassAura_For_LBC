@@ -16575,6 +16575,90 @@ function AuditTrail() {
   );
 }
 
+// The conduct vocabulary editor — the college's behaviour/merit entries, edited as a
+// whole list and saved atomically (one JSON column server-side; see conductConfig.js).
+// The KEY of an existing entry is never editable: it is the handle every logged event
+// froze against, and retyping it would orphan history. New entries get a key slugged
+// from the first label they were saved under, then it too is fixed.
+function ConductVocabularySettings({ notify }) {
+  const [rows, setRows] = useState(null);
+  const [customised, setCustomised] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    try { const r = await api.conductVocabulary(); setRows(r.vocabulary || []); setCustomised(r.customised === true); }
+    catch (e) { setErr(e?.message || "Could not load the vocabulary."); setRows([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const setRow = (i, patch) => setRows(rs => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const slug = (label) => label.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const addRow = (tone) => setRows(rs => [...rs, { key: "", label: "", points: tone === "positive" ? 1 : -1, tone, notifyStudent: false, active: true, isNew: true }]);
+
+  const save = async () => {
+    setBusy(true); setErr("");
+    const list = rows.map(({ isNew, ...r }) => ({ ...r, key: r.key || slug(r.label), points: Number(r.points) }));
+    try {
+      const r = await api.saveConductVocabulary(list);
+      setRows(r.vocabulary); setCustomised(true);
+      notify?.("Conduct vocabulary saved");
+    } catch (e) { setErr(e?.message || "Could not save."); }
+    finally { setBusy(false); }
+  };
+  const reset = async () => {
+    setBusy(true); setErr("");
+    try { const r = await api.saveConductVocabulary(null); setRows(r.vocabulary); setCustomised(false); notify?.("Conduct vocabulary reset to the defaults"); }
+    catch (e) { setErr(e?.message || "Could not reset."); }
+    finally { setBusy(false); }
+  };
+
+  if (rows === null) return <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200/70"><Loader2 className="animate-spin text-slate-300" size={20} /></div>;
+
+  const group = (tone) => rows.map((r, i) => [r, i]).filter(([r]) => r.tone === tone);
+  const Section = ({ tone, title, accent }) => (
+    <div className="min-w-0 flex-1">
+      <p className={`mb-1.5 text-[10px] font-bold uppercase tracking-wide ${accent}`}>{title}</p>
+      <div className="space-y-1.5">
+        {group(tone).map(([r, i]) => (
+          <div key={r.key || `new-${i}`} className={`flex flex-wrap items-center gap-2 rounded-xl px-2.5 py-2 ring-1 ${r.active ? "bg-slate-50 ring-slate-200" : "bg-slate-50/50 ring-slate-100 opacity-60"}`}>
+            <input value={r.label} onChange={e => setRow(i, { label: e.target.value })} placeholder="Label"
+              className="min-w-[120px] flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs" />
+            <input type="number" value={r.points} onChange={e => setRow(i, { points: e.target.value === "" ? "" : Number(e.target.value) })}
+              className="w-16 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs tabular-nums" title="Points" />
+            <label className="flex items-center gap-1 text-[10px] font-semibold text-slate-500" title="Send the student an Inbox/push notification when this is logged">
+              <input type="checkbox" checked={r.notifyStudent === true} onChange={e => setRow(i, { notifyStudent: e.target.checked })} /> tell student
+            </label>
+            <label className="flex items-center gap-1 text-[10px] font-semibold text-slate-500" title="Inactive entries are kept for history but no longer offered">
+              <input type="checkbox" checked={r.active === true} onChange={e => setRow(i, { active: e.target.checked })} /> active
+            </label>
+            {r.isNew && <button onClick={() => setRows(rs => rs.filter((_, j) => j !== i))} className="press rounded-lg p-1 text-slate-400 hover:bg-slate-200" aria-label="Remove"><X size={13} /></button>}
+          </div>
+        ))}
+      </div>
+      <button onClick={() => addRow(tone)} className="press mt-1.5 flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-100"><Plus size={12} /> Add</button>
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
+      <p className="mb-3 text-[11px] text-slate-500">
+        What a lecturer can tap against a student mid-lesson. An existing entry is <b>relabelled</b>, never re-keyed — history keeps the words it was logged under.
+        "Tell student" sends an Inbox + push notification; it is off by default because a conduct message on a lock screen is a choice, not a default.
+      </p>
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <Section tone="positive" title="Praise" accent="text-emerald-600/80" />
+        <Section tone="negative" title="Needs attention" accent="text-rose-500/80" />
+      </div>
+      {err && <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">{err}</p>}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <PrimaryBtn onClick={save} disabled={busy}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save vocabulary</PrimaryBtn>
+        {customised && <button onClick={reset} disabled={busy} className="press rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50">Reset to defaults</button>}
+      </div>
+    </div>
+  );
+}
+
 function AdminSettings({ store }) {
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState(null);
@@ -16642,6 +16726,12 @@ function AdminSettings({ store }) {
         {/* This college's own offer letter and application form, and its own wording for
             every email sent on its behalf. */}
         <DocumentSettings />
+      </div>
+      <div className="mb-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Conduct points</p>
+        {/* The behaviour/merit entries a lecturer taps in class — this college's words
+            and points, not the platform's. */}
+        <ConductVocabularySettings notify={store.notify} />
       </div>
       {/* The teams staff refer students to, named by this college.
           Editing the list needs "settings" AND "referrals" on the server — it sits on

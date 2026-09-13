@@ -789,6 +789,12 @@ export const api = {
   announceUnits: () => request("/announcements/my-units"),
   sendAnnouncement: (unitId, message) => request("/announcements", { method: "POST", body: { unitId, message } }),
   myAnnouncements: () => request("/announcements/mine"),
+  // Conduct points — the vocabulary the sheet offers (any staff), the settings-gated
+  // save, the two-tap log, and the per-student history behind the register.
+  conductVocabulary: () => request("/conduct/vocabulary"),
+  saveConductVocabulary: (vocabulary) => request("/conduct/vocabulary", { method: "PUT", body: { vocabulary } }),
+  logConduct: (studentId, key, note, sessionId) => request("/conduct/events", { method: "POST", body: { studentId, key, ...(note ? { note } : {}), ...(sessionId ? { sessionId } : {}) } }),
+  conductEventsFor: (studentId) => request(`/conduct/events?studentId=${encodeURIComponent(studentId)}`),
   // Which self check-in methods are on, for the Registers page to decide whether a
   // session row offers a "QR code" action at all.
   checkInSettings: () => request("/hnd/check-in-settings"),

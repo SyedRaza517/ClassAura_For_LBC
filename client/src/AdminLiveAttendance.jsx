@@ -23,6 +23,7 @@ import { createPortal } from "react-dom";
 import {
   Radio, Loader2, AlertTriangle, RefreshCw, CheckCircle2, Clock3, UserX,
   Nfc, Lock, CalendarX, ChevronRight, QrCode, X, CalendarDays, Search,
+  Award,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { api } from "./api";
@@ -537,6 +538,20 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   // Which student's history is open, or null. A student id rather than a boolean so the
   // sheet can be opened straight from a row without a second lookup.
   const [historyFor, setHistoryFor] = useState(null);
+  // The student a conduct event is being logged against (the row object, so the
+  // sheet can show the name and running total without another fetch), and the
+  // vocabulary, fetched once the first time any sheet opens — it is college policy
+  // that changes about never, and the register polls; refetching it per poll would
+  // be thirty requests a minute for a list nobody is editing mid-lesson.
+  const [awardFor, setAwardFor] = useState(null);
+  const [conductVocab, setConductVocab] = useState(null);
+  const openAward = async (row) => {
+    setAwardFor(row);
+    if (conductVocab === null) {
+      try { setConductVocab((await api.conductVocabulary())?.vocabulary || []); }
+      catch { setConductVocab([]); }
+    }
+  };
   const alive = useRef(true);
   // Reset on mount, not only cleared on unmount: StrictMode double-mounts in development,
   // and a ref only ever set false leaves every guarded setState skipped for the
@@ -803,7 +818,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
             space. Same shownRows, same setMark, same optimistic save. */}
         {handset ? (
           <HandsetRegister rows={shownRows} total={rows.length} canMark={canMark}
-            saving={saving} setMark={setMark} onHistory={setHistoryFor} />
+            saving={saving} setMark={setMark} onHistory={setHistoryFor} onAward={canMark ? openAward : null} />
         ) : (
         <div className="max-h-[60vh] overflow-auto">
           <table className="w-full min-w-[54rem] border-collapse text-left">
@@ -835,6 +850,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                         <p className="flex items-center gap-1.5">
                           <span className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</span>
                           <RiskChip risk={r.risk} />
+                          <ConductChip points={r.conductPoints} />
                         </p>
                         <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
@@ -905,6 +921,13 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
+                    {canMark && (
+                      <button type="button" onClick={() => openAward(r)} aria-label={`Conduct points for ${r.student.name}`}
+                        title="Log conduct points"
+                        className="press mr-1.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 align-middle text-amber-600 ring-1 ring-amber-200 transition hover:bg-amber-100">
+                        <Award size={14} />
+                      </button>
+                    )}
                     <select
                       value={r.status || ""}
                       disabled={!canMark || saving === r.student.id}
@@ -939,6 +962,10 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
         {/* Offered only to somebody the server will let close it. An administrator
             granted the watching page alone used to see this button and get a 403.
             Undefined (an older server) keeps the old behaviour. */}
+        {awardFor && (
+          <ConductSheet row={awardFor} vocabulary={conductVocab} sessionId={sessionId}
+            onClose={() => setAwardFor(null)} onLogged={load} />
+        )}
         {historyFor && (
           <StudentHistory sessionId={sessionId} studentId={historyFor} onClose={() => setHistoryFor(null)} />
         )}
@@ -981,13 +1008,123 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
   );
 }
 
+// The student's net conduct points. Null renders NOTHING — "no events ever" is not a
+// zero — while a real 0 (merits and demerits netting out) is shown, because it is an
+// answer about events that exist. Green for credit, rose for deficit, neutral for the
+// genuine zero.
+function ConductChip({ points }) {
+  if (points == null) return null;
+  const tone = points > 0 ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+    : points < 0 ? "bg-rose-50 text-rose-700 ring-rose-200"
+    : "bg-slate-100 text-slate-500 ring-slate-200";
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ring-1 ${tone}`}
+      title={`Net conduct points: ${points > 0 ? "+" : ""}${points}`}>
+      <Award size={9} aria-hidden="true" />{points > 0 ? `+${points}` : points}
+    </span>
+  );
+}
+
+// The two-tap capture: open the sheet, tap an entry, done. Logging happens ON the
+// entry tap — a separate confirm button would make it three taps, and the sheet's
+// whole reason to exist is that a lecturer does this mid-lesson with one hand. The
+// optional note is typed BEFORE the tap for the same reason. A brief "logged" state
+// then auto-close, so the register is back under the thumb within a second.
+function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null); // the entry just logged
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+  const handset = useIsHandset();
+
+  const entries = (vocabulary || []).filter((e) => e.active);
+  const positives = entries.filter((e) => e.tone === "positive");
+  const negatives = entries.filter((e) => e.tone === "negative");
+
+  const log = async (entry) => {
+    if (busy || done) return;
+    setBusy(true); setErr("");
+    try {
+      await api.logConduct(row.student.id, entry.key, note.trim() || undefined, sessionId);
+      setDone(entry);
+      onLogged?.();
+      setTimeout(onClose, 900);
+    } catch (e) {
+      setErr(e?.message || "Could not log that.");
+      setBusy(false);
+    }
+  };
+
+  const Chip = ({ e }) => (
+    <button type="button" onClick={() => log(e)} disabled={busy || !!done}
+      className={`press flex min-h-11 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left ring-1 transition disabled:opacity-50 ${
+        e.tone === "positive" ? "bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100" : "bg-rose-50 text-rose-800 ring-rose-200 hover:bg-rose-100"}`}>
+      <span className="text-[13px] font-bold">{e.label}</span>
+      <span className={`shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums ring-1 ${
+        e.tone === "positive" ? "text-emerald-700 ring-emerald-200" : "text-rose-700 ring-rose-200"}`}>
+        {e.points > 0 ? `+${e.points}` : e.points}
+      </span>
+    </button>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]" role="dialog" aria-modal="true" aria-label={`Conduct points for ${row.student.name}`}>
+      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      <div className={`absolute bg-white shadow-2xl fade-up ${handset
+        ? "inset-x-0 bottom-0 rounded-t-3xl p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+        : "left-1/2 top-1/2 w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-2xl p-5"}`}>
+        {handset && <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200" aria-hidden="true" />}
+        <div className="mb-3 flex items-center gap-2.5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white"
+            style={{ background: row.student.colour || "#94a3b8" }}>{row.student.initials}</span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[14px] font-bold text-slate-800">{row.student.name}</p>
+            <p className="text-[11px] text-slate-400">Conduct points{row.conductPoints != null ? ` · net ${row.conductPoints > 0 ? "+" : ""}${row.conductPoints}` : ""}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="press flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
+        </div>
+
+        {done ? (
+          <p className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 py-6 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200 pop">
+            <CheckCircle2 size={18} /> {done.label} logged
+          </p>
+        ) : vocabulary === null ? (
+          <div className="flex justify-center py-8"><Loader2 className="animate-spin text-slate-300" size={22} /></div>
+        ) : !entries.length ? (
+          <p className="py-6 text-center text-xs text-slate-400">No conduct entries are active. An administrator edits the vocabulary in Settings.</p>
+        ) : (
+          <>
+            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200}
+              placeholder="Optional note, then tap an entry…"
+              className="mb-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-blue-200" />
+            {positives.length > 0 && (
+              <div className="mb-3">
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-600/70">Praise</p>
+                <div className="grid grid-cols-2 gap-1.5">{positives.map((e) => <Chip key={e.key} e={e} />)}</div>
+              </div>
+            )}
+            {negatives.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-500/70">Needs attention</p>
+                <div className="grid grid-cols-2 gap-1.5">{negatives.map((e) => <Chip key={e.key} e={e} />)}</div>
+              </div>
+            )}
+            {err && <p className="mt-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">{err}</p>}
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // The register as a card list, for the phone (see the branch that chooses it). Each
 // card is the student plus a four-button mark row: calling a register is tap-tap-tap
 // down a list, not open-scroll-choose three gestures per student. The columns the
 // table spends width on (course, school, student number as its own column) are not
 // lost — the name still opens StudentHistory, which is where "tell me about them"
 // already lived.
-function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory }) {
+function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onAward }) {
   if (!rows.length) {
     return (
       <p className="px-5 py-10 text-center text-sm text-slate-400">
@@ -1034,6 +1171,15 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory }) {
             {r.attendancePct == null
               ? <span className="shrink-0 text-[12px] text-slate-300" title="No marks on this module yet">—</span>
               : <span className="shrink-0 text-[12px] font-bold tabular-nums" style={{ color: pctColour(r.attendancePct) }}>{r.attendancePct}%</span>}
+            {/* Net conduct points: null is "nothing ever recorded" and shows nothing;
+                a real 0 (merits and demerits netting out) shows as one. */}
+            <ConductChip points={r.conductPoints} />
+            {onAward && (
+              <button type="button" onClick={() => onAward(r)} aria-label={`Conduct points for ${r.student.name}`}
+                className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600 ring-1 ring-amber-200 transition hover:bg-amber-100">
+                <Award size={16} />
+              </button>
+            )}
           </div>
           {/* One tap per mark, 44px tall — the same minimum-touch-target reasoning as
               the app header's controls. The active mark doubles as the CLEAR control:
