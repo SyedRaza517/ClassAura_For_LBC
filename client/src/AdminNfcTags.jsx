@@ -212,10 +212,11 @@ function TapSettings({ settings, onSaved }) {
           className="mt-0.5 h-4 w-4 shrink-0"
         />
         <span>
-          <span className="block text-[13px] font-semibold text-slate-800">Tap check-in is {draft.enabled ? "ON" : "OFF"}</span>
+          <span className="block text-[13px] font-semibold text-slate-800">Student NFC check-in is {draft.enabled ? "ON" : "OFF"}</span>
           <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
-            While this is off, no tap is accepted from anybody. Switching it on lets students mark
-            themselves present on the registers for classes they are enrolled on.
+            Lets <strong>students</strong> tap an NFC sticker in the room to mark themselves present on the
+            registers for classes they are enrolled on. While this is off, no student tap is accepted.
+            This does <em>not</em> affect staff clock-in — that has its own switch below.
           </span>
         </span>
       </label>
@@ -273,13 +274,29 @@ function TapSettings({ settings, onSaved }) {
         {num("qrRotateSeconds", "Code changes every (seconds)", "How long each code is shown. It keeps working for a few seconds after it changes, so a slow phone isn't punished. Shortest allowed is ten seconds.", 300)}
       </div>
 
-      <label className="mt-4 flex items-start gap-3">
-        <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
-        <span className="text-[12px] leading-snug text-slate-600">
-          <span className="font-semibold text-slate-800">Staff can clock in with the same stickers.</span>{" "}
-          A tap always records <em>Onsite</em>, because they are in the building. Working online stays available from the Check-In screen.
-        </span>
-      </label>
+      {/* STAFF NFC — its own switch, wholly independent of student NFC above (decoupled
+          13 Sep 2026). A college can run staff clock-in by sticker while students check
+          in by QR, or the reverse, or neither: the two share the physical stickers, not
+          a setting. Placed on its own separated card, with its full ON/OFF state and the
+          onsite/online behaviour spelled out, because it is a different audience and a
+          different decision from everything above it. */}
+      <div className="mt-4 border-t border-slate-200 pt-4">
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Staff clock-in</p>
+        <label className="flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+          <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="block text-[13px] font-semibold text-slate-800">Staff NFC clock-in is {draft.staffTapEnabled ? "ON" : "OFF"}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Lets <strong>staff</strong> clock in for work by tapping an NFC sticker in the building.
+              On the Daily Check-In screen the button stays greyed until they choose <strong>Onsite</strong> or
+              <strong> Online</strong>: choosing Onsite asks them to tap a sticker — a tap always records
+              <em> Onsite</em>, because it proves they are in the building and cannot be done from home —
+              while choosing Online clocks them in straight away, no sticker. Independent of student NFC
+              above; leave it off and staff clock in with a plain button as before.
+            </span>
+          </span>
+        </label>
+      </div>
 
       {/* Its own panel rather than a fourth switch in the stack above, because it is not a
           fourth way to check in — it is a condition on all three of the others at once.

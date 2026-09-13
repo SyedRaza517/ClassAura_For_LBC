@@ -30,8 +30,18 @@ const DEFAULTS = Object.freeze({
   // How long a tag read keeps the check-in button live in the app. Long enough to press,
   // too short to walk to another room.
   armSeconds: 60,
-  // Whether the same stickers also clock staff in.
-  staffTapEnabled: true,
+  // Whether the same stickers also clock staff in — and, when on, REQUIRE a tap for an
+  // onsite clock-in (Online stays a plain button). Its own master switch now.
+  //
+  // SHIPS OFF since 13 Sep 2026, flipped from true. While staff-tap was gated on
+  // `enabled && staffTapEnabled`, this being true was harmless: `enabled` (the student
+  // NFC master) ships off, so the pair resolved to off anyway and true here only meant
+  // "ready if student NFC is ever switched on". Decoupled, `staffTapEnabled` stands
+  // alone — a true default would silently turn NFC-REQUIRED clock-in on for every
+  // college that has never opened this screen, locking out anyone without a sticker to
+  // hand. Off by default; a college switches it on deliberately under Attendance
+  // Settings, the same standard every other capture writer here follows.
+  staffTapEnabled: false,
   // Whether a lecturer can put a rotating QR code on screen and have students scan it.
   //
   // SHIPS ON, and this is a deliberate product decision taken on 4 Sep 2026, reversing the

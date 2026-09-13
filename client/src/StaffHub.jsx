@@ -818,7 +818,10 @@ const HOME_SITES = ["HND", "FE", "SL"];
 // switched tap check-in on AND allowed it for staff, so nobody sees a control that would
 // only ever refuse them.
 function StaffTapCheckIn({ store, settings }) {
-  if (!settings?.enabled || !settings?.staffTapEnabled) return null;
+  // staffTapEnabled ALONE (decoupled 13 Sep 2026) — `settings.enabled` is the STUDENT
+  // NFC master and is irrelevant to whether staff clock in by sticker. Requiring both
+  // meant staff-NFC could not be used while students are on QR (enabled:false).
+  if (!settings?.staffTapEnabled) return null;
 
   return (
     <div className="mt-4">
@@ -864,7 +867,9 @@ function CheckInScreen({ store, me }) {
   useEffect(() => {
     api.staffTapSettings().then(setTapSettings).catch(() => setTapSettings({ enabled: false }));
   }, []);
-  const tapRequired = Boolean(tapSettings?.enabled && tapSettings?.staffTapEnabled);
+  // staffTapEnabled alone — see StaffTapCheckIn's own comment. This is what turns the
+  // Onsite choice into a tap requirement; the student NFC master (`enabled`) is unrelated.
+  const tapRequired = Boolean(tapSettings?.staffTapEnabled);
   // Online is deliberately NOT gated. A sticker proves somebody stood in the building,
   // which is exactly the thing a person working from home cannot do — requiring one to
   // record remote work would make the honest answer unrecordable.

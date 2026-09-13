@@ -22,7 +22,10 @@ test("an unconfigured college gets the defaults, and the feature is OFF", () => 
   assert.equal(s.lateAfterMins, 15);
   assert.equal(s.earlyGraceMins, 0);
   assert.equal(s.armSeconds, 60);
-  assert.equal(s.staffTapEnabled, true);
+  // Ships OFF (flipped 13 Sep 2026 when staff-tap stopped being gated behind the
+  // student NFC master and became its own switch) — an unconfigured college requires
+  // no tap of anyone.
+  assert.equal(s.staffTapEnabled, false);
 });
 
 test("a stored value overrides just that key, leaving the rest at the defaults", () => {

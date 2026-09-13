@@ -1096,11 +1096,11 @@ try {
   console.log("\n--- switching off the staff half only ---");
   /* ====================================================================== */
 
-  // Two flags gate a staff tap — `enabled` and `staffTapEnabled` — and the suite only
-  // ever moved them together, so nothing distinguished them. A college that wants
-  // students tapping into registers but does not want the same stickers running its
-  // timesheets sets exactly this pair, and a route reading the wrong flag serves them
-  // the opposite of what they asked for in BOTH directions at once.
+  // A staff tap is gated by `staffTapEnabled` ALONE (decoupled 13 Sep 2026). Here that
+  // flag goes off while the student master `enabled` stays on: a college that wants
+  // students tapping into registers but does NOT want the same stickers running its
+  // timesheets. The complementary case — student NFC off, staff NFC on — is the section
+  // below, and together they pin both flags as genuinely independent.
   const staffOff = await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: false } });
   check("the staff half can be switched off on its own",
     staffOff.status === 200 && staffOff.data?.staffTapEnabled === false && staffOff.data?.enabled === true,
@@ -1129,6 +1129,38 @@ try {
   check("switching the staff half back on lets staff tap again",
     staffRestored.data?.staffTapEnabled === true && staffWorksAgain.status === 200 && staffWorksAgain.data?.alreadyCheckedIn === true,
     `HTTP ${staffWorksAgain.status} ${staffWorksAgain.data?.error || ""}`);
+
+  /* ====================================================================== */
+  console.log("\n--- staff NFC is INDEPENDENT of student NFC (decoupled 13 Sep 2026) ---");
+  /* ====================================================================== */
+
+  // The whole point of the decoupling: a college running QR for students (student NFC
+  // OFF) must still be able to require staff to clock in by sticker. While staff-tap was
+  // gated on `enabled && staffTapEnabled`, switching student NFC off (enabled:false)
+  // silently killed staff clock-in too. These two assertions are what a route that reads
+  // the wrong flag fails.
+  const studentOffStaffOn = await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: false, staffTapEnabled: true } });
+  check("student NFC can be OFF while staff NFC is ON",
+    studentOffStaffOn.status === 200 && studentOffStaffOn.data?.enabled === false && studentOffStaffOn.data?.staffTapEnabled === true,
+    `enabled=${studentOffStaffOn.data?.enabled} staffTapEnabled=${studentOffStaffOn.data?.staffTapEnabled}`);
+
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
+  const staffTapsStudentOff = await call("/checkins/tap-check-in", { method: "POST", token: adminToken, body: { tagCode } });
+  const staffTapRow = adminId ? await db.checkIn.findFirst({ where: { staffId: adminId, date: staffDate } }) : null;
+  if (staffTapRow && !made.checkIns.includes(staffTapRow.id)) made.checkIns.push(staffTapRow.id);
+  check("a staff tap SUCCEEDS while student NFC is off — this is the decoupling",
+    staffTapsStudentOff.status === 201 && staffTapRow?.site === "Onsite",
+    `HTTP ${staffTapsStudentOff.status} site=${staffTapRow?.site} ${staffTapsStudentOff.data?.error || ""}`);
+
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
+  const manualOnsiteStudentOff = await call("/checkins/check-in", { method: "POST", token: adminToken, body: { site: "Onsite" } });
+  check("...and a plain Onsite clock-in is still refused, even with student NFC off",
+    manualOnsiteStudentOff.status === 409 && manualOnsiteStudentOff.data?.reason === "tap_required",
+    `HTTP ${manualOnsiteStudentOff.status} ${manualOnsiteStudentOff.data?.reason || ""}`);
+
+  // Restore the pair the rest of the suite assumes: student NFC on, staff NFC on.
+  await call("/tags/settings", { method: "PUT", token: adminToken, body: { enabled: true, staffTapEnabled: true } });
+  if (adminId) await db.checkIn.deleteMany({ where: { staffId: adminId, date: staffDate } });
 
   /* ====================================================================== */
   console.log("\n--- a sticker is REQUIRED for onsite, not merely offered ---");

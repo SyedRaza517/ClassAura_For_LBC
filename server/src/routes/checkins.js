@@ -120,7 +120,12 @@ router.post("/check-in", requireAuth, async (req, res) => {
   // the honest answer the unrecordable one. An administrator's PUT / is also untouched,
   // because fixing a missed clock-in is exactly what that route is for.
   const tap = await tapConfig.get();
-  if (site === "Onsite" && tap.enabled && tap.staffTapEnabled) {
+  // staffTapEnabled ALONE since 13 Sep 2026 — it used to be `enabled && staffTapEnabled`,
+  // which chained staff clock-in to the STUDENT NFC master switch: a college running QR
+  // for students (enabled:false) could never require staff to tap, because switching
+  // staff enforcement on dragged student stickers on with it. The two audiences share
+  // stickers, not a switch.
+  if (site === "Onsite" && tap.staffTapEnabled) {
     return res.status(409).json({
       error: "Onsite clock-in is by sticker here — tap the sticker in your building. Choose Online if you are working remotely.",
       reason: "tap_required",
@@ -201,7 +206,10 @@ function staffTapAllowed(staffId) {
 // tag bound to a place — see the design note in docs/superpowers/specs/.
 router.post("/tap-check-in", requireAuth, async (req, res) => {
   const settings = await tapConfig.get();
-  if (!settings.enabled || !settings.staffTapEnabled) {
+  // staffTapEnabled alone, not `enabled &&` — same decoupling as POST /check-in's
+  // onsite gate above, and they MUST agree: if this route refused while that one
+  // demanded a tap, an onsite clock-in would be impossible outright.
+  if (!settings.staffTapEnabled) {
     // method on refusals too: NULL is defined as "row from before the column existed",
     // so a fresh refusal writing NULL would read as pre-feature history in the log.
     try { await prisma.tagTap.create({ data: { staffId: req.user.id, method: "nfc", outcome: "disabled", ip: req.ip ? String(req.ip).slice(0, 60) : null } }); }
