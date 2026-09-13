@@ -397,6 +397,7 @@ model Staff {
   studentReviews   StudentReview[]
   unitsTaught      Unit[]                @relation("UnitTutor")
   unitsLed         Unit[]                @relation("UnitLeader")
+  announcements    Announcement[]        @relation("AnnouncementSender")
   // Timetabled events this person teaches, and their own display settings.
   timetableEvents  TimetableEventStaff[]
   timetablePref    TimetableUserPref[]
@@ -554,6 +555,36 @@ model Notification {
 
   @@index([staffId, read])
   @@index([studentId, read])
+}
+
+// One announcement a member of staff sent to the students of a unit they teach. The
+// DELIVERY is a Notification row per enrolled student (notify.js#notifyStudent — in-app
+// feed plus push), so this table is not read by any student surface at all: it is the
+// sender's record of what was said, to whom, and when.
+//
+// The audience is FROZEN AS WORDS AND A COUNT, not derived through the unitId join.
+// Enrolment lists move and units get renamed or deleted; the question this row answers
+// is "who was told, at the time", and a join would quietly re-answer it with today's
+// truth. Same reasoning as Referral.department staying a plain string. unitId is kept
+// too — SetNull on delete — but only as a convenience link while the unit lives.
+model Announcement {
+  id       String @id @default(cuid())
+  sender   Staff  @relation("AnnouncementSender", fields: [senderId], references: [id], onDelete: Cascade)
+  senderId String
+
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  unitId String?
+
+  /// "CODE — Name" at the moment of sending.
+  audienceLabel  String
+  message        String
+  /// How many students were enrolled when it was sent. 0 is a real answer here (an
+  /// empty unit was announced to), unlike the nullable measurements elsewhere —
+  /// nothing about this count is ever unmeasurable at send time.
+  recipientCount Int
+  createdAt      DateTime @default(now())
+
+  @@index([senderId, createdAt])
 }
 
 model CheckIn {
@@ -912,6 +943,7 @@ model Unit {
 
   sessions       HndSession[]
   enrolments     Enrolment[]
+  announcements  Announcement[]
   assessments    Assessment[]
   vleEngagement  VleEngagement[]
   studentReviews StudentReview[]

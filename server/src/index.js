@@ -121,6 +121,9 @@ app.use("/api/my-timetable", wrapAsync(require("./routes/myTimetable")));
 // because the department list is configuration the college edits at runtime and a
 // permission key cannot be minted into four source files at four in the afternoon.
 app.use("/api/referrals", wrapAsync(require("./routes/referrals")));
+// Identity-gated, no page: a lecturer announcing to a unit that names them. See the
+// header of the file for why that is the whole v1 audience.
+app.use("/api/announcements", wrapAsync(require("./routes/announcements")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
 app.use("/api/admission-stats", wrapAsync(require("./routes/admissionStats")));

@@ -123,6 +123,10 @@ const MODEL_SCOPE = {
   SignupRequest: "UNSCOPED",
   Notification: "UNSCOPED",
   SentNotification: "UNSCOPED",
+  // The sender's own record of what they told a class (routes/announcements.js). Read
+  // only ever scoped by senderId — the sender's identity, not a department — and the
+  // delivery rows are Notifications, already classified above.
+  Announcement: "UNSCOPED",
   CheckIn: "UNSCOPED",
   Leave: "UNSCOPED",
   Adjustment: "UNSCOPED",
