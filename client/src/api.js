@@ -335,6 +335,16 @@ export const api = {
   // deviceHeaders() travels with it like the other two: the device a claim came from is
   // the only corroboration this method has.
   studentDeclareCheckIn: async (sessionId) => request("/student/me/declare-check-in", { method: "POST", body: { sessionId, ...(await positionIfNeeded()) }, headers: deviceHeaders() }),
+  // Streaks/badges — see GET /me/streaks's own comment (server/src/routes/student.js):
+  // computed fresh from this student's own marks every read, never stored, never a
+  // leaderboard. Bare GET, no params — there is only ever "my own".
+  studentStreaks: () => request("/student/me/streaks"),
+  // Notifications — this student's own inbox. `ids` narrows which are marked read;
+  // omitted, the server marks every unread one of THIS student's own (see
+  // PUT /me/notifications/read's own comment for why that is a WHERE filter and
+  // never a per-id ownership check).
+  studentNotifications: () => request("/student/me/notifications"),
+  studentMarkNotificationsRead: (ids) => request("/student/me/notifications/read", { method: "PUT", body: ids ? { ids } : {} }),
 
   // timetable (admin) — weekly slots scoped to course + year + term
 
