@@ -10,7 +10,7 @@ import { api, API_BASE, getToken } from "../api";
 import { StatusBar, Style as StatusBarStyle } from "@capacitor/status-bar";
 import {
   Percent, Award, MessageSquare, ChevronLeft, RefreshCw,
-  Settings, Home as HomeIcon, User, Nfc, QrCode,
+  Settings, Home as HomeIcon, User, Nfc, QrCode, Bell,
 } from "lucide-react";
 
 import { NAVY, NAVY_DARK, MAROON, alpha } from "../branding";
@@ -23,6 +23,7 @@ import ResultsScreen from "./screens/Results";
 import ReviewsScreen from "./screens/Reviews";
 import TimetableScreen from "./screens/Timetable";
 import QueryScreen from "./screens/Query";
+import InboxScreen from "./screens/Inbox";
 import SupportScreen from "./screens/Support";
 import MitigationsScreen from "./screens/Mitigations";
 import MoreScreen from "./screens/More";
@@ -104,6 +105,19 @@ export default function StudentApp({ user, logout }) {
   // answer and renders the empty state; null is "we have not been told yet".
   const [referrals, setReferrals] = useState(null);
   const [supportDepts, setSupportDepts] = useState([]);
+  // The notification inbox. `notifications` defaults to [] rather than null: a
+  // student genuinely having none is a real, common answer (most students, most of
+  // the time) and Inbox.jsx's own empty state already says so — there is no
+  // "unknown yet" state worth distinguishing the way `referrals` (a newer, still-
+  // rolling-out endpoint) needs one. `unread` drives the Header bell's badge on
+  // EVERY screen, which is why it is fetched here rather than only when Inbox opens.
+  const [notifications, setNotifications] = useState([]);
+  const [unread, setUnread] = useState(0);
+  // Streaks/badges (GET /me/streaks) — current + best run, and the badge list for the
+  // Attendance screen. Bonus like referrals/timetable: a failure must not blank the
+  // Home or Attendance screen, so it starts null ("not answered yet") and every
+  // reader treats null as "say nothing" rather than as zero.
+  const [streaks, setStreaks] = useState(null);
   // Defaulted rather than null: attendanceTone/progressTone (ui/tokens.js) accept an
   // empty or missing list and fall back to DEFAULT_ATTENDANCE_BANDS themselves, but
   // starting the STATE at the same default means every screen paints its bands from
@@ -166,6 +180,37 @@ export default function StudentApp({ user, logout }) {
     return () => window.removeEventListener("edtech:pending-qr", onScan);
   }, []);
 
+  // Refetches JUST the inbox, separately from the big `load()` below.
+  //
+  // The bell's badge has to stay honest between the shell's own loads — a query
+  // answered, or a mark released, while a student is sitting on the Attendance
+  // screen must not wait for a pull-to-refresh to show up as unread. Rather than
+  // poll on a timer (nothing else in this app does, and a per-student inbox is not
+  // urgent enough to justify one), this is called at the two moments the brief calls
+  // out as worth a fresh look: Home mounting (its own effect, below) and the Inbox
+  // screen opening (Inbox.jsx's own effect) — the two places a student is actually
+  // about to look at, or already looking at, whether anything is unread.
+  const refreshInbox = useCallback(async () => {
+    try {
+      const r = await api.studentNotifications();
+      setNotifications(r?.notifications || []);
+      setUnread(r?.unread ?? 0);
+    } catch (_) {
+      // Best-effort — the bell keeps its last known count rather than flashing to
+      // zero because of one failed request.
+    }
+  }, []);
+
+  // Mark one or more notifications read, then reconcile from the server rather than
+  // guess the new unread count locally — `updated` can be less than `ids.length` (an
+  // id already read, or one that never belonged to this student) and a locally
+  // decremented counter would drift from the truth on exactly that case.
+  const markNotificationsRead = useCallback(async (ids) => {
+    try { await api.studentMarkNotificationsRead(ids); } catch (_) { /* refreshInbox reconciles either way */ }
+    await refreshInbox();
+  }, [refreshInbox]);
+  const markAllNotificationsRead = useCallback(() => markNotificationsRead(undefined), [markNotificationsRead]);
+
   // Everything the app shows is loaded once, here, so the home screen can summarise
   // attendance and results without each tab refetching the same thing.
   const load = useCallback(async () => {
@@ -176,11 +221,18 @@ export default function StudentApp({ user, logout }) {
     ]);
     const ref = await api.studentReferrals().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
     const sdep = await api.studentSupportDepartments().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
+    // Streaks — a bonus fetch like referrals/support departments: never added to
+    // `failed`, and left at its null default (not "0-day streak") on rejection.
+    const streak = await api.studentStreaks().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
     // A bonus fetch like referrals/support departments above: never added to `failed`
     // below, and a null result is a silent no-op — `bands` state already starts at
     // DEFAULT_ATTENDANCE_BANDS, so there is nothing to reset it TO on a rejection.
     const bandList = await fetchAttendanceBands();
     if (bandList) setBands(bandList);
+    // The inbox, fetched here so the Header bell's badge is right from the first
+    // paint on every screen, not only the two that also refetch it themselves.
+    await refreshInbox();
+    if (streak.status === "fulfilled") setStreaks(streak.value);
     if (a.status === "fulfilled") setAttendance(a.value);
     if (r.status === "fulfilled") setResults(r.value);
     if (q.status === "fulfilled") setQueries(q.value);
@@ -210,11 +262,24 @@ export default function StudentApp({ user, logout }) {
         : `Could not load your ${which.join(" or ")}. Tap the refresh icon at the top to try again. Everything else here is up to date.`);
     }
     setBusy(false);
-  }, []);
+  }, [refreshInbox]);
   useEffect(() => { load(); }, [load]);
 
   // "New reply" badge: answered queries this student hasn't opened yet. Seen-state is
   // kept per student in localStorage, so it's entirely personal to them.
+  //
+  // KEPT DELIBERATELY, ALONGSIDE THE NEW BELL, rather than folded into it. The two
+  // answer genuinely different questions and can legitimately disagree: this one is
+  // "has THIS student actually opened the Query tab since the reply landed" (it only
+  // clears when `screen === "query"` actually mounts, below), while the bell's
+  // `unread` is the server's own Notification.read flag, which the Inbox screen can
+  // clear on a specific row without the student ever visiting the Ask tab at all
+  // (see Inbox.jsx's onOpen — it marks read AND navigates in one action, so the two
+  // usually move together, but a student who ignores the inbox notification and
+  // finds the reply their own way still clears this counter independently). Losing
+  // the finer signal here for the coarser one on the bell would be a regression the
+  // brief did not ask for, so both stay — this is the "judge and document" the task
+  // brief calls for on this exact point.
   const seenKey = `edtech_seen_replies_${user.id}`;
   const answered = queries.filter(q => q.status === "answered");
   let seen = new Set();
@@ -241,12 +306,12 @@ export default function StudentApp({ user, logout }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, reviews]);
 
-  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", mitigations: "Mitigating Circumstances", more: "More" }[screen];
-  const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen, bands };
+  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", mitigations: "Mitigating Circumstances", more: "More", inbox: "Inbox" }[screen];
+  const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen, bands, streaks, refreshInbox };
 
   return (
     <PhoneShell
-      header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} />}
+      header={<Header title={title} screen={screen} setScreen={setScreen} user={user} onRefresh={load} busy={busy} unread={unread} />}
       onRefresh={load} refreshing={busy}
     >
       <div className="flex min-h-full flex-col">
@@ -256,12 +321,26 @@ export default function StudentApp({ user, logout }) {
             without a named class to hang the override on. */}
         <div className="student-bg flex-1">
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
-          {screen === "checkin" && <CheckInScreen tapContext={tapContext} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
+          {/* `timetable` travels down here too, in addition to tapContext — so today's
+              classes can carry a "Join online class" button. tapContext.today (built
+              from HndSession candidates) never carries teamsJoinUrl itself; the events
+              this same load() already fetched for the Timetable screen do (see
+              routes/student.js#studentEvents), and both name the same HndSession id
+              (tapContext's `id` and an event's own `sessionId`), so CheckIn.jsx can
+              look the link up by that id without this screen asking the server for
+              anything it does not already have. */}
+          {screen === "checkin" && <CheckInScreen tapContext={tapContext} timetable={timetable} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
           {screen === "attendance" && <AttendanceScreen {...shared} />}
           {screen === "assessments" && <ResultsScreen {...shared} />}
           {screen === "reviews" && <ReviewsScreen {...shared} />}
           {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
           {screen === "query" && <QueryScreen queries={queries} reload={load} />}
+          {screen === "inbox" && (
+            <InboxScreen
+              notifications={notifications} unread={unread} refreshInbox={refreshInbox}
+              markRead={markNotificationsRead} markAllRead={markAllNotificationsRead} setScreen={setScreen}
+            />
+          )}
           {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {/* Self-contained, unlike the screens above it — its own data is not part of
               this shell's central load() (see Mitigations.jsx's own file comment for
@@ -332,7 +411,7 @@ function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn 
   );
 }
 
-function Header({ title, screen, setScreen, user, onRefresh, busy }) {
+function Header({ title, screen, setScreen, user, onRefresh, busy, unread }) {
   const hour = Number(new Date().toLocaleString("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/London" }));
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   const first = String(user.name || "").trim().split(/\s+/)[0] || "there";
@@ -366,6 +445,22 @@ function Header({ title, screen, setScreen, user, onRefresh, busy }) {
           ? <button onClick={() => setScreen("home")} aria-label="Back" className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white ring-1 ring-white/20 hover:bg-white/25"><ChevronLeft size={22} /></button>
           : <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-2xl bg-white px-1 shadow-lg"><BrandMark size={26} /></div>}
         <div className="min-w-0 flex-1 text-center"><h1 className="truncate text-[17px] font-extrabold tracking-tight text-white">{title}</h1></div>
+        {/* The bell, on EVERY screen except the inbox itself — a button that opens the
+            screen you are already on is an affordance for nothing, the same reason the
+            back chevron above disappears on Home. Placed before Refresh rather than
+            after: Refresh is the one control every screen already had, and adding a
+            second icon after it would put the NEW control furthest from the thumb on
+            a right-handed phone grip, where a reachability check would flag it. */}
+        {screen !== "inbox" && (
+          <button onClick={() => setScreen("inbox")} aria-label={unread > 0 ? `Inbox, ${unread} unread` : "Inbox"} className="press relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white ring-1 ring-white/20 hover:bg-white/25">
+            <Bell size={17} />
+            {unread > 0 && (
+              <span className="pop absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-extrabold text-slate-900 ring-2 ring-white/90">
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
+          </button>
+        )}
         <button onClick={onRefresh} aria-label="Refresh" className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white ring-1 ring-white/20 hover:bg-white/25">
           <RefreshCw size={17} className={busy ? "animate-spin" : ""} />
         </button>
