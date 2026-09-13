@@ -124,6 +124,19 @@ their leave is approved or declined, when their password is reset, and when an a
 resets their two-step verification. Admins get one when a leave request or a sign-up
 arrives. Tapping the notification opens the relevant screen.
 
+**Students got the same channel on 12 Sep 2026.** Before that date a student push was
+not merely unconfigured, it was impossible: `Notification`/`DeviceToken` had no student
+owner column, so nothing a student did could ever write a row a push could be sent
+from. Both tables now carry a nullable `studentId` beside the existing `staffId`
+(exactly one set, enforced by a database `CHECK` — see `API.md`'s Student portal
+section), and a student gets a push when their query is answered, a review is filed
+about them, a grade is released or corrected, their timetable moves inside 48 hours, or
+a referral they were told about changes status. **The lock-screen title now differs by
+audience** (`server/src/notify.js#titleFor`): the college's own display name where
+branded, else `"Staff Hub"` for a staff recipient and `"ClassAura"` for a student one —
+never the other product's name, since a student has never opened the staff app and
+should not see it named on their own lock screen.
+
 ### Turning it on
 
 This is the one step nobody can do for you: a Firebase project is tied to a Google
@@ -207,6 +220,31 @@ final hop to Google's servers:
 Covered by `scripts/smoke-push.mjs` (24 checks).
 
 ---
+
+## Student app native chrome (status bar, pull-to-refresh)
+
+Added 12 Sep 2026, and scoped to `client/src/student/StudentApp.jsx` only — `PhoneShell.jsx`
+is shared with the staff app, so neither change reaches it.
+
+- **Status bar overlay.** `capacitor.config.json` sets `StatusBar.overlaysWebView: true`
+  (the `backgroundColor` key was dropped alongside it — the plugin does nothing with it
+  once overlay is on). A native-only effect, gated on `isNativeApp()` (always false in a
+  browser, staff app included), calls `setOverlaysWebView`/`setStyle` on mount and again
+  on every `prefers-color-scheme` change. It sets `Style.Dark` **unconditionally**, in
+  both colour schemes — not a missed case: the surface the status bar sits over is the
+  student Header's own navy→maroon gradient, which stays dark in both schemes by design,
+  and `Style.Light` there would print black icons on a navy bar always. `Header` gets
+  `paddingTop: calc(env(safe-area-inset-top) + 0.5rem)` so its content clears the
+  overlaid bar.
+- **Pull-to-refresh.** `PhoneShell` grows an optional `onRefresh`/`refreshing` prop pair,
+  implemented with non-passive `touchmove` listeners on the scrollport (needed because
+  `preventDefault()` has to actually stop the native overscroll `overscroll-behavior-y:
+  none` already suppresses at the `<body>` level). Only `StudentApp.jsx` passes them;
+  every existing `PhoneShell` caller, staff app included, is unaffected by the new props
+  being optional. Verified by a clean build and 18 screenshots with no console errors;
+  **not verified with a live touch gesture** — Playwright's Chromium does not dispatch
+  real touch sequences from a mouse-driven script without extra harness work judged out
+  of scope. Worth a manual check on a real device or emulator before shipping.
 
 ## Project layout
 

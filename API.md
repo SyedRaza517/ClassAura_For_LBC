@@ -211,14 +211,25 @@ it is true the client blocks access to the app until a new password is chosen.
 | DELETE | `/devices` | auth | `{ token }` |
 | GET | `/devices` | auth | — the caller's devices, **never the raw tokens** |
 
+**One router, two audiences, since 12 Sep 2026.** `req.user.kind` (`"staff"` or
+`"student"`) decides which owner column a row belongs under — `DeviceToken` carries
+both `staffId` and `studentId`, exactly one ever set, enforced by a database `CHECK`
+rather than trusted to route code (see `POST /api/student/me/notifications` below for
+why this pair of columns exists at all). An applicant token is refused before any
+handler runs — `/api/devices` is not in `APPLICANT_ROUTERS`.
+
 The app registers its FCM token after sign-in and removes it on sign-out. `POST` is
-an upsert **on the token**, not on (staff, token): if the handset was previously
-signed in as somebody else the row *moves* to the current user, so a shared phone
-never delivers the previous person's notifications. `DELETE` is scoped to the caller,
-so one user cannot unregister another's device. Tokens that FCM reports as dead are
-removed automatically on the next send, and deleting an account removes its devices.
+an upsert **on the token**, not on (owner, token): if the handset was previously
+signed in as somebody else — staff or student — the row *moves* to the current user,
+so a shared phone never delivers the previous person's notifications. `DELETE` is
+scoped to the caller, so one user cannot unregister another's device. Tokens that FCM
+reports as dead are removed automatically on the next send, and deleting an account
+removes its devices.
 
 Delivery uses **FCM HTTP v1**; unconfigured, sends are logged instead. See `MOBILE.md`.
+The push's lock-screen title is resolved by audience (`notify.js#titleFor`): the
+college's own display name where branded, else `"Staff Hub"` for a staff recipient and
+`"ClassAura"` for a student one — never the other product's name.
 
 Notifications are created by the server, not by clients: `POST /leave` notifies every
 admin, and `PUT /leave/:id/decision` notifies the requester. Each one also triggers a
@@ -1191,6 +1202,140 @@ Six verbs — `referral.raised`, `.accepted`, `.noted`, `.closed`, `.transferred
 `.messaged` — each naming **who and where, never why**. The reason, the case notes, the
 closing detail, the hand-off reason and every message body stay out, because the audit log
 is read on Settings by administrators who were never granted this page.
+
+## Student portal — notifications, self-service mitigations, bands and streaks
+
+All of `/api/student` is inside the student router allowlist, keyed on `req.user.id`;
+none of the routes below take an id parameter, so there is nothing for one student to
+tamper with to reach another's. Only the endpoints added or changed by the 12-13 Sep
+2026 student-app refresh are documented here — the tap/QR/declare check-in family has
+its own section above (**NFC tap check-in**), and the pre-existing self-service
+referral routes (`GET /me/support-departments`, `POST /me/referrals`, the message
+thread) are not repeated here; see `routes/student.js` directly for those.
+
+### Notifications
+
+| Method | Path | Access | Body | Returns |
+|--------|------|--------|------|---------|
+| GET | `/student/me/notifications` | student token | — | `{ notifications: [...], unread }` — latest 50, newest first |
+| PUT | `/student/me/notifications/read` | student token | `{ ids? }` | `{ ok, updated }` |
+
+`unread` counts **every** unread row, not just the 50 returned — a badge that stopped
+counting once the list scrolled off-screen would undercount exactly the student a badge
+exists for: one who has ignored the app for a while. Each notification is
+`{ id, type, message, link, read, createdAt }` — an allowlist that deliberately omits
+`staffId`/`studentId` (the CHECK-constrained owner pair below) so nothing about
+ownership, or a column this table grows later for staff's own sake, reaches a student's
+screen just because it sat on the row.
+
+`PUT .../read` with `{ ids: [...] }` marks only those notifications; omitting `ids`
+marks every unread one. **Never a per-id ownership check that could be skipped**: `ids`
+narrows the `WHERE` clause, it does not replace it — `studentId: req.user.id` is always
+ANDed in, so an id copied from another student's notification (guessed, or seen over
+their shoulder) matches zero rows here rather than marking someone else's notification
+read. `ids` must be an array of strings (400 otherwise) and an empty array is a no-op
+`{ ok: true, updated: 0 }` rather than "mark everything".
+
+**Where these rows come from.** `Notification` and `DeviceToken` gained a nullable
+`studentId` alongside their existing `staffId` on 12 Sep 2026
+(`20260912T190000_student_notifications`), with a raw-SQL `CHECK
+(("staffId" IS NULL) <> ("studentId" IS NULL))` on each table — Prisma cannot express a
+cross-column constraint, the same limitation `HndSession`'s partial unique indexes hit.
+`notify.js#notifyStudent` is the one path that creates a student-owned row; it has **no
+email leg** (`Student.email` is for password resets, not a college mailbox) — in-app +
+push is the whole channel. Five staff-side write paths call it: a student query
+answered (`PUT /api/student-queries/:id/respond`), a student review filed (`POST
+/api/student-reviews`, not an edit), a grade released or corrected (`PUT
+/api/assessments/:id/grades`, deduped to one notification per student per save — an
+identical resave or a clear-to-null does not fire), a timetable change inside 48 hours
+(`PUT /api/timetabling/events/:id`, fanned out once per student across every register a
+merged class has, never twice for one student on two registers of the same event), and
+a referral's status changing or the department replying (gated on the same
+`studentNotified`/`selfReferred` flags `GET /me/referrals` reads, so a notification
+never points at something the student cannot open).
+
+### Self-service mitigating circumstances
+
+| Method | Path | Access | Body | Returns |
+|--------|------|--------|------|---------|
+| GET | `/student/me/mitigations` | student token | — | `{ claims: [...] }`, newest raised first |
+| POST | `/student/me/mitigations` | student token | `{ coversFrom, coversTo, coversAttendance?, category?, detail? }` | the created claim |
+
+Until 12 Sep 2026 the only route onto `MitigatingCircumstance` was
+`requirePage("mitigations")` — a member of staff writing up what a student told them.
+This is the same table, reached by the student themselves, validated by the **same**
+function the staff route uses (`routes/mitigations.js`'s own `validateWindow`, required
+a second time by module path so Node's module cache hands back the identical function
+object — a byte-identical 400 message on a reversed or an over-long window is what
+proves this, not a second copy that could drift).
+
+- `status` is always created `"open"` and cannot be set by the caller — a student
+  cannot self-approve.
+- `category`, if sent, must be one of the same categories the staff form offers (400
+  `Unknown category.` otherwise); `detail` is the student's own free text, capped the
+  same as every other free-text field in this API.
+- **One open claim per overlapping window.** A second `POST` whose `[coversFrom,
+  coversTo]` overlaps an existing **open** claim is refused **409**, naming the dates
+  of the claim already standing. A rejected or withdrawn claim does not block a fresh
+  attempt at the same dates; an approved one covering the period means there is
+  nothing left to ask for.
+- **The response allowlist is narrower than the staff read, and narrower even than the
+  student's own `detail`.** A created or listed claim carries `{ id, status,
+  coversFrom, coversTo, coversAttendance, category, raisedOn, decidedOn, createdAt }`
+  — never `detail` (withheld even from the student who wrote it), never
+  `decisionNote` (`mitigations.js`'s own comment: "shown to staff"), never
+  `decidedBy` or the adjustment rows. This is Article 9 health data, and `category`/
+  `detail` are the WHY half of the model that `metrics.js` is contractually forbidden
+  from selecting — see `.claude/rules/mitigating-circumstances.md`.
+- Staff holding the `mitigations` page — an `EXPLICIT_ONLY` grant, so an admin with no
+  pages configured does **not** hold it by default — are notified in-app when a
+  student self-raises, naming the student and the window only. The student is
+  notified once when staff decide (`PUT /api/mitigations/:id/decision`), naming the
+  outcome and never the note or category.
+
+### Attendance bands and streaks
+
+| Method | Path | Access | Returns |
+|--------|------|--------|---------|
+| GET | `/student/me/attendance-bands` | student token | `{ bands: [{ key, label, min, colour }] }` |
+| GET | `/student/me/streaks` | student token | `{ current, best, badges: [...] }` |
+
+`GET .../attendance-bands` serves this college's **own** resolved ladder — the same
+resolution the admin screen and the month-end warning-letter send use — allowlisted
+down to `{key,label,min,colour}`. `max` is dropped as redundant (the boundary that
+actually decides is the *next* band's `min`); `emailTrigger` is a staff-only fact
+(whether landing in a band fires the automated letter) withheld from the person the
+letter would be sent to.
+
+`GET .../streaks` is computed fresh on every read from this student's own
+`AttendanceMark`/`HndSession` rows — nothing is stored, so there is no cross-student
+table a wider query could ever reach by mistake, and no leaderboard is possible even
+by accident. `current`/`best` are consecutive-teaching-day counts; a day with only
+Excused marks bridges a streak (neither extends nor breaks it) rather than counting as
+a gap, and a mixed Present/Excused day counts as attended in full. `badges` is a flat
+array of `{ key, earnedOn }`: `streak5`/`streak10`/`streak25` fire once, the first time
+the running streak reaches that length; `perfectWeek`/`perfectMonth` fire once per
+first fully-attended **closed** period (the trailing, still-open one can never earn
+one); `perfectUnit` fires when any one unit's attendance reaches exactly 100%, dated
+the most recent contributing session.
+
+### Two existing responses, extended
+
+`GET /student/me/timetable`'s `events[]` rows now carry `teamsJoinUrl` — the session's
+own copy (not the timetable event's admin-pasted one; the register's copy is the
+per-class truth once a class has a register at all), `null` for a class with no
+meeting or none synced. Before 12 Sep 2026 this endpoint did not serve the field at
+all, so a student had no in-app way to reach an online class's link even though the
+staff side had carried one since the Teams automation work (§3.12 of `STATUS.md`).
+
+`GET /student/me/assessments` now returns `averageIsWeighted` alongside `averagePct`/
+`averageGrade`: `true` only when at least one **graded** assessment carries a real,
+college-set positive `weight`. `Assessment.weight` defaults to 0 and the Moodle
+importer never sets it, so an ordinary college's average is still the plain mean it
+always was — a missing or non-positive weight folds to equal weighting rather than
+being treated as a literal weight of zero (which would make the average a division by
+zero the moment any assessment *did* carry a real weight). `averagePct` and
+`averageGrade` are unchanged in shape; only `averageIsWeighted` is new.
 
 ## Admission tracker (funnel analytics)
 
