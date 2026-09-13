@@ -33,12 +33,13 @@ const FOR_EMAIL = (arg("--for") || "").trim().toLowerCase() || null;
 const START = (arg("--start", "16:30")).trim();
 const END = (arg("--end", "18:30")).trim();
 
-// The single test module every session created here hangs off. No course, no cohort —
-// a null cohortId is what makes the roster the enrolment list, and a null courseId is
-// allowed (Unit.courseId is nullable). Named so a human reading a register knows at a
-// glance it is a test.
-const UNIT_CODE = "ZZT-PM";
-const UNIT_NAME = "ZZ TEST — Check-in Test Class";
+// The module every session created here hangs off. No course, no cohort — a null
+// cohortId is what makes the roster the enrolment list, and a null courseId is allowed
+// (Unit.courseId is nullable). Name and code are overridable so the class can read as a
+// real subject; both default to Machine Learning. The code is the handle `--remove`
+// deletes by, so a distinctive one keeps cleanup exact.
+const UNIT_CODE = (arg("--code", "ML-TEST")).trim();
+const UNIT_NAME = (arg("--name", "Machine Learning")).trim();
 
 // The built-in test student (tools/seed-test-student.js). Reused if present so the two
 // tools describe the same account; created here only if missing AND a password is given.
