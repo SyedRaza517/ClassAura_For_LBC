@@ -145,6 +145,9 @@ async function resolveAcademicDepartment(raw, { defaultForCaller = false } = {})
   return { id: found.id };
 }
 const predictionRunner = require("../prediction/runner");
+// For ONE read: showBandToLecturers, which decides whether the live view carries the
+// risk band. The rest of the prediction feature stays behind its page grant.
+const predictionSettings = require("../prediction/settings");
 
 /**
  * Flag students whose progression score a change here has invalidated.
@@ -2434,7 +2437,19 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   const studentIds = students.map((s) => s.id);
   const cohortIdsOf = [...new Set(students.map((s) => s.cohortId).filter(Boolean))];
   const deptIdsOf = [...new Set(students.map((s) => s.academicDepartmentId).filter(Boolean))];
-  const [unitMarkAgg, cohortRows, deptRows] = await Promise.all([
+
+  // Whether the college shows the risk band on this screen — showBandToLecturers,
+  // prediction/settings.js, OFF by default. Read before the fetch below so the query
+  // does not even run when the answer is no: the gate is server-side precisely so a
+  // client cannot leak a field it never receives. (get() is cached, so this is not an
+  // extra query on every poll.) The switch is named for lecturers but the audience is
+  // everyone this route admits — the page-holders lecturerGate lets through already
+  // hold registers-level trust, and a band that appears for a tutor and vanishes for
+  // the attendance officer beside them would read as a bug, not a permission.
+  const predCfg = await predictionSettings.get();
+  const showRiskBands = predCfg.showBandToLecturers === true;
+
+  const [unitMarkAgg, cohortRows, deptRows, bandRows] = await Promise.all([
     studentIds.length
       ? prisma.attendanceMark.groupBy({
           by: ["studentId", "status"],
@@ -2448,6 +2463,13 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     deptIdsOf.length
       ? prisma.academicDepartment.findMany({ where: { id: { in: deptIdsOf } }, select: { id: true, name: true } })
       : [],
+    // The band KEY only. The score, the components and the driver codes stay behind
+    // the prediction page — this screen answers "should I keep an eye on them", not
+    // "why", and the WHY row includes material (mitigating circumstances among it)
+    // that has its own, stricter audience.
+    showRiskBands && studentIds.length
+      ? prisma.studentPredictionCurrent.findMany({ where: { studentId: { in: studentIds } }, select: { studentId: true, riskLevel: true } })
+      : [],
   ]);
   const tallies = new Map();
   for (const r of unitMarkAgg) {
@@ -2457,6 +2479,11 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
   }
   const cohortById = new Map(cohortRows.map((c) => [c.id, c]));
   const deptById = new Map(deptRows.map((d) => [d.id, d]));
+  const bandByStudent = new Map(bandRows.map((b) => [b.studentId, b.riskLevel]));
+  // The college's OWN label for each band key, from the same settings row that owns
+  // the switch — a college that renamed R3 to "Amber" must see "Amber" here, not the
+  // platform default the key happened to start life as.
+  const bandLabelByKey = new Map((predCfg.bands || []).map((b) => [b.key, b.label]));
 
   const rows = students.map((s) => {
     const mark = byStudent.get(s.id);
@@ -2509,6 +2536,21 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
       sharedDeviceWith: sharedDevices.get(s.id)?.length || 0,
 
       enrolled: enrolments.some((e) => e.studentId === s.id),
+
+      // ABSENT (not null) when the college has not switched showBandToLecturers on —
+      // absent is "this screen does not carry bands", null is "bands are on and this
+      // student has no score yet", and collapsing the two would make an unscored
+      // student indistinguishable from a switched-off college. A key stored against
+      // a band the college has since deleted still ships, with the key as its own
+      // label, rather than vanishing — the history row it came from still means what
+      // it meant.
+      ...(showRiskBands
+        ? {
+            risk: bandByStudent.has(s.id)
+              ? { key: bandByStudent.get(s.id), label: bandLabelByKey.get(bandByStudent.get(s.id)) || bandByStudent.get(s.id) }
+              : null,
+          }
+        : {}),
     };
   });
 
@@ -2569,6 +2611,9 @@ router.get("/sessions/:id/live", requireAuth, lecturerGate(["live-attendance", "
     // never term-locked — and not the same as "the term is open".
     termLocked: session.unit?.term ? !termOpen : null,
     counts,
+    // Whether the rows carry `risk` at all, so the screen can draw a legend or a
+    // column head without sniffing the first row for the field.
+    showRiskBands,
     rows,
   });
 });

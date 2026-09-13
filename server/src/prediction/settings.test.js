@@ -190,3 +190,27 @@ test("bandForScore matches on the lower bound, so one-decimal scores always land
   assert.equal(b(0), "R5");
   assert.equal(settings.bandForScore(null, DEFAULTS.bands), null);
 });
+
+test("showBandToLecturers defaults OFF — showing risk to teaching staff is a decision, not a default", () => {
+  // The band is admin-gated everywhere else (the `prediction` page). Surfacing it on
+  // the lecturer's own register widens who can see it, so it ships like NFC and the
+  // attendance-email automation do: off until an administrator turns it on.
+  assert.equal(DEFAULTS.showBandToLecturers, false);
+  const result = validate({});
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.config.showBandToLecturers, false);
+});
+
+test("showBandToLecturers must be a real boolean — a stringified form must be refused, not coerced", () => {
+  // Boolean("false") is true: coercion here would switch a college's registers to
+  // showing risk bands because a form serialiser changed, with nobody having chosen it.
+  const result = validate({ showBandToLecturers: "false" });
+  assert.equal(result.ok, false, "a string must not be accepted as a tickbox");
+  assert.match(result.error, /not true or false/, result.error);
+});
+
+test("showBandToLecturers: true survives validate, so the switch can actually be turned on", () => {
+  const result = validate({ showBandToLecturers: true });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.config.showBandToLecturers, true);
+});

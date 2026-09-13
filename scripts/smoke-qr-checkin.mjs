@@ -471,6 +471,34 @@ try {
   check("the live view carries the QR switch for the screen",
     liveView.data?.qrEnabled === true, `qrEnabled=${liveView.data?.qrEnabled}`);
 
+  // THE RISK-BAND GATE, both ways. showBandToLecturers ships OFF, and off must mean
+  // the field is ABSENT from every row — not null: absent is "this screen does not
+  // carry bands", null is "bands are on and this student has no score", and a client
+  // cannot leak what it never receives. Then switched on, the field appears on every
+  // row and the flag the screen draws its legend from flips with it. Restored
+  // afterwards, because a suite that changes a setting puts it back.
+  check("risk bands are absent from the live view by default — off means not sent",
+    liveView.data?.showRiskBands === false && qaRow && !("risk" in qaRow),
+    `showRiskBands=${liveView.data?.showRiskBands} hasRiskKey=${qaRow ? "risk" in qaRow : "no row"}`);
+
+  const predCfgRes = await call("/prediction/settings", { token: adminToken });
+  check("the model settings answer, and the switch ships off",
+    predCfgRes.status === 200 && predCfgRes.data?.config?.showBandToLecturers === false,
+    `HTTP ${predCfgRes.status} showBandToLecturers=${predCfgRes.data?.config?.showBandToLecturers}`);
+  const bandOn = await call("/prediction/settings", { method: "PUT", token: adminToken, body: { config: { ...predCfgRes.data.config, showBandToLecturers: true } } });
+  check("an administrator can switch the band on for lecturers' registers",
+    bandOn.status === 200, `HTTP ${bandOn.status} ${bandOn.data?.error || ""}`);
+
+  const liveWithBands = await call(`/hnd/sessions/${live.id}/live`, { token: adminToken });
+  const qaRowBanded = liveWithBands.data?.rows?.find((r) => r.student?.id === QA_ID);
+  check("with the switch on, every row carries a risk field — null for the unscored, never missing",
+    liveWithBands.data?.showRiskBands === true && qaRowBanded && "risk" in qaRowBanded,
+    `showRiskBands=${liveWithBands.data?.showRiskBands} risk=${JSON.stringify(qaRowBanded?.risk)}`);
+
+  const bandOff = await call("/prediction/settings", { method: "PUT", token: adminToken, body: { config: predCfgRes.data.config } });
+  check("the band switch is restored to off for the rest of the suite",
+    bandOff.status === 200, `HTTP ${bandOff.status}`);
+
   // THE ROTATION GRACE, END TO END — and the shape of this block changed on 11 Sep 2026
   // along with the rule it tests.
   //

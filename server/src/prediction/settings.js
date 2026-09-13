@@ -540,6 +540,24 @@ const DEFAULTS = {
   // collapse into each other and the single number takes the higher of the two roles.
   dayLengthMinDays: 5,
 
+  /* --- who may see the band ------------------------------------------------ */
+
+  // Whether the risk BAND (key + label, never the score, the components or the driver
+  // codes) is shown to a lecturer on the register of a class they teach — the live
+  // view, which lecturerGate already admits them to without the `prediction` page.
+  //
+  // OFF by default, because this is an access decision and not a display preference:
+  // everywhere else the band sits behind an admin page grant, and the evidence for
+  // showing it to teachers (teachers who saw weekly predictions and acted got better
+  // outcomes — Herodotou's OU Analyse studies) is an argument a college weighs against
+  // its own view of labelling, not one the software gets to settle. Same posture as
+  // NFC tap check-in and the attendance-email automation: built, and inert until an
+  // administrator turns it on.
+  //
+  // The gate is SERVER-SIDE (routes/hnd.js joins the band into the live rows only when
+  // this is true), so a client cannot leak what it never receives.
+  showBandToLecturers: false,
+
   // Which version of the engine produced a score. NOT a college's policy — it is a
   // property of the code, and two rows scored by different versions are not
   // comparable. It appears here because every caller reads the whole config and the
@@ -1218,8 +1236,9 @@ function validate(input) {
 
   /* --- tickboxes -------------------------------------------------------- */
 
-  // The only boolean in the configuration, so it is checked here rather than through a
-  // checkBool helper that would have exactly one caller.
+  // (This said "the only boolean in the configuration" while that was true; there are
+  // two now, and they still share the check inline rather than through a checkBool
+  // helper — two callers is not yet a pattern.)
   //
   // STRICTLY typed, never coerced. Boolean("false") is true, and a config posted from a
   // form that stringifies its fields would silently flip a college from "a pending claim
@@ -1235,6 +1254,18 @@ function validate(input) {
     );
   }
   out.pendingClaimSuppresses = pendingClaimSuppresses;
+
+  // Same strictness, and the stakes are access rather than measurement: a coerced
+  // "false" here would put risk bands on every lecturer's register at a college that
+  // never chose that.
+  const showBandToLecturers = pick("showBandToLecturers");
+  if (typeof showBandToLecturers !== "boolean") {
+    return fail(
+      `Whether lecturers see the risk band is "${showBandToLecturers}", which is not true or false. ` +
+      `It decides who at the college can see a student's risk level, so a value that is not a tickbox must be refused rather than guessed at.`
+    );
+  }
+  out.showBandToLecturers = showBandToLecturers;
 
   /* --- modelVersion ----------------------------------------------------- */
 
