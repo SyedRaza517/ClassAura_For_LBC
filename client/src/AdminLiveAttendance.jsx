@@ -30,6 +30,7 @@ import { scanLinkFor, isLocalOnlyOrigin } from "./scanLink";
 import ConfirmDialog from "./ConfirmDialog";
 import { NAVY } from "./branding";
 import { selfCheckInMethod } from "./checkInMethods";
+import { useIsHandset } from "./PhoneShell";
 
 // How often the live view re-reads while a class is running. Slow enough not to hammer a
 // free-tier API with a lecture theatre's worth of open laptops, fast enough that a
@@ -42,6 +43,34 @@ const STATUS = {
   E: { label: "Excused", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
   A: { label: "Absent", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
+
+// The student's risk band, as a chip beside their name. Rendered only when the row
+// carries one at all: the server omits the field unless the college switched
+// showBandToLecturers on (prediction settings), and sends null for a student with no
+// current score — which renders as NOTHING rather than a dash, because "not scored"
+// is not a finding and a dash in a risk column reads like one.
+//
+// Tones are keyed on the DEFAULT ladder's keys; a college that replaced R1–R5 with
+// its own keys gets a neutral chip with its own label, which is correct — the words
+// are the college's, the traffic-light reading was only ever true of the default
+// ladder.
+const RISK_TONES = {
+  R1: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  R2: "bg-teal-50 text-teal-700 ring-teal-200",
+  R3: "bg-amber-50 text-amber-700 ring-amber-200",
+  R4: "bg-orange-50 text-orange-700 ring-orange-200",
+  R5: "bg-rose-50 text-rose-700 ring-rose-200",
+};
+function RiskChip({ risk }) {
+  if (!risk) return null;
+  const tone = RISK_TONES[risk.key] || "bg-slate-100 text-slate-600 ring-slate-200";
+  return (
+    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ring-1 ${tone}`}
+      title={`Progression risk band: ${risk.label}`}>
+      {risk.label}
+    </span>
+  );
+}
 
 // Attendance banding. The thresholds are the ones the rest of the platform already uses
 // for its RAG bands, restated here rather than imported because this screen colours a
@@ -535,6 +564,10 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
     return () => clearInterval(t);
   }, [data?.acceptingTaps, load]);
 
+  // Above the early return with the other hooks — a hook below it would change the
+  // hook order between the loading render and the loaded one, which React rejects.
+  const handset = useIsHandset();
+
   if (!data && !err) return <div className="flex justify-center p-12"><Loader2 className="animate-spin text-slate-300" size={28} /></div>;
 
   const counts = data?.counts || { P: 0, L: 0, E: 0, A: 0, notMarked: 0 };
@@ -762,6 +795,16 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
           </div>
         </div>
 
+        {/* THE PHONE GETS CARDS, NOT THIS TABLE. Six columns at min-w-[54rem] inside a
+            390px shell is a sideways scroll with the Mark column — the one the lecturer
+            came for — off the right edge behind a dropdown. The card list puts a one-tap
+            mark row under every name instead; the table stays exactly as it is for the
+            desktop, where six columns genuinely fit and the extra columns earn their
+            space. Same shownRows, same setMark, same optimistic save. */}
+        {handset ? (
+          <HandsetRegister rows={shownRows} total={rows.length} canMark={canMark}
+            saving={saving} setMark={setMark} onHistory={setHistoryFor} />
+        ) : (
         <div className="max-h-[60vh] overflow-auto">
           <table className="w-full min-w-[54rem] border-collapse text-left">
             <thead className="sticky top-0 z-10">
@@ -789,7 +832,10 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
                         style={{ background: r.student.colour || "#94a3b8" }}>{r.student.initials}</span>
                       <div className="min-w-0">
-                        <p className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</p>
+                        <p className="flex items-center gap-1.5">
+                          <span className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</span>
+                          <RiskChip risk={r.risk} />
+                        </p>
                         <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
                           {r.selfMarked && (() => {                            // WHICH self check-in, in checkInMethods.js's words — the
@@ -888,6 +934,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
             </tbody>
           </table>
         </div>
+        )}
 
         {/* Offered only to somebody the server will let close it. An administrator
             granted the watching page alone used to see this button and get a 403.
@@ -930,6 +977,88 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
           onCancel={() => setConfirming(false)}
         />
       )}
+    </div>
+  );
+}
+
+// The register as a card list, for the phone (see the branch that chooses it). Each
+// card is the student plus a four-button mark row: calling a register is tap-tap-tap
+// down a list, not open-scroll-choose three gestures per student. The columns the
+// table spends width on (course, school, student number as its own column) are not
+// lost — the name still opens StudentHistory, which is where "tell me about them"
+// already lived.
+function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory }) {
+  if (!rows.length) {
+    return (
+      <p className="px-5 py-10 text-center text-sm text-slate-400">
+        {total
+          ? "No student matches that filter."
+          : "Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it."}
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
+      {rows.map((r) => (
+        <div key={r.student.id} className="px-3 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <button type="button" onClick={() => onHistory(r.student.id)}
+              title={`${r.student.name} — attendance on this module`}
+              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg text-left transition active:opacity-70">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                style={{ background: r.student.colour || "#94a3b8" }}>{r.student.initials}</span>
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</span>
+                  <RiskChip risk={r.risk} />
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  {r.student.studentRef && <span className="tabular-nums">{r.student.studentRef}</span>}
+                  {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
+                  {r.selfMarked && (() => {
+                    // Same token-keyed lookup as the table row — see the comment there.
+                    const { Icon, words } = selfCheckInMethod(r.checkInMethod, r.takenBy);
+                    return <span className="flex items-center" title={words}><Icon size={12} aria-hidden="true" /><span className="sr-only">{words}</span></span>;
+                  })()}
+                  {r.sharedDeviceWith > 0 && (
+                    <span className="rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800"
+                      title={`Checked in from the same device as ${r.sharedDeviceWith} other student${r.sharedDeviceWith === 1 ? "" : "s"} here.`}>
+                      SAME DEVICE AS {r.sharedDeviceWith}
+                    </span>
+                  )}
+                  {!r.enrolled && <span className="text-amber-600" title="On this register through their group, with no enrolment on the module">via group</span>}
+                </span>
+              </span>
+            </button>
+            {/* Null is an em dash, not 0% — same rule as the table's Attendance column. */}
+            {r.attendancePct == null
+              ? <span className="shrink-0 text-[12px] text-slate-300" title="No marks on this module yet">—</span>
+              : <span className="shrink-0 text-[12px] font-bold tabular-nums" style={{ color: pctColour(r.attendancePct) }}>{r.attendancePct}%</span>}
+          </div>
+          {/* One tap per mark, 44px tall — the same minimum-touch-target reasoning as
+              the app header's controls. The active mark doubles as the CLEAR control:
+              tapping "Present" on a student already present un-marks them, which is
+              the only undo a slipped finger needs and spares the row a fifth button
+              it has no width for. (The table's dropdown keeps its explicit "N/A".) */}
+          <div className="mt-2 grid grid-cols-4 gap-1.5" role="group" aria-label={`Attendance for ${r.student.name}`}>
+            {["P", "L", "E", "A"].map((k) => {
+              const active = r.status === k;
+              return (
+                <button key={k} type="button"
+                  disabled={!canMark || saving === r.student.id}
+                  onClick={() => setMark(r.student.id, active ? "" : k)}
+                  aria-pressed={active}
+                  title={canMark ? STATUS[k].label : "You can see this register but not change it."}
+                  className={`press flex h-11 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${
+                    active ? `${STATUS[k].cls} ring-2` : "bg-white text-slate-400 ring-slate-200"}`}>
+                  <span className="text-[14px] font-extrabold leading-none">{k}</span>
+                  <span className="mt-0.5 text-[9px] font-semibold leading-none opacity-80">{STATUS[k].label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

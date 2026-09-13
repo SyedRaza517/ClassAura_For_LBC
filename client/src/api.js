@@ -783,6 +783,12 @@ export const api = {
     const qs = q.toString();
     return request("/hnd/my-sessions/today" + (qs ? `?${qs}` : ""));
   },
+  // Announcements — identity-gated (the units that name this person as tutor or on a
+  // timetable event), no admin page. my-units carries the reach of each send so the
+  // compose screen can say "23 students" before the button.
+  announceUnits: () => request("/announcements/my-units"),
+  sendAnnouncement: (unitId, message) => request("/announcements", { method: "POST", body: { unitId, message } }),
+  myAnnouncements: () => request("/announcements/mine"),
   // Which self check-in methods are on, for the Registers page to decide whether a
   // session row offers a "QR code" action at all.
   checkInSettings: () => request("/hnd/check-in-settings"),

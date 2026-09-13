@@ -23,7 +23,7 @@ export const unitOf = (mr) => mr.unit || mr.module || {};
 // `pushToStudentDevices` sends `data: { link }` straight off the row it just wrote),
 // so validating a tapped push against a SECOND, hand-maintained list would have been
 // the two-copies-drift bug this file's own house style warns against elsewhere.
-export const KNOWN_LINKS = new Set(["query", "reviews", "assessments", "timetable", "support", "mitigations"]);
+export const KNOWN_LINKS = new Set(["query", "reviews", "assessments", "timetable", "support", "mitigations", "inbox"]);
 
 // "Thursday 11 September" — for the one place a date is a heading rather than a cell.
 // Built from the date STRING, never from a Date the browser re-zones: the college's day is

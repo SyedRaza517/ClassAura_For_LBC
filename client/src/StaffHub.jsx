@@ -574,6 +574,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
           a unit to their own classes without any admin page. No settings link here;
           a lecturer is told to ask. */}
       {screen === "classes" && <AdminLiveAttendance />}
+      {screen === "announce" && <AnnounceScreen />}
       {screen === "balance" && <BalanceScreen store={store} me={me} />}
       {screen === "calendar" && <CalendarScreen store={store} me={me} />}
       {screen === "request" && <RequestLeaveScreen store={store} me={me} setScreen={setScreen} />}
@@ -608,7 +609,7 @@ function StatusBar() {
 }
 
 function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, showNotes, setShowNotes }) {
-  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", classes: "My Classes", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
+  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", classes: "My Classes", announce: "Announce", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
   const unread = store.notes.length;
   const greet = greetingFor();
   const Greet = greet.Icon;
@@ -689,6 +690,8 @@ const TILES = [
   // Only for staff recorded as the tutor of a unit (HomeGrid asks the server). The
   // lecturer's own registers: today's classes, the QR code, who has scanned.
   { key: "classes", label: "My Classes", Icon: Radio, sub: "Today's registers & QR code" },
+  // Same gate as My Classes: the server's answer to "do they teach", not a guess.
+  { key: "announce", label: "Announce", Icon: Send, sub: "Message a class you teach" },
   { key: "balance", label: "Holiday Balance", Icon: Check, sub: "Days remaining" },
   { key: "calendar", label: "Holiday Calendar", Icon: Calendar, sub: "Who's off & when" },
   { key: "request", label: "Request Leave", Icon: Plus, sub: "Book time off" },
@@ -718,15 +721,20 @@ const canDecideLeaveFor = (user) => ["requests", "approvals", "calendar"].some(p
 function HomeGrid({ setScreen, store, me }) {
   const today = todayISO();
   const canDecideLeave = canDecideLeaveFor(store.currentUser);
-  // Whether this person tutors any unit — the server's answer, not a guess from the
-  // staff list, because unit records are admin-only and the app never loads them.
-  // False until answered, so the tile appears rather than disappears.
-  const [teaches, setTeaches] = useState(false);
+  // The whole "my sessions today" answer, not just the `teaches` flag this used to
+  // keep: the My Day section renders from the same response that gates the Classes
+  // tile, so one request serves both and they can never disagree about whether this
+  // person teaches. `teaches` is still the server's answer, not a guess from the staff
+  // list, because unit records are admin-only and the app never loads them. Null until
+  // answered (or on failure), so for the majority of staff — who teach nothing — the
+  // home screen stays a menu rather than flashing an empty "My day" panel.
+  const [myDay, setMyDay] = useState(null);
   useEffect(() => {
     let on = true;
-    api.mySessionsToday().then((r) => { if (on) setTeaches(r?.teaches === true); }).catch(() => { /* not a lecturer, or offline: no tile */ });
+    api.mySessionsToday().then((r) => { if (on) setMyDay(r || null); }).catch(() => { /* not a lecturer, or offline: no section, no tile */ });
     return () => { on = false; };
   }, []);
+  const teaches = myDay?.teaches === true;
   const myToday = store.checkins.find(c => c.staffId === me.id && c.date === today && c.in);
   const pending = store.leave.filter(l => l.staffId === me.id && l.status === "pending").length;
   const left = store.remaining(me.id);
@@ -743,19 +751,40 @@ function HomeGrid({ setScreen, store, me }) {
         <p className="relative text-[11px] font-semibold uppercase tracking-wide text-white/60">{fmtDay(today)}</p>
         <p className="relative mt-1 flex items-center gap-1.5 text-base font-extrabold"><HeroIcon size={17} className="text-amber-300" /> {heroStatus}</p>
         <p className="relative mt-0.5 text-[12px] text-white/70">{left > 0 ? `${left} day${left === 1 ? "" : "s"} of holiday left` : "No holiday remaining"}{pending > 0 ? ` · ${pending} request${pending === 1 ? "" : "s"} pending` : ""}</p>
+        {/* The most likely first action of the morning, one tap from the top of the
+            screen instead of hunting the tile grid. Only while it IS the likely action:
+            once checked in, the band goes back to being a status display. */}
+        {!myToday && (
+          <button onClick={() => setScreen("checkin")} className="press relative mt-2.5 rounded-xl bg-white/15 px-3.5 py-1.5 text-[12px] font-bold text-white ring-1 ring-white/25 transition hover:bg-white/25">
+            Clock in now →
+          </button>
+        )}
       </div>
       <div className="mb-4 grid grid-cols-3 gap-2 fade-up">
         <MiniStat label="Status" value={myToday ? (myToday.out ? "Done" : "In") : "Out"} tone={myToday && !myToday.out ? "green" : "grey"} Icon={myToday && !myToday.out ? UserCheck : Clock} />
         <MiniStat label="Holiday left" value={`${left}d`} tone="navy" Icon={Plane} />
         <MiniStat label="Pending" value={pending} tone={pending ? "amber" : "grey"} Icon={Inbox} />
       </div>
+      {/* NEEDS ATTENTION — the to-do framing of facts already on this screen, and only
+          the ones this person can act on with one tap. Deliberately NOT a general task
+          inbox: referral queues and intervention reviews are behind admin page grants
+          the staff app does not hold, and a row that 403s when tapped is worse than no
+          row (the access ruling belongs to the case-management work, not here). The
+          register row overlaps the My Day chip on purpose — one is status, this is the
+          instruction — and both disappear when there is nothing to do. */}
+      <NeedsAttention
+        registersToTake={myDay?.teaches ? (myDay.sessions || []).filter(s => (s.counts?.notMarked ?? 0) > 0).length : 0}
+        approvalsWaiting={canDecideLeave ? store.leave.filter(l => l.status === "pending").length : 0}
+        setScreen={setScreen}
+      />
+      <MyDaySection myDay={myDay} setScreen={setScreen} />
       <p className="mb-3 text-center text-sm font-semibold italic text-slate-500" style={{ fontFamily: "'Lora', serif" }}>Please select one of the buttons below</p>
       <div className="grid grid-cols-2 gap-3">
         {/* The Manager Approval tile needs a LEAVE page, not merely being an admin.
             Gated on store.isAdmin, a page-scoped admin (e.g. finance, timesheets-only)
             saw the tile, opened an empty/misleading queue, and every Approve/Decline
             tap 403'd — a dead-end button. canDecideLeave mirrors the server guard. */}
-        {TILES.filter(t => (t.key !== "approval" || canDecideLeave) && (t.key !== "classes" || teaches)).map((t, i) => {
+        {TILES.filter(t => (t.key !== "approval" || canDecideLeave) && ((t.key !== "classes" && t.key !== "announce") || teaches)).map((t, i) => {
           const badge = t.key === "approval" ? store.leave.filter(l => l.status === "pending").length : t.key === "request" ? pending : 0;
           return (
             <button key={t.key} onClick={() => setScreen(t.key)} className="shine hover-lift group relative flex flex-col items-center justify-center gap-2.5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:shadow-xl hover:ring-blue-200 active:scale-95 pop" style={{ animationDelay: `${i * 60}ms` }}>
@@ -777,6 +806,208 @@ function HomeGrid({ setScreen, store, me }) {
     </div>
   );
 }
+// See the comment at the call site for why this is deliberately slim.
+function NeedsAttention({ registersToTake, approvalsWaiting, setScreen }) {
+  const items = [];
+  if (registersToTake > 0) items.push({
+    key: "registers", Icon: Radio, tone: "amber", screen: "classes",
+    label: `${registersToTake} register${registersToTake === 1 ? "" : "s"} still to take today`,
+  });
+  if (approvalsWaiting > 0) items.push({
+    key: "approvals", Icon: ThumbsUp, tone: "navy", screen: "approval",
+    label: `${approvalsWaiting} leave request${approvalsWaiting === 1 ? "" : "s"} waiting for your decision`,
+  });
+  if (!items.length) return null;
+  const tones = { amber: "bg-amber-50 text-amber-800 ring-amber-200", navy: "bg-blue-50 text-blue-900 ring-blue-200" };
+  return (
+    <div className="mb-4 fade-up">
+      <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Needs attention</p>
+      <div className="space-y-2">
+        {items.map(({ key, Icon, tone, screen, label }) => (
+          <button key={key} onClick={() => setScreen(screen)}
+            className={`press flex w-full items-center gap-2.5 rounded-2xl p-3 text-left ring-1 transition hover:shadow-sm ${tones[tone]}`}>
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-sm"><Icon size={17} /></span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{label}</span>
+            <ChevronRight size={15} className="shrink-0 opacity-50" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// The lecturer's day at a glance: today's classes from /hnd/my-sessions/today, each
+// with the state of its register. Renders nothing for staff with no class today —
+// most of the college, most days — so the home screen stays a menu for them instead
+// of carrying a permanently empty panel. Tapping any row lands on My Classes, which
+// is the screen that can actually act (QR code, live check-ins, the register).
+function MyDaySection({ myDay, setScreen }) {
+  if (!myDay?.teaches || !Array.isArray(myDay.sessions) || myDay.sessions.length === 0) return null;
+  const sessions = myDay.sessions;
+  // Which row to spotlight. "Live" is the SERVER's answer — acceptingTaps is derived
+  // against the college's clock, the tap window and the term, none of which the client
+  // can compute. "Next" falls back to the browser's wall clock, which is only ever used
+  // to ORDER today's rows, never to decide what today is (the server already did): the
+  // worst a mis-set clock can do here is spotlight the wrong row of the right day.
+  const hhmm = new Date().toTimeString().slice(0, 5);
+  const live = myDay.isToday ? sessions.find(s => s.acceptingTaps) : null;
+  const next = live
+    || (myDay.isToday ? sessions.find(s => (s.endTime || s.startTime || "99:99") >= hhmm) : sessions[0])
+    || sessions[sessions.length - 1];
+  const t = myDay.totals || {};
+  return (
+    <div className="mb-4 fade-up">
+      <div className="mb-2 flex items-center justify-between px-1">
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">My day · {sessions.length} class{sessions.length === 1 ? "" : "es"}</p>
+        {/* notMarked null is "roster unknown", never zero — a day of unsized classes
+            cannot claim "all marked", so it claims nothing. */}
+        {t.notMarked != null && (
+          t.notMarked > 0
+            ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200">{t.notMarked} still to mark</span>
+            : <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">All marked</span>
+        )}
+      </div>
+      <div className="space-y-2">
+        {sessions.map(s => <MyDayCard key={s.id} s={s} spotlight={s === next} live={s === live} onOpen={() => setScreen("classes")} />)}
+      </div>
+    </div>
+  );
+}
+
+function MyDayCard({ s, spotlight, live, onOpen }) {
+  const c = s.counts || {};
+  // The register's state in words a lecturer scans between rooms. Order matters: a
+  // class accepting check-ins RIGHT NOW outranks how much marking is left; and the
+  // null cases stay silent — an unknown roster with some marks has nothing honest to
+  // claim, so it claims nothing rather than "done".
+  let badge = null;
+  if (live) badge = <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200"><Radio size={10} className="animate-pulse" /> Open now</span>;
+  else if (c.notMarked > 0) badge = <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200">{c.notMarked} to mark</span>;
+  else if (c.roster != null && c.marked > 0) badge = <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">Register done</span>;
+  else if (!c.marked) badge = <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">Not started</span>;
+  return (
+    <button onClick={onOpen} className={`press flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left shadow-sm ring-1 transition hover:shadow-md ${spotlight ? "ring-2 ring-blue-300" : "ring-slate-200/70"}`}>
+      <div className="flex h-11 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-50 ring-1 ring-slate-200/70">
+        <span className="text-[12px] font-extrabold leading-none" style={{ color: NAVY }}>{s.startTime || "—"}</span>
+        <span className="mt-0.5 text-[9px] font-medium text-slate-400">{s.endTime || ""}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13px] font-bold" style={{ color: NAVY }}>{s.unit ? `${s.unit.code} · ${s.unit.name}` : (s.description || "Class")}</p>
+        <p className="mt-0.5 truncate text-[11px] text-slate-400">
+          {s.kind ? `${s.kind} · ` : ""}
+          {/* marked/roster; a null roster renders the marks alone, because "size not
+              recorded" must never read as "0 students". */}
+          {c.roster != null ? `${c.marked ?? 0}/${c.roster} marked` : `${c.marked ?? 0} marked`}
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">{badge}<ChevronRight size={14} className="text-slate-300" /></div>
+    </button>
+  );
+}
+
+/* ----- Announce ----- */
+// Compose an announcement to one unit this person teaches. The reach ("23 students")
+// comes from the server BEFORE anything is sent and sits inside the send button
+// itself, so the informed moment and the committing moment are the same tap. Delivery
+// lands in each student's existing Inbox plus a push; nothing here talks to students
+// directly — see routes/announcements.js for the access reasoning.
+function AnnounceScreen() {
+  const [units, setUnits] = useState(null); // null = still asking
+  const [unitId, setUnitId] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+  const [sent, setSent] = useState([]);
+
+  useEffect(() => {
+    let on = true;
+    Promise.all([api.announceUnits(), api.myAnnouncements()])
+      .then(([u, h]) => {
+        if (!on) return;
+        const list = u?.units || [];
+        setUnits(list);
+        setSent(h?.announcements || []);
+        // One unit needs no choosing; more than one must be chosen, not defaulted —
+        // a preselected audience is how a message reaches the wrong class.
+        if (list.length === 1) setUnitId(list[0].id);
+      })
+      .catch(() => { if (on) { setUnits([]); } });
+    return () => { on = false; };
+  }, []);
+
+  const unit = (units || []).find(u => u.id === unitId) || null;
+  const ready = unit && message.trim().length > 0 && message.length <= 500 && !busy;
+
+  const send = async () => {
+    if (!ready) return;
+    setBusy(true); setNote(null);
+    try {
+      const r = await api.sendAnnouncement(unit.id, message.trim());
+      setNote({ tone: "ok", text: `Sent to ${r.recipients} student${r.recipients === 1 ? "" : "s"} on ${r.audienceLabel}.` });
+      setMessage("");
+      const h = await api.myAnnouncements();
+      setSent(h?.announcements || []);
+    } catch (e) {
+      setNote({ tone: "err", text: e?.message || "Could not send that announcement." });
+    } finally { setBusy(false); }
+  };
+
+  if (units === null) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-slate-300" size={24} /></div>;
+  if (!units.length) {
+    return <EmptyState Icon={Send} title="No class to announce to" msg="Announcements go to the students of a unit that names you as its tutor or on its timetable. Ask an administrator if one is missing." />;
+  }
+
+  return (
+    <Screen>
+      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70">
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">To</p>
+        <select value={unitId} onChange={e => { setUnitId(e.target.value); setNote(null); }}
+          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none">
+          {units.length > 1 && <option value="">Choose a class…</option>}
+          {units.map(u => <option key={u.id} value={u.id}>{u.code} — {u.name} ({u.students} student{u.students === 1 ? "" : "s"})</option>)}
+        </select>
+
+        <p className="mb-2 mt-4 text-xs font-bold uppercase tracking-wide text-slate-500">Message</p>
+        <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4} maxLength={500}
+          placeholder="e.g. Tomorrow's 9am class moves to room B204."
+          className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200" />
+        <p className="mt-1 text-right text-[10px] tabular-nums text-slate-400">{message.length}/500</p>
+
+        {note && (
+          <p className={`mt-2 rounded-xl px-3 py-2 text-xs font-semibold ${note.tone === "ok" ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-1 ring-rose-200"}`}>
+            {note.text}
+          </p>
+        )}
+
+        <button onClick={send} disabled={!ready}
+          className="press mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition disabled:opacity-40"
+          style={{ background: NAVY }}>
+          {busy
+            ? <><Loader2 size={16} className="animate-spin" /> Sending…</>
+            : <><Send size={15} /> {unit ? `Send to ${unit.students} student${unit.students === 1 ? "" : "s"}` : "Send"}</>}
+        </button>
+        <p className="mt-2 text-center text-[10px] text-slate-400">
+          Lands in each student's Inbox with a push notification. Five sends an hour.
+        </p>
+      </div>
+
+      {sent.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent</p>
+          <div className="space-y-2">
+            {sent.map(a => (
+              <div key={a.id} className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
+                <p className="text-[11px] font-bold text-slate-500">{a.audienceLabel} · {a.recipientCount} student{a.recipientCount === 1 ? "" : "s"} · {new Date(a.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</p>
+                <p className="mt-1 text-[13px] text-slate-700">{a.message}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Screen>
+  );
+}
+
 function MiniStat({ label, value, tone, Icon }) {
   const tones = { green: "bg-emerald-50 text-emerald-700 ring-emerald-200", amber: "bg-amber-50 text-amber-700 ring-amber-200", navy: "bg-blue-50 text-blue-800 ring-blue-200", grey: "bg-slate-50 text-slate-600 ring-slate-200" }[tone];
   return (
@@ -4656,6 +4887,17 @@ function PredictionModel({ data, summary, onSaved }) {
               <option value="current-year">The current year</option>
               <option value="all">The whole record</option>
             </select>
+          </Field>
+          {/* An ACCESS decision rather than a scoring input, kept on this screen because
+              the people trusted to shape the model are the ones who should decide who
+              sees its output. Band key + the college's label only — the live register
+              never receives the score, the components or the reasons. Ships off. */}
+          <Field label="Lecturers' registers">
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-600">
+              <input type="checkbox" checked={draft.showBandToLecturers === true}
+                onChange={e => setDraft({ ...draft, showBandToLecturers: e.target.checked })} />
+              Show each student's risk band on the live register
+            </label>
           </Field>
         </div>
       </Card>
