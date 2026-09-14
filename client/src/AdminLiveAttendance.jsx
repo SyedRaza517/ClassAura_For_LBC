@@ -198,7 +198,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
           appears only once you have left it. The range picker stays console-only —
           reading a fortnight of registers is desk work. */}
       {handset && (
-        <div className="flex items-center gap-2">
+        <div className="fade-up flex items-center gap-2">
           <button onClick={() => shiftDay(-1)} aria-label="Previous day"
             className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200/70"><ChevronRight size={18} className="rotate-180" /></button>
           <label className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
@@ -273,7 +273,16 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
       {/* Offered only when the server says this account may ask for it. A control that
           always answers 403 is worse than no control. */}
       {today?.canSeeAll && (
-        <div role="group" aria-label="Which classes to show" className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+        // A SLIDING pill, not two repainting buttons. The moving backdrop is what
+        // says "one control, two positions" — the repaint version read as two
+        // separate buttons taking turns being blue. The pill is an absolute layer
+        // translated by exactly its own width, which the equal-width grid
+        // guarantees; the labels sit above it (z-10) and only change colour.
+        <div role="group" aria-label="Which classes to show"
+          className="fade-up relative grid w-fit grid-cols-2 rounded-xl border border-slate-200 bg-white p-1">
+          <span aria-hidden="true"
+            className="absolute bottom-1 left-1 top-1 w-[calc(50%-0.25rem)] rounded-lg transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+            style={{ background: NAVY, transform: scope === "all" ? "translateX(100%)" : "translateX(0)" }} />
           {[
             { key: "mine", label: "My classes" },
             { key: "all", label: "All classes" },
@@ -281,8 +290,8 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
             <button
               key={o.key} onClick={() => chooseScope(o.key)}
               aria-pressed={scope === o.key}
-              className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition-colors"
-              style={scope === o.key ? { background: NAVY, color: "#fff" } : { color: "#475569" }}
+              className="press relative z-10 rounded-lg px-3.5 py-2 text-center text-[13px] font-semibold transition-colors duration-300"
+              style={{ color: scope === o.key ? "#fff" : "#475569" }}
             >{o.label}</button>
           ))}
         </div>
@@ -306,7 +315,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
       {sessions.length > 0 && <TodayTotals totals={today?.totals} classes={sessions.length} />}
 
       {!sessions.length ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+        <div className="scale-in rounded-2xl border border-slate-200 bg-white p-10 text-center">
           <CalendarX size={26} className="mx-auto mb-3 text-slate-300" />
           <p className="text-sm font-semibold text-slate-700">
             {scope === "all" ? "No classes anywhere today" : "No classes of yours today"}
@@ -322,9 +331,14 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
         </div>
       ) : (
         <ul className="space-y-2.5">
-          {sessions.map((s) => (
-            <li key={s.id}>
-              <button onClick={() => setChosen(s.id)} className="press flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300">
+          {sessions.map((s, i) => (
+            // Staggered like the home grid's tiles (35ms steps there, 45ms here —
+            // these are whole cards, and a beat between them reads as a list being
+            // dealt rather than a page assembling itself). Capped at 8 steps so a
+            // college-wide "All classes" list of forty does not make the fortieth
+            // card arrive two seconds late.
+            <li key={s.id} className="fade-up" style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}>
+              <button onClick={() => setChosen(s.id)} className="press flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition-shadow hover:border-slate-300 hover:shadow-md">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-slate-800">
                     {s.unit?.name || s.unit?.code || "Session"}
@@ -370,17 +384,25 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
 function TodayTotals({ totals, classes }) {
   if (!totals) return null;
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="fade-up rounded-2xl border border-slate-200 bg-white p-4">
       <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Today so far</p>
-      <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {/* ONE ROW OF FIVE at every width. This was grid-cols-2 on the phone, which
+          wrapped the five tiles 2+2+1 and left "Not marked" — the least alarming of
+          the five — sitting alone on its own row looking like a headline. Five
+          across at 390px works because the tiles carry one number and one word;
+          they shrink (padding and type step down below sm:) rather than wrap. */}
+      <div className="mt-2.5 grid grid-cols-5 gap-1.5 sm:gap-2">
         {TILES.map((t) => (
           <div
             key={t.key}
             title={totals[t.key] === null && t.key === "notMarked" ? NOT_MEASURED : undefined}
-            className={`rounded-xl px-3 py-2.5 text-center ring-1 ${t.cls}`}
+            className={`rounded-xl px-1 py-2 text-center ring-1 sm:px-3 sm:py-2.5 ${t.cls}`}
           >
-            <p className="text-xl font-bold tabular-nums leading-none">{shown(totals[t.key])}</p>
-            <p className="mt-1 text-[11px] font-semibold opacity-80">{t.label}</p>
+            {/* Keyed on the value: a register filling while this is open remounts
+                the number, and .pop replays — the count visibly ticks up rather
+                than silently being a different number when the eye returns. */}
+            <p key={String(totals[t.key])} className="pop text-base font-bold tabular-nums leading-none sm:text-xl">{shown(totals[t.key])}</p>
+            <p className="mt-1 text-[9px] font-semibold leading-tight opacity-80 sm:text-[11px]">{t.label}</p>
           </div>
         ))}
       </div>
@@ -488,9 +510,12 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
   const s = data?.student;
   const pct = data?.summary?.pct;
   return createPortal(
-    <div className="fixed inset-0 z-[120] flex items-end justify-center sm:items-center" style={{ background: "rgba(15,23,42,.45)" }}
+    <div className="backdrop-in fixed inset-0 z-[120] flex items-end justify-center sm:items-center" style={{ background: "rgba(15,23,42,.45)" }}
       onClick={onClose} role="presentation">
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+      {/* .sheet-in on both form factors: on the phone this panel is docked to the
+          bottom edge and the rise reads as the sheet sliding up; centred on the
+          desktop the same rise reads as a dialog lifting into place. */}
+      <div className="sheet-in max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Attendance history">
         <div className="flex items-start gap-3 px-4 py-3 text-white" style={{ background: NAVY }}>
           {s && (
@@ -767,7 +792,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
     <div className="space-y-4 p-4 md:p-6">
       <button onClick={onBack} className="press -ml-1 rounded-lg px-2 py-2 text-[13px] font-semibold" style={{ color: NAVY }}>← {backLabel}</button>
 
-      <header className="rounded-2xl border border-slate-200 bg-white p-5">
+      <header className="fade-up rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-bold text-slate-800">{data?.unit?.name || data?.unit?.code || "Register"}</h2>
         {/* sSession serialises the times as `start` and `end`. This line read
             startTime/endTime from the day it was written and rendered a bare dash —
@@ -811,13 +836,15 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
       )}
 
       {data?.qrEnabled && (
-        <QrCard
-          sessionId={sessionId}
-          unitName={data?.unit?.name || data?.unit?.code || "Register"}
-          times={`${data?.session?.start}–${data?.session?.end}`}
-          counts={counts}
-          phase={data?.phase}
-        />
+        <div className="fade-up" style={{ animationDelay: "40ms" }}>
+          <QrCard
+            sessionId={sessionId}
+            unitName={data?.unit?.name || data?.unit?.code || "Register"}
+            times={`${data?.session?.start}–${data?.session?.end}`}
+            counts={counts}
+            phase={data?.phase}
+          />
+        </div>
       )}
 
       {/* End early, or hold open for late arrivals. Only for today's class, only for
@@ -826,7 +853,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
           reopened. Before the class starts there is nothing to press. */}
       {data?.canClose && data?.today && data?.session?.date === data.today
         && (data?.qrEnabled || data?.tapEnabled) && (data.phase === "open" || data.phase === "over" || data.phase === "ended") && (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+        <section className="fade-up flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4" style={{ animationDelay: "80ms" }}>
           {data.phase === "open" ? (
             <>
               <div className="min-w-0">
@@ -856,7 +883,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
       {/* One row on a phone, not a 2×2 of cards. Four big tiles pushed the first
           student below the fold, and the list is what a lecturer opened this for —
           the counts are a glance, not the content. */}
-      <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
+      <div className="fade-up grid grid-cols-4 gap-1.5 sm:gap-2.5" style={{ animationDelay: "60ms" }}>
         <Tally n={counts.P} label="Present" colour="#059669" />
         <Tally n={counts.L} label="Late" colour="#d97706" />
         <Tally n={counts.A} label="Absent" colour="#e11d48" />
@@ -884,7 +911,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
 
           The header is sticky within the table's own scroll box, so column meanings
           survive a long class. */}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className="fade-up overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" style={{ animationDelay: "110ms" }}>
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
           <p className="text-[13px] font-bold text-slate-700">
             {rows.length} student{rows.length === 1 ? "" : "s"}
@@ -1177,8 +1204,10 @@ function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
 
   return createPortal(
     <div className="fixed inset-0 z-[80]" role="dialog" aria-modal="true" aria-label={`Conduct points for ${row.student.name}`}>
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className={`absolute bg-white shadow-2xl fade-up ${handset
+      <div className="backdrop-in absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      {/* .sheet-in, not .fade-up — this is a sheet, and 10px of card-entrance rise
+          under-sold the "slid up from the edge" story the layout already tells. */}
+      <div className={`absolute bg-white shadow-2xl sheet-in ${handset
         ? "inset-x-0 bottom-0 rounded-t-3xl p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]"
         : "left-1/2 top-1/2 w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-2xl p-5"}`}>
         {handset && <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200" aria-hidden="true" />}
@@ -1233,6 +1262,25 @@ function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
 // lost — the name still opens StudentHistory, which is where "tell me about them"
 // already lived.
 function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onAward }) {
+  // WHO JUST TAPPED IN. The register re-reads every ten seconds while the class
+  // runs, and a student whose check-in arrived between polls used to simply BE
+  // different on the next paint — the one thing a lecturer watches this screen for,
+  // and the screen never pointed at it. The ref holds each student's checkedInAt as
+  // of the previous render; a row whose value went nothing→something this render
+  // gets one .flash-new wash (background only — the row must not move, a finger may
+  // be heading for it). Null until the first render completes, so the initial load
+  // arrives calm rather than flashing everyone who checked in before it opened.
+  const seen = useRef(null);
+  const flash = new Set();
+  if (seen.current) {
+    for (const r of rows) {
+      const prev = seen.current.get(r.student.id);
+      if (r.checkedInAt && prev !== undefined && !prev) flash.add(r.student.id);
+    }
+  }
+  useEffect(() => {
+    seen.current = new Map(rows.map((r) => [r.student.id, r.checkedInAt || null]));
+  });
   if (!rows.length) {
     return (
       <p className="px-5 py-10 text-center text-sm text-slate-400">
@@ -1244,8 +1292,15 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
   }
   return (
     <div className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto">
-      {rows.map((r) => (
-        <div key={r.student.id} className="px-3 py-2.5">
+      {rows.map((r, i) => (
+        // Stagger capped at 10 steps: a register of forty must not hold its last
+        // rows hostage to a two-second entrance. When .flash-new is present it WINS
+        // over .fade-up outright (both set the `animation` shorthand and flash-new
+        // is declared later in index.css) — which is the wanted outcome: a row
+        // announcing a live check-in should flash in place, not re-run its
+        // entrance as though it had just arrived on the page.
+        <div key={r.student.id} className={`fade-up px-3 py-2.5 ${flash.has(r.student.id) ? "flash-new" : ""}`}
+          style={{ animationDelay: flash.has(r.student.id) ? "0ms" : `${Math.min(i, 10) * 30}ms` }}>
           <div className="flex items-center gap-2.5">
             <button type="button" onClick={() => onHistory(r.student.id)}
               title={`${r.student.name} — attendance on this module`}
@@ -1304,7 +1359,7 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
                   aria-pressed={active}
                   title={canMark ? STATUS[k].label : "You can see this register but not change it."}
                   className={`press flex h-11 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${
-                    active ? `${STATUS[k].cls} ring-2` : "bg-white text-slate-400 ring-slate-200"}`}>
+                    active ? `${STATUS[k].cls} ring-2 pop` : "bg-white text-slate-400 ring-slate-200"}`}>
                   <span className="text-[14px] font-extrabold leading-none">{k}</span>
                   <span className="mt-0.5 text-[9px] font-semibold leading-none opacity-80">{STATUS[k].label}</span>
                 </button>
@@ -1322,7 +1377,10 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
 function Tally({ n, label, colour }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white px-1.5 py-2 text-center sm:px-4 sm:py-3 sm:text-left">
-      <p className="text-lg font-extrabold tabular-nums leading-none sm:text-2xl" style={{ color: colour }}>{n}</p>
+      {/* Keyed on the value so the ten-second poll's changes replay .pop — the
+          count visibly ticks when somebody taps in, on the screen whose whole job
+          is to be watched while that happens. */}
+      <p key={n} className="pop text-lg font-extrabold tabular-nums leading-none sm:text-2xl" style={{ color: colour }}>{n}</p>
       <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px] sm:tracking-wider">{label}</p>
     </div>
   );
