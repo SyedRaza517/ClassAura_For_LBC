@@ -8,7 +8,7 @@
 // fingerprint is stable when nothing changed and different when something did.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { meetingFingerprint } = require("./teamsMeetings");
+const { meetingFingerprint, seriesFingerprint } = require("./teamsMeetings");
 
 const base = { subject: "OBM Lecture", date: "2026-09-15", startTime: "10:00", endTime: "12:00", attendeeEmails: ["a@x.ac.uk", "b@x.ac.uk"] };
 
@@ -32,4 +32,19 @@ test("a changed time changes the fingerprint", () => {
 test("an added or removed attendee changes the fingerprint", () => {
   assert.notEqual(meetingFingerprint(base), meetingFingerprint({ ...base, attendeeEmails: [...base.attendeeEmails, "c@x.ac.uk"] }));
   assert.notEqual(meetingFingerprint(base), meetingFingerprint({ ...base, attendeeEmails: ["a@x.ac.uk"] }));
+});
+
+const sbase = { subject: "OBM", firstDate: "2026-09-14", lastDate: "2026-12-07", weekdays: ["monday", "thursday"], startTime: "10:00", endTime: "12:00", attendeeEmails: ["a@x", "b@x"], staffEmails: ["t@x"] };
+
+test("series: same inputs (any order) -> same fingerprint", () => {
+  assert.equal(seriesFingerprint(sbase), seriesFingerprint({ ...sbase, weekdays: ["thursday", "monday"], attendeeEmails: ["b@x", "a@x"] }));
+});
+test("series: a changed lecturer changes the fingerprint", () => {
+  assert.notEqual(seriesFingerprint(sbase), seriesFingerprint({ ...sbase, staffEmails: ["u@x"] }));
+});
+test("series: a changed end date changes the fingerprint", () => {
+  assert.notEqual(seriesFingerprint(sbase), seriesFingerprint({ ...sbase, lastDate: "2026-12-14" }));
+});
+test("series: an added weekday changes the fingerprint", () => {
+  assert.notEqual(seriesFingerprint(sbase), seriesFingerprint({ ...sbase, weekdays: ["monday", "thursday", "friday"] }));
 });

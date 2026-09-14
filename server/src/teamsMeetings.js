@@ -70,6 +70,24 @@ function meetingFingerprint({ subject, date, startTime, endTime, attendeeEmails 
 }
 
 /**
+ * A fingerprint of exactly the fields sent to Graph for a recurring series meeting —
+ * subject, the date range, the weekly pattern, the times, the attendee list AND the
+ * teaching-staff list (staff drive co-organizer, so a lecturer change must re-sync even
+ * though attendees may already contain that email). All list fields sorted so order,
+ * which owes nothing to a real change, does not read as one. The series pass PATCHes the
+ * meeting only when this differs from the stored fingerprint — the same gate
+ * meetingFingerprint gives the per-event pass.
+ */
+function seriesFingerprint({ subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails, staffEmails }) {
+  return [
+    subject, firstDate, lastDate, startTime, endTime,
+    [...(weekdays || [])].sort().join(","),
+    [...(attendeeEmails || [])].sort().join(","),
+    [...(staffEmails || [])].sort().join(","),
+  ].join("|");
+}
+
+/**
  * The channel address(es) to invite alongside staff, for an event whose unit already
  * has a provisioned channel. Returns [] rather than throwing when Phase B has not run
  * (or is switched off) for this cohort/unit — a meeting must still be creatable with
@@ -236,4 +254,4 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
   }
 }
 
-module.exports = { runMeetingsSync, isRunning, sweepStaleRuns, meetingFingerprint };
+module.exports = { runMeetingsSync, isRunning, sweepStaleRuns, meetingFingerprint, seriesFingerprint };
