@@ -316,38 +316,6 @@ async function resolveMeetingId(organizerId, joinUrl) {
   return page.value && page.value[0] ? page.value[0].id : null;
 }
 
-/** Every participant's join/leave intervals, merged across ALL attendance reports. */
-async function attendanceIntervals(organizerId, meetingId) {
-  const fx = fixtures();
-  // A missing key is not "no attendance", it is "the report could not be read" — the
-  // real Graph call two lines below throws on any non-2xx, and a fixture that answered
-  // [] for an unlisted meeting was a fake success where the real API would have failed.
-  // The sync (teamsSync.js) branches on this throw: NO marks on a failed fetch, only on
-  // a successful one that happens to report nobody there. Task 10's smoke suite is what
-  // this distinction exists to prove, hence the one-line change rather than leaving the
-  // fixture branch answering the safe-looking [].
-  if (fx) {
-    if (!(meetingId in (fx.attendance || {}))) throw new Error("fixture: no report");
-    return fx.attendance[meetingId];
-  }
-  const reports = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports`);
-  const byKey = new Map(); // email|msUserId -> { email, msUserId, intervals }
-  for (const r of reports.value || []) {
-    const recs = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports/${r.id}/attendanceRecords`);
-    for (const rec of recs.value || []) {
-      const email = String(rec.emailAddress || (rec.identity && rec.identity.user && rec.identity.user.email) || "").toLowerCase();
-      const msUserId = (rec.identity && rec.identity.user && rec.identity.user.id) || null;
-      const key = msUserId || email;
-      if (!key) continue; // an anonymous dial-in is not evidence about any student
-      if (!byKey.has(key)) byKey.set(key, { email, msUserId, intervals: [] });
-      for (const iv of rec.attendanceIntervals || []) {
-        byKey.get(key).intervals.push({ joinedAt: zonedTime(iv.joinDateTime), leftAt: zonedTime(iv.leaveDateTime) });
-      }
-    }
-  }
-  return [...byKey.values()];
-}
-
 /**
  * One entry per attendance report (i.e. per held occurrence of a recurring meeting),
  * tagged with the report's own DATE. This is what makes a single recurring join URL
@@ -716,7 +684,7 @@ async function testConnection() {
 
 module.exports = {
   isConfigured, describe, forgetCached, testConnection,
-  resolveOrganizers, calendarView, resolveMeetingId, attendanceIntervals, attendanceByOccurrence, graphFetch,
+  resolveOrganizers, calendarView, resolveMeetingId, attendanceByOccurrence, graphFetch,
   // Teams automation (Task 2): writes, plus the reads they depend on.
   createClassMeeting, updateClassMeeting, cancelClassMeeting,
   createRecurringClassMeeting, updateRecurringClassMeeting, setMeetingCoorganizers,

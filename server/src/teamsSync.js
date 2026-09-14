@@ -9,7 +9,7 @@
 // is for, rather than a unit test asserting the wiring is wired.
 const prisma = require("./db");
 const graph = require("./teamsGraph");
-const { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus } = require("./teamsAttendance");
+const { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus, occurrenceForDate } = require("./teamsAttendance");
 const { TEAMS_AUTO_STAMP, termOpenOn } = require("./attendanceTap");
 const { rosterForSession } = require("./timetabling/registers");
 const teamsConfig = require("./teamsAttendanceConfig");
@@ -63,6 +63,21 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
     reportsFetched: 0, marksCreated: 0, marksSkippedExisting: 0,
     participantsUnmatched: 0,
   };
+  // One recurring meeting id is shared by every week of a series, so its attendance
+  // reports are fetched ONCE per run and reused for each week's register — twelve weeks
+  // must not be twelve identical Graph calls. Keyed by meetingId; the value is the
+  // attendanceByOccurrence list (or the Error it threw, cached so a failed fetch is not
+  // retried twelve times in one run either).
+  const occurrencesByMeeting = new Map();
+  async function occurrencesFor(organizerId, meetingId) {
+    if (!occurrencesByMeeting.has(meetingId)) {
+      try { occurrencesByMeeting.set(meetingId, { ok: await graph.attendanceByOccurrence(organizerId, meetingId) }); }
+      catch (e) { occurrencesByMeeting.set(meetingId, { err: e }); }
+    }
+    const hit = occurrencesByMeeting.get(meetingId);
+    if (hit.err) throw hit.err;
+    return hit.ok;
+  }
   // `run` is declared here, outside the try, only so the catch block below can still
   // see it — it is not assigned until the FIRST line inside the try. The create used
   // to sit ahead of the try/finally entirely, which reads as harmless (it's "just"
@@ -178,12 +193,22 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
         }
         await prisma.hndSession.update({ where: { id: session.id }, data: { teamsMeetingId: meetingId, teamsOrganizerId: organizerId } });
       }
-      let participants;
-      try { participants = await graph.attendanceIntervals(organizerId, meetingId); }
+      let occurrences;
+      try { occurrences = await occurrencesFor(organizerId, meetingId); }
       catch (e) {
         note(`Attendance report for ${session.date} ${session.startTime} (${session.unit?.code || "?"}) could not be fetched: ${e.message}`);
         continue; // NO marks on a failed fetch — Absent is only written on success
       }
+      // A recurring meeting reports one occurrence per week; this register may read ONLY
+      // its own date's occurrence, or the shared join URL would credit a student present
+      // in any week to every week. A one-off meeting reports a single occurrence whose
+      // date equals this session's date, so the same lookup serves both.
+      const thisOccurrence = occurrenceForDate(occurrences, session.date);
+      if (!thisOccurrence) {
+        note(`No attendance report for ${session.date} ${session.startTime} (${session.unit?.code || "?"}) — the meeting had no session on that date yet.`);
+        continue; // stays eligible inside the retry window
+      }
+      const participants = thisOccurrence.intervals;
       summary.reportsFetched++;
 
       // Match participants to students: cached msUserId first, then email.
