@@ -227,6 +227,28 @@ function zonedTime(iso) {
   return new Date(iso).toLocaleTimeString("en-GB", { timeZone: ZONE, hour: "2-digit", minute: "2-digit" });
 }
 
+/** The calendar date (YYYY-MM-DD) of a Graph attendance report's meetingStartDateTime. */
+function localDateFromGraph(dt) {
+  // attendanceReport.meetingStartDateTime arrives in UTC; convert to the app zone's date.
+  return new Date(dt).toLocaleDateString("en-CA", { timeZone: ZONE });
+}
+
+/** Merge a report's attendanceRecords into one entry per person, intervals concatenated. */
+function mergeRecords(records) {
+  const byKey = new Map();
+  for (const rec of records || []) {
+    const email = String(rec.emailAddress || (rec.identity && rec.identity.user && rec.identity.user.email) || "").toLowerCase();
+    const msUserId = (rec.identity && rec.identity.user && rec.identity.user.id) || null;
+    const key = msUserId || email;
+    if (!key) continue; // an anonymous dial-in is not evidence about any student
+    if (!byKey.has(key)) byKey.set(key, { email, msUserId, intervals: [] });
+    for (const iv of rec.attendanceIntervals || []) {
+      byKey.get(key).intervals.push({ joinedAt: zonedTime(iv.joinDateTime), leftAt: zonedTime(iv.leaveDateTime) });
+    }
+  }
+  return [...byKey.values()];
+}
+
 /** The organizer accounts resolved to Entra user ids, cached for the process. */
 async function resolveOrganizers() {
   const fx = fixtures();
@@ -324,6 +346,28 @@ async function attendanceIntervals(organizerId, meetingId) {
     }
   }
   return [...byKey.values()];
+}
+
+/**
+ * One entry per attendance report (i.e. per held occurrence of a recurring meeting),
+ * tagged with the report's own DATE. This is what makes a single recurring join URL
+ * safe: without the per-report date, all weeks' intervals merge into one set and a
+ * student present in any week is credited to every week (the bug the design doc warns
+ * of). Each report's records are merged per person by mergeRecords.
+ */
+async function attendanceByOccurrence(organizerId, meetingId) {
+  const fx = fixtures();
+  if (fx) {
+    if (!(meetingId in (fx.attendanceByOccurrence || {}))) throw new Error("fixture: no report");
+    return fx.attendanceByOccurrence[meetingId];
+  }
+  const reports = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports`);
+  const out = [];
+  for (const r of reports.value || []) {
+    const recs = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports/${r.id}/attendanceRecords`);
+    out.push({ date: localDateFromGraph(r.meetingStartDateTime), intervals: mergeRecords(recs.value || []) });
+  }
+  return out;
 }
 
 // --- Write operations (Teams automation) ------------------------------------------
@@ -672,7 +716,7 @@ async function testConnection() {
 
 module.exports = {
   isConfigured, describe, forgetCached, testConnection,
-  resolveOrganizers, calendarView, resolveMeetingId, attendanceIntervals, graphFetch,
+  resolveOrganizers, calendarView, resolveMeetingId, attendanceIntervals, attendanceByOccurrence, graphFetch,
   // Teams automation (Task 2): writes, plus the reads they depend on.
   createClassMeeting, updateClassMeeting, cancelClassMeeting,
   createRecurringClassMeeting, updateRecurringClassMeeting, setMeetingCoorganizers,
@@ -681,4 +725,6 @@ module.exports = {
   creatorEmail, resolveCreatorId,
   // Task 2: weekday helper for recurring meetings.
   graphWeekday,
+  // Task 4: per-occurrence attendance helpers.
+  mergeRecords, localDateFromGraph,
 };
