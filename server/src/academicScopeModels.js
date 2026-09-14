@@ -169,6 +169,12 @@ const MODEL_SCOPE = {
   // nothing tests" this file's header warns against.
   CohortTeam: "UNSCOPED",
   UnitChannel: "UNSCOPED",
+  // The one recurring Teams meeting per timetable series (keyed by seriesId). Meeting
+  // metadata, reachable through the series' events but declared UNSCOPED like its
+  // siblings CohortTeam/UnitChannel/TeamsProvisionSync directly above: only the
+  // college-wide meetings sync (teamsMeetings.js) reads it, and it carries no
+  // academicDepartmentId to scope on.
+  TeamsSeriesMeeting: "UNSCOPED",
 
   /* ---- Institution-wide for now: attendance hardware ---------------------- */
   AttendanceTag: "UNSCOPED",
