@@ -416,6 +416,11 @@ export default function StudentApp({ user, logout }) {
             class names, and a gradient this specific was never going to become one
             without a named class to hang the override on. */}
         <div className="student-bg flex-1">
+          {/* Keyed on the screen name so .screen-in replays per navigation — the same
+              one-rise screen entrance the staff shell applies, defined in index.css.
+              Inside .student-bg, not around it: the background must not fade with
+              the content or every tab change flashes the page colour. */}
+          <div key={screen} className="screen-in">
           {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
           {/* `timetable` travels down here too, in addition to tapContext — so today's
               classes can carry a "Join online class" button. tapContext.today (built
@@ -443,6 +448,7 @@ export default function StudentApp({ user, logout }) {
               why), so it carries no props from `shared` at all. */}
           {screen === "mitigations" && <MitigationsScreen />}
           {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
+          </div>
         </div>
       </div>
     </PhoneShell>
@@ -490,7 +496,9 @@ function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn 
         return (
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
             className="press relative flex flex-1 flex-col items-center gap-1 py-2">
-            <span className="relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200"
+            {/* .pop only while active — replays once per tab change, exactly as the
+                staff bar does, so the two bars keep one motion language. */}
+            <span className={`relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200 ${on ? "pop" : ""}`}
               style={on ? { background: alpha(NAVY, 14) } : undefined}>
               <Icon size={20} strokeWidth={on ? 2.6 : 2} style={{ color: on ? NAVY : "#9aa5b8" }} />
               {key === "query" && newReplies > 0 && (
