@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 
 import { NAVY } from "../../branding";
-import { clearPendingQr, stashScan } from "../../pendingQr";
+import { clearPendingQr, stashScan, noteCheckedIn, hasCheckedIn } from "../../pendingQr";
 import { qrScanResult, qrScanRefusal, keepScanAfter } from "../../qrResultView";
 import QrScanner from "../../QrScanner";
 import { nfcStatus } from "../../nfc";
@@ -478,9 +478,25 @@ function QrCheckInCard({ qr, reload, onDone }) {
     // The stash dies the moment the submit fires — one scan, one attempt. A reload
     // that races the request simply resubmits and is answered alreadyMarked.
     clearPendingQr();
+
+    // ALREADY CHECKED IN ON THIS TAB FOR THIS CLASS? Then this is not a new attempt — the
+    // code rotated and the camera re-read it, or the deep link re-navigated, or this card
+    // remounted on the new code. Show the reassuring answer and DO NOT resubmit. A second
+    // POST here returns "already marked" at best and, once the code has expired, a red
+    // "scan again" over a check-in that already worked — and a burst of them trips the
+    // rate limiter. The `fired` ref only guards one card instance; this guard (see
+    // pendingQr.noteCheckedIn) is what holds across rotations and remounts. Keyed on the
+    // session, because the class is what stays the same while the code turns over.
+    if (hasCheckedIn(qr.sessionId)) {
+      setState({ phase: "done", result: { ok: true, alreadyMarked: true } });
+      return;
+    }
     (async () => {
       try {
         const r = await api.studentQrCheckIn(qr.sessionId, qr.code);
+        // A 2xx here means a mark now stands (newly written or already present). Record it
+        // so any re-fired scan for this class short-circuits above instead of resubmitting.
+        noteCheckedIn(qr.sessionId);
         setState({ phase: "done", result: r });
         // Refresh the day's list so the P or L pill appears under the card at once.
         reload();

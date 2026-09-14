@@ -75,6 +75,20 @@ function tapAllowed(studentId) {
   tapHits.set(studentId, recent);
   return true;
 }
+// The counterpart to tapAllowed. An IDEMPOTENT repeat — a student who is already marked
+// scanning the same class again — must not spend the ten-a-minute budget, or a re-scanner
+// is told "too many attempts" on top of a check-in that already worked. That is exactly
+// the loop a rotating code invites: the app resubmits a scan on its own, the code has
+// turned over, and each redundant POST that changes nothing was still charging the budget
+// until it locked the student out. The charge happens up front in tapAllowed because the
+// budget must be spent before any work is done; this hands ONE charge back the moment we
+// learn the attempt changed nothing. Best-effort and in-process, exactly like tapAllowed:
+// it pops this request's own timestamp (pushed a few lines of code ago), never throws, and
+// a missing bucket is simply nothing to refund.
+function refundTap(studentId) {
+  const recent = tapHits.get(studentId);
+  if (recent && recent.length) recent.pop();
+}
 
 /**
  * Record what happened, whatever happened.
@@ -640,7 +654,45 @@ router.post("/me/qr-check-in", async (req, res) => {
   });
   if (!verdict.valid) {
     if (verdict.reason === "expired") {
-      // "Expired" and "never ours" are different sentences with different next steps.
+      // A VALID SIGNATURE, only a stale clock. verifyCode returns "expired" ONLY after
+      // deriveCode matched this exact sessionId in a recent PAST window, so the sessionId
+      // is cryptographically proven here — unlike "bad_signature" below, where it is
+      // attacker-controlled and nothing about it may be trusted or revealed.
+      //
+      // So before the refusal: if a mark ALREADY STANDS for this student on this proven
+      // session, the honest answer is "you're already checked in", never "that code has
+      // expired, scan the one on screen again". The app resubmits a scan on its own — the
+      // code rotates between a student's first successful scan and the app's follow-up
+      // POST — and that follow-up would otherwise land here and paint a red "scan again"
+      // over a check-in that already worked, which is exactly the reported bug. This is a
+      // pure read: it creates nothing, records no absence, touches no lecturer's mark, and
+      // tells the student only about their OWN mark on a session they proved a valid code
+      // for. The rate-budget charge for this idempotent repeat is handed back too, so a
+      // rotating code cannot lock a student out of a class they are already marked in.
+      const already = await prisma.attendanceMark.findUnique({
+        where: { sessionId_studentId: { sessionId, studentId: req.user.id } },
+      });
+      if (already) {
+        refundTap(req.user.id);
+        // Name the class the student is already in, so the card reads as "you're done"
+        // rather than a bare acknowledgement. A light lookup on a rare path (expired AND
+        // already marked); sTapSession tolerates a missing session, but a name is kinder.
+        const s = await prisma.hndSession.findUnique({
+          where: { id: sessionId },
+          include: { unit: { select: { code: true, name: true } } },
+        });
+        const shaped = {
+          id: sessionId,
+          unitCode: s?.unit?.code || "",
+          unitName: s?.unit?.name || "",
+          startTime: s?.startTime || "",
+          endTime: s?.endTime || "",
+        };
+        await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "already_marked" });
+        return res.json({ ok: true, alreadyMarked: true, status: already.status, checkedInAt: already.checkedInAt ?? null, session: sTapSession(shaped) });
+      }
+      // Not marked, genuinely stale: "expired" and "never ours" are different sentences
+      // with different next steps, and this one is "scan the code on screen again".
       await logTap(req, { studentId: req.user.id, sessionId, method: "qr", outcome: "qr_expired" });
       return res.status(409).json({ error: "That code has expired. Scan the one on screen again.", reason: "qr_expired" });
     }
@@ -705,6 +757,10 @@ router.post("/me/qr-check-in", async (req, res) => {
     where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
   });
   if (existing) {
+    // Idempotent: a mark already stands, this scan changed nothing, so hand the budget
+    // charge back (see refundTap) — a repeat of a completed check-in must not count
+    // toward the ten-a-minute limit.
+    refundTap(req.user.id);
     await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "already_marked" });
     return res.json({ ok: true, alreadyMarked: true, status: existing.status, checkedInAt: existing.checkedInAt ?? null, session: sTapSession(shaped) });
   }
@@ -722,6 +778,9 @@ router.post("/me/qr-check-in", async (req, res) => {
       where: { sessionId_studentId: { sessionId: session.id, studentId: req.user.id } },
     });
     if (!standing) throw e;
+    // Two scans raced past the existence check; this one did not write the mark that now
+    // stands, so it is an idempotent repeat and its budget charge is refunded too.
+    refundTap(req.user.id);
     await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "already_marked" });
     return res.json({ ok: true, alreadyMarked: true, status: standing.status, checkedInAt: standing.checkedInAt ?? null, session: sTapSession(shaped) });
   }

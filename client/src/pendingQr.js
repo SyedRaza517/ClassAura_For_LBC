@@ -86,6 +86,58 @@ export function clearPendingQr() {
   try { sessionStorage.removeItem(KEY); } catch (_) {}
 }
 
+// The classes this TAB has already checked into. It is the guard that survives a code
+// rotation and a card remount, which the card's own `fired` ref cannot.
+//
+// THE BUG THIS CLOSES. One scan was turning into a burst of submissions: the projector
+// code rotates every few seconds, and every fresh capture — a native camera app
+// re-opening the same deep link through the hashchange listener above, or the card
+// remounting because `key={pendingQr.code}` changed to the new code — starts with a fresh
+// `fired` ref and fires another POST. The first is "marked"; the next lands "already
+// marked"; once the code turns over they read "that code has expired, scan again" — a red
+// error painted over a check-in that already worked — and enough of them trip the ten-a-
+// minute limiter into "too many attempts". Recording the SESSION (not the code) is what
+// makes the guard hold across rotations: the code changes, the class does not.
+//
+// sessionStorage and per tab, the same lifetime and blocked-storage tolerance as the
+// pending scan above: the mark is the server's record, this is only "this tab already
+// did that class, don't ask again". A genuine retry after a REFUSAL still works — only a
+// scan that actually resulted in a mark is remembered, so a student refused for a stale
+// code (and not yet marked) can still scan the new one.
+const DONE_KEY = "edtech.qrCheckedIn";
+const DONE_MAX = 50; // a long-lived tab that scanned many classes cannot grow unbounded
+
+function readDone() {
+  try {
+    const raw = sessionStorage.getItem(DONE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/** Remember that this tab has a mark for `sessionId`, so a re-fired scan does not resubmit. */
+export function noteCheckedIn(sessionId) {
+  if (!sessionId) return;
+  try {
+    const list = readDone();
+    if (list.includes(String(sessionId))) return;
+    list.push(String(sessionId));
+    while (list.length > DONE_MAX) list.shift();
+    sessionStorage.setItem(DONE_KEY, JSON.stringify(list));
+  } catch (_) {
+    // Storage blocked — the card's `fired` ref still guards a single instance, and the
+    // server answers a duplicate idempotently. Degrade, never throw.
+  }
+}
+
+/** Has this tab already checked into `sessionId`? */
+export function hasCheckedIn(sessionId) {
+  if (!sessionId) return false;
+  return readDone().includes(String(sessionId));
+}
+
 function read() {
   try {
     const raw = sessionStorage.getItem(KEY);

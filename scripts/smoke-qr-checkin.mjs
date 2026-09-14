@@ -522,25 +522,44 @@ try {
   check("a second scan does not move the recorded arrival time",
     afterAgain?.checkedInAt === firstCheckedInAt, `${firstCheckedInAt} -> ${afterAgain?.checkedInAt}`);
 
-  // ...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED. The same code, a few seconds later.
-  // This is the assertion that fails if the tolerance is ever widened back to a whole
-  // window, which is the change that would silently double how long a photographed screen
-  // keeps working.
-  // graceFor(ROTATE), not the raw ceiling. The grace is scaled to the rotation period —
-  // a third of it, capped — so at the 20-second default it is six seconds, not seven.
-  // Sleeping a hardcoded eight happened to clear it; deriving the real figure means this
-  // still waits past the boundary if either constant changes, instead of flaking.
+  // ...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED — but what an ALREADY-MARKED student
+  // is TOLD when they present a past-grace code changed on 14 Sep 2026, and this is that fix.
+  //
+  // The code has genuinely stopped verifying (the acceptance window is unchanged; widening
+  // it back to a whole window is still the regression this block guards — see the
+  // not-marked student below). But QA is already marked on this register, and the app
+  // resubmits a scan on its own as the code rotates. Telling a student who is already
+  // checked in "that code has expired, scan the one on screen again" is a red error over a
+  // check-in that already worked. Because verifyCode proved this sessionId (the signature
+  // matched a past window; only the clock is stale), the route now looks up the standing
+  // mark and answers "already checked in" instead — a pure read that creates nothing.
+  // graceFor(ROTATE), not the raw ceiling: the grace is scaled to the rotation period — a
+  // third of it, capped — so at the 20-second default it is six seconds, not seven, and
+  // deriving it means this still waits past the boundary if either constant changes.
   await sleep((graceFor(ROTATE) + 2) * 1000);
   const tooLate = await call("/student/me/qr-check-in", { method: "POST", token: qaToken, body: { sessionId: live.id, code: graceCode } });
-  check("...AND STOPS VERIFYING ONCE THE GRACE HAS PASSED",
-    tooLate.status === 409 && tooLate.data?.reason === "qr_expired",
-    `HTTP ${tooLate.status} ${tooLate.data?.reason}`);
-  // "Scan the new one" and "that was never one of ours" are different sentences with
-  // different next steps, and this is the commonest refusal there is — a student a few
-  // seconds late. It read as a forgery for a moment while this change was being made,
-  // because the diagnostic loop still started where the acceptance loop used to stop.
-  check("...and is reported as expired, not as a forgery",
-    /expired/i.test(tooLate.data?.error || tooLate.data?.reason || ""), tooLate.data?.error);
+  const afterTooLate = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
+  const markCountTooLate = await db.attendanceMark.count({ where: { sessionId: live.id, studentId: QA_ID } });
+  check("an ALREADY-MARKED student presenting a past-grace code is reassured, not told to scan again",
+    tooLate.status === 200 && tooLate.data?.alreadyMarked === true && markCountTooLate === 1,
+    `HTTP ${tooLate.status} ${tooLate.data?.reason || tooLate.data?.error || ""}, ${markCountTooLate} mark(s)`);
+  check("...and the reassurance is never the scary 'expired, scan again'",
+    tooLate.data?.reason !== "qr_expired", `reason=${tooLate.data?.reason || "none"}`);
+  check("...and it moves nothing — the recorded arrival time is untouched",
+    afterTooLate?.checkedInAt === firstCheckedInAt, `${firstCheckedInAt} -> ${afterTooLate?.checkedInAt}`);
+
+  // THE EXPIRY WORDING ITSELF, kept alive on a student who is NOT already marked — this is
+  // the assertion that fails if the acceptance tolerance is ever widened back to a whole
+  // window (the code would still verify and this would 200 instead of 409). QE is not
+  // enrolled on the unit, but the window check runs BEFORE the roster check, so a
+  // two-windows-old code is refused as expired regardless. QE has never been marked here,
+  // so the already-marked shortcut above does not apply to them.
+  const staleNotMarked = await call("/student/me/qr-check-in", { method: "POST", token: qeToken, body: { sessionId: live.id, code: codeFor(live.id, -2) } });
+  check("a NOT-yet-marked student on a stale code is still told it expired — scan the new one",
+    staleNotMarked.status === 409 && staleNotMarked.data?.reason === "qr_expired",
+    `HTTP ${staleNotMarked.status} ${staleNotMarked.data?.reason}`);
+  check("...and that is reported as expired, not as a forgery",
+    /expired/i.test(staleNotMarked.data?.error || staleNotMarked.data?.reason || ""), staleNotMarked.data?.error);
 
   /* ====================================================================== */
   console.log("\n--- one code, a whole class ---");
