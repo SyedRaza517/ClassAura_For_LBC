@@ -643,35 +643,49 @@ function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, sho
       {/* The back arrow and the bell are the two persistent navigation controls, so
           both are sized to Apple's 44pt / Android's 48dp minimum touch target. They
           were 30-32px, about a third under, which produces mis-taps. */}
-      <div className="flex items-center gap-2 px-3 pb-2 pt-1">
-        {/* Tabs get the logo; only PUSHED screens get a back arrow — the tab bar is
-            how you leave a tab, and a back arrow beside it says the navigation model
-            is something it is not. */}
-        {!["home", "classes", "checkin", "more"].includes(screen) ? (
-          <button onClick={() => setScreen("home")} aria-label="Back to Staff Hub" className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"><ChevronLeft size={22} /></button>
-        ) : (
-          <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-md bg-white px-1"><Logo small /></div>
-        )}
-        <div className="min-w-0 flex-1 text-center"><h1 className="truncate text-lg font-extrabold tracking-wide text-white">{title}</h1></div>
-        <button
-          onClick={() => setShowNotes(v => !v)}
-          aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
-          className={`press relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 ${unread ? "glow-pulse" : ""}`}
-        >
-          {unread ? <BellRing size={20} /> : <Bell size={20} />}
-          {unread > 0 && <span className="pop absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900 ring-2" style={{ "--tw-ring-color": "var(--brand-primary-dark)" }}>{unread}</span>}
-        </button>
-      </div>
+      {/* HOME IS ONE ROW — avatar, greeting, bell — exactly as the approved mockup
+          drew it. The implementation first kept the logo-box + "Staff Hub" title bar
+          ABOVE that row, which stacked three bands of chrome where the mockup had
+          one and is a fair share of why the built screen read older than the
+          drawing. Pushed screens and the other tabs keep the title bar, because a
+          screen you navigated into needs its name and its way back. */}
+      {screen === "home" ? (
+        <div className="flex items-center gap-3 px-4 pb-2 pt-2 fade-up">
+          <div className="float flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-[15px] font-bold text-white shadow-lg ring-2 ring-white/20" style={{ background: me.colour }}>{me.initials}</div>
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1 text-[11px] font-medium text-white/70"><Greet size={12} className="text-amber-300" /> {greet.word}</p>
+            <p className="truncate text-[16px] font-extrabold text-white">{me.name}</p>
+          </div>
+          <button
+            onClick={() => setShowNotes(v => !v)}
+            aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+            className={`press relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 ${unread ? "glow-pulse" : ""}`}
+          >
+            {unread ? <BellRing size={20} /> : <Bell size={20} />}
+            {unread > 0 && <span className="pop absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900 ring-2" style={{ "--tw-ring-color": "var(--brand-primary-dark)" }}>{unread}</span>}
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 px-3 pb-2 pt-1">
+          {!["classes", "checkin", "more"].includes(screen) ? (
+            <button onClick={() => setScreen("home")} aria-label="Back to Staff Hub" className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"><ChevronLeft size={22} /></button>
+          ) : (
+            <div className="flex h-11 w-12 shrink-0 items-center justify-center rounded-md bg-white px-1"><Logo small /></div>
+          )}
+          <div className="min-w-0 flex-1 text-center"><h1 className="truncate text-lg font-extrabold tracking-wide text-white">{title}</h1></div>
+          <button
+            onClick={() => setShowNotes(v => !v)}
+            aria-label={unread ? `Notifications, ${unread} unread` : "Notifications"}
+            className={`press relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 ${unread ? "glow-pulse" : ""}`}
+          >
+            {unread ? <BellRing size={20} /> : <Bell size={20} />}
+            {unread > 0 && <span className="pop absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900 ring-2" style={{ "--tw-ring-color": "var(--brand-primary-dark)" }}>{unread}</span>}
+          </button>
+        </div>
+      )}
       {screen === "home" && (
         <div className="px-4 pb-5 fade-up">
-          <div className="flex items-center gap-3">
-            <div className="float flex h-11 w-11 items-center justify-center rounded-2xl text-[15px] font-bold text-white shadow-lg ring-2 ring-white/20" style={{ background: me.colour }}>{me.initials}</div>
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-1 text-[11px] font-medium text-white/70"><Greet size={12} className="text-amber-300" /> {greet.word}</p>
-              <p className="truncate text-[16px] font-extrabold text-white">{me.name}</p>
-            </div>
-          </div>
-          {/* The clock-in card lives IN the header band now (the Option A direction the
+          {/* The clock-in card lives IN the header band (the Option A direction the
               user picked from the canvas): one vivid block owns greeting + today's
               first action, and the page below it starts on white. */}
           <HeaderClockIn store={store} me={me} setScreen={setScreen} />

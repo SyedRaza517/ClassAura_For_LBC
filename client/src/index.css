@@ -17,6 +17,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The product's typeface, one family everywhere — the approved home-screen mockup
+   was set in Plus Jakarta Sans and half its "modern" read came from the type, which
+   the implementation had quietly dropped back to the system stack. Declared AFTER
+   the Tailwind layers so it wins over preflight's font-sans on <body>; the fallback
+   stack carries the packaged app when the font cannot load offline. */
+body {
+  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
 /* ── Motion & surface utilities ───────────────────────────────────────────────
    These class names are used throughout the app (fade-up, press, scale-in, pop,
    skeleton…) but had never actually been defined, so every one of them was a
