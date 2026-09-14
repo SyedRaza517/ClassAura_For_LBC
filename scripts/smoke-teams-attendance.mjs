@@ -79,6 +79,11 @@ const FIXTURES_PATH = join(tmpdir(), `teams-graph-fixtures-${RUN}.json`);
 const ZONE = process.env.APP_TIMEZONE || "Europe/London";
 const isoOffset = (days) => new Date(Date.now() + days * 86400000).toLocaleDateString("en-CA", { timeZone: ZONE });
 const TODAY = isoOffset(0), YEST = isoOffset(-1), TOM = isoOffset(1);
+// Task 10's recurring-meeting scenario needs two DIFFERENT past dates, both inside the
+// RETRY_DAYS(7) collection window (teamsSync.js: daysAgo(7)..today) so both registers
+// are actually eligible for collection in this run, rather than one landing in the
+// future (skipped, "never touched") or outside the window (never collected at all).
+const WEEK1 = isoOffset(-6), WEEK2 = YEST;
 
 // A bare client, exactly as smoke-qr-checkin.mjs uses one: this suite plants fixtures
 // the API's own routes would refuse to create directly (a lecturer's mark, an event
@@ -108,6 +113,14 @@ const S3_EMAIL = `s3-${RUN}@x.ac.uk`;
 const STRANGER_EMAIL = `stranger-${RUN}@gmail.com`;
 const ORG_EMAIL = `organizer-${RUN}@x.ac.uk`;
 const ORG_ID = "org1";
+// Task 10's two-student roster for the recurring-meeting scenario. RUN-suffixed like
+// every other identifier here (both the email and the Graph-side msUserId, which lands
+// on Student.msUserId — a @@unique column — so a leftover value from a previous run
+// could otherwise collide with this one's).
+const ALICE_EMAIL = `alice-${RUN}@x.ac.uk`;
+const BOB_EMAIL = `bob-${RUN}@x.ac.uk`;
+const ALICE_MSID = `ms-alice-${RUN}`;
+const BOB_MSID = `ms-bob-${RUN}`;
 
 // A valid-shaped join link is all parseJoinUrl asks for (see teamsAttendance.js); the
 // suffix only needs to be unique per meeting.
@@ -119,6 +132,7 @@ const URL_D = joinUrl("d"); // yesterday 13:31 — the ambiguous slot
 const URL_E = joinUrl("e"); // a personal meeting at a time nothing is timetabled
 const URL_F_PASTED = joinUrl("f-pasted"); // yesterday 16:45 — already on the session, an admin's paste
 const URL_F_COMPETING = joinUrl("f-competing"); // a DIFFERENT meeting the calendar offers at the same slot
+const URL_SERIES = joinUrl("series"); // ONE recurring link, shared by two registers on two different dates
 
 // Times deliberately NOT on the hour or half hour. prisma/seed.js times its own weekly
 // timetable at 10:00/14:00/18:00 on fixed weekdays computed relative to today — a real
@@ -131,10 +145,16 @@ const T = {
   d: { start: "13:31", end: "15:01" },
   e: { start: "20:53", end: "21:23" },
   f: { start: "16:45", end: "18:15" },
+  g: { start: "08:13", end: "09:43" }, // the recurring meeting's slot, on both WEEK1 and WEEK2
 };
 
 const made = { sessions: [], events: [], enrolments: [], marks: [], students: [] };
 let unit = null, cohort = null, course = null;
+// Task 10's recurring-meeting scenario gets its own unit and cohort — alice and bob are
+// its ONLY roster, deliberately isolated from the three-student cohort the rest of this
+// suite shares, so a stray s1/s2/s3 mark can never be mistaken for (or mask) the
+// per-week separation this scenario exists to pin.
+let unit2 = null, cohort2 = null;
 let child = null, bootLog = "";
 let integrationExisted = false, priorIntegration = null;
 let teamsConfigExisted = false, priorTeamsConfig = null;
@@ -170,8 +190,10 @@ async function cleanup() {
     for (const id of made.events) await db.timetableEvent.delete({ where: { id } }).catch(() => {}); // groups cascade
     for (const id of made.enrolments) await db.enrolment.delete({ where: { id } }).catch(() => {});
     if (unit) await db.unit.delete({ where: { id: unit.id } }).catch(() => {});
+    if (unit2) await db.unit.delete({ where: { id: unit2.id } }).catch(() => {});
     for (const id of made.students) await db.student.delete({ where: { id } }).catch(() => {});
     if (cohort) await db.cohort.delete({ where: { id: cohort.id } }).catch(() => {});
+    if (cohort2) await db.cohort.delete({ where: { id: cohort2.id } }).catch(() => {});
     if (course) await db.course.delete({ where: { id: course.id } }).catch(() => {});
 
     // This suite's own runs, only — scoped by startedAt rather than a bare deleteMany({}).
@@ -235,31 +257,61 @@ try {
         { subject: "Teams Suite Pasted Slot Competitor", date: YEST, startTime: T.f.start, endTime: T.f.end, joinUrl: URL_F_COMPETING },
       ],
     },
-    meetingIds: { [URL_A]: "m-a", [URL_C]: "m-c", [URL_B]: "m-b", [URL_F_PASTED]: "m-f", [URL_F_COMPETING]: "m-f-competing" },
-    attendance: {
+    meetingIds: {
+      [URL_A]: "m-a", [URL_C]: "m-c", [URL_B]: "m-b", [URL_F_PASTED]: "m-f", [URL_F_COMPETING]: "m-f-competing",
+      [URL_SERIES]: "mtg-series-1",
+    },
+    // Task 10 replaced the old attendanceIntervals(org, meetingId) — a bare participants
+    // list per meeting id, read from `fixtures().attendance` — with
+    // attendanceByOccurrence(org, meetingId): ONE ENTRY PER HELD OCCURRENCE, each tagged
+    // with that occurrence's own DATE (teamsGraph.js), and matched to a register by
+    // occurrenceForDate() in teamsAttendance.js, which reads ONLY the occurrence whose
+    // date equals the session being collected. Every scenario below that used to hand a
+    // bare participants array under `attendance` now wraps that SAME array as the sole
+    // occurrence of `attendanceByOccurrence`, dated to the one session it feeds — get the
+    // date wrong here and occurrenceForDate finds nothing, which collects as "no report",
+    // not as a mismatch, so it fails exactly as silently as it would in production.
+    attendanceByOccurrence: {
       "m-a": [
-        // student1: the report says they attended in full. Irrelevant to the outcome —
-        // the point of this fixture is that a LECTURER'S mark already stands here and
-        // must survive no matter what the report claims.
-        { email: S1_EMAIL, msUserId: null, intervals: [{ joinedAt: T.a.start, leftAt: "10:27" }] },
-        // student2: joins twenty minutes in — past lateAfterMins (15) added to the
-        // 09:07 start, i.e. after 09:22 — so this is the Late case.
-        { email: S2_EMAIL, msUserId: null, intervals: [{ joinedAt: "09:27", leftAt: T.a.end }] },
-        // On the call, on no roster this college can see. Reported, never guessed.
-        { email: STRANGER_EMAIL, msUserId: null, intervals: [{ joinedAt: "09:10", leftAt: "09:20" }] },
-        // student3 has NO entry at all: rostered, report fetched successfully, never
-        // joined — the "actually absent" case, as opposed to "we don't know" below.
+        { date: YEST, intervals: [
+          // student1: the report says they attended in full. Irrelevant to the outcome —
+          // the point of this fixture is that a LECTURER'S mark already stands here and
+          // must survive no matter what the report claims.
+          { email: S1_EMAIL, msUserId: null, intervals: [{ joinedAt: T.a.start, leftAt: "10:27" }] },
+          // student2: joins twenty minutes in — past lateAfterMins (15) added to the
+          // 09:07 start, i.e. after 09:22 — so this is the Late case.
+          { email: S2_EMAIL, msUserId: null, intervals: [{ joinedAt: "09:27", leftAt: T.a.end }] },
+          // On the call, on no roster this college can see. Reported, never guessed.
+          { email: STRANGER_EMAIL, msUserId: null, intervals: [{ joinedAt: "09:10", leftAt: "09:20" }] },
+          // student3 has NO entry at all: rostered, report fetched successfully, never
+          // joined — the "actually absent" case, as opposed to "we don't know" below.
+        ] },
       ],
-      // "m-c" IS DELIBERATELY ABSENT. teamsGraph.js's fixture branch now throws for a
-      // meeting id with no key here (Task 10's one-line change to teamsGraph.js) rather
-      // than answering [] — a fetch that failed must not read like a report that
-      // succeeded and found nobody.
+      // "m-c" IS DELIBERATELY ABSENT. teamsGraph.js's fixture branch throws for a
+      // meeting id with no key here rather than answering [] — a fetch that failed must
+      // not read like a report that succeeded and found nobody.
       //
       // "m-f" is the PASTED meeting's report, not the competing one's — "m-f-competing"
       // has no entry at all, and must never be asked for, because nothing ever lets its
       // url reach a session's teamsJoinUrl in the first place.
       "m-f": [
-        { email: S1_EMAIL, msUserId: null, intervals: [{ joinedAt: "16:47", leftAt: "18:10" }] },
+        { date: YEST, intervals: [
+          { email: S1_EMAIL, msUserId: null, intervals: [{ joinedAt: "16:47", leftAt: "18:10" }] },
+        ] },
+      ],
+      // Task 10's own scenario: ONE recurring meeting id shared by two registers on
+      // DIFFERENT dates, reported as TWO occurrences — alice attended WEEK1's meeting
+      // only, bob attended WEEK2's only. Nothing here merges the weeks; the bug this
+      // pins is a collector that used to flatten every occurrence of a meeting id into
+      // one set of participants, which would have credited BOTH students onto BOTH
+      // registers regardless of which week each of them actually attended.
+      "mtg-series-1": [
+        { date: WEEK1, intervals: [
+          { email: ALICE_EMAIL, msUserId: ALICE_MSID, intervals: [{ joinedAt: T.g.start, leftAt: T.g.end }] },
+        ] },
+        { date: WEEK2, intervals: [
+          { email: BOB_EMAIL, msUserId: BOB_MSID, intervals: [{ joinedAt: T.g.start, leftAt: T.g.end }] },
+        ] },
       ],
     },
   };
@@ -397,6 +449,43 @@ try {
     description: "Teams Suite Pasted Link", teamsJoinUrl: URL_F_PASTED, teamsOrganizerId: null,
   } });
   made.sessions.push(sessF.id);
+
+  // Task 10's recurring-meeting scenario: its own unit and cohort, containing ONLY
+  // alice and bob, so their roster can never pick up s1/s2/s3 (or vice versa). Both
+  // registers carry the SAME teamsJoinUrl and teamsMeetingId — one recurring meeting —
+  // pre-set directly on the session exactly as sessF's pasted link is, so this scenario
+  // exercises COLLECTION (matching a report to a register by date) rather than
+  // discovery, which is already covered above.
+  unit2 = await db.unit.create({ data: {
+    code: `TMR${RUN}`.slice(0, 12), name: `Teams Suite Recurring Unit ${RUN}`, courseId: course.id,
+    startDate: WEEK1, endDate: TOM,
+  } });
+  cohort2 = await db.cohort.create({ data: { courseId: course.id, name: `Teams Suite Recurring Intake ${RUN}` } });
+  const alice = await db.student.create({ data: {
+    firstName: "Alice", lastName: `Suite${RUN}`, studentRef: `TMRA${RUN}`, email: ALICE_EMAIL,
+    initials: "AL", colour: "#1a73e8", cohortId: cohort2.id,
+  } });
+  made.students.push(alice.id);
+  const bob = await db.student.create({ data: {
+    firstName: "Bob", lastName: `Suite${RUN}`, studentRef: `TMRB${RUN}`, email: BOB_EMAIL,
+    initials: "BO", colour: "#1a73e8", cohortId: cohort2.id,
+  } });
+  made.students.push(bob.id);
+  for (const s of [alice, bob]) {
+    const e = await db.enrolment.create({ data: { studentId: s.id, unitId: unit2.id } });
+    made.enrolments.push(e.id);
+  }
+
+  const sessWk1 = await db.hndSession.create({ data: {
+    unitId: unit2.id, cohortId: cohort2.id, date: WEEK1, startTime: T.g.start, endTime: T.g.end,
+    description: "Teams Suite Recurring — week 1", teamsJoinUrl: URL_SERIES, teamsMeetingId: "mtg-series-1", teamsOrganizerId: null,
+  } });
+  made.sessions.push(sessWk1.id);
+  const sessWk2 = await db.hndSession.create({ data: {
+    unitId: unit2.id, cohortId: cohort2.id, date: WEEK2, startTime: T.g.start, endTime: T.g.end,
+    description: "Teams Suite Recurring — week 2", teamsJoinUrl: URL_SERIES, teamsMeetingId: "mtg-series-1", teamsOrganizerId: null,
+  } });
+  made.sessions.push(sessWk2.id);
 
   /* ====================================================================== */
   console.log("\n--- the ship-switched-off proof ---");
@@ -550,6 +639,34 @@ try {
   check("the mark was written from the pasted meeting's own report",
     s1PastedMark?.status === "P" && s1PastedMark?.takenBy === "Auto check-in (Teams)",
     `status=${s1PastedMark?.status} takenBy=${s1PastedMark?.takenBy}`);
+
+  /* ====================================================================== */
+  console.log("\n--- the recurring-meeting case: per-week separation, no cross-contamination ---");
+  /* ====================================================================== */
+  // THE BUG THIS PINS: one join URL, one resolved meeting id, TWO registers on two
+  // dates. Before attendanceByOccurrence carried a date per occurrence, collection read
+  // one flat participants list per meeting id — so a student present in EITHER week's
+  // report would have been marked Present on BOTH registers, because nothing on the
+  // fixture or the collector's read of it distinguished which week was which. alice
+  // attended week 1 only; bob attended week 2 only. If the two occurrences' intervals
+  // were ever merged before being matched to a register by date, both would show BOTH
+  // students Present on BOTH weeks — which is exactly what the four checks below rule out.
+
+  const week1AliceMark = await db.attendanceMark.findFirst({ where: { sessionId: sessWk1.id, studentId: alice.id } });
+  check("week 1's register marks alice Present, from week 1's own occurrence",
+    week1AliceMark?.status === "P" && week1AliceMark?.takenBy === "Auto check-in (Teams)",
+    `status=${week1AliceMark?.status} takenBy=${week1AliceMark?.takenBy}`);
+  const week1BobMark = await db.attendanceMark.findFirst({ where: { sessionId: sessWk1.id, studentId: bob.id } });
+  check("...and bob is NOT present on week 1 — he is only in week 2's occurrence",
+    week1BobMark?.status !== "P", `status=${week1BobMark?.status}`);
+
+  const week2BobMark = await db.attendanceMark.findFirst({ where: { sessionId: sessWk2.id, studentId: bob.id } });
+  check("week 2's register marks bob Present, from week 2's own occurrence",
+    week2BobMark?.status === "P" && week2BobMark?.takenBy === "Auto check-in (Teams)",
+    `status=${week2BobMark?.status} takenBy=${week2BobMark?.takenBy}`);
+  const week2AliceMark = await db.attendanceMark.findFirst({ where: { sessionId: sessWk2.id, studentId: alice.id } });
+  check("...and alice is NOT present on week 2 — the shared meeting id did not merge the weeks",
+    week2AliceMark?.status !== "P", `status=${week2AliceMark?.status}`);
 
   /* ====================================================================== */
   console.log("\n--- discovery ignores a meeting that matches no timetabled slot ---");
