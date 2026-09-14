@@ -416,6 +416,87 @@ async function cancelClassMeeting({ organizerId, calendarEventId }) {
 }
 
 /**
+ * Schedules ONE recurring online class as a weekly calendar event on the organizer's
+ * calendar. Same isOnlineMeeting/teamsForBusiness shape as createClassMeeting, plus a
+ * weekly recurrence bounded by an explicit end date — the series' last occurrence, so
+ * the meeting can never out-run or under-run the real lessons. start/end carry the FIRST
+ * occurrence's wall-clock; the pattern repeats it.
+ */
+async function createRecurringClassMeeting({ organizerId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails }) {
+  const fx = fixtures();
+  if (fx) {
+    const id = `cal-series-${slug(subject)}-${firstDate}`;
+    const joinUrl = `https://teams.microsoft.com/l/meetup-join/fixture-series-${slug(subject)}-${firstDate}`;
+    journal("createRecurringClassMeeting", { organizerId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails });
+    return { calendarEventId: id, joinUrl };
+  }
+  const body = {
+    subject,
+    isOnlineMeeting: true,
+    onlineMeetingProvider: "teamsForBusiness",
+    start: { dateTime: `${firstDate}T${startTime}:00`, timeZone: ZONE },
+    end: { dateTime: `${firstDate}T${endTime}:00`, timeZone: ZONE },
+    attendees: (attendeeEmails || []).map((address) => ({ emailAddress: { address }, type: "required" })),
+    recurrence: {
+      pattern: { type: "weekly", interval: 1, daysOfWeek: weekdays },
+      range: { type: "endDate", startDate: firstDate, endDate: lastDate },
+    },
+  };
+  const event = await graphFetch(`/users/${organizerId}/events`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  let joinUrl = event.onlineMeeting && event.onlineMeeting.joinUrl;
+  if (!joinUrl) {
+    const refetched = await graphFetch(`/users/${organizerId}/events/${event.id}?$select=onlineMeeting`);
+    joinUrl = refetched.onlineMeeting && refetched.onlineMeeting.joinUrl;
+  }
+  if (!joinUrl) throw new Error(`Created the recurring event for "${subject}" but Microsoft never attached a Teams join URL to it.`);
+  return { calendarEventId: event.id, joinUrl };
+}
+
+/** Rewrites the recurring series master this system created (times, subject, range, roster changed). */
+async function updateRecurringClassMeeting({ organizerId, calendarEventId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails }) {
+  const fx = fixtures();
+  if (fx) { journal("updateRecurringClassMeeting", { organizerId, calendarEventId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails }); return; }
+  const body = {
+    subject,
+    start: { dateTime: `${firstDate}T${startTime}:00`, timeZone: ZONE },
+    end: { dateTime: `${firstDate}T${endTime}:00`, timeZone: ZONE },
+    attendees: (attendeeEmails || []).map((address) => ({ emailAddress: { address }, type: "required" })),
+    recurrence: {
+      pattern: { type: "weekly", interval: 1, daysOfWeek: weekdays },
+      range: { type: "endDate", startDate: firstDate, endDate: lastDate },
+    },
+  };
+  await graphFetch(`/users/${organizerId}/events/${calendarEventId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Promotes the teaching staff to Teams co-organizers on an online meeting. Needs the
+ * OnlineMeetings.ReadWrite.All application permission (see TEAMS_SETUP.md). Idempotent:
+ * re-writing the same roles is harmless, so the caller gates on coorganizersSetAt rather
+ * than this refusing. Empty coorganizerUserIds is a no-op (nobody to promote).
+ */
+async function setMeetingCoorganizers({ organizerId, meetingId, coorganizerUserIds }) {
+  const fx = fixtures();
+  if (fx) { journal("setMeetingCoorganizers", { organizerId, meetingId, coorganizerUserIds }); return; }
+  if (!meetingId || !coorganizerUserIds || !coorganizerUserIds.length) return;
+  const body = {
+    participants: {
+      attendees: coorganizerUserIds.map((id) => ({
+        identity: { "@odata.type": "#microsoft.graph.identitySet", user: { "@odata.type": "#microsoft.graph.identity", id } },
+        role: "coorganizer",
+      })),
+    },
+  };
+  await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+/**
  * Provisions a new Team from the standard template, owned by `ownerUserId`. Graph
  * answers 202 with a Location header rather than the team itself, because team
  * creation is genuinely asynchronous on Microsoft's side — the underlying Microsoft
@@ -594,6 +675,7 @@ module.exports = {
   resolveOrganizers, calendarView, resolveMeetingId, attendanceIntervals, graphFetch,
   // Teams automation (Task 2): writes, plus the reads they depend on.
   createClassMeeting, updateClassMeeting, cancelClassMeeting,
+  createRecurringClassMeeting, updateRecurringClassMeeting, setMeetingCoorganizers,
   createTeam, createChannel, getChannelEmail, addTeamMember, resolveUserId,
   // Teams automation (Task 4): the creator-account setting.
   creatorEmail, resolveCreatorId,
