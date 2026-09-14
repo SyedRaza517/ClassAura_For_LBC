@@ -14,6 +14,11 @@ const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
 const { normaliseCampus } = require("../timetabling/campusMatch");
 const { seriesDates } = require("../timetabling/recurrence");
 const { parseSessions } = require("../timetabling/sessions");
+// The WINDOW-wide clash report (every double-booked pair per resource), renamed at
+// import because ../timetabling/overlap exports a findClashes of its own answering
+// the save path's candidate-vs-existing question. Same boundary rule, one predicate
+// — see the header of clashes.js.
+const { findClashes: findWindowClashes } = require("../timetabling/clashes");
 // The rescue-hatch validator: the same shape check the sync engine will later run the
 // pasted string through, imported rather than reimplemented so a link this route
 // accepts is never one the sync then silently refuses to look up.
@@ -1013,6 +1018,55 @@ router.get("/events", async (req, res) => {
     where, include: EVENT_INCLUDE, orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
   res.json(rows.map(sEvent));
+});
+
+/* --------------------------------------------------------------- clashes -- */
+
+// GET /api/timetabling/clashes?from&to — every staff, room and group double-booking
+// in the window. Clash detection v1: the piece this module was parked on, checked by
+// src/timetabling/clashes.js (pure, tested — its header carries the rules and the
+// research they came from).
+//
+// A REPORT, NOT A GATE — deliberately, per the market-unanimous ruling the research
+// verified at source (EDT: constraints are strict in automatic placement, advisory
+// in manual). Saving an event that clashes stays possible; this route is how the
+// planner SEES what the timetable currently double-books, drafts included, because
+// the drafts are exactly what a timetabler is trying to fix before publishing.
+router.get("/clashes", async (req, res) => {
+  const from = str(req.query.from), to = str(req.query.to);
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) return res.status(400).json({ error: "from and to must be YYYY-MM-DD" });
+  if (to < from) return res.status(400).json({ error: "to must not be before from" });
+
+  // The minimal select, not EVENT_INCLUDE: the checker needs ids and times, and a
+  // term of events rides this one request.
+  const rows = await prisma.timetableEvent.findMany({
+    where: { date: { gte: from, lte: to } },
+    select: {
+      id: true, date: true, startTime: true, endTime: true, title: true, published: true,
+      roomId: true, staff: { select: { staffId: true } }, groups: { select: { cohortId: true } },
+    },
+  });
+  const clashes = findWindowClashes(rows.map((e) => ({
+    id: e.id, date: e.date, start: e.startTime, end: e.endTime, title: e.title,
+    published: e.published, roomId: e.roomId,
+    staffIds: e.staff.map((s) => s.staffId), groupIds: e.groups.map((g) => g.cohortId),
+  })));
+
+  // Names for the resources that actually clash — looked up AFTER detection, so a
+  // clean term costs three empty queries and a messy one costs three small ones.
+  const idsOf = (kind) => [...new Set(clashes.filter((c) => c.kind === kind).map((c) => c.resourceId))];
+  const [staffRows, roomRows, groupRows] = await Promise.all([
+    idsOf("staff").length ? prisma.staff.findMany({ where: { id: { in: idsOf("staff") } }, select: { id: true, name: true } }) : [],
+    idsOf("room").length ? prisma.room.findMany({ where: { id: { in: idsOf("room") } }, select: { id: true, name: true } }) : [],
+    idsOf("group").length ? prisma.cohort.findMany({ where: { id: { in: idsOf("group") } }, select: { id: true, name: true } }) : [],
+  ]);
+  const nameOf = new Map([...staffRows, ...roomRows, ...groupRows].map((r) => [r.id, r.name]));
+
+  res.json({
+    from, to,
+    total: clashes.length,
+    clashes: clashes.map((c) => ({ ...c, resourceName: nameOf.get(c.resourceId) || null })),
+  });
 });
 
 /* ------------------------------------------------------------ events list -- */
