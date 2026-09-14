@@ -31,7 +31,10 @@ import { CHECK_IN_METHODS, MACHINE_METHODS, selfCheckInMethod } from "./checkInM
 import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
-import CheckInCard from "./CheckInCard";
+// CheckInCard (the student register's tap-arms-a-button card) is no longer imported
+// here: the staff clock-in popup reads the sticker and submits in one motion — see
+// TapOnsiteSheet. The card itself lives on for the student app.
+import { nfcStatus, scanOnce, cancelScan } from "./nfc";
 import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance, { LiveSession } from "./AdminLiveAttendance";
 import { liveAction } from "./checkInAction";
@@ -1198,31 +1201,107 @@ const SITES = ["Onsite", "Online"];
 // Staff-tab filter and the Add/Edit Staff form. Matches validate.js HOME_SITES.
 const HOME_SITES = ["HND", "FE", "SL"];
 
-// Clocking in by touching a sticker. Renders nothing at all unless the college has
-// switched tap check-in on AND allowed it for staff, so nobody sees a control that would
-// only ever refuse them.
-function StaffTapCheckIn({ store, settings }) {
-  // staffTapEnabled ALONE (decoupled 13 Sep 2026) — `settings.enabled` is the STUDENT
-  // NFC master and is irrelevant to whether staff clock in by sticker. Requiring both
-  // meant staff-NFC could not be used while students are on QR (enabled:false).
-  if (!settings?.staffTapEnabled) return null;
+// The tap-onsite popup: opens on the "Tap onsite" button, says "hold your phone to
+// the sticker", and THE READ ITSELF CLOCKS THE PERSON IN — no armed second button.
+// (StaffTapCheckIn, the inline card this replaces, used the student register's
+// tap-arms-a-button model; for a clock-in the deliberate act is pressing "Tap
+// onsite", so a second press after the read was a step with no decision in it.)
+//
+// staffTapEnabled ALONE gates the button that opens this — `enabled` is the STUDENT
+// NFC master and irrelevant to staff clock-in (decoupled 13 Sep 2026).
+//
+// api.tapCheckIn directly rather than store.tapCheckIn: the store's run() wrapper
+// swallows failures into a toast, and this sheet needs the error in hand to offer
+// "try again" in place. onDone() refreshes the store, so the check-in list and the
+// home hero still update exactly as the button path does.
+function TapOnsiteSheet({ onClose, onDone }) {
+  const [status, setStatus] = useState(null);   // from nfcStatus(), null while asking
+  const [phase, setPhase] = useState("scanning"); // scanning | done | error
+  const [rec, setRec] = useState(null);
+  const [error, setError] = useState("");
+  const alive = useRef(true);
 
-  return (
-    <div className="mt-4">
-      <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Tap the sticker to clock in</p>
-      <CheckInCard
-        armSeconds={settings.armSeconds || 60}
-        actionLabel="Clock in — Onsite"
-        // Through the store, not the api directly: run() resyncs the check-in list and
-        // raises the same toast the button does, so both routes in behave identically.
-        onCheckIn={(tagCode) => store.tapCheckIn(tagCode)}
-        renderResult={(r) => (
-          r.alreadyCheckedIn
-            ? <>You were already clocked in at <strong>{r.in}</strong>.</>
-            : <>Clocked in <strong>Onsite</strong> at <strong>{r.in}</strong>.</>
+  useEffect(() => { alive.current = true; return () => { alive.current = false; cancelScan(); }; }, []);
+  useEffect(() => { nfcStatus().then((s) => { if (alive.current) setStatus(s); }); }, []);
+
+  const scan = useCallback(async () => {
+    setPhase("scanning"); setError("");
+    // Keep listening until a sticker is read, the sheet closes, or something real
+    // breaks. A timeout is "nobody has tapped yet", not an error — same reading as
+    // CheckInCard's silent re-arm, minus the arming window this flow doesn't have.
+    for (;;) {
+      if (!alive.current) return;
+      try {
+        const code = await scanOnce({ alertMessage: "Hold your phone near the sticker" });
+        if (!alive.current) return;
+        const r = await api.tapCheckIn(code);
+        if (!alive.current) return;
+        setRec(r); setPhase("done");
+        onDone?.();
+        setTimeout(() => { if (alive.current) onClose(); }, 1600);
+        return;
+      } catch (e) {
+        if (!alive.current) return;
+        if (e?.timedOut) continue;      // nobody tapped yet — keep waiting
+        if (e?.cancelled) { onClose(); return; } // the user dismissed Apple's sheet
+        setError(e?.message || "Could not read the sticker."); setPhase("error");
+        return;
+      }
+    }
+  }, [onClose, onDone]);
+
+  // Android reads silently, so the sheet starts listening the moment it opens.
+  // iPhone cannot — Apple's scan sheet needs a gesture — so the "Tap onsite" press
+  // that OPENED this sheet is the gesture, and scan() runs immediately either way;
+  // on iOS scanOnce raises the system sheet on top of this one.
+  useEffect(() => {
+    if (!status?.ok) return;
+    scan();
+  }, [status, scan]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90]" role="dialog" aria-modal="true" aria-label="Tap onsite">
+      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
+      <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] shadow-2xl fade-up sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[22rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200 sm:hidden" aria-hidden="true" />
+        <button onClick={onClose} aria-label="Close" className="press absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
+
+        {phase === "done" ? (
+          <div className="py-4 text-center pop">
+            <span className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 ring-4 ring-emerald-100"><CheckCircle2 size={30} className="text-emerald-600" /></span>
+            <p className="text-lg font-extrabold text-slate-800">{rec?.alreadyCheckedIn ? "Already clocked in" : "You're clocked in"}</p>
+            <p className="mt-1 text-sm text-slate-500">Onsite at <strong>{rec?.in}</strong>. Have a great day.</p>
+          </div>
+        ) : status && !status.ok ? (
+          <div className="py-4 text-center">
+            <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100"><Smartphone size={24} className="text-slate-400" /></span>
+            <p className="text-[15px] font-extrabold text-slate-800">
+              {status.reason === "web" ? "Use the app to tap in" : status.reason === "no-hardware" ? "This phone can't read stickers" : status.reason === "disabled" ? "NFC is switched off" : "NFC isn't working"}
+            </p>
+            <p className="mx-auto mt-1 max-w-[240px] text-[12.5px] leading-relaxed text-slate-500">
+              {status.reason === "web" ? "Tap check-in needs the college app on your phone — a browser can't read a sticker."
+                : status.reason === "disabled" ? "Turn NFC on in your phone's settings, then try again."
+                : status.detail || "Ask your admin to check the sticker rollout."}
+            </p>
+          </div>
+        ) : phase === "error" ? (
+          <div className="py-4 text-center">
+            <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50"><AlertCircle size={24} className="text-rose-500" /></span>
+            <p className="text-[15px] font-extrabold text-slate-800">That didn't work</p>
+            <p className="mx-auto mt-1 max-w-[250px] text-[12.5px] leading-relaxed text-slate-500">{error}</p>
+            <button onClick={scan} className="press mx-auto mt-3 rounded-xl px-4 py-2.5 text-[13px] font-bold text-white" style={{ background: NAVY }}>Try again</button>
+          </div>
+        ) : (
+          <div className="py-4 text-center">
+            <span className="glow-pulse mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full ring-4 ring-blue-100" style={{ background: alpha(NAVY, 10) }}><Nfc size={30} style={{ color: NAVY }} /></span>
+            <p className="text-lg font-extrabold text-slate-800">Please tap the NFC sticker</p>
+            <p className="mt-1 text-sm text-slate-500">Hold the top of your phone flat against the sticker — you'll be clocked in automatically.</p>
+            <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-400"><Loader2 size={12} className="animate-spin" /> Listening for a tap…</p>
+          </div>
         )}
-      />
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1233,6 +1312,8 @@ function CheckInScreen({ store, me }) {
   // "not checked in" (offer the Check In button, which fills the time server-side).
   const checkedIn = rec && rec.in;
   const [clock, setClock] = useState(new Date());
+  // Whether the tap-onsite sheet is open.
+  const [tapOpen, setTapOpen] = useState(false);
   // Whether this college requires a sticker for an ONSITE clock-in.
   //
   // Read here rather than only inside the tap card, because the plain Check In button
@@ -1297,7 +1378,18 @@ function CheckInScreen({ store, me }) {
           <div className="mt-5 text-left">
             {tapRequired ? (
               <>
-                <StaffTapCheckIn store={store} settings={tapSettings} />
+                {/* THE FLOW, in the user's own words (14 Sep 2026): "they need to
+                    select a button called tap onsite, they will click, then one pop
+                    will open saying please tap on NFC — once tapped it will mark
+                    them checked in automatically." So the button opens the sheet,
+                    the sheet arms the reader, and the STICKER READ ITSELF submits —
+                    no armed second button here, unlike the student register card,
+                    because pressing "Tap onsite" already was the deliberate act the
+                    arming window exists to capture. */}
+                <button onClick={() => setTapOpen(true)}
+                  className="press flex w-full flex-col items-center gap-1.5 rounded-2xl py-4 text-white shadow-md" style={{ background: NAVY }}>
+                  <Nfc size={22} /><span className="text-[15px] font-extrabold">Tap onsite</span><span className="text-[10px] text-white/70">Clock in at the sticker</span>
+                </button>
                 <div className="my-4 flex items-center gap-3" aria-hidden="true">
                   <span className="h-px flex-1 bg-slate-200" /><span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">or</span><span className="h-px flex-1 bg-slate-200" />
                 </div>
@@ -1305,6 +1397,7 @@ function CheckInScreen({ store, me }) {
                   className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[14px] font-extrabold ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
                   <Wifi size={17} /> Working remotely — clock in online
                 </button>
+                {tapOpen && <TapOnsiteSheet onClose={() => setTapOpen(false)} onDone={() => store.refresh()} />}
               </>
             ) : (
               <>
