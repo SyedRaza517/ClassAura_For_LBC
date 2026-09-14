@@ -1233,9 +1233,6 @@ function CheckInScreen({ store, me }) {
   // "not checked in" (offer the Check In button, which fills the time server-side).
   const checkedIn = rec && rec.in;
   const [clock, setClock] = useState(new Date());
-  // Which site they're clocking in from today. Must be chosen before the button
-  // enables, so every check-in carries a site.
-  const [site, setSite] = useState(null);
   // Whether this college requires a sticker for an ONSITE clock-in.
   //
   // Read here rather than only inside the tap card, because the plain Check In button
@@ -1257,9 +1254,7 @@ function CheckInScreen({ store, me }) {
   // Online is deliberately NOT gated. A sticker proves somebody stood in the building,
   // which is exactly the thing a person working from home cannot do — requiring one to
   // record remote work would make the honest answer unrecordable.
-  const onsiteNeedsTap = tapRequired && site === "Onsite";
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
-  const checkIn = () => store.checkIn(site);
   const checkOut = () => store.checkOut(rec.id);
   return (
     <Screen>
@@ -1286,45 +1281,49 @@ function CheckInScreen({ store, me }) {
             </div>
           );
         })()}
+        {/* ONE TAP, EITHER WAY — the user's ruling for this screen, 14 Sep 2026: "on
+            campus should be taken by NFC and online should be straight." The old flow
+            was choose-a-site THEN press a confirm button, which made the commonest
+            action on this screen a two-step form. Now:
+
+            * Sticker required (staffTapEnabled): the TAP CARD is the onsite action —
+              hold the phone to the sticker, done — and Online is one plain button
+              underneath. There is no Onsite button at all, because the server would
+              refuse it (tap_required, routes/checkins.js) and a control that only
+              ever 409s is worse than no control.
+            * No sticker requirement: two direct buttons, each of which clocks in on
+              the tap. Choosing and confirming were never two decisions. */}
         {!checkedIn && (
           <div className="mt-5 text-left">
-            <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Where are you working today?</p>
-            <div className="grid grid-cols-2 gap-2">
-              {SITES.map(s => {
-                const active = site === s;
-                return (
-                  <button
-                    key={s}
-                    onClick={() => setSite(s)}
-                    className={`press rounded-xl py-2.5 text-sm font-bold ring-1 transition-all ${active ? "text-white ring-transparent shadow-md" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
-                    style={active ? { background: NAVY } : {}}
-                  >
-                    {s}
+            {tapRequired ? (
+              <>
+                <StaffTapCheckIn store={store} settings={tapSettings} />
+                <div className="my-4 flex items-center gap-3" aria-hidden="true">
+                  <span className="h-px flex-1 bg-slate-200" /><span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">or</span><span className="h-px flex-1 bg-slate-200" />
+                </div>
+                <button onClick={() => store.checkIn("Online")}
+                  className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[14px] font-extrabold ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
+                  <Wifi size={17} /> Working remotely — clock in online
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Where are you working today?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => store.checkIn("Onsite")}
+                    className="press flex flex-col items-center gap-1.5 rounded-2xl py-4 text-white shadow-md" style={{ background: NAVY }}>
+                    <Building2 size={20} /><span className="text-sm font-extrabold">On campus</span><span className="text-[10px] text-white/70">One tap — you're in</span>
                   </button>
-                );
-              })}
-            </div>
-
-            {/* Shown only once Onsite is chosen. Offering it beside an Online selection
-                would be offering the one route that contradicts the answer just given. */}
-            {onsiteNeedsTap && <StaffTapCheckIn store={store} settings={tapSettings} />}
+                  <button onClick={() => store.checkIn("Online")}
+                    className="press flex flex-col items-center gap-1.5 rounded-2xl bg-white py-4 ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
+                    <Wifi size={20} /><span className="text-sm font-extrabold">Online</span><span className="text-[10px] text-slate-400">Working remotely</span>
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
         <div className="mt-5">
-          {/* The gate. While this college requires a sticker for onsite work, the
-              ordinary button cannot record one — the tap card above is the only route,
-              and its own button stays grey until a sticker has actually been read.
-              Online is unaffected, so nobody is ever left unable to record their day. */}
-          {!checkedIn && !onsiteNeedsTap && <PrimaryBtn onClick={checkIn} disabled={!site} className="w-full !py-3.5 text-base"><LogIn size={20} /> {site ? `Check In · ${site}` : "Choose onsite or online"}</PrimaryBtn>}
-          {!checkedIn && onsiteNeedsTap && (
-            <p className="rounded-xl bg-slate-50 px-4 py-3 text-center text-[13px] leading-relaxed text-slate-500 ring-1 ring-slate-200">
-              Onsite clock-in is by sticker at this college. Hold your phone to the sticker above to switch the button on.
-              <br />
-              <button type="button" onClick={() => setSite("Online")} className="mt-1 font-semibold underline" style={{ color: NAVY }}>
-                Working online instead?
-              </button>
-            </p>
-          )}
           {checkedIn && !rec.out && <PrimaryBtn onClick={checkOut} colour={MAROON} className="w-full !py-3.5 text-base"><LogOut size={20} /> Check Out</PrimaryBtn>}
           {checkedIn && rec.out && <div className="rounded-xl bg-emerald-50 py-3 text-sm font-semibold text-emerald-700">✓ Your day is complete. Have a great evening!</div>}
         </div>
