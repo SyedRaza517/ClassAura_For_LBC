@@ -38,7 +38,7 @@ import { liveAction } from "./checkInAction";
 import AssessmentTracker from "./AssessmentTracker";
 import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import AdmissionTracker from "./AdmissionTracker";
-import MyTimetable from "./MyTimetable";
+import StaffTimetable from "./StaffTimetable";
 import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
 import PhoneShell, { useIsHandset } from "./PhoneShell";
@@ -557,28 +557,13 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
 
   const header = <AppHeader me={me} staff={staff} setCurrentStaffId={setCurrentStaffId} screen={screen} setScreen={setScreen} store={store} showNotes={showNotes} setShowNotes={setShowNotes} />;
 
-  // MY TIMETABLE BREAKS OUT OF THE DECORATIVE PHONE ON A DESKTOP.
-  //
-  // Every other screen in this app is phone-shaped by design, and PhoneShell draws a
-  // 390px handset around it when the window is big enough. A timetable cannot live in
-  // that frame: it is a 330px sidebar beside a seven-column grid, and 390px has room
-  // for neither. Squeezing it in would mean shipping something that shares none of
-  // the shape of the product it is meant to reproduce.
-  //
-  // So this ONE screen takes the whole window on a desktop, and on a real handset it
-  // stays in the shell with everything else — where TimetableCalendar has already
-  // decided to draw itself as a list rather than a grid.
-  if (screen === "timetable" && !isHandsetApp) {
-    return (
-      // NO AppHeader HERE. Stacking the app's own blue bar above the timetable's
-      // gives two title bars and two rows of chrome before any timetable appears,
-      // which is not what the product being reproduced looks like. MyTimetable's bar
-      // carries the back control instead, so nothing is lost.
-      <div className="flex h-full min-h-0 w-full flex-col bg-white">
-        <MyTimetable onBack={() => setScreen("home")} />
-      </div>
-    );
-  }
+  // The desktop breakout that used to live here — MyTimetable taking the whole
+  // window, outside the phone frame — went on 14 Sep 2026, on the user's ruling that
+  // the staff timetable "leads towards webapp" and should read like the STUDENT
+  // app's timetable instead. StaffTimetable.jsx is that screen: the student
+  // module-by-module presentation with staff details, phone-shaped everywhere. The
+  // web timetable product survives untouched where it belongs, in the admin
+  // console's Timetabling pages.
 
   return (
     <PhoneShell header={header} footer={
@@ -586,7 +571,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
     }>
       {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} myDay={myDay} canDecideLeave={canDecideLeave} />}
       {screen === "checkin" && <CheckInScreen store={store} me={me} />}
-      {screen === "timetable" && <MyTimetable />}
+      {screen === "timetable" && <StaffTimetable meId={me.id} />}
       {/* The lecturer's live view, exactly the console's: the server admits the tutor of
           a unit to their own classes without any admin page. No settings link here;
           a lecturer is told to ask. */}
