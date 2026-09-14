@@ -110,12 +110,109 @@ async function channelEmailsFor(ev) {
   return unitChannel?.channelEmail ? [unitChannel.channelEmail] : [];
 }
 
+async function reconcileSeries({ organizerId, note, summary }) {
+  // Candidate series: those with at least one still-relevant (>= yesterday) published,
+  // wanted occurrence. Grouped by seriesId.
+  const events = await prisma.timetableEvent.findMany({
+    where: { seriesId: { not: null }, date: { gte: daysAgo(1) } },
+    include: {
+      unit: { select: { code: true, name: true } },
+      staff: { select: { staff: { select: { email: true } } } },
+      groups: { select: { cohortId: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+  const bySeries = new Map();
+  for (const ev of events) {
+    if (!bySeries.has(ev.seriesId)) bySeries.set(ev.seriesId, []);
+    bySeries.get(ev.seriesId).push(ev);
+  }
+
+  for (const [seriesId, group] of bySeries) {
+    try {
+      const wantedEvents = group.filter((e) => e.published && e.teamsAutoMeeting);
+      const existing = await prisma.teamsSeriesMeeting.findUnique({ where: { seriesId } });
+
+      // Rollout (a): a legacy series (per-event meetings already exist, no series row)
+      // is left to the per-event loop; never converted here.
+      const hasLegacyMeetings = group.some((e) => e.teamsCalendarEventId);
+      if (!existing && hasLegacyMeetings) continue;
+
+      // Not wanted (unpublished / checkbox cleared across the whole series) but we own a
+      // recurring meeting: cancel OURS and clear the links.
+      if (!wantedEvents.length) {
+        if (existing) {
+          await graph.cancelClassMeeting({ organizerId, calendarEventId: existing.calendarEventId });
+          const ids = group.map((e) => e.id);
+          await prisma.timetableEvent.updateMany({ where: { id: { in: ids } }, data: { teamsJoinUrl: "" } });
+          await prisma.hndSession.updateMany({ where: { timetableEventId: { in: ids } }, data: { teamsJoinUrl: null, teamsMeetingId: null, teamsOrganizerId: null } });
+          await prisma.teamsSeriesMeeting.delete({ where: { seriesId } });
+          summary.seriesMeetingsCancelled++;
+        }
+        continue;
+      }
+
+      // Build the recurring meeting's inputs from the whole wanted series.
+      const dates = wantedEvents.map((e) => e.date).sort();
+      const firstDate = dates[0];
+      const lastDate = dates[dates.length - 1];
+      const weekdays = [...new Set(wantedEvents.map((e) => graph.graphWeekday(e.date)))].sort();
+      const startTime = wantedEvents[0].startTime;
+      const endTime = wantedEvents[0].endTime;
+      const subject = wantedEvents[0].title || wantedEvents[0].unit?.name || wantedEvents[0].unit?.code || "Class";
+      const staffEmails = [...new Set(wantedEvents.flatMap((e) => e.staff.map((s) => s.staff.email)))].filter(Boolean);
+      // Attendees = staff + the unit's channel (one cohort only), same rule as the
+      // per-event pass. Reuse channelEmailsFor on a representative event.
+      const channelEmails = await channelEmailsFor(wantedEvents[0]);
+      const attendeeEmails = [...new Set([...staffEmails, ...channelEmails])].filter(Boolean);
+      const fp = seriesFingerprint({ subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails, staffEmails });
+
+      let row = existing;
+      if (!row) {
+        const { calendarEventId, joinUrl } = await graph.createRecurringClassMeeting({ organizerId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails });
+        row = await prisma.teamsSeriesMeeting.create({ data: { seriesId, calendarEventId, joinUrl, organizerId, fingerprint: fp } });
+        summary.seriesMeetingsCreated++;
+      } else if (fp !== row.fingerprint) {
+        await graph.updateRecurringClassMeeting({ organizerId, calendarEventId: row.calendarEventId, subject, firstDate, lastDate, weekdays, startTime, endTime, attendeeEmails });
+        row = await prisma.teamsSeriesMeeting.update({ where: { seriesId }, data: { fingerprint: fp, lastSyncedAt: new Date() } });
+        summary.seriesMeetingsUpdated++;
+      }
+
+      // Fan the ONE join URL onto every occurrence's event + registers (blanks only, so
+      // an admin's paste and an already-set link both stand — the never-overwrite rule).
+      const ids = group.map((e) => e.id);
+      await prisma.timetableEvent.updateMany({ where: { id: { in: ids }, teamsJoinUrl: "" }, data: { teamsJoinUrl: row.joinUrl } });
+      await prisma.hndSession.updateMany({ where: { timetableEventId: { in: ids }, teamsJoinUrl: null }, data: { teamsJoinUrl: row.joinUrl, teamsOrganizerId: organizerId } });
+
+      // Resolve the onlineMeeting id once, then promote staff to co-organizers when the
+      // staff set changed (or was never written). Failure to resolve/promote is a NOTE,
+      // never a thrown run — the meeting and its link already stand.
+      if (!row.meetingId) {
+        try {
+          const mid = await graph.resolveMeetingId(organizerId, row.joinUrl);
+          if (mid) row = await prisma.teamsSeriesMeeting.update({ where: { seriesId }, data: { meetingId: mid } });
+        } catch (e) { note(`Series "${subject}": resolving its meeting id for co-organizers: ${e.message}`); }
+      }
+      if (row.meetingId && (!row.coorganizersSetAt || fp !== existing?.fingerprint)) {
+        try {
+          const ids2 = [];
+          for (const email of staffEmails) { const uid = await graph.resolveUserId(email); if (uid) ids2.push(uid); else note(`Series "${subject}": ${email} has no Microsoft account — not made a co-organizer.`); }
+          await graph.setMeetingCoorganizers({ organizerId, meetingId: row.meetingId, coorganizerUserIds: ids2 });
+          await prisma.teamsSeriesMeeting.update({ where: { seriesId }, data: { coorganizersSetAt: new Date() } });
+        } catch (e) { note(`Series "${subject}": setting co-organizers: ${e.message}`); }
+      }
+    } catch (e) {
+      note(`Series ${seriesId}: ${e.message}`);
+    }
+  }
+}
+
 async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
   if (running) throw new Error("A Teams meetings sync is already running.");
   running = true;
   const issues = [];
   const note = (m) => issues.push(String(m).slice(0, 500));
-  const summary = { meetingsCreated: 0, meetingsUpdated: 0, meetingsCancelled: 0 };
+  const summary = { meetingsCreated: 0, meetingsUpdated: 0, meetingsCancelled: 0, seriesMeetingsCreated: 0, seriesMeetingsUpdated: 0, seriesMeetingsCancelled: 0 };
   // `run` declared outside the try, assigned only as its first line — the same
   // create-inside-try shape teamsSync.js's own long comment justifies: a create that
   // itself rejects (a pooler blip, a deploy that reaches this code before
@@ -131,6 +228,8 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
       throw new Error("No Teams creator account is configured (Settings -> Connected systems -> Teams).");
     }
 
+    await reconcileSeries({ organizerId, note, summary });
+
     const events = await prisma.timetableEvent.findMany({
       where: { date: { gte: daysAgo(1), lte: daysAhead(14) } },
       include: {
@@ -142,6 +241,13 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
 
     for (const ev of events) {
       try {
+        // Series events are owned by the series pass (reconcileSeries), not this
+        // per-event loop. EXCEPTION for rollout (a): a legacy series whose events already
+        // carry a per-event teamsCalendarEventId (created before recurring meetings
+        // existed) keeps being maintained here — reconcileSeries leaves those alone — so
+        // only skip a series event that has NO legacy owned meeting.
+        if (ev.seriesId && !ev.teamsCalendarEventId) continue;
+
         const wants = ev.published && ev.teamsAutoMeeting;
         // A human's pasted link always wins — never create a second meeting beside
         // it. `teamsCalendarEventId` is how the machine tells its own meeting apart
