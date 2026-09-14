@@ -14,6 +14,7 @@
 //   node tools/seed-class-today.js                      # dry run — prints, writes nothing
 //   node tools/seed-class-today.js --apply              # today 16:30-18:30, ZZ TEST student
 //   node tools/seed-class-today.js --apply --for a@b.c  # also enrol an existing student
+//   node tools/seed-class-today.js --apply --tutor me@college.ac.uk  # name the lecturer
 //   node tools/seed-class-today.js --apply --start 16:30 --end 18:30
 //   node tools/seed-class-today.js --remove --apply     # take the class + module away
 //
@@ -30,6 +31,11 @@ const arg = (flag, dflt = null) => { const i = process.argv.indexOf(flag); retur
 const APPLY = process.argv.includes("--apply");
 const REMOVE = process.argv.includes("--remove");
 const FOR_EMAIL = (arg("--for") || "").trim().toLowerCase() || null;
+// The LECTURER of the test class, by staff email. Setting Unit.tutorStaffId is what
+// makes the class theirs everywhere identity gates it: My Day, My Classes, the live
+// register, announcements, conduct. Without this the class belonged to nobody and
+// testing the lecturer half meant a hand-written UPDATE afterwards, every time.
+const TUTOR_EMAIL = (arg("--tutor") || "").trim().toLowerCase() || null;
 const START = (arg("--start", "16:30")).trim();
 const END = (arg("--end", "18:30")).trim();
 
@@ -113,11 +119,32 @@ async function main() {
     process.exitCode = 1; return;
   }
 
+  // --- the lecturer ----------------------------------------------------------------
+  // Resolved BEFORE the module is written, so a typo'd email fails the run rather
+  // than leaving a tutor-less class and a message nobody reads. A STAFF account,
+  // matched case-insensitively; refusing rather than skipping, because a test of
+  // "what does the lecturer see" against a class with no lecturer proves nothing.
+  let tutorStaff = null;
+  if (TUTOR_EMAIL) {
+    tutorStaff = await db.staff.findFirst({ where: { email: { equals: TUTOR_EMAIL, mode: "insensitive" } } });
+    if (!tutorStaff) {
+      console.error(`FAILED: ${TUTOR_EMAIL} is not a STAFF account on this database — no lecturer assigned, nothing written.`);
+      process.exitCode = 1; return;
+    }
+    console.log(`Lecturer: ${tutorStaff.name} (${tutorStaff.email}).`);
+  }
+
   // --- the module ------------------------------------------------------------------
   let unit = await db.unit.findFirst({ where: { code: UNIT_CODE } });
   console.log(unit ? `Using existing module ${UNIT_CODE}.` : `${APPLY ? "Creating" : "Would create"} module ${UNIT_CODE} "${UNIT_NAME}" (no group, no course).`);
   if (APPLY && !unit) {
     unit = await db.unit.create({ data: { code: UNIT_CODE, name: UNIT_NAME, unitNumber: "", tutor: "" } });
+  }
+  // Set (or move) the tutor on a reused module too — re-running with a different
+  // --tutor is how the class is handed to somebody else between tests.
+  if (APPLY && unit && tutorStaff && unit.tutorStaffId !== tutorStaff.id) {
+    unit = await db.unit.update({ where: { id: unit.id }, data: { tutorStaffId: tutorStaff.id } });
+    console.log(`Module ${UNIT_CODE} now tutored by ${tutorStaff.name}.`);
   }
 
   // --- enrolments (idempotent) -----------------------------------------------------
