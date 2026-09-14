@@ -1621,6 +1621,38 @@ model TeamsProvisionSync {
   @@index([startedAt])
 }
 
+// The ONE recurring Teams meeting that covers a whole timetable series (every weekly
+// occurrence sharing a TimetableEvent.seriesId). A recurring meeting belongs to the
+// series, not to any one occurrence, so it gets its own row rather than being pinned to
+// an arbitrary "first" event. One-off events (seriesId null) keep using the per-event
+// columns on TimetableEvent instead — see teamsMeetings.js's two passes.
+model TeamsSeriesMeeting {
+  id       String @id @default(cuid())
+  // The TimetableEvent.seriesId this meeting covers. Unique: one recurring meeting per
+  // series, and the lookup key the reconcile uses.
+  seriesId String @unique
+  // The recurring Graph calendar event (the series master) on the creator's calendar,
+  // so a later run can PATCH or DELETE it. Set only by the machine.
+  calendarEventId String
+  joinUrl         String
+  // The stable onlineMeeting id behind joinUrl, resolved once — needed for the
+  // co-organizer write and for attendance collection.
+  meetingId   String?
+  // The creator account's Entra id (every Graph artifact fetch is addressed through it).
+  organizerId String
+  // subject|firstDate|lastDate|weekdays|startTime|endTime|sorted(attendees)|sorted(staff).
+  // The reconcile PATCHes the meeting only when this differs from a freshly computed one,
+  // the same gate teamsMeetings.js's per-event meetingFingerprint provides.
+  fingerprint String
+  // When co-organizer roles were last written, so an unchanged staff set is not
+  // re-written on every hourly tick.
+  coorganizersSetAt DateTime?
+  lastSyncedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([seriesId])
+}
+
 // Whether the Teams meeting/provisioning automations run, and their settings. Same
 // shape as TeamsAttendanceConfig above: defaults in code with enabled:false, one JSON
 // column merged over them, constant "singleton" key, allowlist on the way out, short
