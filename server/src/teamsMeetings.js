@@ -110,7 +110,7 @@ async function channelEmailsFor(ev) {
   return unitChannel?.channelEmail ? [unitChannel.channelEmail] : [];
 }
 
-async function reconcileSeries({ organizerId, note, summary }) {
+async function reconcileSeries({ organizerId, note, summary, legacySeriesIds }) {
   // Candidate series: those with at least one still-relevant (>= yesterday) published,
   // wanted occurrence. Grouped by seriesId.
   const events = await prisma.timetableEvent.findMany({
@@ -133,10 +133,9 @@ async function reconcileSeries({ organizerId, note, summary }) {
       const wantedEvents = group.filter((e) => e.published && e.teamsAutoMeeting);
       const existing = await prisma.teamsSeriesMeeting.findUnique({ where: { seriesId } });
 
-      // Rollout (a): a legacy series (per-event meetings already exist, no series row)
-      // is left to the per-event loop; never converted here.
-      const hasLegacyMeetings = group.some((e) => e.teamsCalendarEventId);
-      if (!existing && hasLegacyMeetings) continue;
+      // Legacy series (per-event meetings predate recurring ones) stay wholly on the
+      // per-event path — never converted here.
+      if (legacySeriesIds.has(seriesId)) continue;
 
       // Not wanted (unpublished / checkbox cleared across the whole series) but we own a
       // recurring meeting: cancel OURS and clear the links.
@@ -144,8 +143,8 @@ async function reconcileSeries({ organizerId, note, summary }) {
         if (existing) {
           await graph.cancelClassMeeting({ organizerId, calendarEventId: existing.calendarEventId });
           const ids = group.map((e) => e.id);
-          await prisma.timetableEvent.updateMany({ where: { id: { in: ids } }, data: { teamsJoinUrl: "" } });
-          await prisma.hndSession.updateMany({ where: { timetableEventId: { in: ids } }, data: { teamsJoinUrl: null, teamsMeetingId: null, teamsOrganizerId: null } });
+          await prisma.timetableEvent.updateMany({ where: { id: { in: ids }, teamsJoinUrl: existing.joinUrl }, data: { teamsJoinUrl: "" } });
+          await prisma.hndSession.updateMany({ where: { timetableEventId: { in: ids }, teamsJoinUrl: existing.joinUrl }, data: { teamsJoinUrl: null, teamsMeetingId: null, teamsOrganizerId: null } });
           await prisma.teamsSeriesMeeting.delete({ where: { seriesId } });
           summary.seriesMeetingsCancelled++;
         }
@@ -228,7 +227,19 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
       throw new Error("No Teams creator account is configured (Settings -> Connected systems -> Teams).");
     }
 
-    await reconcileSeries({ organizerId, note, summary });
+    // Legacy series ids, computed ONCE across every event (not just the reconcile
+    // window) so a legacy series' brand-new occurrence — one that rolls into the window
+    // after this deploy, with no teamsCalendarEventId of its own yet — is still
+    // recognised as belonging to a legacy series and stays on the per-event path
+    // instead of being stranded (skipped by both the per-event loop AND
+    // reconcileSeries, neither of which then owns it).
+    const legacyRows = await prisma.timetableEvent.findMany({
+      where: { seriesId: { not: null }, teamsCalendarEventId: { not: null } },
+      select: { seriesId: true }, distinct: ["seriesId"],
+    });
+    const legacySeriesIds = new Set(legacyRows.map((r) => r.seriesId));
+
+    await reconcileSeries({ organizerId, note, summary, legacySeriesIds });
 
     const events = await prisma.timetableEvent.findMany({
       where: { date: { gte: daysAgo(1), lte: daysAhead(14) } },
@@ -241,12 +252,11 @@ async function runMeetingsSync({ mode = "manual", startedBy = null } = {}) {
 
     for (const ev of events) {
       try {
-        // Series events are owned by the series pass (reconcileSeries), not this
-        // per-event loop. EXCEPTION for rollout (a): a legacy series whose events already
-        // carry a per-event teamsCalendarEventId (created before recurring meetings
-        // existed) keeps being maintained here — reconcileSeries leaves those alone — so
-        // only skip a series event that has NO legacy owned meeting.
-        if (ev.seriesId && !ev.teamsCalendarEventId) continue;
+        // Series events are owned by reconcileSeries UNLESS the series is legacy (already has
+        // per-event meetings from before recurring meetings existed) — a legacy series stays
+        // wholly on this per-event path, new occurrences included. One-offs (seriesId null)
+        // always run here.
+        if (ev.seriesId && !legacySeriesIds.has(ev.seriesId)) continue;
 
         const wants = ev.published && ev.teamsAutoMeeting;
         // A human's pasted link always wins — never create a second meeting beside
