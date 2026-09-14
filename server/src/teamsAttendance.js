@@ -221,4 +221,12 @@ function decideStatus({ minutes, firstJoin, session, minAttendancePct, lateAfter
   return { status, remark: "" };
 }
 
-module.exports = { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus };
+// One weekly occurrence's attendance, by date. A recurring meeting hands back one
+// report per week (teamsGraph.attendanceByOccurrence); a register is one date, so it may
+// only ever read its OWN week's report. No match returns null, and the caller writes NO
+// marks — null is "not measurable", never Absent-by-default (conventions.md).
+function occurrenceForDate(occurrences, date) {
+  return (occurrences || []).find((o) => o.date === date) || null;
+}
+
+module.exports = { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus, occurrenceForDate };

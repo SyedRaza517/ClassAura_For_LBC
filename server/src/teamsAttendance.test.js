@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus } = require("./teamsAttendance");
+const { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus, occurrenceForDate } = require("./teamsAttendance");
 
 test("parseJoinUrl accepts a real meetup-join link and rejects everything else", () => {
   const url = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=%7b%22Tid%22%3a%22t%22%2c%22Oid%22%3a%22o%22%7d";
@@ -59,4 +59,16 @@ test("decideStatus: the threshold boundary is inclusive, lateness follows lateAf
   assert.equal(a.status, "A");
   assert.equal(a.remark, "Joined 44 of 90 min");
   assert.equal(decideStatus({ ...base, minutes: 0, firstJoin: null }).status, "A");
+});
+
+test("occurrenceForDate returns only the matching date's occurrence", () => {
+  const occ = [
+    { date: "2026-09-14", intervals: [{ email: "a@x", msUserId: "u1", intervals: [] }] },
+    { date: "2026-09-21", intervals: [{ email: "b@x", msUserId: "u2", intervals: [] }] },
+  ];
+  assert.equal(occurrenceForDate(occ, "2026-09-21").intervals[0].email, "b@x");
+});
+
+test("occurrenceForDate returns null when no occurrence matches (no marks written)", () => {
+  assert.equal(occurrenceForDate([{ date: "2026-09-14", intervals: [] }], "2026-09-28"), null);
 });
