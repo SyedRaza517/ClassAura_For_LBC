@@ -107,24 +107,44 @@ export function clearPendingQr() {
 const DONE_KEY = "edtech.qrCheckedIn";
 const DONE_MAX = 50; // a long-lived tab that scanned many classes cannot grow unbounded
 
+// Entries are { id, status } — the status is WHAT the tab knows stands, so a
+// short-circuited repeat can replay the truth instead of fabricating one. Older
+// entries were bare id strings; readDone upgrades them to { id, status: null } so a
+// tab that lived across the deploy keeps its guard without inventing a "P".
 function readDone() {
   try {
     const raw = sessionStorage.getItem(DONE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.map(String) : [];
+    if (!Array.isArray(list)) return [];
+    return list.map((e) => (e && typeof e === "object" ? { id: String(e.id), status: e.status ?? null } : { id: String(e), status: null }));
   } catch (_) {
     return [];
   }
 }
 
-/** Remember that this tab has a mark for `sessionId`, so a re-fired scan does not resubmit. */
-export function noteCheckedIn(sessionId) {
+/**
+ * Remember that this tab CHECKED INTO `sessionId` — and only that.
+ *
+ * P and L are the only statuses that ever belong here. The first version recorded
+ * every 2xx, and the server answers 200 `alreadyMarked` for a standing mark of ANY
+ * kind — including an Absent a lecturer wrote, which a scan deliberately never
+ * overwrites. Recording that "A" as checked-in made the SECOND scan short-circuit
+ * into a green "Already checked in" over a register that says absent: the truth
+ * shown once, then a lie on every retry (reported from a real device, 14 Sep 2026).
+ * An A or E is refused here, so a repeat scan re-asks the server and keeps showing
+ * the honest card — idempotent and budget-refunded server-side, so re-asking is free.
+ */
+export function noteCheckedIn(sessionId, status) {
   if (!sessionId) return;
+  if (status !== "P" && status !== "L") return;
   try {
     const list = readDone();
-    if (list.includes(String(sessionId))) return;
-    list.push(String(sessionId));
-    while (list.length > DONE_MAX) list.shift();
+    const hit = list.find((e) => e.id === String(sessionId));
+    if (hit) { hit.status = status; }
+    else {
+      list.push({ id: String(sessionId), status });
+      while (list.length > DONE_MAX) list.shift();
+    }
     sessionStorage.setItem(DONE_KEY, JSON.stringify(list));
   } catch (_) {
     // Storage blocked — the card's `fired` ref still guards a single instance, and the
@@ -132,10 +152,15 @@ export function noteCheckedIn(sessionId) {
   }
 }
 
-/** Has this tab already checked into `sessionId`? */
+/**
+ * The status this tab checked into `sessionId` with — "P", "L", null (a pre-upgrade
+ * entry: checked in, status unrecorded) — or undefined when this tab never did.
+ * Truthy/falsy keeps the old boolean call sites honest.
+ */
 export function hasCheckedIn(sessionId) {
-  if (!sessionId) return false;
-  return readDone().includes(String(sessionId));
+  if (!sessionId) return undefined;
+  const hit = readDone().find((e) => e.id === String(sessionId));
+  return hit ? (hit.status ?? null) : undefined;
 }
 
 function read() {

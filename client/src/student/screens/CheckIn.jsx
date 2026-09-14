@@ -487,16 +487,23 @@ function QrCheckInCard({ qr, reload, onDone }) {
     // rate limiter. The `fired` ref only guards one card instance; this guard (see
     // pendingQr.noteCheckedIn) is what holds across rotations and remounts. Keyed on the
     // session, because the class is what stays the same while the code turns over.
-    if (hasCheckedIn(qr.sessionId)) {
-      setState({ phase: "done", result: { ok: true, alreadyMarked: true } });
+    // Short-circuit ONLY on a status this tab actually checked in with, and REPLAY that
+    // status — the fabricated `{ alreadyMarked }` with no status defaulted to "P" in the
+    // verdict builder, which painted a green "Already checked in" over a register that
+    // said ABSENT (a real device report, 14 Sep 2026). A null/undefined answer — never
+    // scanned, or a pre-upgrade entry with no recorded status — falls through to the
+    // server, whose repeat answer is idempotent, budget-refunded and truthful.
+    const standing = hasCheckedIn(qr.sessionId);
+    if (standing === "P" || standing === "L") {
+      setState({ phase: "done", result: { ok: true, alreadyMarked: true, status: standing } });
       return;
     }
     (async () => {
       try {
         const r = await api.studentQrCheckIn(qr.sessionId, qr.code);
-        // A 2xx here means a mark now stands (newly written or already present). Record it
-        // so any re-fired scan for this class short-circuits above instead of resubmitting.
-        noteCheckedIn(qr.sessionId);
+        // Record ONLY a real check-in (noteCheckedIn refuses anything but P/L): a 200
+        // carrying a lecturer's standing "A" must not become this tab's "I'm in".
+        noteCheckedIn(qr.sessionId, r?.status);
         setState({ phase: "done", result: r });
         // Refresh the day's list so the P or L pill appears under the card at once.
         reload();
@@ -707,11 +714,15 @@ export function StudentCheckIn({ tapContext, reload }) {
         reload();
         return r;
       }}
-      renderResult={(r) => (
-        r.alreadyMarked
-          ? <>You were already marked <strong>{r.status === "L" ? "late" : "present"}</strong> for {r.session?.unitName || "this class"}.</>
-          : <>Marked <strong>{r.status === "L" ? "late" : "present"}</strong> for {r.session?.unitName || "this class"} at <strong>{r.checkedInAt}</strong>.</>
-      )}
+      renderResult={(r) => {
+        // The SAME verdict builder as the QR sheet, so the two capture methods can
+        // never describe one mark two ways. This line used to render any status that
+        // was not "L" as "present" — including a lecturer's standing ABSENT, which a
+        // tap deliberately never overwrites; qrScanResult is where A and E already
+        // get told the truth and the one next step a student can actually take.
+        const v = qrScanResult(r);
+        return <>{v.heading}. {v.detail}</>;
+      }}
     />
   );
 }

@@ -98,3 +98,32 @@ test("junk in storage reads as nothing rather than throwing", () => {
   store.set(KEY, JSON.stringify({ code: "only" }));
   assert.equal(peekPendingQr(), null);
 });
+
+test("a lecturer's standing ABSENT is never recorded as 'checked in' — the register's truth outranks a 200", () => {
+  // The device-reported bug of 14 Sep 2026: the server answers 200 alreadyMarked for
+  // ANY standing mark, including an A a scan deliberately never overwrites. Recording
+  // that as checked-in made the next scan short-circuit into a green "Already checked
+  // in" over a register that said absent — the truth shown once, then a lie forever.
+  reset();
+  mod.noteCheckedIn("ses-abs", "A");
+  mod.noteCheckedIn("ses-exc", "E");
+  mod.noteCheckedIn("ses-none", undefined);
+  assert.equal(mod.hasCheckedIn("ses-abs"), undefined, "an A was remembered as a check-in");
+  assert.equal(mod.hasCheckedIn("ses-exc"), undefined, "an E was remembered as a check-in");
+  assert.equal(mod.hasCheckedIn("ses-none"), undefined, "a statusless 200 was remembered as a check-in");
+});
+
+test("a real check-in replays its own status, so a repeat scan can tell Late from Present", () => {
+  reset();
+  mod.noteCheckedIn("ses-p", "P");
+  mod.noteCheckedIn("ses-l", "L");
+  assert.equal(mod.hasCheckedIn("ses-p"), "P");
+  assert.equal(mod.hasCheckedIn("ses-l"), "L");
+  assert.equal(mod.hasCheckedIn("ses-never"), undefined);
+});
+
+test("a pre-upgrade entry (bare id string) still reads as checked-in, with its status unknown", () => {
+  reset();
+  store.set("edtech.qrCheckedIn", JSON.stringify(["ses-old"]));
+  assert.equal(mod.hasCheckedIn("ses-old"), null, "an old entry must read as checked-in-status-unknown, never invent a P");
+});
