@@ -78,6 +78,14 @@ const slug = (s) => String(s || "")
   .replace(/[^a-z0-9]+/g, "-")
   .replace(/^-+|-+$/g, "");
 
+// Microsoft Graph recurrence uses lowercase English weekday names. Parse the date as
+// UTC (append T00:00:00Z) so the weekday never drifts by one near midnight on a host in
+// a behind-UTC timezone — our date strings are calendar dates, not instants.
+const GRAPH_WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+function graphWeekday(date) {
+  return GRAPH_WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()];
+}
+
 function isConfigured() {
   return Boolean(TENANT_ID() && CLIENT_ID() && CLIENT_SECRET() && ORGANIZERS().length);
 }
@@ -589,4 +597,6 @@ module.exports = {
   createTeam, createChannel, getChannelEmail, addTeamMember, resolveUserId,
   // Teams automation (Task 4): the creator-account setting.
   creatorEmail, resolveCreatorId,
+  // Task 2: weekday helper for recurring meetings.
+  graphWeekday,
 };
