@@ -79,6 +79,47 @@ body {
   .press { transition: transform 0.12s ease, filter 0.12s ease; }
   .press:active { transform: scale(0.97); filter: brightness(0.97); }
 
+  /* A whole SCREEN arriving — the tab bar or a home tile swapping what fills the
+     shell. Deliberately faster and shallower than .fade-up (260ms, 8px): entrance
+     animations are sized to what is moving, and a full screen that rose as far and
+     as long as a card would make every navigation feel like waiting. Applied by the
+     shells (StaffHub, StudentApp) on a wrapper keyed by the screen name, so React
+     remounts it per navigation and the animation replays. */
+  .screen-in { animation: edtech-screen-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes edtech-screen-in {
+    from { opacity: 0; transform: translate3d(0, 8px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* A bottom sheet or dialog arriving. More travel than .fade-up because a sheet's
+     story is "slid up from the bottom edge", and 10px reads as a flicker rather
+     than a slide. One class for both form factors: on desktop the same rise reads
+     as a lift, which is what a dialog does there. */
+  .sheet-in { animation: edtech-sheet-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  @keyframes edtech-sheet-in {
+    from { opacity: 0; transform: translate3d(0, 26px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* The dim behind a sheet. Fading it with the sheet stops the "lights off, THEN
+     the sheet" double-beat of an unanimated backdrop under an animated panel. */
+  .backdrop-in { animation: edtech-backdrop-in 0.22s ease-out both; }
+  @keyframes edtech-backdrop-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* One green wash over a row that just changed under the reader — the live
+     register's "somebody tapped in while you watched". Background rather than
+     transform on purpose: the row must not MOVE (a lecturer may be about to tap
+     it), it must only announce itself. A one-off 1.4s paint is cheap; it is the
+     infinite background animations that hurt a phone. */
+  .flash-new { animation: edtech-flash-new 1.4s ease-out both; }
+  @keyframes edtech-flash-new {
+    0%   { background-color: rgba(16, 185, 129, 0.22); }
+    100% { background-color: transparent; }
+  }
+
   /* Loading placeholder with a light sweep, so a slow network still looks alive. */
   .skeleton {
     background: linear-gradient(100deg, #e9edf3 30%, #f4f7fb 48%, #e9edf3 66%);
@@ -187,6 +228,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .fade-up, .scale-in, .pop, .slide-in, .bounce-in,
   .skeleton, .float, .glow-pulse, .animated-gradient,
+  .screen-in, .sheet-in, .backdrop-in, .flash-new,
   .shine::after {
     animation: none !important;
   }

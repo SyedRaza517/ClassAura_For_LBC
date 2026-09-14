@@ -572,6 +572,12 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
     <PhoneShell header={header} footer={
       <StaffTabBar screen={screen} setScreen={setScreen} teaches={teaches} moreBadge={approvalsWaiting} />
     }>
+      {/* KEYED ON THE SCREEN NAME so React remounts this wrapper per navigation and
+          .screen-in replays — one subtle rise for every screen change, defined once
+          here rather than each screen carrying (and slightly disagreeing about) its
+          own entrance. NotePanel stays OUTSIDE it: an overlay opening must not
+          re-run the entrance of the screen it is covering. */}
+      <div key={screen} className="screen-in">
       {screen === "home" && <HomeGrid setScreen={setScreen} store={store} me={me} myDay={myDay} canDecideLeave={canDecideLeave} />}
       {screen === "checkin" && <CheckInScreen store={store} me={me} />}
       {screen === "timetable" && <StaffTimetable meId={me.id} />}
@@ -591,6 +597,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
       {screen === "reflection" && <SelfReflectionScreen store={store} me={me} />}
       {screen === "studentreview" && <StudentReviewScreen store={store} me={me} />}
       {screen === "more" && <MoreScreen store={store} me={me} logout={logout} onChangePassword={onChangePassword} onSwitchToAdmin={onSwitchToAdmin} setScreen={setScreen} teaches={teaches} canDecideLeave={canDecideLeave} approvalsWaiting={approvalsWaiting} />}
+      </div>
 
       {showNotes && <NotePanel store={store} onClose={() => setShowNotes(false)} />}
     </PhoneShell>
@@ -891,7 +898,9 @@ function StaffTabBar({ screen, setScreen, teaches, moreBadge = 0 }) {
         return (
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
             className="press relative flex flex-1 flex-col items-center gap-1 py-2">
-            <span className="relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200"
+            {/* .pop only while active: the class arrives with the activation, so the
+                pill pops once per tab change and sits still afterwards. */}
+            <span className={`relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200 ${on ? "pop" : ""}`}
               style={on ? { background: alpha(NAVY, 14) } : undefined}>
               <TabIcon size={20} strokeWidth={on ? 2.6 : 2} style={{ color: on ? NAVY : "#9aa5b8" }} />
               {key === "more" && moreBadge > 0 && (
@@ -1149,7 +1158,7 @@ function AnnounceScreen() {
 
       {sent.length > 0 && (
         <div className="mt-4">
-          <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sent</p>
+          <SectionLabel>Sent</SectionLabel>
           <div className="space-y-2">
             {sent.map(a => (
               <div key={a.id} className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
@@ -1421,7 +1430,7 @@ function CheckInScreen({ store, me }) {
           {checkedIn && rec.out && <div className="rounded-xl bg-emerald-50 py-3 text-sm font-semibold text-emerald-700">✓ Your day is complete. Have a great evening!</div>}
         </div>
       </Card>
-      <p className="mb-2 mt-5 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Recent activity</p>
+      <SectionLabel className="mt-5">Recent activity</SectionLabel>
       <Card className="p-0">
         {store.checkins.filter(c => c.staffId === me.id && c.in).length === 0 && (
           <EmptyState Icon={History} title="No activity yet" msg="Your check-ins will appear here once you clock in." />
@@ -1503,7 +1512,7 @@ function BalanceScreen({ store, me }) {
           </div>
         </Card>
       )}
-      <p className="mb-2 mt-5 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Leave history</p>
+      <SectionLabel className="mt-5">Leave history</SectionLabel>
       <div className="space-y-2">
         {myLeave.length === 0 && <Card><EmptyState Icon={Plane} title="No leave records yet" msg="Requests you submit will show up here." /></Card>}
         {myLeave.slice().reverse().map((l, i) => <LeaveRow key={l.id} l={l} i={i} store={store} />)}
@@ -1802,7 +1811,7 @@ function BankHolidayList({ store }) {
   const passed = list.filter(h => h.date <= today).length;
   return (
     <div className="mt-5">
-      <p className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Bank holidays {year} · {passed} of {list.length} passed</p>
+      <SectionLabel colour="#d97706">Bank holidays {year} · {passed} of {list.length} passed</SectionLabel>
       <Card className="p-0">
         {list.map((h, i, a) => { const done = h.date <= today; return (
           <div key={h.date} className={`flex items-center gap-3 px-4 py-2.5 ${i < a.length - 1 ? "border-b border-slate-100" : ""}`}>
@@ -1829,7 +1838,7 @@ function CalendarScreen({ store }) {
         </div>
       </Card>
       <BankHolidayList store={store} />
-      <p className="mb-2 mt-5 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Who's off (approved)</p>
+      <SectionLabel colour="#0d9463" className="mt-5">Who's off (approved)</SectionLabel>
       <div className="space-y-2">
         {approved.length === 0 && <Card><EmptyState Icon={CalendarCheck} title="No approved leave" msg="Approved absences across the college will appear here." /></Card>}
         {approved.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); return (
@@ -2037,7 +2046,7 @@ function SummaryScreen({ store, me }) {
         <textarea value={text} onChange={e => { setTouched(true); setText(e.target.value); }} rows={6} placeholder="e.g. Taught Y12 Maths, marked mock papers, met admissions about September intake…" className={inputCls + " resize-none"} />
         <PrimaryBtn onClick={save} colour={saved ? "#059669" : NAVY} className="mt-3 w-full !py-3">{saved ? <><Check size={18} /> Saved & shared</> : "Save Daily Summary"}</PrimaryBtn>
       </Card>
-      <p className="mb-2 mt-5 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Recent summaries</p>
+      <SectionLabel className="mt-5">Recent summaries</SectionLabel>
       <div className="space-y-2">
         {store.checkins.filter(c => c.staffId === me.id && c.summary).length === 0 && <Card><EmptyState Icon={ClipboardList} title="No summaries yet" msg="Save a daily summary above and it will appear here." /></Card>}
         {store.checkins.filter(c => c.staffId === me.id && c.summary).slice(0, 4).map((c, i) => <Card key={c.id} className="!p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}><p className="text-xs font-bold text-slate-400">{fmtDay(c.date)}</p><p className="mt-1 text-sm text-slate-600">{c.summary}</p></Card>)}
@@ -2556,7 +2565,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
           </div>
         );
       })}
-      <p className="mb-2 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Preferences</p>
+      <SectionLabel>Preferences</SectionLabel>
       <Card className="!p-0 mb-3">
         {[["notif", "Push notifications"], ["reminders", "Check-in reminders"]].map(([k, label], i) => (
           <div key={k} className="flex items-center justify-between border-b border-slate-100 px-4 py-3.5">
@@ -2570,7 +2579,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
             renders something — the options, or why they aren't available. */}
         <BiometricSetting owner={me.email} />
       </Card>
-      <p className="mb-2 mt-4 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">App info</p>
+      <SectionLabel className="mt-4">App info</SectionLabel>
       <div className="animated-gradient relative overflow-hidden rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 50%, ${MAROON} 140%)`, backgroundSize: "200% 200%" }}>
         <Building2 size={56} className="float-slow absolute -right-2 -top-2 text-white/10" />
         <div className="relative mb-2 flex h-9 w-12 items-center justify-center rounded-md bg-white"><Logo small /></div>
@@ -2581,7 +2590,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
       </div>
       {/* Account deletion. Both app stores require this to be reachable from
           inside the app, not only by emailing an administrator. */}
-      <p className="mb-2 mt-5 px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Account</p>
+      <SectionLabel className="mt-5">Account</SectionLabel>
       <Card className="!p-0">
         {/* Change password — moved here from the top bar so the mobile app has a
             clean header. Triggers the shared change-password modal in the shell. */}
