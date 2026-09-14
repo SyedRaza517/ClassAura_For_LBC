@@ -405,7 +405,11 @@ stop there.
 
 Creating, rescheduling and cancelling a class's calendar event is a **write** to the
 organizer account's own calendar, which `Calendars.Read` (Step 4) cannot do by
-definition. Go back to **API permissions** on the same app registration, **remove**
+definition. Online classes are booked as **one recurring meeting per class** (not separate
+meetings for each week), spanning the class's real timetabled dates, with the teacher
+added as a co-organizer so they can manage the meeting in Teams.
+
+Go back to **API permissions** on the same app registration, **remove**
 `Calendars.Read` and **add `Calendars.ReadWrite`** in its place, then **grant admin
 consent** again — `OnlineMeetings.Read.All` and `OnlineMeetingArtifact.Read.All` are
 untouched, because reading the attendance report afterwards is still only a read.
@@ -417,6 +421,10 @@ organizer-accounts group restricts `Calendars.ReadWrite` to exactly the same gro
 restricted `Calendars.Read` to, automatically, the moment the permission is upgraded.
 Re-run `Test-ApplicationAccessPolicy` (Step 6.3) only if you want to double-check; you do
 not need to recreate the policy.
+
+**To make teachers co-organizers, upgrade `OnlineMeetings.Read.All` to `OnlineMeetings.ReadWrite.All`.** The recurring meetings that Phase A creates are owned by the creator account, but teachers need to edit them — to reschedule, add or remove attendees, or control the meeting itself (admit from lobby, mute, remove disruptive attendees). Write access to the meeting is what grants that. Go back to **API permissions** on the same app registration, **remove** `OnlineMeetings.Read.All` and **add `OnlineMeetings.ReadWrite.All`** in its place, then **grant admin consent** again. `OnlineMeetingArtifact.Read.All` stays, because attendance reporting is still a read; `Calendars.ReadWrite` (just upgraded above) stays for the calendar event itself.
+
+**The Teams application access policy from Step 7 needs nothing redone.** Step 7's policy scopes the app to the organizer accounts by mailbox, exactly as Step 6's policy does — a policy names *accounts*, not *permissions*, so the restriction to the organizer-accounts group that already narrows `OnlineMeetings.Read.All` automatically narrows `OnlineMeetings.ReadWrite.All` to the same accounts the moment the permission is upgraded. Re-run `Get-CsApplicationAccessPolicy` (Step 7.4) only if you want to double-check; you do not need to recreate the policy.
 
 **The creator account.** Every organizer account can still be *read* for attendance, but
 exactly one of them is the account that actually **creates** new class meetings and
