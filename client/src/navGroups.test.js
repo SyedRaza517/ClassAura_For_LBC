@@ -126,13 +126,28 @@ test("StaffHub really does put the three attendance screens in the attendance gr
   assert.match(src, /"attendance":\s*\{\s*label:\s*"Attendance"/,
     'NAV_GROUPS no longer declares an "attendance" group with the label "Attendance".');
 
+  // SEARCH INSIDE allNav, NOT THE WHOLE FILE — and that is the whole fix here.
+  //
+  // This used to match the first `{ ... key: "registers" ... }` anywhere in the source.
+  // StaffHub also builds an alerts list containing `{ key: "registers", Icon: Radio, ... }`
+  // — a badge saying how many registers are still to take — and it appears ~2400 lines
+  // ABOVE the nav array. `String.match` returns the first hit, so the test read that badge,
+  // found no `group:` on it, and failed while the real nav entry was correct all along.
+  //
+  // A test that fails for a reason unrelated to what it is named after is worse than no
+  // test: it sends somebody looking for a bug in the nav configuration that was never
+  // there. Anchoring on the array means a second object sharing a key can no longer be
+  // mistaken for the nav entry.
+  const navBlock = src.match(/const allNav = \[[\s\S]*?\n {2}\];/);
+  assert.ok(navBlock, "could not find the `const allNav = [...]` array in StaffHub.jsx");
+
   for (const key of ["registers", "live-attendance", "attendance-settings"]) {
     // Doubled backslashes: this is a TEMPLATE LITERAL, so `\{` and `\s` would be eaten
     // as string escapes before RegExp ever saw them, leaving a pattern that matches the
     // literal letter "s" and never fires.
     const entry = new RegExp(`\\{[^}]*key:\\s*"${key}"[^}]*\\}`);
-    const m = src.match(entry);
-    assert.ok(m, `no nav entry found for "${key}"`);
+    const m = navBlock[0].match(entry);
+    assert.ok(m, `no nav entry found for "${key}" inside allNav`);
     assert.match(m[0], /group:\s*"attendance"/,
       `the nav entry for "${key}" is not in the attendance group: ${m[0]}`);
   }
