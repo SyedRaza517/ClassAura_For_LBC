@@ -151,11 +151,18 @@ async function reconcileSeries({ organizerId, note, summary, legacySeriesIds }) 
         continue;
       }
 
-      // Build the recurring meeting's inputs from the whole wanted series.
-      const dates = wantedEvents.map((e) => e.date).sort();
-      const firstDate = dates[0];
-      const lastDate = dates[dates.length - 1];
-      const weekdays = [...new Set(wantedEvents.map((e) => graph.graphWeekday(e.date)))].sort();
+      // The meeting's range/pattern must reflect the WHOLE series, not just the occurrences
+      // still inside the reconcile window — otherwise firstDate/weekdays drift forward as past
+      // weeks age out, the fingerprint changes weekly, and Microsoft re-notifies everyone every
+      // week. Queried fresh (id + date only) so it stays stable for the life of the series.
+      const allSeriesEvents = await prisma.timetableEvent.findMany({
+        where: { seriesId, published: true, teamsAutoMeeting: true },
+        select: { date: true },
+      });
+      const allDates = allSeriesEvents.map((e) => e.date).sort();
+      const firstDate = allDates[0];
+      const lastDate = allDates[allDates.length - 1];
+      const weekdays = [...new Set(allSeriesEvents.map((e) => graph.graphWeekday(e.date)))].sort();
       const startTime = wantedEvents[0].startTime;
       const endTime = wantedEvents[0].endTime;
       const subject = wantedEvents[0].title || wantedEvents[0].unit?.name || wantedEvents[0].unit?.code || "Class";
@@ -199,6 +206,14 @@ async function reconcileSeries({ organizerId, note, summary, legacySeriesIds }) 
           await graph.setMeetingCoorganizers({ organizerId, meetingId: row.meetingId, coorganizerUserIds: ids2 });
           await prisma.teamsSeriesMeeting.update({ where: { seriesId }, data: { coorganizersSetAt: new Date() } });
         } catch (e) { note(`Series "${subject}": setting co-organizers: ${e.message}`); }
+      }
+
+      // Fan the resolved onlineMeeting id to every occurrence's register too, so
+      // attendance collection can read it straight from the session rather than
+      // re-resolving it per occurrence (blanks only, same never-overwrite rule as the
+      // join-URL fan-out above).
+      if (row.meetingId) {
+        await prisma.hndSession.updateMany({ where: { timetableEventId: { in: ids }, teamsMeetingId: null }, data: { teamsMeetingId: row.meetingId } });
       }
     } catch (e) {
       note(`Series ${seriesId}: ${e.message}`);
