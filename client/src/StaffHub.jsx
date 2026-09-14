@@ -816,6 +816,7 @@ function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
         approvalsWaiting={canDecideLeave ? store.leave.filter(l => l.status === "pending").length : 0}
         setScreen={setScreen}
       />
+      <InsightsSection setScreen={setScreen} />
       <MyDaySection myDay={myDay} setScreen={setScreen} />
       {/* ALL TOOLS, on the first page — the user's ruling (13 Sep 2026), reversing
           the brief experiment of exiling them to the More tab. What did NOT come
@@ -943,6 +944,61 @@ function NeedsAttention({ registersToTake, approvalsWaiting, setScreen }) {
               : <ChevronRight size={15} className="shrink-0 text-slate-300" />}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// THE INSIGHTS FEED — plain-language suggestion cards the server computes from data
+// it already trusts: a lecturer's own students by identity, the college's aggregates
+// by the pages the caller holds (routes/suggestions.js has the access argument).
+// Renders NOTHING while loading and nothing when the feed is empty — an insights
+// section with a spinner or an empty state would be a promise of cleverness the
+// screen cannot keep; when there is nothing worth saying, the section says nothing.
+function InsightsSection({ setScreen }) {
+  const [cards, setCards] = useState(null);
+  useEffect(() => {
+    let on = true;
+    api.suggestions().then((r) => { if (on) setCards(r?.suggestions || []); }).catch(() => { if (on) setCards([]); });
+    return () => { on = false; };
+  }, []);
+  if (!cards || !cards.length) return null;
+  const tones = {
+    urgent: { ink: "#d6455d", tint: "#ffe8ec", Icon: AlertCircle },
+    warn: { ink: "#d97706", tint: "#fef3dd", Icon: TrendingDown },
+    info: { ink: "#2557d6", tint: "#e3ebfd", Icon: Info },
+  };
+  return (
+    <div className="mb-4 fade-up">
+      <SectionLabel colour="#d6455d">Insights</SectionLabel>
+      <div className="space-y-2">
+        {cards.map((c) => {
+          const t = tones[c.severity] || tones.info;
+          const Body = (
+            <>
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: t.tint }}>
+                <t.Icon size={17} style={{ color: t.ink }} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-bold text-slate-700">{c.title}</span>
+                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">{c.detail}</span>
+              </span>
+              {c.screen && <ChevronRight size={15} className="mt-2 shrink-0 text-slate-300" />}
+            </>
+          );
+          // A card with a screen navigates; one without is a finding, not a button —
+          // rendering it as one would be the dead-end control this app just purged.
+          return c.screen ? (
+            <button key={c.kind + c.title} onClick={() => setScreen(c.screen)}
+              className="press flex w-full items-start gap-3 rounded-[18px] bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
+              {Body}
+            </button>
+          ) : (
+            <div key={c.kind + c.title} className="flex items-start gap-3 rounded-[18px] bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
+              {Body}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

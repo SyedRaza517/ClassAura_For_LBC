@@ -127,6 +127,8 @@ app.use("/api/announcements", wrapAsync(require("./routes/announcements")));
 // Conduct points: logging is identity-gated (the students of classes that name the
 // caller); the vocabulary edit is the settings page. See the router's header.
 app.use("/api/conduct", wrapAsync(require("./routes/conduct")));
+// The insights feed: lecturer cards by identity, admin cards by per-card page.
+app.use("/api/suggestions", wrapAsync(require("./routes/suggestions")));
 app.use("/api/admissions", wrapAsync(require("./routes/admissions")));
 app.use("/api/admission-config", wrapAsync(require("./routes/admissionConfig")));
 app.use("/api/admission-stats", wrapAsync(require("./routes/admissionStats")));

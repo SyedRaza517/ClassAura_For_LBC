@@ -1,0 +1,11 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Option A — Colourful & vibrant" },
+    { "file": "Minimal.dc.html", "x": 490, "y": 0, "w": 390, "h": 844, "title": "Option B — Premium minimal" },
+    { "file": "Dark.dc.html", "x": 980, "y": 0, "w": 390, "h": 844, "title": "Option C — Dark professional" }
+  ],
+  "annotations": [
+    { "id": "pick-a-direction", "x": 0, "y": -170, "w": 560, "text": "Three directions for the staff app home screen — same content, three treatments.\nA: colourful and lively, every tool gets its own colour.\nB: calm, typographic, lots of air — quiet luxury.\nC: dark pro dashboard with glowing accents.\nReply with the letter you prefer (or mix: \"A but with B's header\") and it gets built into the real app." }
+  ],
+  "launch": { "view": "canvas" }
+}

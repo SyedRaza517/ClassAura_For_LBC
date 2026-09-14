@@ -789,6 +789,9 @@ export const api = {
   announceUnits: () => request("/announcements/my-units"),
   sendAnnouncement: (unitId, message) => request("/announcements", { method: "POST", body: { unitId, message } }),
   myAnnouncements: () => request("/announcements/mine"),
+  // The insights feed — plain-language suggestion cards computed server-side from
+  // the caller's own students (identity) and the pages they hold.
+  suggestions: () => request("/suggestions"),
   // Conduct points — the vocabulary the sheet offers (any staff), the settings-gated
   // save, the two-tap log, and the per-student history behind the register.
   conductVocabulary: () => request("/conduct/vocabulary"),
