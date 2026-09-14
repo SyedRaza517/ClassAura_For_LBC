@@ -148,6 +148,19 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
   // the control can stay hidden until asked for.
   const [to, setTo] = useState("");
   const [ranged, setRanged] = useState(false);
+  // Phone or console? The list is shared by both, and the phone gets app furniture —
+  // no duplicate title (the app header already says My Classes), ‹ day › arrows
+  // instead of a form row, no range picker (a fortnight of registers is console work).
+  const handset = useIsHandset();
+  // Shift the shown day by ±1. "" means the server's today, so shifting from it
+  // starts at the date the server actually answered with — never the browser's.
+  const shiftDay = (delta) => {
+    const base = date || today?.date;
+    if (!base) return;
+    const d = new Date(`${base}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + delta);
+    setDate(d.toISOString().slice(0, 10));
+  };
 
   const loadToday = useCallback(async () => {
     setBusy(true); setErr("");
@@ -169,7 +182,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
 
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <header>
+      {!handset && <header>
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800"><Radio size={18} style={{ color: NAVY }} />Live Attendance</h2>
         <p className="mt-0.5 text-[13px] text-slate-500">
           {today?.isToday === false
@@ -178,7 +191,29 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
                 : (scope === "all" ? "Every class on the day you have chosen." : "Your classes on the day you have chosen."))
             : (scope === "all" ? "Every class running today, and the registers as they fill." : "Your classes today, and the registers as they fill.")}
         </p>
-      </header>
+      </header>}
+
+      {/* On the phone: one row of day navigation, in the app's own furniture. The
+          arrows shift a day at a time from the SERVER's answer for today; "Today"
+          appears only once you have left it. The range picker stays console-only —
+          reading a fortnight of registers is desk work. */}
+      {handset && (
+        <div className="flex items-center gap-2">
+          <button onClick={() => shiftDay(-1)} aria-label="Previous day"
+            className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200/70"><ChevronRight size={18} className="rotate-180" /></button>
+          <label className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
+            <CalendarDays size={15} className="text-slate-400" />
+            <input type="date" value={date || today?.date || ""} onChange={(e) => setDate(e.target.value)}
+              className="bg-transparent text-[13px] font-bold text-slate-700 outline-none" />
+          </label>
+          <button onClick={() => shiftDay(1)} aria-label="Next day"
+            className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200/70"><ChevronRight size={18} /></button>
+          {today?.isToday === false && (
+            <button onClick={() => { setDate(""); setTo(""); setRanged(false); }}
+              className="press h-11 shrink-0 rounded-2xl px-3.5 text-[12px] font-extrabold text-white shadow-sm" style={{ background: NAVY }}>Today</button>
+          )}
+        </div>
+      )}
 
       {/* THE DAY PICKER. Not a nicety: this screen answers "what is happening" for one
           date, and before this it could only ever be asked about the current one. On the
@@ -190,7 +225,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
           college's today lives on the server: clearing the field asks for "today" and
           lets the server answer, where filling in the browser's date would ask about
           whatever day the reader's laptop thinks it is. */}
-      <div className="flex flex-wrap items-center gap-2">
+      {!handset && <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <CalendarDays size={15} className="text-slate-400" />
           <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Day</span>
@@ -233,7 +268,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
             Back to today
           </button>
         )}
-      </div>
+      </div>}
 
       {/* Offered only when the server says this account may ask for it. A control that
           always answers 403 is worse than no control. */}
