@@ -633,8 +633,8 @@ function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, sho
   const handset = useIsHandset();
   return (
     <div
-      className={`relative z-20 ${handset ? "pt-2" : "pt-7"}`}
-      style={{ background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 100%)` }}
+      className={`relative z-20 rounded-b-[28px] ${handset ? "pt-2" : "pt-7"}`}
+      style={{ background: `linear-gradient(150deg, ${NAVY} 0%, ${NAVY_DARK} 60%, ${MAROON} 160%)` }}
     >
       {/* No safe-area padding here. This header sits BELOW the app's top bar,
           which already clears the notch — applying the inset again reserved the
@@ -664,15 +664,43 @@ function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, sho
       </div>
       {screen === "home" && (
         <div className="px-4 pb-5 fade-up">
-          <div className="flex items-center gap-3 rounded-2xl bg-white/10 p-3 ring-1 ring-white/10 backdrop-blur transition-all hover:bg-white/15">
-            <div className="float flex h-12 w-12 items-center justify-center rounded-xl text-base font-bold text-white shadow-lg ring-2 ring-white/20" style={{ background: me.colour }}>{me.initials}</div>
-            <div className="flex-1">
-              <p className="flex items-center gap-1 text-[11px] font-medium text-white/70"><Greet size={12} className="text-amber-300" /> {greet.word}, {firstNameOf(me.name)}</p>
-              <p className="text-[15px] font-bold text-white">{me.name}</p>
-              <p className="text-[11px] text-white/60">{me.role}</p>
+          <div className="flex items-center gap-3">
+            <div className="float flex h-11 w-11 items-center justify-center rounded-2xl text-[15px] font-bold text-white shadow-lg ring-2 ring-white/20" style={{ background: me.colour }}>{me.initials}</div>
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-1 text-[11px] font-medium text-white/70"><Greet size={12} className="text-amber-300" /> {greet.word}</p>
+              <p className="truncate text-[16px] font-extrabold text-white">{me.name}</p>
             </div>
           </div>
+          {/* The clock-in card lives IN the header band now (the Option A direction the
+              user picked from the canvas): one vivid block owns greeting + today's
+              first action, and the page below it starts on white. */}
+          <HeaderClockIn store={store} me={me} setScreen={setScreen} />
         </div>
+      )}
+    </div>
+  );
+}
+
+// The frosted clock-in card inside the home header. Reads the same three facts the
+// old hero band read (today's check-in row, holiday remaining) and goes to the same
+// screen; only the clothes changed.
+function HeaderClockIn({ store, me, setScreen }) {
+  const today = todayISO();
+  const myToday = store.checkins.find(c => c.staffId === me.id && c.date === today && c.in);
+  const left = store.remaining(me.id);
+  const status = myToday ? (myToday.out ? "Day complete — see you tomorrow" : "You're checked in") : "Not checked in yet";
+  return (
+    <div className="mt-3 flex items-center gap-3 rounded-[20px] border border-white/20 bg-white/[.13] p-3.5 pl-4 backdrop-blur">
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-bold uppercase tracking-[.08em] text-white/60">{fmtDay(today)}</p>
+        <p className="mt-0.5 truncate text-[15px] font-extrabold text-white">{status}</p>
+        <p className="mt-0.5 text-[11px] text-white/70">{left > 0 ? `${left} day${left === 1 ? "" : "s"} of holiday left` : "No holiday remaining"}</p>
+      </div>
+      {!myToday && (
+        <button onClick={() => setScreen("checkin")}
+          className="press shrink-0 rounded-2xl bg-white px-4 py-2.5 text-[13px] font-extrabold shadow-lg" style={{ color: NAVY }}>
+          Clock in →
+        </button>
       )}
     </div>
   );
@@ -749,31 +777,14 @@ const canDecideLeaveFor = (user) => ["requests", "approvals", "calendar"].some(p
 function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
   const today = todayISO();
   const teaches = myDay?.teaches === true;
-  const myToday = store.checkins.find(c => c.staffId === me.id && c.date === today && c.in);
   const pending = store.leave.filter(l => l.staffId === me.id && l.status === "pending").length;
-  const left = store.remaining(me.id);
-  // Read-only display values for the hero band.
-  const heroStatus = myToday ? (myToday.out ? "Day complete — see you tomorrow" : "You're checked in") : "Not checked in yet";
-  const heroIcon = myToday ? (myToday.out ? CheckCircle2 : UserCheck) : Clock;
-  const HeroIcon = heroIcon;
   const tip = STAFF_TIPS[new Date().getDate() % STAFF_TIPS.length];
   return (
     <div className="p-4">
-      {/* Hero / summary band */}
-      <div className="animated-gradient relative mb-4 overflow-hidden rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 55%, ${MAROON} 140%)`, backgroundSize: "200% 200%" }}>
-        <Sparkles size={56} className="float-slow absolute -right-2 -top-2 text-white/10" />
-        <p className="relative text-[11px] font-semibold uppercase tracking-wide text-white/60">{fmtDay(today)}</p>
-        <p className="relative mt-1 flex items-center gap-1.5 text-base font-extrabold"><HeroIcon size={17} className="text-amber-300" /> {heroStatus}</p>
-        <p className="relative mt-0.5 text-[12px] text-white/70">{left > 0 ? `${left} day${left === 1 ? "" : "s"} of holiday left` : "No holiday remaining"}{pending > 0 ? ` · ${pending} request${pending === 1 ? "" : "s"} pending` : ""}</p>
-        {/* The most likely first action of the morning, one tap from the top of the
-            screen instead of hunting the tile grid. Only while it IS the likely action:
-            once checked in, the band goes back to being a status display. */}
-        {!myToday && (
-          <button onClick={() => setScreen("checkin")} className="press relative mt-2.5 rounded-xl bg-white/15 px-3.5 py-1.5 text-[12px] font-bold text-white ring-1 ring-white/25 transition hover:bg-white/25">
-            Clock in now →
-          </button>
-        )}
-      </div>
+      {/* The hero band that opened this screen moved INTO the header (HeaderClockIn)
+          on 14 Sep 2026 — the Option A direction the user picked from the canvas: one
+          vivid block owns greeting + clock-in, and the page starts at the first
+          section rather than a second gradient card echoing the header above it. */}
       {/* The three MiniStat tiles that sat here (Status / Holiday left / Pending) were
           removed 13 Sep 2026: they repeated, word for word, the three facts the hero
           band above them already states — the same information twice within one
@@ -799,36 +810,40 @@ function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
           menu costs four rows instead of seven screens-worth. The More tab keeps its
           grouped directory too — two roads to the same screens is fine when both are
           honest; a home page missing the options people expect is not. */}
-      <SectionLabel>All tools</SectionLabel>
-      <div className="grid grid-cols-4 gap-2">
+      <SectionLabel colour="#7c6cf0">All tools</SectionLabel>
+      {/* THREE columns, per the user's ruling on the picked direction — and every
+          tool wears its own colour (Option A's whole point): the tint/ink pairs are
+          fixed per tool, not cycled by index, so a gate hiding Classes cannot shift
+          every colour after it and make the grid look reshuffled between colleagues. */}
+      <div className="grid grid-cols-3 gap-2.5">
         {[
-          { key: "checkin", label: "Clock in", Icon: Clock },
-          { key: "timetable", label: "Timetable", Icon: CalendarDays },
+          { key: "checkin", label: "Clock in", Icon: Clock, ink: "#2557d6", tint: "#e3ebfd" },
+          { key: "timetable", label: "Timetable", Icon: CalendarDays, ink: "#7c3aed", tint: "#ede9fe" },
           ...(teaches ? [
-            { key: "classes", label: "Classes", Icon: Radio },
-            { key: "announce", label: "Announce", Icon: Send },
+            { key: "classes", label: "Classes", Icon: Radio, ink: "#0d9488", tint: "#d8f6ec" },
+            { key: "announce", label: "Announce", Icon: Send, ink: "#d6455d", tint: "#ffe8ec" },
           ] : []),
-          { key: "balance", label: "Holidays", Icon: Plane },
-          { key: "calendar", label: "Calendar", Icon: Calendar },
-          { key: "request", label: "Leave", Icon: Plus, badge: pending },
+          { key: "balance", label: "Holidays", Icon: Plane, ink: "#d97706", tint: "#fef3dd" },
+          { key: "calendar", label: "Calendar", Icon: Calendar, ink: "#0284c7", tint: "#def3fd" },
+          { key: "request", label: "Leave", Icon: Plus, badge: pending, ink: "#0d9463", tint: "#e7f9f1" },
           ...(canDecideLeave ? [
-            { key: "approval", label: "Approvals", Icon: ThumbsUp, badge: store.leave.filter(l => l.status === "pending").length },
+            { key: "approval", label: "Approvals", Icon: ThumbsUp, badge: store.leave.filter(l => l.status === "pending").length, ink: "#1a3a8f", tint: "#e3ebfd" },
           ] : []),
-          { key: "timesheet", label: "Timesheet", Icon: ClipboardList },
-          { key: "summary", label: "Summary", Icon: UserPlus },
-          { key: "onsite", label: "On site", Icon: Users },
-          { key: "documents", label: "Documents", Icon: FileText },
-          { key: "reflection", label: "Reflection", Icon: Award },
-          { key: "studentreview", label: "Reviews", Icon: MessageSquare },
+          { key: "timesheet", label: "Timesheet", Icon: ClipboardList, ink: "#6d5ae0", tint: "#e9e6fb" },
+          { key: "summary", label: "Summary", Icon: UserPlus, ink: "#c2410c", tint: "#feeadd" },
+          { key: "onsite", label: "On site", Icon: Users, ink: "#0e7490", tint: "#d9f2f8" },
+          { key: "documents", label: "Documents", Icon: FileText, ink: "#64748b", tint: "#eef1f6" },
+          { key: "reflection", label: "Reflection", Icon: Award, ink: "#b45309", tint: "#fdeecd" },
+          { key: "studentreview", label: "Reviews", Icon: MessageSquare, ink: "#9333ea", tint: "#f3e8ff" },
         ].map((t, i) => (
           <button key={t.key} onClick={() => setScreen(t.key)}
-            className="press relative flex flex-col items-center gap-1.5 rounded-2xl bg-white py-3 shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md pop"
+            className="press relative flex flex-col items-center gap-2 rounded-[18px] bg-white px-1 py-3.5 shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md pop"
             style={{ animationDelay: `${i * 35}ms` }}>
-            {t.badge > 0 && <span className="pop absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-900">{t.badge}</span>}
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: alpha(NAVY, 10) }}>
-              <t.Icon size={19} style={{ color: NAVY }} strokeWidth={2.2} />
+            {t.badge > 0 && <span className="pop absolute right-2 top-2 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-extrabold text-slate-900">{t.badge}</span>}
+            <span className="flex h-11 w-11 items-center justify-center rounded-[14px]" style={{ background: t.tint }}>
+              <t.Icon size={20} style={{ color: t.ink }} strokeWidth={2.1} />
             </span>
-            <span className="max-w-full truncate px-1 text-[10px] font-bold text-slate-600">{t.label}</span>
+            <span className="max-w-full truncate px-1 text-[11px] font-bold text-slate-600">{t.label}</span>
           </button>
         ))}
       </div>
@@ -844,10 +859,10 @@ function HomeGrid({ setScreen, store, me, myDay, canDecideLeave }) {
 // The student app's SectionTitle, restated for the staff shell (which has no dark
 // mode by ruling): a short accent rule and wide-tracked caps, so every section on
 // every staff screen is headed the same way.
-function SectionLabel({ children, className = "" }) {
+function SectionLabel({ children, colour = NAVY, className = "" }) {
   return (
     <div className={`mb-2 flex items-center gap-2 px-1 ${className}`}>
-      <span className="h-3.5 w-1 rounded-full" style={{ background: NAVY }} />
+      <span className="h-2 w-2 rounded-[3px]" style={{ background: colour }} />
       <p className="text-[11px] font-extrabold uppercase tracking-widest text-slate-500">{children}</p>
     </div>
   );
@@ -891,25 +906,27 @@ function StaffTabBar({ screen, setScreen, teaches, moreBadge = 0 }) {
 function NeedsAttention({ registersToTake, approvalsWaiting, setScreen }) {
   const items = [];
   if (registersToTake > 0) items.push({
-    key: "registers", Icon: Radio, tone: "amber", screen: "classes",
+    key: "registers", Icon: Radio, ink: "#d97706", tint: "#fef3dd", screen: "classes",
     label: `${registersToTake} register${registersToTake === 1 ? "" : "s"} still to take today`,
   });
   if (approvalsWaiting > 0) items.push({
-    key: "approvals", Icon: ThumbsUp, tone: "navy", screen: "approval",
-    label: `${approvalsWaiting} leave request${approvalsWaiting === 1 ? "" : "s"} waiting for your decision`,
+    key: "approvals", Icon: ThumbsUp, ink: "#1a3a8f", tint: "#e3ebfd", screen: "approval",
+    label: `${approvalsWaiting} leave request${approvalsWaiting === 1 ? "" : "s"} waiting for you`,
+    badge: approvalsWaiting,
   });
   if (!items.length) return null;
-  const tones = { amber: "bg-amber-50 text-amber-800 ring-amber-200", navy: "bg-blue-50 text-blue-900 ring-blue-200" };
   return (
     <div className="mb-4 fade-up">
-      <SectionLabel>Needs attention</SectionLabel>
+      <SectionLabel colour="#f5b840">Needs attention</SectionLabel>
       <div className="space-y-2">
-        {items.map(({ key, Icon, tone, screen, label }) => (
+        {items.map(({ key, Icon, ink, tint, screen, label, badge }) => (
           <button key={key} onClick={() => setScreen(screen)}
-            className={`press flex w-full items-center gap-2.5 rounded-2xl p-3 text-left ring-1 transition hover:shadow-sm ${tones[tone]}`}>
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-sm"><Icon size={17} /></span>
-            <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{label}</span>
-            <ChevronRight size={15} className="shrink-0 opacity-50" />
+            className="press flex w-full items-center gap-3 rounded-[18px] bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: tint }}><Icon size={17} style={{ color: ink }} /></span>
+            <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-700">{label}</span>
+            {badge > 0
+              ? <span className="flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full bg-amber-400 px-1.5 text-[11px] font-extrabold text-slate-900">{badge}</span>
+              : <ChevronRight size={15} className="shrink-0 text-slate-300" />}
           </button>
         ))}
       </div>
@@ -939,7 +956,7 @@ function MyDaySection({ myDay, setScreen }) {
   return (
     <div className="mb-4 fade-up">
       <div className="mb-2 flex items-center justify-between pr-1">
-        <SectionLabel className="!mb-0">My day · {sessions.length} class{sessions.length === 1 ? "" : "es"}</SectionLabel>
+        <SectionLabel colour="#34d399" className="!mb-0">My day · {sessions.length} class{sessions.length === 1 ? "" : "es"}</SectionLabel>
         {/* notMarked null is "roster unknown", never zero — a day of unsized classes
             cannot claim "all marked", so it claims nothing. */}
         {t.notMarked != null && (
@@ -968,9 +985,9 @@ function MyDayCard({ s, spotlight, live, onOpen }) {
   else if (!c.marked) badge = <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">Not started</span>;
   return (
     <button onClick={onOpen} className={`press flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left shadow-sm ring-1 transition hover:shadow-md ${spotlight ? "ring-2 ring-blue-300" : "ring-slate-200/70"}`}>
-      <div className="flex h-11 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-slate-50 ring-1 ring-slate-200/70">
-        <span className="text-[12px] font-extrabold leading-none" style={{ color: NAVY }}>{s.startTime || "—"}</span>
-        <span className="mt-0.5 text-[9px] font-medium text-slate-400">{s.endTime || ""}</span>
+      <div className="flex h-12 w-14 shrink-0 flex-col items-center justify-center rounded-[14px]" style={{ background: "linear-gradient(160deg, #eef2ff, #e0e7ff)" }}>
+        <span className="text-[13px] font-extrabold leading-none" style={{ color: NAVY }}>{s.startTime || "—"}</span>
+        <span className="mt-0.5 text-[9.5px] font-semibold text-slate-400">{s.endTime || ""}</span>
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-bold" style={{ color: NAVY }}>{s.unit ? `${s.unit.code} · ${s.unit.name}` : (s.description || "Class")}</p>
