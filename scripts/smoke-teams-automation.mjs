@@ -30,20 +30,36 @@
 // and expected, to re-add the same members it added the first time, because that is what
 // "never remove, never rename, but never falls behind either" costs on every run.
 //
+// SCENARIO 10 IS A THIRD REGRESSION SHAPE (Task 9): a whole weekly SERIES — many
+// TimetableEvent rows sharing one seriesId — must fold into ONE recurring Graph meeting,
+// never one per occurrence. reconcileSeries (teamsMeetings.js) is a third pass beside the
+// two above, with its own row (TeamsSeriesMeeting) and its own fingerprint
+// (seriesFingerprint), so it earns its own idempotence proof rather than borrowing the
+// per-event one: a second sync with nothing changed must add no createRecurringClassMeeting,
+// updateRecurringClassMeeting or setMeetingCoorganizers line, and a lecturer swap — the
+// one field besides the class's own times that legitimately changes a live series — must
+// add exactly one of the latter two, never a second series and never a silent no-op.
+//
 // THE FIXTURES SEAM, extended for writes. TEAMS_GRAPH_FIXTURES answers `users` (email ->
 // Entra id) exactly as smoke-teams-attendance.mjs's fixtures do; neither engine here ever
-// calls calendarView, resolveMeetingId or attendanceIntervals, so this suite's fixtures
-// file carries only two keys: `users`, and (fix 8, engine review) `channelEmails` —
-// chan-<slug> -> address, read once per channel by teamsProvisioning.js's
-// getChannelEmail() so scenario 9 below can prove the address it learns is actually
-// invited to a class meeting, not merely resolved and cached. TEAMS_GRAPH_JOURNAL is new
-// for this suite: every write op (createClassMeeting, updateClassMeeting,
-// cancelClassMeeting, createTeam, createChannel, addTeamMember) appends one JSON line
-// `{ op, args }`, which is the only way to prove "a meeting was created with these
-// times" or "no second Team was created" without a Microsoft tenant to look inside.
-// Fixture ids are DETERMINISTIC — cal-<subject slug>, team-<name slug>, chan-<name
-// slug> — so a suite reading them back does not have to invent a way to learn what the
-// fixture branch just minted.
+// calls calendarView or attendanceIntervals, so this suite's fixtures file carries three
+// keys: `users`; (fix 8, engine review) `channelEmails` — chan-<slug> -> address, read
+// once per channel by teamsProvisioning.js's getChannelEmail() so scenario 9 below can
+// prove the address it learns is actually invited to a class meeting, not merely resolved
+// and cached; and (Task 9, scenario 10) `meetingIds` — the one Graph read
+// (resolveMeetingId) this suite DOES need, because reconcileSeries resolves the series'
+// onlineMeeting id from its own deterministic join URL before it can write
+// co-organizers, and that URL has to be keyed here, before the series (or its title)
+// exists as a database row, exactly as CHANNEL_ID is computed ahead of provisioning
+// below. TEAMS_GRAPH_JOURNAL is new for this suite: every write op (createClassMeeting,
+// updateClassMeeting, cancelClassMeeting, createRecurringClassMeeting,
+// updateRecurringClassMeeting, setMeetingCoorganizers, createTeam, createChannel,
+// addTeamMember) appends one JSON line `{ op, args }`, which is the only way to prove "a
+// meeting was created with these times" or "no second Team was created" without a
+// Microsoft tenant to look inside. Fixture ids are DETERMINISTIC — cal-<subject slug>,
+// cal-series-<subject slug>-<firstDate>, team-<name slug>, chan-<name slug> — so a suite
+// reading them back does not have to invent a way to learn what the fixture branch just
+// minted.
 //
 // ITS OWN API, ITS OWN PORT, for the same reason smoke-teams-attendance.mjs gives at
 // length: `npm test` boots one shared API on port 4010 with one fixed environment, and
@@ -175,8 +191,38 @@ const CHANNEL_ID = `chan-${slugify(CHANNEL_DISPLAY_NAME)}`;
 // actually exercise the invite.
 const CHANNEL_EMAIL = `channel-${RUN}@x.ac.uk`;
 
+// --- Scenario 10 (Task 9): a published weekly SERIES, with its own two teachers so the
+// lecturer-swap step is a clean single-to-single change rather than a staff SET that
+// still contains TEACHER_EMAIL from the scenarios above. Never TEACHER_EMAIL/TEACHER_ID
+// themselves — reusing them would make "the lecturer changed" ambiguous with "the earlier
+// per-event scenarios' own teacher happened to teach this too".
+const SERIES_TEACHER_EMAIL = `series-teacher-${RUN}@x.ac.uk`;
+const SERIES_TEACHER2_EMAIL = `series-teacher2-${RUN}@x.ac.uk`;
+const SERIES_TEACHER_ID = "seriesteacher1";
+const SERIES_TEACHER2_ID = "seriesteacher2";
+const SERIES_TITLE = `Teams Automation Series ${RUN}`;
+// Three weekly occurrences, deliberately on dates separate from D7 (events A/B/C's own
+// date above) so this scenario's clash warnings never mix with theirs. No `days` sent on
+// the create call below — seriesDates() defaults to the weekday SERIES_D1 itself falls
+// on, so a 14-day range from SERIES_D1 to SERIES_D3 lands on exactly three dates, 7 days
+// apart, without this suite having to reproduce that arithmetic.
+const SERIES_D1 = isoOffset(10);
+const SERIES_D3 = isoOffset(24);
+const T_SERIES = { start: "08:05", end: "09:35" }; // odd minutes, same reasoning as T_A/T_B/T_C above
+// The deterministic fixture join URL createRecurringClassMeeting will hand back —
+// teamsGraph.js's own fixture branch derives it from `subject` (SERIES_TITLE, via its
+// slug helper, reproduced here as `slugify` below for the same reason smoke-teams-
+// attendance.mjs's own comment gives) and `firstDate` (the series' earliest wanted
+// occurrence, SERIES_D1 since wantedEvents is sorted ascending by date). Computed here,
+// ahead of the API process starting, so it can be written into fixtures.meetingIds below
+// — resolveMeetingId has no other way to answer a lookup for a meeting the fixture branch
+// has not minted yet.
+const SERIES_JOIN_URL = `https://teams.microsoft.com/l/meetup-join/fixture-series-${slugify(SERIES_TITLE)}-${SERIES_D1}`;
+const SERIES_MEETING_ID = "mtg-series-1";
+
 const made = { events: [] };
 let unit = null, cohort = null, course = null, teacher = null;
+let seriesTeacher = null, seriesTeacher2 = null, seriesId = null;
 let s1 = null, s2 = null, s3 = null;
 let child = null, bootLog = "";
 let integrationExisted = false, priorIntegration = null;
@@ -222,7 +268,14 @@ async function cleanup() {
     if (unit) await db.unit.delete({ where: { id: unit.id } }).catch(() => {});
 
     for (const s of [s1, s2, s3]) if (s) await db.student.delete({ where: { id: s.id } }).catch(() => {});
-    if (teacher) await db.staff.delete({ where: { id: teacher.id } }).catch(() => {});
+    // teacher, plus scenario 10's two series teachers — same reasoning, same shape.
+    for (const t of [teacher, seriesTeacher, seriesTeacher2]) if (t) await db.staff.delete({ where: { id: t.id } }).catch(() => {});
+    // TeamsSeriesMeeting is NOT cascaded off TimetableEvent — seriesId is a plain unique
+    // string, not a foreign key to any one occurrence (see its own comment on
+    // schema.prisma: the row belongs to the SERIES, not to an arbitrary "first" event),
+    // so deleting the three event rows above leaves this row behind unless it is deleted
+    // here explicitly.
+    if (seriesId) await db.teamsSeriesMeeting.deleteMany({ where: { seriesId } }).catch(() => {});
     // Cohort last of the academic rows — CohortTeam is Cascade off it, so any
     // provisioning row this suite created goes with it even if the unit delete above
     // did not already remove UnitChannel first.
@@ -301,10 +354,15 @@ try {
       [S1_EMAIL.toLowerCase()]: S1_ID,
       [S2_EMAIL.toLowerCase()]: S2_ID,
       // S3_EMAIL is deliberately absent — see its declaration above.
+      [SERIES_TEACHER_EMAIL.toLowerCase()]: SERIES_TEACHER_ID,
+      [SERIES_TEACHER2_EMAIL.toLowerCase()]: SERIES_TEACHER2_ID,
     },
     // Channel-email invite coverage (fix 8, engine review) — see CHANNEL_ID/CHANNEL_EMAIL's
     // own comments above for why this is keyed and written before provisioning ever runs.
     channelEmails: { [CHANNEL_ID]: CHANNEL_EMAIL },
+    // Scenario 10 (Task 9) — see SERIES_JOIN_URL's own comment above for why this key,
+    // unlike the two above, has to be computed before the series row exists at all.
+    meetingIds: { [SERIES_JOIN_URL]: SERIES_MEETING_ID },
   };
   writeFileSync(FIXTURES_PATH, JSON.stringify(fixtures, null, 2));
 
@@ -382,6 +440,17 @@ try {
   teacher = await db.staff.create({ data: {
     name: `Teams Teacher ${RUN}`, jobTitle: "Lecturer", dept: "Teaching", email: TEACHER_EMAIL, passwordHash: "unused",
     initials: "TT", colour: "#1a73e8",
+  } });
+
+  // Scenario 10's own two teachers — see their declaration above for why neither reuses
+  // `teacher`.
+  seriesTeacher = await db.staff.create({ data: {
+    name: `Series Teacher ${RUN}`, jobTitle: "Lecturer", dept: "Teaching", email: SERIES_TEACHER_EMAIL, passwordHash: "unused",
+    initials: "S1", colour: "#1a73e8",
+  } });
+  seriesTeacher2 = await db.staff.create({ data: {
+    name: `Series Teacher Two ${RUN}`, jobTitle: "Lecturer", dept: "Teaching", email: SERIES_TEACHER2_EMAIL, passwordHash: "unused",
+    initials: "S2", colour: "#1a73e8",
   } });
 
   const mkStudent = (n, email) => db.student.create({ data: {
@@ -695,6 +764,84 @@ try {
   check("the journal recorded creating event C's meeting, exactly once", createLinesC.length === 1, `${createLinesC.length}`);
   check("...addressed to the unit's own channel, not just the teacher — the channel-email invite actually fired",
     (createLinesC[0]?.args?.attendeeEmails || []).includes(CHANNEL_EMAIL), JSON.stringify(createLinesC[0]?.args?.attendeeEmails));
+
+  /* ====================================================================== */
+  console.log("\n--- scenario 10: a published weekly SERIES gets ONE recurring meeting (Task 9) ---");
+  // The proof this scenario exists for: N occurrences sharing one seriesId must fold
+  // into exactly one createRecurringClassMeeting — never one createClassMeeting per
+  // week — the teacher becomes a co-organizer on it, the join link fans out to every
+  // occurrence's own register, a sync with nothing changed writes nothing new, and
+  // swapping the lecturer produces exactly one update and one co-organizer rewrite.
+  /* ====================================================================== */
+
+  const createdSeries = await call("/timetabling/events", {
+    method: "POST", token: adminToken,
+    body: {
+      date: SERIES_D1, endDate: SERIES_D3, start: T_SERIES.start, end: T_SERIES.end, title: SERIES_TITLE,
+      unitId: unit.id, courseId: course.id, cohortIds: [cohort.id], staffIds: [seriesTeacher.id],
+      published: true, teamsAutoMeeting: true,
+    },
+  });
+  check("the series is created", createdSeries.status === 201, `HTTP ${createdSeries.status} ${JSON.stringify(createdSeries.data)}`);
+  check("...as three weekly occurrences", createdSeries.data?.created === 3, JSON.stringify(createdSeries.data));
+  check("...with a register built for every one of them", createdSeries.data?.registers?.created === 3, JSON.stringify(createdSeries.data?.registers));
+  seriesId = createdSeries.data?.seriesId;
+  check("...sharing one seriesId", !!seriesId, seriesId);
+
+  const seriesEvents = await db.timetableEvent.findMany({ where: { seriesId }, orderBy: { date: "asc" } });
+  check("...and the three rows in the database actually share it", seriesEvents.length === 3, `${seriesEvents.length}`);
+  for (const ev of seriesEvents) made.events.push(ev.id);
+
+  const syncSeries1 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  check("the series' first meetings sync answers 200", syncSeries1.status === 200, `HTTP ${syncSeries1.status} ${syncSeries1.data?.error || ""}`);
+  check("it created exactly one recurring meeting for the whole series", syncSeries1.data?.summary?.seriesMeetingsCreated === 1, JSON.stringify(syncSeries1.data?.summary));
+
+  const seriesCreateLines1 = readJournal().filter((j) => j.op === "createRecurringClassMeeting");
+  check("the journal holds exactly one createRecurringClassMeeting", seriesCreateLines1.length === 1, `${seriesCreateLines1.length}`);
+  check("...covering at least one weekday", (seriesCreateLines1[0]?.args?.weekdays || []).length >= 1, JSON.stringify(seriesCreateLines1[0]?.args?.weekdays));
+  check("the journal holds ZERO createClassMeeting for the series — occurrences must not get their own meetings",
+    !readJournal().some((j) => j.op === "createClassMeeting" && j.args?.subject === SERIES_TITLE), "");
+
+  const seriesCoorg1 = readJournal().filter((j) => j.op === "setMeetingCoorganizers");
+  check("co-organizers were written exactly once", seriesCoorg1.length === 1, `${seriesCoorg1.length}`);
+  check("...naming exactly the resolved teacher",
+    JSON.stringify(seriesCoorg1[0]?.args?.coorganizerUserIds) === JSON.stringify([SERIES_TEACHER_ID]), JSON.stringify(seriesCoorg1[0]?.args?.coorganizerUserIds));
+
+  const seriesSessions1 = await db.hndSession.findMany({ where: { timetableEventId: { in: seriesEvents.map((e) => e.id) } } });
+  check("every occurrence built its own register", seriesSessions1.length === 3, `${seriesSessions1.length}`);
+  check("...and every one of them carries the SAME non-null join url",
+    seriesSessions1.length === 3 && seriesSessions1.every((s) => s.teamsJoinUrl === SERIES_JOIN_URL), JSON.stringify(seriesSessions1.map((s) => s.teamsJoinUrl)));
+
+  const seriesEventsAfter1 = await db.timetableEvent.findMany({ where: { seriesId } });
+  check("...and every occurrence's own event row matches the fixture's deterministic series join url",
+    seriesEventsAfter1.every((e) => e.teamsJoinUrl === SERIES_JOIN_URL), JSON.stringify(seriesEventsAfter1.map((e) => e.teamsJoinUrl)));
+
+  /* ---- idempotence: a second sync with nothing changed writes nothing new (the gate) ---- */
+  const syncSeries2 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  check("the series' second sync answers 200", syncSeries2.status === 200, `HTTP ${syncSeries2.status}`);
+  check("it created no second recurring meeting", syncSeries2.data?.summary?.seriesMeetingsCreated === 0, JSON.stringify(syncSeries2.data?.summary));
+  check("THE GATE: it updated nothing when nothing changed", syncSeries2.data?.summary?.seriesMeetingsUpdated === 0, JSON.stringify(syncSeries2.data?.summary));
+  check("the journal still holds exactly one createRecurringClassMeeting", journalCount("createRecurringClassMeeting") === 1, `${journalCount("createRecurringClassMeeting")}`);
+  check("...no updateRecurringClassMeeting appeared", journalCount("updateRecurringClassMeeting") === 0, `${journalCount("updateRecurringClassMeeting")}`);
+  check("...and no second setMeetingCoorganizers", journalCount("setMeetingCoorganizers") === 1, `${journalCount("setMeetingCoorganizers")}`);
+
+  /* ---- a lecturer change produces exactly one update, and one co-organizer rewrite ---- */
+  for (const ev of seriesEvents) {
+    const swapped = await call(`/timetabling/events/${ev.id}`, { method: "PUT", token: adminToken, body: { staffIds: [seriesTeacher2.id] } });
+    check(`event ${ev.date} accepts the lecturer swap`, swapped.status === 200, `HTTP ${swapped.status}`);
+  }
+
+  const syncSeries3 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  check("the series' third sync answers 200", syncSeries3.status === 200, `HTTP ${syncSeries3.status}`);
+  check("it updated exactly the one recurring meeting", syncSeries3.data?.summary?.seriesMeetingsUpdated === 1, JSON.stringify(syncSeries3.data?.summary));
+  check("...and created no second one", syncSeries3.data?.summary?.seriesMeetingsCreated === 0, JSON.stringify(syncSeries3.data?.summary));
+  check("the journal gained exactly one updateRecurringClassMeeting", journalCount("updateRecurringClassMeeting") === 1, `${journalCount("updateRecurringClassMeeting")}`);
+  check("...still exactly one createRecurringClassMeeting — the swap PATCHed, it did not re-create", journalCount("createRecurringClassMeeting") === 1, `${journalCount("createRecurringClassMeeting")}`);
+  check("...and exactly one MORE setMeetingCoorganizers — the co-organizer set was rewritten", journalCount("setMeetingCoorganizers") === 2, `${journalCount("setMeetingCoorganizers")}`);
+
+  const seriesCoorgLines = readJournal().filter((j) => j.op === "setMeetingCoorganizers");
+  check("the rewritten co-organizer list names the NEW lecturer, not the old one",
+    JSON.stringify(seriesCoorgLines[1]?.args?.coorganizerUserIds) === JSON.stringify([SERIES_TEACHER2_ID]), JSON.stringify(seriesCoorgLines[1]?.args?.coorganizerUserIds));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;
