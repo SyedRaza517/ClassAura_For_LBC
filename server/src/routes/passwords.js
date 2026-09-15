@@ -72,7 +72,7 @@ router.put("/:kind/:id", async (req, res) => {
   if (password.length < MIN_LENGTH) return res.status(400).json({ error: `The password must be at least ${MIN_LENGTH} characters` });
   if (password !== confirm) return res.status(400).json({ error: "The two passwords don't match" });
 
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
 
   if (kind === "staff") {
     const target = await prisma.staff.findUnique({ where: { id }, select: { id: true, name: true, email: true, isSuperAdmin: true, accountRole: true, adminPages: true } });

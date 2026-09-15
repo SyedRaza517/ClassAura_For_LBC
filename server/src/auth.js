@@ -13,8 +13,28 @@ const { runWithAcademicScope, withoutAcademicScope, scopeForStaff, CONFINED_BY_R
 const { sessionSecret } = require("./sessionSecret");
 const SECRET = sessionSecret();
 
-const hashPassword = (pw) => bcrypt.hashSync(pw, 10);
-const verifyPassword = (pw, hash) => bcrypt.compareSync(pw, hash);
+// ASYNC, AND THAT IS THE POINT — both return Promises and every caller must await.
+//
+// These were bcrypt.hashSync / bcrypt.compareSync. bcryptjs is pure JavaScript, so a
+// cost-10 hash or compare is ~80-100ms of arithmetic, and the Sync variants run all of
+// it ON the event loop thread: while one person's password was being checked, every
+// other request in the process — every register scan, every QR check-in — sat frozen.
+// On Render's free plan (a fraction of one CPU) that stretched to hundreds of ms per
+// login, and a burst of sign-ins serialised the whole API behind bcrypt. The async
+// bcryptjs API (promise-returning when no callback is given) does the same arithmetic
+// in small chunks yielded through setImmediate, so other requests interleave between
+// chunks. The CPU cost per login is unchanged; the difference is that nobody else's
+// request stops while it is paid.
+//
+// Native `bcrypt` (the compiled addon) was considered and REJECTED: it would move the
+// work off-thread entirely, which is strictly better, but it swaps a pure-JS dependency
+// for one that must compile on every deploy target — a Render build that has never
+// needed a toolchain would suddenly depend on one, and a failed native build takes
+// logins down with it. bcryptjs async already removes the event-loop blocking, which
+// was the actual problem. The hash FORMAT is identical either way ($2a$/$2b$), so
+// every stored hash keeps verifying; cost stays 10 for the same reason.
+const hashPassword = (pw) => bcrypt.hash(pw, 10);
+const verifyPassword = (pw, hash) => bcrypt.compare(pw, hash);
 // purpose distinguishes a real session from the short-lived two-factor challenge
 // token issued between the password step and the authenticator step. Both are
 // signed with the same secret, so requireAuth MUST check this — otherwise a
