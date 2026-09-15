@@ -5,6 +5,22 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { api } from "./api";
 import { ukBankHolidaysRange } from "./bankHolidays";
+import { createRefetchGate } from "./refetchGate";
+
+// How old a refetcher's data may be before a focus/visibility event (or a poll
+// tick) is allowed to re-download it. Only the "recent is fine" paths consult
+// these — mounts, manual Refresh buttons and post-mutation resyncs always fetch.
+//   • 15s for the light collections: under the 20s poll cadence, so the poll
+//     itself is never starved — a tick only skips when a mutation or focus
+//     refetch already landed moments before it.
+//   • 60s for the heavy admin collections (registers = every student + every
+//     session + the attendance matrix; assessments; PAT): alt-tabbing to look
+//     something up and coming straight back used to cost a full boot's worth
+//     of data, and nothing in those collections changes so fast that a copy
+//     under a minute old misleads anyone — another device's edits still arrive
+//     on any genuine return after being away.
+const LIGHT_MAX_AGE_MS = 15_000;
+const HEAVY_MAX_AGE_MS = 60_000;
 
 const daysBetween = (a, b) => { const d1 = new Date(a), d2 = new Date(b); if (isNaN(d1) || isNaN(d2)) { console.error("Invalid dates:", a, b); return 0; } return Math.max(1, Math.round((d2 - d1) / 86400000) + 1); };
 // Today as YYYY-MM-DD in the college's own timezone (Europe/London), matching the
@@ -54,7 +70,33 @@ export function useApiStore(notify, user) {
   // admin dashboard, the Manager Approval tile and every admin-only fetch below.
   const isAdmin = user?.accountRole === "ADMIN" && user?.kind !== "student" && !user?.isStudent;
 
-  const refresh = useCallback(async () => {
+  // One gate per refetcher (see refetchGate.js for the full why). Held in a
+  // ref because the gate's memory — "when did this last complete, what's on
+  // the wire" — must survive re-renders but reset with the hook instance.
+  // Why not react-query/SWR: they'd solve this too, but they own the cache,
+  // and moving every collection out of useState and every mutation into their
+  // invalidation model is a rewrite of this whole store plus every consumer.
+  const gates = useRef(null);
+  if (gates.current === null) {
+    gates.current = {
+      refresh: createRefetchGate({ maxAgeMs: LIGHT_MAX_AGE_MS }),
+      hnd: createRefetchGate({ maxAgeMs: HEAVY_MAX_AGE_MS }),
+      interactions: createRefetchGate({ maxAgeMs: HEAVY_MAX_AGE_MS }),
+      assessments: createRefetchGate({ maxAgeMs: HEAVY_MAX_AGE_MS }),
+    };
+  }
+  // Every gate scope starts with who is signed in: this hook lives at App
+  // level and SURVIVES logout/login, so without the user in the scope a
+  // freshly signed-in user could inherit the previous user's "fresh enough,
+  // skip" verdict on a focus event. A render-updated ref rather than a
+  // useCallback dep, so reading it never changes any refetcher's identity —
+  // components' effects hang off those identities.
+  const userKeyRef = useRef("");
+  userKeyRef.current = user ? String(user.id ?? user.email ?? "signed-in") : "";
+
+  // The undecorated batch. Kept separate from the exported refresh() so the
+  // gate can wrap the SAME body with two different guarantees below.
+  const doRefresh = useCallback(async () => {
     try {
       // The three admin-only reads join the same batch as the core five: they are
       // independent round trips and used to run one AFTER another once the batch
@@ -84,12 +126,23 @@ export function useApiStore(notify, user) {
     setLoaded(true);
   }, [notify, isAdmin]);
 
+  // The exported refresh(): always lands data at least as fresh as the moment
+  // of the call (it's the post-mutation resync path), but calls that arrive
+  // while a batch is already on the wire share one follow-up batch instead of
+  // each opening a concurrent duplicate. Identity changes exactly when the old
+  // refresh()'s did — [notify, isAdmin], via doRefresh — so the mount effect
+  // below and every component effect that lists it re-fire as before.
+  const refresh = useCallback(() => gates.current.refresh.fresh(doRefresh, `${userKeyRef.current}|${isAdmin ? "admin" : "staff"}`), [doRefresh, isAdmin]);
+  // The focus/poll variant: skips entirely when the last batch completed under
+  // LIGHT_MAX_AGE_MS ago, joins the in-flight batch if one is running.
+  const refreshIfStale = useCallback(() => gates.current.refresh.ifStale(doRefresh, `${userKeyRef.current}|${isAdmin ? "admin" : "staff"}`), [doRefresh, isAdmin]);
+
   useEffect(() => { if (user) refresh(); }, [user, refresh]);
 
   // Refetches everything the registers page shows, with attendance scoped to the
   // selected semester. Depends on semesterId, so changing the picker re-runs the
   // page's load effect and every figure rescopes together.
-  const refreshHnd = useCallback(async () => {
+  const doRefreshHnd = useCallback(async () => {
     try {
       // Cohorts, terms and check-in settings are independent round trips that used to
       // run one after another once the main batch resolved — three extra sequential
@@ -120,6 +173,16 @@ export function useApiStore(notify, user) {
     }
     setHndLoaded(true);
   }, [notify, semesterId]);
+
+  // The gate's scope carries the semester: this is what keeps the semester
+  // picker honest. refreshHnd's identity still changes with semesterId (via
+  // doRefreshHnd), so the Registers page and the Executive Dashboard effects
+  // that depend on it re-fire exactly as before — and because the NEW
+  // semesterId is a scope the gate has never settled, the staleness and
+  // in-flight checks both wave the refetch through. A 10-second-old copy of
+  // semester A is not a fresh copy of semester B.
+  const refreshHnd = useCallback(() => gates.current.hnd.fresh(doRefreshHnd, `${userKeyRef.current}|${semesterId}`), [doRefreshHnd, semesterId]);
+  const refreshHndIfStale = useCallback(() => gates.current.hnd.ifStale(doRefreshHnd, `${userKeyRef.current}|${semesterId}`), [doRefreshHnd, semesterId]);
 
   // derived
 
@@ -258,13 +321,15 @@ export function useApiStore(notify, user) {
     return null;
   }, [chargeableDays, remainingIn]);
 
-  const refreshInteractions = useCallback(async () => {
+  const doRefreshInteractions = useCallback(async () => {
     try { setInteractions(await api.listInteractions()); }
     catch (e) { notify?.(e.message || "Failed to load interactions", "error"); }
     setInteractionsLoaded(true);
   }, [notify]);
+  const refreshInteractions = useCallback(() => gates.current.interactions.fresh(doRefreshInteractions, userKeyRef.current), [doRefreshInteractions]);
+  const refreshInteractionsIfStale = useCallback(() => gates.current.interactions.ifStale(doRefreshInteractions, userKeyRef.current), [doRefreshInteractions]);
 
-  const refreshAssessments = useCallback(async () => {
+  const doRefreshAssessments = useCallback(async () => {
     try {
       const [list, ov] = await Promise.all([api.listAssessments(), api.assessmentOverview()]);
       setAssessments(list); setAssessmentOverview(ov);
@@ -275,6 +340,8 @@ export function useApiStore(notify, user) {
     }
     setAssessmentsLoaded(true);
   }, [notify]);
+  const refreshAssessments = useCallback(() => gates.current.assessments.fresh(doRefreshAssessments, userKeyRef.current), [doRefreshAssessments]);
+  const refreshAssessmentsIfStale = useCallback(() => gates.current.assessments.ifStale(doRefreshAssessments, userKeyRef.current), [doRefreshAssessments]);
 
   // Keep the UI fresh without a manual reload — but tiered by cost so we don't
   // re-pull large payloads needlessly:
@@ -283,32 +350,38 @@ export function useApiStore(notify, user) {
   //   • Heavy admin collections (registers with 1000+ students + attendance,
   //     assessments, PAT) are refetched only when the app/tab regains focus — that's
   //     when another device's changes matter — instead of every interval tick.
-  // A short throttle collapses the focus + visibilitychange pair that both fire when
-  // returning to the app, so a return triggers one refetch, not two.
-  const lastFullRefetch = useRef(0);
+  // Every trigger here goes through its gate's ifStale(): a focus event only
+  // costs requests when the data is genuinely old (15s light / 60s heavy), so
+  // alt-tabbing away and straight back costs ZERO requests, while a return
+  // after minutes away still refreshes everything exactly as before. This
+  // replaced a 3-second throttle whose only job was collapsing the focus +
+  // visibilitychange pair that both fire on every return — the staleness gate
+  // collapses that pair and the mount/timer overlaps besides, so the blunt
+  // version is gone rather than left as a second, redundant guard.
   useEffect(() => {
     if (!user) return;
-    const refetchAll = () => {
-      const now = Date.now();
-      if (now - lastFullRefetch.current < 3000) return; // collapse duplicate focus/visibility events
-      lastFullRefetch.current = now;
-      refresh();
-      if (hndLoaded) refreshHnd();
-      if (interactionsLoaded) refreshInteractions();
-      if (assessmentsLoaded) refreshAssessments();
+    const refetchStale = () => {
+      refreshIfStale()?.catch(() => {});
+      if (hndLoaded) refreshHndIfStale()?.catch(() => {});
+      if (interactionsLoaded) refreshInteractionsIfStale()?.catch(() => {});
+      if (assessmentsLoaded) refreshAssessmentsIfStale()?.catch(() => {});
     };
-    const onVisible = () => { if (document.visibilityState === "visible") refetchAll(); };
-    window.addEventListener("focus", refetchAll);
+    const onVisible = () => { if (document.visibilityState === "visible") refetchStale(); };
+    window.addEventListener("focus", refetchStale);
     document.addEventListener("visibilitychange", onVisible);
     // Interval refreshes ONLY the light collections — the heavy registers/assessments
-    // lists are left to the focus/visibility refetch above.
-    const id = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 20000);
+    // lists are left to the focus/visibility refetch above. The 20s cadence is
+    // deliberately untouched (live check-in views lean on it); ifStale only
+    // lets a tick skip when a mutation or focus refetch landed under 15s
+    // before it, which is why the threshold sits BELOW the cadence — at 20s or
+    // above, every tick would find itself "fresh" and the poll would starve.
+    const id = setInterval(() => { if (document.visibilityState === "visible") refreshIfStale()?.catch(() => {}); }, 20000);
     return () => {
-      window.removeEventListener("focus", refetchAll);
+      window.removeEventListener("focus", refetchStale);
       document.removeEventListener("visibilitychange", onVisible);
       clearInterval(id);
     };
-  }, [user, refresh, refreshHnd, refreshInteractions, refreshAssessments, hndLoaded, interactionsLoaded, assessmentsLoaded]);
+  }, [user, refreshIfStale, refreshHndIfStale, refreshInteractionsIfStale, refreshAssessmentsIfStale, hndLoaded, interactionsLoaded, assessmentsLoaded]);
 
   // Wrap an action so errors surface as toasts and the relevant data resyncs.
   // The resync runs in the BACKGROUND (not awaited): the save itself is awaited so
