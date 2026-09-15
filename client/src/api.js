@@ -824,7 +824,7 @@ export const api = {
   getAttendance: (semesterId, termId) => request(`/hnd/attendance${termId ? `?termId=${encodeURIComponent(termId)}` : semesterId ? `?semesterId=${encodeURIComponent(semesterId)}` : ""}`),
   // year/termNumber scope to a curriculum stage ("Year 1 · Term 2") by narrowing to
   // the units taught at that point in the course.
-  attendanceMonthly: (opts = {}) => { const q = new URLSearchParams(); if (opts.studentId) q.set("studentId", opts.studentId); if (opts.unitId) q.set("unitId", opts.unitId); if (opts.courseId) q.set("courseId", opts.courseId); if (opts.year) q.set("year", opts.year); if (opts.termNumber) q.set("termNumber", opts.termNumber); const s = q.toString(); return request(`/hnd/attendance/monthly${s ? `?${s}` : ""}`); },
+  attendanceMonthly: (opts = {}) => { const q = new URLSearchParams(); if (opts.studentId) q.set("studentId", opts.studentId); if (opts.unitId) q.set("unitId", opts.unitId); if (opts.courseId) q.set("courseId", opts.courseId); if (opts.year) q.set("year", opts.year); if (opts.termNumber) q.set("termNumber", opts.termNumber); if (opts.academicDepartmentId) q.set("academicDepartmentId", opts.academicDepartmentId); const s = q.toString(); return request(`/hnd/attendance/monthly${s ? `?${s}` : ""}`); },
   // A student's attendance grouped by term (current + previous terms).
   studentTermAttendance: (id) => request(`/hnd/students/${id}/attendance-terms`),
   // PAT (Personal Academic Tutor) interactions
@@ -954,7 +954,9 @@ export const api = {
     request(`/hnd/units/${unitId}/leader`, { method: "PUT", body: { leaderStaffId } }),
   setMarkingDeadline: (assessmentId, markingDueDate) =>
     request(`/assessments/${assessmentId}/marking-deadline`, { method: "PUT", body: { markingDueDate } }),
-  execSummary: () => request("/assessments/exec-summary"),
+  // The optional School filter is the ONLY scope exec-summary takes — course/unit
+  // narrowing stays client-side over the per-course rows it already returns.
+  execSummary: (opts = {}) => { const q = new URLSearchParams(); if (opts.academicDepartmentId) q.set("academicDepartmentId", opts.academicDepartmentId); const s = q.toString(); return request(`/assessments/exec-summary${s ? `?${s}` : ""}`); },
   // staff reviews (Strategic Self-Reflection, Monthly Performance & Support)
   // The question definitions come FROM the server, so a new form or a reworded
   // question needs no client release.

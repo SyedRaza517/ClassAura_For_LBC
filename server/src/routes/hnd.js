@@ -2940,16 +2940,29 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   const termNum = Number(req.query?.termNumber);
   const byYear = Number.isInteger(yearNum) && yearNum >= 1 && yearNum <= MAX_YEAR;
   const byTerm = Number.isInteger(termNum) && termNum >= 1 && termNum <= MAX_TERM;
+  // ?academicDepartmentId= — the dashboard's School FILTER, a view an admin chose,
+  // not the caller's scope (that is appended separately below and still applies, so
+  // a department-scoped caller filtering to a school they cannot see gets an empty
+  // chart, never somebody else's). "none" selects the rows nobody has assigned to a
+  // school yet, matching the shared SchoolFilter dropdown's vocabulary. The filter
+  // reaches a department by the SAME definitions the scope does — a mark through its
+  // STUDENT, a session through its UNIT (see academicScopeSql.js for why those are
+  // the definitions) — so an admin filtering by school X sees exactly the figures a
+  // school-X-scoped member of staff sees unfiltered.
+  const deptFilter = str(req.query?.academicDepartmentId);
   // Join Unit when filtering by course or by curriculum stage.
   const needUnit = Boolean(courseId || byYear || byTerm);
   const unitJoin = needUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
+  // The filter's own Student join, aliased away from the scope's sc_st so the two
+  // predicates can coexist in one query.
+  const filtStJoin = deptFilter ? ` JOIN "Student" f_st ON f_st.id = am."studentId"` : "";
   const base = `
     SELECT left(se.date, 7) ym,
       count(*) FILTER (WHERE am.status='P')::int p,
       count(*) FILTER (WHERE am.status='L')::int l,
       count(*) FILTER (WHERE am.status='E')::int e,
       count(*) FILTER (WHERE am.status='A')::int a
-    FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId" ${unitJoin}`;
+    FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId" ${unitJoin}${filtStJoin}`;
   // Every filter here is optional, so `conds` is legitimately empty for the unfiltered
   // dashboard and the WHERE clause is omitted entirely — see the guard below.
   const conds = [], params = [];
@@ -2958,6 +2971,8 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   if (courseId) { params.push(courseId); conds.push(`u."courseId" = $${params.length}`); }
   if (byYear) { params.push(yearNum); conds.push(`u."year" = $${params.length}`); }
   if (byTerm) { params.push(termNum); conds.push(`u."termNumber" = $${params.length}`); }
+  if (deptFilter === "none") { conds.push(`f_st."academicDepartmentId" IS NULL`); }
+  else if (deptFilter) { params.push(deptFilter); conds.push(`f_st."academicDepartmentId" = $${params.length}`); }
   // Departmental scope, appended by hand because $queryRaw never reaches the client
   // extension -- see the header of this file. A college-wide caller gets an empty join
   // and an empty predicate, so the query below is character-for-character what it was.
@@ -2977,12 +2992,17 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   const t = summariseCounts(P, L, E, A);
   // Session count under the SAME course/unit scope (independent of student/marks),
   // so the dashboard's "Total Sessions" tracks the filters too.
-  const sJoin = needUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
+  // The School filter needs the Unit join too: a session reaches a department
+  // through its unit, exactly as the caller's scope below defines it.
+  const sNeedUnit = needUnit || Boolean(deptFilter);
+  const sJoin = sNeedUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
   const sConds = [], sParams = [];
   if (unitId) { sParams.push(unitId); sConds.push(`se."unitId" = $${sParams.length}`); }
   if (courseId) { sParams.push(courseId); sConds.push(`u."courseId" = $${sParams.length}`); }
   if (byYear) { sParams.push(yearNum); sConds.push(`u."year" = $${sParams.length}`); }
   if (byTerm) { sParams.push(termNum); sConds.push(`u."termNumber" = $${sParams.length}`); }
+  if (deptFilter === "none") { sConds.push(`u."academicDepartmentId" IS NULL`); }
+  else if (deptFilter) { sParams.push(deptFilter); sConds.push(`u."academicDepartmentId" = $${sParams.length}`); }
   // A session has no student, so it reaches a department through its unit — one join since
   // spec 2, and the SAME definition of "which department" the mark path above uses.
   const sDept = scopedUnitJoin('se."unitId"', sParams.length);

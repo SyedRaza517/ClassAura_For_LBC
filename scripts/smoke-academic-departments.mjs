@@ -100,6 +100,9 @@ let mappingCourseIds = [], mappingCohortId = null, mappingStudentId = null;
 let handMadeCourseId = null, handMadeCohortId = null, handMadeStudentId = null;
 let optionsStudentId = null;
 const confineIds = { courses: [], cohorts: [], students: [] };
+// The executive-dashboard filter fixtures: declared here so the finally can always
+// reach them, whichever check a failed run died in.
+const execFix = { unit: null, sessions: [], student: null };
 
 try {
   /* ------------------------------------------------------------------------ */
@@ -889,10 +892,94 @@ try {
     assert.equal(res.body.students.length, 0, `an unknown id returned ${res.body.students.length} student(s)`);
     return "0 rows";
   });
+  /* ---- the executive dashboard school filter — the same rule as prediction's:
+          A FILTER, NOT A BOUNDARY, and its figures must be GROUND-TRUTH equal to
+          what the database says at that moment, not merely "smaller than before".
+          Fixtures are created with db directly (the suite's own style, see the
+          prediction probe above): a Business unit, one session on it, a Business
+          student with three marks — P, L, A — which is 50% points-weighted. ---- */
+  await check("exec-summary counts exactly the filtered school's students", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    execFix.unit = await db.unit.create({ data: { code: `EXF${stamp}`, name: "Exec Filter Unit", academicDepartmentId: biz.id } });
+    execFix.student = await db.student.create({
+      data: {
+        firstName: "Exec", lastName: "Probe", studentRef: `EXF${stamp}`,
+        email: `exec.filter.${stamp}@edtech.co.uk`, initials: "EP", colour: "#654321",
+        academicDepartmentId: biz.id,
+      },
+    });
+    // One mark per student PER SESSION (a register), so three marks need three dates.
+    for (const [i, status] of ["P", "L", "A"].entries()) {
+      const s = await db.hndSession.create({ data: { unitId: execFix.unit.id, date: `2026-03-1${i + 1}`, startTime: "09:00", endTime: "11:00" } });
+      execFix.sessions.push(s.id);
+      await db.attendanceMark.create({ data: { sessionId: s.id, studentId: execFix.student.id, status } });
+    }
+    const [expected, expectedNone, unfiltered] = await Promise.all([
+      db.student.count({ where: { academicDepartmentId: biz.id } }),
+      db.student.count({ where: { academicDepartmentId: null } }),
+      db.student.count(),
+    ]);
+    const inBiz = await call(`/assessments/exec-summary?academicDepartmentId=${biz.id}`, { token: adminToken });
+    assert.equal(inBiz.status, 200, `expected 200, got ${inBiz.status}`);
+    assert.equal(inBiz.body.totals.students, expected, `filtered says ${inBiz.body.totals.students} student(s), the database says ${expected}`);
+    // The discriminating half: were the parameter silently dropped, filtered would
+    // equal the whole college and BOTH assertions below would fail loudly.
+    assert.ok(expected < unfiltered, "fixture problem: the school holds every student, so this proves nothing");
+    const none = await call(`/assessments/exec-summary?academicDepartmentId=none`, { token: adminToken });
+    assert.equal(none.body.totals.students, expectedNone, `"none" says ${none.body.totals.students}, the database says ${expectedNone}`);
+    return `${expected} in school, ${expectedNone} unassigned, ${unfiltered} in college`;
+  });
+
+  await check("an unknown school id shows an empty dashboard, not the college", async () => {
+    const res = await call(`/assessments/exec-summary?academicDepartmentId=not-a-school-${stamp}`, { token: adminToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.totals.students, 0, `an unknown id counted ${res.body.totals.students} student(s)`);
+    assert.equal(res.body.totals.courses, 0, `an unknown id counted ${res.body.totals.courses} course(s)`);
+    return "0 students, 0 courses";
+  });
+
+  await check("monthly attendance under the filter equals the database's own count", async () => {
+    const list = await call("/academic-departments", { token: adminToken });
+    const biz = list.body.departments.find((d) => d.key === BIZ);
+    const cmp = list.body.departments.find((d) => d.key === CMP);
+    // Ground truth, by the filter's own definitions: marks through the STUDENT's
+    // school, sessions through the UNIT's — the definitions academicScopeSql.js fixed.
+    const [P, L, E, A, sessions] = await Promise.all([
+      db.attendanceMark.count({ where: { status: "P", student: { academicDepartmentId: biz.id } } }),
+      db.attendanceMark.count({ where: { status: "L", student: { academicDepartmentId: biz.id } } }),
+      db.attendanceMark.count({ where: { status: "E", student: { academicDepartmentId: biz.id } } }),
+      db.attendanceMark.count({ where: { status: "A", student: { academicDepartmentId: biz.id } } }),
+      db.hndSession.count({ where: { unit: { academicDepartmentId: biz.id } } }),
+    ]);
+    const res = await call(`/hnd/attendance/monthly?academicDepartmentId=${biz.id}`, { token: adminToken });
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    assert.deepEqual(
+      { P: res.body.totals.present, L: res.body.totals.late, E: res.body.totals.excused, A: res.body.totals.absent, sessions: res.body.sessions },
+      { P, L, E, A, sessions },
+      "the filtered figures disagree with the database",
+    );
+    assert.ok(res.body.totals.marked >= 3, "the fixture's own three marks are missing");
+    // And the other school does NOT see them — the leak assertion.
+    const other = await call(`/hnd/attendance/monthly?academicDepartmentId=${cmp.id}`, { token: adminToken });
+    const march = (other.body.months || []).find((m) => m.month === "2026-03");
+    assert.ok(!march || march.marked === 0 || march.P + march.L + march.A < 3, "another school's chart shows this school's marks");
+    return `P=${P} L=${L} E=${E} A=${A}, ${sessions} session(s)`;
+  });
+
+  await check("exec-summary is still refused without the executive page", async () => {
+    const res = await call(`/assessments/exec-summary?academicDepartmentId=whatever`, { token: narrow.token });
+    assert.equal(res.status, 403, `expected 403, got ${res.status} — the filter must not widen who can read the figures`);
+    return "403";
+  });
 } finally {
   /* -------------------------------------------------------------------------- */
   /* Cleanup — in a finally, so a failed run leaves nothing behind               */
   /* -------------------------------------------------------------------------- */
+  if (execFix.sessions.length) await db.attendanceMark.deleteMany({ where: { sessionId: { in: execFix.sessions } } }).catch(() => {});
+  if (execFix.sessions.length) await db.hndSession.deleteMany({ where: { id: { in: execFix.sessions } } }).catch(() => {});
+  if (execFix.unit) await db.unit.deleteMany({ where: { id: execFix.unit.id } }).catch(() => {});
+  if (execFix.student) await db.student.deleteMany({ where: { id: execFix.student.id } }).catch(() => {});
   if (optionsStudentId) {
     await db.studentPredictionCurrent.deleteMany({ where: { studentId: optionsStudentId } }).catch(() => {});
     await db.student.deleteMany({ where: { id: optionsStudentId } }).catch(() => {});

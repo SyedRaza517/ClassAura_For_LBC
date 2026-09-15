@@ -3032,7 +3032,14 @@ function ExecutiveDashboard({ store }) {
   const [stage, setStage] = useState("all");   // "all" | "1-2" (year-term)
 
   const [err, setErr] = useState("");
-  // exec-summary loads once; monthly attendance re-scopes to the Course/Unit filters.
+  // The School filter. Unlike Course/Unit it re-scopes BOTH halves of the page —
+  // exec-summary is recomputed server-side per school (its per-course rows only
+  // cover that school's courses), so changing it reloads with withExec: true where
+  // a course change gets away with narrowing client-side.
+  const schools = useSchoolOptions();
+  const [school, setSchool] = useState("");
+  // exec-summary loads once per School selection; monthly attendance re-scopes to
+  // the Course/Unit filters as well.
   // Only the NEWEST request may write state. Switching course twice quickly could
   // otherwise let the first response land last, painting course A's attendance under
   // course B's name — the same stale-numbers symptom by a different route.
@@ -3045,7 +3052,7 @@ function ExecutiveDashboard({ store }) {
       // executive page while /hnd/attendance/monthly needs registers/students or
       // executive, so one 403 must not blank the other half of the page.
       const results = await Promise.allSettled([
-        withExec ? api.execSummary() : Promise.resolve(null),
+        withExec ? api.execSummary(scope || {}) : Promise.resolve(null),
         api.attendanceMonthly(scope || {}),
       ]);
       if (seq !== loadSeq.current) return;   // a newer request has already answered
@@ -3075,11 +3082,23 @@ function ExecutiveDashboard({ store }) {
   // Defensive on the argument: a missing stage previously threw inside the Refresh
   // handler, where nothing catches it, so the button silently did nothing at all.
   const stageParts = (s) => (!s || s === "all" ? {} : { year: s.split("-")[0], termNumber: s.split("-")[1] });
-  const scopeOf = (c, u, s) => ({ ...(c !== "all" ? { courseId: c } : {}), ...(u !== "all" ? { unitId: u } : {}), ...stageParts(s) });
+  // The fourth argument defaults to the CURRENT school so every existing caller
+  // stays school-scoped without repeating it; onSchool passes the next value
+  // explicitly because state hasn't landed yet when it builds the scope.
+  const scopeOf = (c, u, s, sch = school) => ({ ...(c !== "all" ? { courseId: c } : {}), ...(u !== "all" ? { unitId: u } : {}), ...stageParts(s), ...(sch ? { academicDepartmentId: sch } : {}) });
+  // Changing school resets every narrower filter: the chosen course/unit/stage may
+  // not exist in the new school, and an impossible AND of filters silently zeroes
+  // the attendance tiles — the same trap the course/unit resets below guard against.
+  const onSchool = (v) => {
+    setSchool(v); setCourse("all"); setUnit("all"); setStage("all"); setYear("all");
+    load(scopeOf("all", "all", "all", v), true);
+  };
   // Units are listed per course, so changing the course must clear a unit that isn't
   // in it — otherwise the two filters AND together into an impossible scope and every
   // attendance tile silently reads zero while the student tiles show real numbers.
-  const coursesUnits = course === "all" ? store.units : store.units.filter(u => u.courseId === course);
+  // The School filter narrows first, by the unit's own stored school.
+  const schoolUnits = school ? store.units.filter(u => matchesSchool(school, u.academicDepartmentId)) : store.units;
+  const coursesUnits = course === "all" ? schoolUnits : schoolUnits.filter(u => u.courseId === course);
   // Stages present in the current course, so the dropdown never offers a term this
   // course doesn't teach.
   const stages = Array.from(new Set(coursesUnits.filter(isPlaced).map(u => `${u.year}-${u.termNumber}`)))
@@ -3135,7 +3154,10 @@ function ExecutiveDashboard({ store }) {
   const shownGraded = course === "all" ? (exec?.totals?.graded ?? 0) : courses.reduce((a, c) => a + (c.graded || 0), 0);
   const shownPassRate = shownGraded ? Math.round(shownPassed / shownGraded * 1000) / 10 : null;
   const totalCourses = course === "all" ? (exec?.totals?.courses ?? store.courses.length) : 1;
-  const assessmentsCount = course === "all" ? (exec ? exec?.totals?.assessments ?? store.assessments.length : (store.assessments.length || null)) : courses.reduce((a, c) => a + (c.assessments || 0), 0);
+  // Under a School filter the store fallbacks are wrong-scoped (they count the whole
+  // college), so a failed exec load shows "—" rather than a college-wide number
+  // beside school-scoped tiles.
+  const assessmentsCount = course === "all" ? (exec ? exec?.totals?.assessments ?? (school ? null : store.assessments.length) : (school ? null : store.assessments.length || null)) : courses.reduce((a, c) => a + (c.assessments || 0), 0);
   // A Unit filter narrows attendance only — say so rather than mixing scopes silently.
   // Both the Unit and Year/Term filters narrow the attendance query only — the
   // student and results figures come from exec-summary, which is course-wide.
@@ -3145,7 +3167,10 @@ function ExecutiveDashboard({ store }) {
     <>
       <AdminHeader title="Executive Dashboard" subtitle="College-wide attendance & results at a glance" Icon={BarChart3}
         action={<div className="flex items-center gap-2 text-[11px] text-slate-400">{refreshed && <span className="hidden sm:inline">Last refreshed {refreshed.toLocaleString("en-GB")}</span>}<button onClick={() => load(scopeOf(course, unit, stage), true)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" title="Refresh"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div>} />
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {/* The shared school filter, first in the row because it re-scopes every
+            figure on the page where the rest narrow only part of it. */}
+        <SchoolFilter schools={schools} value={school} onChange={onSchool} />
         <FilterSelect label="Year" value={year} onChange={setYear} options={[{ v: "all", l: "All years" }, ...years.map(y => ({ v: y, l: y }))]} />
         {/* "__none__" is a synthetic bucket for students with no course, not a real
             course — selecting it would filter attendance by a courseId no unit has. */}
@@ -3157,7 +3182,7 @@ function ExecutiveDashboard({ store }) {
         <FilterSelect label="Unit" value={unit} onChange={onUnit} options={[{ v: "all", l: "All units" }, ...unitsForCourse.map(m => ({ v: m.id, l: course === "all" ? `${m.code} — ${m.name} · ${courses.find(c => c.courseId === m.courseId)?.code || "unassigned"}` : `${m.code} — ${m.name}` }))]} />
       </div>
       {err && <div className="mb-3 flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200"><AlertCircle size={15} /> {err}</div>}
-      {unitScoped && <p className="mb-3 text-[11px] text-slate-400">The {unit !== "all" && stage !== "all" ? "Year / Term and Unit filters apply" : unit !== "all" ? "Unit filter applies" : "Year / Term filter applies"} to the attendance figures; student and results figures cover the whole {course === "all" ? "college" : "course"}.</p>}
+      {unitScoped && <p className="mb-3 text-[11px] text-slate-400">The {unit !== "all" && stage !== "all" ? "Year / Term and Unit filters apply" : unit !== "all" ? "Unit filter applies" : "Year / Term filter applies"} to the attendance figures; student and results figures cover the whole {course !== "all" ? "course" : school ? "school" : "college"}.</p>}
       <ExecHero attPct={attPct} passRate={shownPassRate} students={exec ? shownStudents : null}
         courses={exec ? totalCourses : null} marks={totalMarks} />
       {/* Five tiles, so five columns on a wide screen — at four they wrapped to a

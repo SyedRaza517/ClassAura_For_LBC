@@ -573,14 +573,27 @@ router.get("/student/:id", requireAuth, async (req, res) => {
 // grouped by cohort (the "course"), plus per-course pass-rate. Heavy per-student
 // aggregation done here (server-side) so the client never fetches 100s of students.
 async function execSummary(req, res) {
+  // ?academicDepartmentId= — the dashboard's School FILTER: a view the admin chose,
+  // never a boundary (the caller's own scope still applies through the client
+  // extension). "none" means the rows nobody has assigned to a school, matching the
+  // shared SchoolFilter dropdown. One definition of "which school" throughout: the
+  // academicDepartmentId column each row carries (maintained together by
+  // assignCourses), reached relationally through the unit for assessment-shaped
+  // rows. Cohorts stay UNFILTERED on purpose — they are only a student→course
+  // lookup here, and filtering the map would misfile a filtered-in student whose
+  // cohort belongs elsewhere as "Unassigned" twice over.
+  const deptRaw = typeof req.query?.academicDepartmentId === "string" ? req.query.academicDepartmentId.trim() : "";
+  const deptVal = deptRaw === "none" ? null : deptRaw;      // null = IS NULL in Prisma
+  const deptWhere = deptRaw ? { academicDepartmentId: deptVal } : undefined;
+  const viaUnit = deptRaw ? { unit: { academicDepartmentId: deptVal } } : undefined;
   const [students, assessments, grades, cohorts, courseList, unitList, enrolments] = await Promise.all([
-    prisma.student.findMany({ select: { id: true, cohortId: true } }),
-    prisma.assessment.findMany({ select: { id: true, maxMarks: true, unitId: true } }),
-    prisma.assessmentGrade.findMany({ select: { studentId: true, assessmentId: true, marks: true } }),
+    prisma.student.findMany({ where: deptWhere, select: { id: true, cohortId: true } }),
+    prisma.assessment.findMany({ where: viaUnit, select: { id: true, maxMarks: true, unitId: true } }),
+    prisma.assessmentGrade.findMany({ where: viaUnit ? { assessment: viaUnit } : undefined, select: { studentId: true, assessmentId: true, marks: true } }),
     prisma.cohort.findMany({ select: { id: true, name: true, courseId: true } }),
-    prisma.course.findMany({ select: { id: true, name: true } }),
-    prisma.unit.findMany({ select: { id: true, courseId: true } }),
-    prisma.enrolment.findMany({ select: { studentId: true, unitId: true } }),
+    prisma.course.findMany({ where: deptWhere, select: { id: true, name: true } }),
+    prisma.unit.findMany({ where: deptWhere, select: { id: true, courseId: true } }),
+    prisma.enrolment.findMany({ where: viaUnit, select: { studentId: true, unitId: true } }),
   ]);
   // How many assessments belong to each course (via unit → course).
   const unitCourse = new Map(unitList.map((u) => [u.id, u.courseId || null]));
