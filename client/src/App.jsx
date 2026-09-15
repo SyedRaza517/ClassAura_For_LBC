@@ -19,7 +19,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
 import { StaffApp, AdminDashboard } from "./StaffHub";
-import { capturePendingQr, hasPendingQr, clearPendingQr } from "./pendingQr";
+import { capturePendingQr, hasPendingQr, clearPendingQr, clearCheckedIn } from "./pendingQr";
 import { LogOut, CheckCircle2, XCircle, Sparkles, Loader2, GraduationCap, Clock, KeyRound, Lock, ShieldCheck, X, WifiOff } from "lucide-react";
 // Only the loading skeleton, for the Suspense fallback below — not the rest of the
 // student app. A named import off the barrel still only pulls in what LoadingScreen
@@ -297,6 +297,18 @@ export default function App() {
   // student is off a scan they never made.
   useEffect(() => {
     if (user && user.kind !== "student") clearPendingQr();
+  }, [user]);
+
+  // The "this tab already checked into these classes" guard is a WITHIN-session
+  // burst-preventer, and it must not survive the session that made it. Cleared whenever
+  // there is no student signed in — a logout (user null) or a non-student session —
+  // so the NEXT student to sign in (a fresh sign-in, or a different person on a shared
+  // podium browser) starts by trusting the server again instead of replaying a stale
+  // "already checked in". Deliberately NOT tied to clearPendingQr above: a pending SCAN
+  // must survive the signed-out gap so a scan-then-sign-in still lands its mark, whereas
+  // this memory of past marks should not carry across sign-ins at all.
+  useEffect(() => {
+    if (!user || user.kind !== "student") clearCheckedIn();
   }, [user]);
 
   const clearTokenFromUrl = () => {

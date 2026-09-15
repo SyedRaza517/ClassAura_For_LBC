@@ -163,6 +163,24 @@ export function hasCheckedIn(sessionId) {
   return hit ? (hit.status ?? null) : undefined;
 }
 
+/**
+ * Forget every class this tab has checked into. Called when the student session ends —
+ * a logout, or a non-student (or a DIFFERENT student on a shared podium browser) signing
+ * in on the same tab.
+ *
+ * THE BUG THIS CLOSES. This guard is a WITHIN-session burst-preventer (see noteCheckedIn),
+ * and nothing ever cleared it: it outlived logout, so the next person to sign in on the
+ * same tab and scan a class this tab had already done was shown a green "Already checked
+ * in" that SHORT-CIRCUITED the server entirely — the first genuine check-in of a fresh
+ * session reading as a repeat, and, worse, a stale memory the server no longer agrees
+ * with (a mark cleared elsewhere, or a different student's class). The mark itself is the
+ * server's record; dropping this tab-local memory makes a fresh sign-in re-ask the server
+ * and show its honest answer, whether that is "checked in" or "already checked in".
+ */
+export function clearCheckedIn() {
+  try { sessionStorage.removeItem(DONE_KEY); } catch (_) {}
+}
+
 function read() {
   try {
     const raw = sessionStorage.getItem(KEY);
