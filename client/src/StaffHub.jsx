@@ -3006,7 +3006,21 @@ const riskBand = (pct) => pct == null ? { label: "No data", colour: "#94a3b8", b
 /* ----- Executive Dashboard (admin) ----- */
 function ExecutiveDashboard({ store }) {
   const { refreshHnd, refreshAssessments } = store;
-  useEffect(() => { refreshHnd(); refreshAssessments(); }, [refreshHnd, refreshAssessments]);
+  // The headline tiles come from two SMALL responses (exec-summary + monthly
+  // attendance — both aggregate server-side), but this effect used to fire
+  // refreshHnd() in the same instant, which downloads every student, every session
+  // and the whole attendance matrix. On a small server all of those queue on the
+  // same CPU and the two numbers the user is actually staring at arrive LAST.
+  // So the heavy refresh now waits until the first numbers load has settled
+  // (success or failure — .finally, so a 403 on the tiles can't wedge the rest of
+  // the page unloaded). Firing both and trusting the browser to prioritise was the
+  // rejected alternative: HTTP/2 multiplexes the requests, but the server still
+  // computes them side by side, and the big payloads always won.
+  const [numbersLanded, setNumbersLanded] = useState(false);
+  useEffect(() => {
+    if (!numbersLanded) return;
+    refreshHnd(); refreshAssessments();
+  }, [numbersLanded, refreshHnd, refreshAssessments]);
   const [exec, setExec] = useState(null);
   const [monthly, setMonthly] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3055,7 +3069,9 @@ function ExecutiveDashboard({ store }) {
       if (seq === loadSeq.current) setErr(e?.message || "Could not load dashboard data");
     } finally { if (seq === loadSeq.current) setLoading(false); }
   }, []);
-  useEffect(() => { load({}, true); }, [load]);
+  // Numbers first: the mount load carries only the two light requests, and only
+  // once it settles does the heavy store refresh above get its green light.
+  useEffect(() => { load({}, true).finally(() => setNumbersLanded(true)); }, [load]);
   // Defensive on the argument: a missing stage previously threw inside the Refresh
   // handler, where nothing catches it, so the button silently did nothing at all.
   const stageParts = (s) => (!s || s === "all" ? {} : { year: s.split("-")[0], termNumber: s.split("-")[1] });
