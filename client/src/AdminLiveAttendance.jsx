@@ -1070,7 +1070,12 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                       className={`rounded-lg px-2.5 py-1.5 text-[12px] font-bold ring-1 outline-none transition disabled:opacity-60 ${
                         r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-500 ring-slate-200"}`}
                     >
-                      <option value="">N/A — no mark</option>
+                      {/* Shown for an as-yet-unmarked student, but DISABLED so it cannot
+                          be chosen: clearing a mark back to "no mark" was removed by
+                          product decision (it let a student's own check-in be silently
+                          wiped). A wrong mark is corrected by picking the right status,
+                          never by blanking it. */}
+                      <option value="" disabled>— not marked</option>
                       {["P", "L", "E", "A"].map((k) => (
                         <option key={k} value={k}>{STATUS[k].label}</option>
                       ))}
@@ -1345,17 +1350,18 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
             )}
           </div>
           {/* One tap per mark, 44px tall — the same minimum-touch-target reasoning as
-              the app header's controls. The active mark doubles as the CLEAR control:
-              tapping "Present" on a student already present un-marks them, which is
-              the only undo a slipped finger needs and spares the row a fifth button
-              it has no width for. (The table's dropdown keeps its explicit "N/A".) */}
+              the app header's controls. A mark can be CHANGED between P/L/E/A but no
+              longer cleared back to unmarked: tapping the active mark leaves it set.
+              Clearing a check-in was removed by product decision — it let a student's
+              own scan be silently wiped, and a wrong mark is corrected by choosing the
+              right status, not by blanking it. */}
           <div className="mt-2 grid grid-cols-4 gap-1.5" role="group" aria-label={`Attendance for ${r.student.name}`}>
             {["P", "L", "E", "A"].map((k) => {
               const active = r.status === k;
               return (
                 <button key={k} type="button"
                   disabled={!canMark || saving === r.student.id}
-                  onClick={() => setMark(r.student.id, active ? "" : k)}
+                  onClick={() => setMark(r.student.id, k)}
                   aria-pressed={active}
                   title={canMark ? STATUS[k].label : "You can see this register but not change it."}
                   className={`press flex h-11 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${

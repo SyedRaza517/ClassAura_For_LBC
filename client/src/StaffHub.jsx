@@ -7385,7 +7385,10 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
   const termState = !term ? "none" : (today >= term.start && today <= term.end) ? "current" : (today > term.end ? "past" : "future");
   const locked = termState === "past" || termState === "future";
   const readOnly = locked && !reopened;
-  const setStatus = (studentId, status) => { if (readOnly) return; setDraft(d => ({ ...d, [studentId]: { ...d[studentId], status: d[studentId]?.status === status ? null : status } })); };
+  // Set-only, never toggle-to-clear: tapping the active mark leaves it set. Clearing a
+  // mark back to "unmarked" was removed by product decision (it let a student's own
+  // check-in be silently wiped); a wrong mark is corrected by choosing the right status.
+  const setStatus = (studentId, status) => { if (readOnly) return; setDraft(d => ({ ...d, [studentId]: { ...d[studentId], status } })); };
   const setRemark = (studentId, remark) => { if (readOnly) return; setDraft(d => ({ ...d, [studentId]: { ...d[studentId], remark } })); };
   const applyBulk = (status) => {
     if (readOnly) return;
