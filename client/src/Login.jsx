@@ -48,7 +48,10 @@ export default function Login({ onBack }) {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4" style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,600;1,500&display=swap');`}</style>
+      {/* The fonts used to be @import-ed again right here — a third copy of the same
+          Google Fonts load (index.html and GLOBAL_STYLE each had one too). index.html
+          is now the single place the fonts load; see the note above GLOBAL_STYLE in
+          App.jsx before adding any font import back to a component. */}
 
       {/* Animated gradient backdrop */}
       <div

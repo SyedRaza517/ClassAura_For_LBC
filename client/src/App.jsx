@@ -18,7 +18,6 @@ import ApplicantPortal, { ApplicantAuth } from "./ApplicantPortal";
 import ConfirmDialog from "./ConfirmDialog";
 import BiometricGate, { useAppLock, BiometricSetupPrompt } from "./BiometricGate";
 import { useBackHandler } from "./backButton";
-import { StaffApp, AdminDashboard } from "./StaffHub";
 import { capturePendingQr, hasPendingQr, clearPendingQr, clearCheckedIn } from "./pendingQr";
 import { LogOut, CheckCircle2, XCircle, Sparkles, Loader2, GraduationCap, Clock, KeyRound, Lock, ShieldCheck, X, WifiOff } from "lucide-react";
 // Only the loading skeleton, for the Suspense fallback below — not the rest of the
@@ -29,17 +28,59 @@ import { LoadingScreen as StudentLoadingScreen } from "./student/ui";
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
 const initialsOf = (name) => String(name || "").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
-// The staff app (StaffHub.jsx, ~16k lines) is imported statically above for the
-// Shell/AdminDashboard routes, so it is already part of this file's own chunk for every
-// user — staff, student or applicant. Loading StudentApp eagerly here would put the
-// student screens in that SAME chunk too, which is harmless for staff but means a
-// student downloads staff-only code they will never render. React.lazy gives the
-// student app its own chunk, fetched only when `user.kind === "student"` actually
-// renders it below. This only pays off because BiometricSetting no longer drags
-// StaffHub.jsx in through StudentApp's own imports (see student/BiometricSetting.jsx) —
-// splitting the entry point does nothing if the split-off chunk still statically
-// imports the thing it was split away from.
+// EVERY app world is lazy now — staff, admin and student alike. The entry chunk holds
+// only what an unauthenticated visitor can actually see: the landing chooser, the three
+// sign-in screens and the public admission pages.
+//
+// This comment used to say the opposite about StaffHub.jsx: that it was "imported
+// statically above for the Shell/AdminDashboard routes, so it is already part of this
+// file's own chunk for every user", and only StudentApp was worth lazy-loading. That
+// was a description of the status quo, not a ruling against splitting — and the status
+// quo was a 1.9 MB (~484 KB gzipped) entry chunk in which the login screen shipped the
+// entire admin dashboard, recharts included, before it could paint a password box.
+//
+// The old comment's real warning stands and is exactly what had to be cleared before
+// this split could work: "splitting the entry point does nothing if the split-off
+// chunk still statically imports the thing it was split away from." Two such edges
+// existed and both are gone:
+//   - BiometricSetting once dragged StaffHub.jsx into the student chunk; it moved to
+//     student/BiometricSetting.jsx (that fix predates this split and is why StudentApp
+//     could go lazy first).
+//   - AdmissionApply.jsx and ApplicantPortal.jsx — both EAGER, they serve people with
+//     no account — imported ADMISSION_SECTIONS/ADMISSION_REQUIRED from StaffHub.jsx,
+//     which would have pulled the whole staff bundle straight back into the entry
+//     chunk. The data (and only the data) moved to ./admissionSections.js, and
+//     StaffHub.jsx imports it back from there; see the WHY at the top of that module.
+//
+// Two lazy wrappers over ONE import promise: StaffApp and AdminDashboard live in the
+// same module, so the chunk is fetched once and both components resolve from it —
+// switching app ↔ dashboard never triggers a second download. The cost of the split is
+// one extra round-trip after sign-in, covered by the same branded HubLoading screen the
+// session-restore path already shows (so it reads as one continuous load, not a new
+// kind of waiting); the win is that first paint no longer waits on ~17k lines of
+// staff-only code nobody has signed in to yet.
+const staffHubModule = () => import("./StaffHub");
+const StaffApp = React.lazy(() => staffHubModule().then((m) => ({ default: m.StaffApp })));
+const AdminDashboard = React.lazy(() => staffHubModule().then((m) => ({ default: m.AdminDashboard })));
 const StudentApp = React.lazy(() => import("./student/StudentApp"));
+
+// The branded full-screen loading state. One component, two callers: the auth
+// restore on refresh (the `loading` branch below) and the Suspense fallback while the
+// lazy StaffHub chunk downloads after sign-in. Sharing it is deliberate — the two
+// waits are usually back to back (restore session, then fetch the staff chunk), and
+// showing the SAME screen for both makes them read as one continuous load instead of
+// two different spinners flashing past.
+function HubLoading() {
+  return (
+    <div className="animated-gradient flex min-h-screen flex-col items-center justify-center gap-3 text-white" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
+      <div className="relative flex h-16 w-16 items-center justify-center">
+        <span className="absolute inset-0 rounded-2xl bg-white/15 glow-pulse" />
+        <Loader2 className="animate-spin" size={30} />
+      </div>
+      <p className="text-sm font-semibold tracking-wide text-white/80">Loading Staff Hub…</p>
+    </div>
+  );
+}
 
 // Small live clock for the top bar (ticks every 30s).
 function LiveClock() {
@@ -156,9 +197,16 @@ function ChangePasswordGate({ user, onDone, logout }) {
   );
 }
 
+// NO @import OF THE FONTS HERE, deliberately. This style block used to start with a
+// Google Fonts @import — and so did Login.jsx, and index.html carried a <link> for the
+// same families. Three copies of one font load, and the two @imports were the worst
+// kind: GLOBAL_STYLE is injected as a <style> tag by nearly every screen in this file,
+// so every entry point re-declared a render-blocking CSS import at runtime. The single
+// font load now lives in index.html (both families, Plus Jakarta Sans AND Lora, since
+// screens here set both), loaded non-blocking with display=swap so text paints in the
+// system fallback stack rather than waiting. Adding a family? Edit index.html, not
+// here — an @import added back here silently reintroduces the triple load.
 const GLOBAL_STYLE = `
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,500;0,600;1,500&display=swap');
-
 /* ---- entrance keyframes (subtle) ---- */
 @keyframes fadeUp{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 @keyframes pop{0%{transform:scale(.96);opacity:0}100%{transform:scale(1);opacity:1}}
@@ -338,15 +386,7 @@ export default function App() {
   if (inviteToken) return (<><style>{GLOBAL_STYLE}</style><AcceptInvite token={inviteToken} onDone={clearTokenFromUrl} /></>);
   if (resetToken) return (<><style>{GLOBAL_STYLE}</style><ResetPasswordPage token={resetToken} onDone={clearTokenFromUrl} /></>);
 
-  if (loading) return (
-    <div className="animated-gradient flex min-h-screen flex-col items-center justify-center gap-3 text-white" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
-      <div className="relative flex h-16 w-16 items-center justify-center">
-        <span className="absolute inset-0 rounded-2xl bg-white/15 glow-pulse" />
-        <Loader2 className="animate-spin" size={30} />
-      </div>
-      <p className="text-sm font-semibold tracking-wide text-white/80">Loading Staff Hub…</p>
-    </div>
-  );
+  if (loading) return <HubLoading />;
   // Signed in, but the server could not be reached to confirm it. The token is
   // still good — say so and offer a retry, rather than silently ejecting them to
   // the sign-in screen the moment the signal drops.
@@ -569,9 +609,16 @@ function Shell({ user, logout, entry }) {
       )}
 
       <div key={view} className={handset ? "min-h-0 flex-1" : "fade-up"}>
-        {view === "app"
-          ? <StaffApp store={store} currentStaffId={user.id} logout={logout} onChangePassword={() => setShowChangePw(true)} onSwitchToAdmin={isAdmin ? () => setView("admin") : undefined} />
-          : <AdminDashboard store={store} onExitToStaffApp={handset ? () => setView("app") : undefined} />}
+        {/* StaffApp/AdminDashboard are lazy (see the top of this file), so their first
+            render suspends while the StaffHub chunk downloads. The fallback is the
+            same branded HubLoading the session restore shows, NOT a blank region —
+            and both components resolve from the one chunk, so the app ↔ dashboard
+            toggle never suspends again after the first load. */}
+        <Suspense fallback={<HubLoading />}>
+          {view === "app"
+            ? <StaffApp store={store} currentStaffId={user.id} logout={logout} onChangePassword={() => setShowChangePw(true)} onSwitchToAdmin={isAdmin ? () => setView("admin") : undefined} />
+            : <AdminDashboard store={store} onExitToStaffApp={handset ? () => setView("app") : undefined} />}
+        </Suspense>
       </div>
 
       {/* App footer — carries the copyright. Hidden on the mobile staff app, which

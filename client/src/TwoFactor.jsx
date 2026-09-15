@@ -3,7 +3,6 @@
 // Used in two places: mid-sign-in inside the staff mobile app (driven by a
 // challenge token) and from the admin login if an admin ever turns 2FA on.
 import React, { useEffect, useRef, useState } from "react";
-import QRCode from "qrcode";
 import { api } from "./api";
 import { ShieldCheck, Loader2, XCircle, Copy, Check, KeyRound, Smartphone, Download } from "lucide-react";
 
@@ -143,7 +142,15 @@ export function TotpSetup({ challengeToken, onDone, onCancel }) {
         setSetup(s);
         // Rendering the QR can fail (very long URL, canvas unavailable) — the
         // typed secret below is the fallback, so don't block enrolment on it.
+        //
+        // `qrcode` is imported HERE, not at the top of the file: this module is on the
+        // login screen's eager path (Login and MobileAuth both render TotpSetup /
+        // TotpVerify), and a top-level import shipped the whole QR generator to every
+        // visitor before the password box could paint. Enrolment is the one moment the
+        // library is needed, this code is already async, and a failed fetch of the
+        // chunk falls into the same catch as a failed render — manual key entry.
         try {
+          const { default: QRCode } = await import("qrcode");
           const url = await QRCode.toDataURL(s.otpauthUrl, { width: 320, margin: 1, color: { dark: "#0f172a", light: "#ffffff" } });
           if (!cancelled) setQr(url);
         } catch (_) { /* fall back to manual entry */ }

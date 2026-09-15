@@ -8,12 +8,25 @@
     <title>ClassAura</title>
     <meta name="description" content="Timetables, attendance and check-in for staff and students." />
 
-    <!-- The app's typeface. Loaded from Google Fonts on the web; the packaged app
-         falls back to the system stack offline (the font-family declares both), so
-         nothing here blocks a launch without internet. -->
+    <!-- The app's typefaces — BOTH families (Plus Jakarta Sans for body text, Lora for
+         the serif headings), loaded here and ONLY here. Two @import copies of this
+         same request used to live in the JS (App.jsx's injected GLOBAL_STYLE and
+         Login.jsx), each of them render-blocking at runtime; they are gone, so adding
+         a family means editing this line, not a component.
+
+         Loaded NON-BLOCKING on purpose: media="print" makes the browser fetch the
+         stylesheet without holding up first paint (print styles don't block screen
+         rendering), and onload flips it to media="all" once it has arrived. With
+         display=swap, text paints immediately in the system stack and upgrades when
+         the font lands. The alternative — a plain blocking <link> — cost a full
+         round-trip to fonts.googleapis.com before ANYTHING painted, which on a slow
+         connection was a second or more of pure white. The packaged app falls back to
+         the system stack offline (every font-family declares both), so nothing here
+         blocks a launch without internet either. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,500;0,600;1,500&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lora:ital,wght@0,500;0,600;1,500&display=swap" /></noscript>
 
     <!-- Installable web app / packaged app metadata -->
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -32,7 +45,23 @@
          viable in a packaged mobile app. -->
   </head>
   <body>
-    <div id="root"></div>
+    <!-- A tiny inline loading shell so the tab is never pure white while the JS
+         downloads and parses. It is everything-free on purpose: no external requests,
+         no classes from the app's CSS (which hasn't loaded yet), no branding (the
+         college's colours/logo come from the server after boot — guessing here would
+         flash the wrong brand). React's createRoot().render() replaces the contents
+         of #root wholesale on mount, so nothing needs to remove this by hand; if the
+         bundle never arrives, the spinner keeps spinning, which is at least an honest
+         signal that loading — not the app — is what failed. Colours follow
+         prefers-color-scheme so a dark-mode phone isn't blasted with a white screen
+         at night. -->
+    <style>
+      #boot-shell{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#eef1f6}
+      #boot-shell .sp{width:34px;height:34px;border-radius:50%;border:3px solid #cbd5e1;border-top-color:#64748b;animation:boot-spin .8s linear infinite}
+      @keyframes boot-spin{to{transform:rotate(360deg)}}
+      @media (prefers-color-scheme:dark){#boot-shell{background:#0f172a}#boot-shell .sp{border-color:#334155;border-top-color:#94a3b8}}
+    </style>
+    <div id="root"><div id="boot-shell" role="status" aria-label="Loading"><div class="sp"></div></div></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

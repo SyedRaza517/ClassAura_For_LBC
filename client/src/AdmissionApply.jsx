@@ -7,7 +7,7 @@
 // this file.
 import React, { useState, useEffect } from "react";
 import { api } from "./api";
-import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./StaffHub";
+import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./admissionSections";
 import { BrandLockup } from "./Brand";
 import { Send, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 

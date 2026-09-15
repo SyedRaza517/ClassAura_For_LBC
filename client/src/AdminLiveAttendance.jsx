@@ -25,7 +25,6 @@ import {
   Nfc, Lock, CalendarX, ChevronRight, QrCode, X, CalendarDays, Search,
   Award,
 } from "lucide-react";
-import QRCode from "qrcode";
 import { api } from "./api";
 import { scanLinkFor, isLocalOnlyOrigin } from "./scanLink";
 import ConfirmDialog from "./ConfirmDialog";
@@ -1466,6 +1465,13 @@ function QrCard({ sessionId, unitName, times, counts, phase }) {
         });
         if (!url) { if (alive.current) { setImg(""); setUnreachable(true); } return; }
         if (alive.current) { setUnreachable(false); setLocalOnly(isLocalOnlyOrigin(window.location.origin)); }
+        // `qrcode` loads on demand rather than at the top of the file — same reasoning
+        // as TwoFactor.jsx: a top-level import welds the generator into whichever chunk
+        // imports this screen, and this call site is already async, so the one screen
+        // that draws a projector code pays for the library the first time it draws one.
+        // The refresh cycle below re-runs this whole function, so a failed chunk fetch
+        // surfaces in the same catch/retry path as a failed mint.
+        const { default: QRCode } = await import("qrcode");
         const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 640, color: { dark: "#0f172a", light: "#ffffff" } });
         if (alive.current) setImg(dataUrl);
       } else {

@@ -168,4 +168,37 @@ function requireProductionApiUrl() {
 export default defineConfig({
   plugins: [react(), requireProductionApiUrl()],
   server: { port: 5173 },
+  build: {
+    rollupOptions: {
+      output: {
+        // Two named vendor chunks, and only two — this is a cache split, not a size
+        // split. The size work is done by React.lazy in App.jsx (StaffHub, StudentApp)
+        // and by on-demand imports (qrcode, pdfjs, jsQR); carving the app itself up
+        // here would fight those boundaries rather than help them.
+        //
+        //   vendor-react   react + react-dom + scheduler. Needed before first paint
+        //                  anyway, but it changes only when React is upgraded, so as
+        //                  its own chunk it stays cached across every app deploy —
+        //                  a returning user re-downloads our code, not React.
+        //
+        //   vendor-charts  recharts and the tree it drags in (victory-vendor's d3-*,
+        //                  lodash, react-smooth…). Charts are used by two LAZY screens
+        //                  (StaffHub and AdmissionTrackerPanels); without a name of
+        //                  its own, rollup would duplicate-or-hoist this ~400 KB into
+        //                  whichever chunk loads first. Named, it is fetched once, on
+        //                  demand, by whichever of the two needs it first — and never
+        //                  by the login screen, which is the regression this guards
+        //                  against. Only async chunks reference it, so it stays async.
+        //
+        // Everything else in node_modules is left to rollup's own judgement: lucide
+        // icons tree-shake to just the icons imported, and the capacitor plugins are
+        // tiny — pinning them by hand is maintenance with no payoff.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "vendor-react";
+          if (/[\\/]node_modules[\\/](recharts|victory-vendor|d3-[^\\/]+|lodash|react-smooth|fast-equals|recharts-scale|internmap|decimal\.js-light)[\\/]/.test(id)) return "vendor-charts";
+        },
+      },
+    },
+  },
 });
