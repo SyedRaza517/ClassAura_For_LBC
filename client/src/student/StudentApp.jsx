@@ -292,23 +292,30 @@ export default function StudentApp({ user, logout }) {
   // attendance and results without each tab refetching the same thing.
   const load = useCallback(async () => {
     setBusy(true); setErr("");
-    const [a, r, q, v, tt, tap] = await Promise.allSettled([
+    // Everything below is one batch: referrals, support departments, streaks,
+    // attendance bands and the inbox used to run one after another AFTER the first
+    // six settled — a five-deep waterfall of independent round trips, none of which
+    // consumes another's result. allSettled keeps each one's rejection isolated,
+    // exactly as the per-call .then wrappers they replaced did.
+    const [a, r, q, v, tt, tap, ref, sdep, streak, bandList] = await Promise.allSettled([
       api.studentAttendance(), api.studentAssessments(), api.studentQueries(), api.studentReviewsAboutMe(), api.studentTimetable(),
       api.studentTapContext(),
+      api.studentReferrals(),
+      api.studentSupportDepartments(),
+      // Streaks — a bonus fetch like referrals/support departments: never added to
+      // `failed`, and left at its null default (not "0-day streak") on rejection.
+      api.studentStreaks(),
+      // A bonus fetch like referrals/support departments above: never added to `failed`
+      // below, and a null result is a silent no-op — `bands` state already starts at
+      // DEFAULT_ATTENDANCE_BANDS, so there is nothing to reset it TO on a rejection.
+      // (fetchAttendanceBands never rejects; it answers null for every failure.)
+      fetchAttendanceBands(),
+      // The inbox, fetched here so the Header bell's badge is right from the first
+      // paint on every screen, not only the two that also refetch it themselves.
+      // refreshInbox swallows its own errors and sets its own state.
+      refreshInbox(),
     ]);
-    const ref = await api.studentReferrals().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
-    const sdep = await api.studentSupportDepartments().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
-    // Streaks — a bonus fetch like referrals/support departments: never added to
-    // `failed`, and left at its null default (not "0-day streak") on rejection.
-    const streak = await api.studentStreaks().then(v => ({ status: "fulfilled", value: v }), () => ({ status: "rejected" }));
-    // A bonus fetch like referrals/support departments above: never added to `failed`
-    // below, and a null result is a silent no-op — `bands` state already starts at
-    // DEFAULT_ATTENDANCE_BANDS, so there is nothing to reset it TO on a rejection.
-    const bandList = await fetchAttendanceBands();
-    if (bandList) setBands(bandList);
-    // The inbox, fetched here so the Header bell's badge is right from the first
-    // paint on every screen, not only the two that also refetch it themselves.
-    await refreshInbox();
+    if (bandList.status === "fulfilled" && bandList.value) setBands(bandList.value);
     if (streak.status === "fulfilled") setStreaks(streak.value);
     if (a.status === "fulfilled") setAttendance(a.value);
     if (r.status === "fulfilled") setResults(r.value);

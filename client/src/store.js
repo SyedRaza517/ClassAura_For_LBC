@@ -56,22 +56,29 @@ export function useApiStore(notify, user) {
 
   const refresh = useCallback(async () => {
     try {
-      const [st, lv, ci, dc, aj] = await Promise.all([
+      // The three admin-only reads join the same batch as the core five: they are
+      // independent round trips and used to run one AFTER another once the batch
+      // resolved, which cost an admin three extra sequential trips on every load.
+      //
+      // Sign-up requests are admin-only AND page-gated: a staff user, or an admin
+      // without the "signups" page, would 403. Each admin read is caught on its own
+      // promise so a failure stays swallowed per-call — it neither breaks the rest
+      // of the load nor toasts an error on every 20s refresh, just leaves that slice
+      // empty — while a core failure still rejects the whole batch and, as before,
+      // sets no admin state either.
+      const [st, lv, ci, dc, aj, su, sq, tp] = await Promise.all([
         api.listStaff(), api.listLeave(), api.listCheckins(), api.listDocuments(), api.listAdjustments(),
+        isAdmin ? api.listSignups().catch(() => []) : null,
+        // Student queries — tolerant like sign-ups (page-gated + needs the new API).
+        isAdmin ? api.listStudentQueries().catch(() => []) : null,
+        // Timesheets awaiting review — a count for the nav badge (tolerant).
+        isAdmin ? api.timesheetPendingCount().catch(() => null) : null,
       ]);
       setStaff(st); setLeave(lv); setCheckins(ci); setDocs(dc); setAdjustments(aj);
-      // Sign-up requests are admin-only AND now page-gated: a staff user, or an admin
-      // without the "signups" page, would 403. Swallow that so it neither breaks the
-      // rest of the load nor toasts an error on every 20s refresh — just leave it empty.
       if (isAdmin) {
-        try { setSignups(await api.listSignups()); }
-        catch (_) { setSignups([]); }
-        // Student queries — tolerant like sign-ups (page-gated + needs the new API).
-        try { setStudentQueries(await api.listStudentQueries()); }
-        catch (_) { setStudentQueries([]); }
-        // Timesheets awaiting review — a count for the nav badge (tolerant).
-        try { setTimesheetsPending((await api.timesheetPendingCount())?.count || 0); }
-        catch (_) { setTimesheetsPending(0); }
+        setSignups(su);
+        setStudentQueries(sq);
+        setTimesheetsPending(tp?.count || 0);
       }
     } catch (e) { notify?.(e.message || "Failed to load data", "error"); }
     setLoaded(true);
@@ -84,20 +91,26 @@ export function useApiStore(notify, user) {
   // page's load effect and every figure rescopes together.
   const refreshHnd = useCallback(async () => {
     try {
-      const [ms, st, se, sem, pr, at] = await Promise.all([
+      // Cohorts, terms and check-in settings are independent round trips that used to
+      // run one after another once the main batch resolved — three extra sequential
+      // trips. They join the batch, each caught on its own promise because they must
+      // stay tolerant: if an endpoint lags behind on a deploy (Vercel client ahead of
+      // the Render server), it must not break the rest of the registers page.
+      const [ms, st, se, sem, pr, at, co, tm, cis] = await Promise.all([
         api.listUnits(), api.listStudents(), api.listSessions(), api.listSemesters(), api.listCourses(), api.getAttendance(semesterId),
+        api.listCohorts().catch(() => []),
+        api.listTerms().catch(() => []),
+        // Boxed on success so a failure (null) is distinguishable from ANY body the
+        // server could answer with — on failure we keep the safe default (no live-view
+        // action offered) rather than setting anything, exactly as before.
+        api.checkInSettings().then((v) => ({ v }), () => null),
       ]);
       setUnits(ms); setStudents(st); setSessions(se);
       setSemesters(sem.semesters); setUnassignedSessions(sem.unassignedSessions);
       setCourses(pr);
       setAttendance(at);
-      // Cohorts & terms load tolerantly: if an endpoint lags behind on a deploy
-      // (Vercel client ahead of the Render server), it must not break the rest.
-      try { setCohorts(await api.listCohorts()); } catch (_) { setCohorts([]); }
-      try { setTerms(await api.listTerms()); } catch (_) { setTerms([]); }
-      // Tolerant for the same reason: a client deployed ahead of its server must not
-      // lose the registers page over one missing read. The default offers nothing.
-      try { setCheckIn(await api.checkInSettings()); } catch (_) { /* keep the safe default */ }
+      setCohorts(co); setTerms(tm);
+      if (cis) setCheckIn(cis.v);
     } catch (e) {
       // Tolerate a 403 silently, exactly as refreshAssessments does. AdminKPI calls
       // this on mount, and hndLoaded is set even on failure, so the focus/visibility
