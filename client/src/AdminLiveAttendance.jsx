@@ -1070,12 +1070,15 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                       className={`rounded-lg px-2.5 py-1.5 text-[12px] font-bold ring-1 outline-none transition disabled:opacity-60 ${
                         r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-500 ring-slate-200"}`}
                     >
-                      {/* Shown for an as-yet-unmarked student, but DISABLED so it cannot
-                          be chosen: clearing a mark back to "no mark" was removed by
-                          product decision (it let a student's own check-in be silently
-                          wiped). A wrong mark is corrected by picking the right status,
-                          never by blanking it. */}
-                      <option value="" disabled>— not marked</option>
+                      {/* HIDDEN, not just disabled: it is not offered in the list at all,
+                          so "not marked" can never be CHOSEN — the select only lets you
+                          pick P/L/E/A. It still renders as the closed-select label for a
+                          student nobody has marked yet (a hidden option that matches the
+                          current value is shown as the selection but kept out of the
+                          menu). Clearing a mark back to "no mark" was removed by product
+                          decision — it let a student's own check-in be silently wiped;
+                          a wrong mark is corrected by picking the right status. */}
+                      <option value="" hidden>— not marked</option>
                       {["P", "L", "E", "A"].map((k) => (
                         <option key={k} value={k}>{STATUS[k].label}</option>
                       ))}
