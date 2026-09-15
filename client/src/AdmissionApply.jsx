@@ -77,7 +77,7 @@ function Field({ f, value, missing, onChange }) {
       <label htmlFor={`apply-${f.key}`} className="block text-[13px] font-semibold leading-snug text-slate-600">
         {f.label}{f.required && <span className="ml-0.5 text-rose-500">*</span>}
       </label>
-      {f.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{f.hint}</p>}
+      {f.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{f.hint}</p>}
       <div className="mt-1.5">{control}</div>
     </div>
   );
@@ -176,7 +176,7 @@ export default function AdmissionApply() {
           {ADMISSION_SECTIONS.map((sec) => (
             <section key={sec.title}>
               <h2 className="text-sm font-bold tracking-tight" style={{ color: NAVY }}>{sec.title}</h2>
-              {sec.note && <p className="mt-1 text-xs leading-relaxed text-slate-400">{sec.note}</p>}
+              {sec.note && <p className="mt-1 text-xs leading-relaxed text-slate-500">{sec.note}</p>}
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {sec.fields.map((f) => {
                   const ff = (f.key === "course" && courseOptions.length) ? { ...f, options: courseOptions }

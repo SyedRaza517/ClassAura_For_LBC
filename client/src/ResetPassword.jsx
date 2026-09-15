@@ -37,7 +37,7 @@ function Note({ tone = "error", children }) {
 function Labelled({ label, Icon, children }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       <div className="relative">
         <Icon size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         {children}
@@ -132,7 +132,7 @@ export function ForgotPasswordForm({ onBack, prefillEmail = "" }) {
 
       <Note>{error}</Note>
       <Submit busy={busy} busyLabel="Sending…" label="Email me a reset link" Icon={Mail} />
-      <button type="button" onClick={onBack} className="press text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">
+      <button type="button" onClick={onBack} className="press text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">
         Back to sign in
       </button>
     </form>
@@ -240,7 +240,7 @@ export default function ResetPasswordPage({ token, onDone }) {
             <div className="relative"><input type={pw2.type} value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy}
               autoComplete="new-password" className={`${inputClass} pr-11`} style={{ "--tw-ring-color": NAVY }} />{pw2.button}</div>
           </Labelled>
-          <p className="text-[11px] text-slate-400">At least 8 characters, and different from your current one.</p>
+          <p className="text-[11px] text-slate-500">At least 8 characters, and different from your current one.</p>
 
           {state.requiresCode && (
             <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
@@ -248,7 +248,7 @@ export default function ResetPasswordPage({ token, onDone }) {
                 <Smartphone size={12} /> Authenticator code
               </p>
               <CodeInput value={code} onChange={setCode} disabled={busy} autoFocus={false} />
-              <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+              <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
                 Your account uses two-step verification, so the emailed link on its own isn't enough.
               </p>
             </div>

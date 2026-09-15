@@ -268,7 +268,7 @@ function StatusFilter({ units, value, setValue, today, className = "" }) {
   const pill = (on) => `press rounded-full px-3 py-1.5 text-xs font-bold shadow-sm ring-1 transition-all ${on ? "text-white ring-transparent" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"}`;
   return (
     <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
-      <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Status</span>
+      <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Status</span>
       <button onClick={() => setValue("")} className={pill(!value)} style={!value ? { background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` } : {}}>All</button>
       {shown.map(s => (
         <button key={s} onClick={() => setValue(s)} className={pill(value === s)} style={value === s ? { background: STATUS_META[s].colour } : {}}>
@@ -292,7 +292,7 @@ function PlaceFilter({ units, year, setYear, term, setTerm, className = "" }) {
   const activeStyle = { background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` };
   return (
     <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
-      <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Year</span>
+      <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Year</span>
       <button onClick={() => { setYear(""); setTerm(""); }} className={pill(!year)} style={!year ? activeStyle : {}}>All</button>
       {years.map(y => (
         // Changing year clears the term — a term from the old year may not exist in
@@ -302,7 +302,7 @@ function PlaceFilter({ units, year, setYear, term, setTerm, className = "" }) {
       {anyUnplaced && <button onClick={() => { setYear("none"); setTerm(""); }} className={pill(year === "none")} style={year === "none" ? activeStyle : {}}>Not set</button>}
       {year !== "none" && terms.length > 1 && (
         <>
-          <span className="ml-2 mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Term</span>
+          <span className="ml-2 mr-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Term</span>
           <button onClick={() => setTerm("")} className={pill(!term)} style={!term ? activeStyle : {}}>All</button>
           {terms.map(t => (
             <button key={t} onClick={() => setTerm(String(t))} className={pill(term === String(t))} style={term === String(t) ? activeStyle : {}}>Term {t}</button>
@@ -326,7 +326,7 @@ function PlaceFields({ form, setForm }) {
         </select>
       </Field>
       <Field label="Term">
-        <select value={form.termNumber ?? ""} onChange={e => set("termNumber", e.target.value)} disabled={!form.year} className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-400`}>
+        <select value={form.termNumber ?? ""} onChange={e => set("termNumber", e.target.value)} disabled={!form.year} className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-600`}>
           <option value="">{form.year ? "Choose a term" : "Pick a year first"}</option>
           {TERMS.map(t => <option key={t} value={t}>Term {t}</option>)}
         </select>
@@ -372,7 +372,7 @@ const initialsOf = (name) => name.split(" ").map(w => w[0]).slice(0, 2).join("")
 /* ---------- shared UI ---------- */
 function Card({ children, className = "", style }) { return <div style={style} className={`rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 ${className}`}>{children}</div>; }
 const inputCls = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
-function Field({ label, children }) { return <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</label><div className="mt-1">{children}</div></div>; }
+function Field({ label, children }) { return <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</label><div className="mt-1">{children}</div></div>; }
 function PrimaryBtn({ children, onClick, disabled, colour = BUTTON, className = "" }) {
   return <button onClick={onClick} disabled={disabled} className={`shine press flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-md shadow-slate-900/10 transition-all duration-200 hover:opacity-95 hover:shadow-lg hover:shadow-slate-900/15 active:scale-95 disabled:opacity-40 disabled:shadow-none ${className}`} style={{ background: `linear-gradient(135deg, ${colour} 0%, ${alpha(colour, 90)} 100%)`, color: BUTTON_TEXT }}>{children}</button>;
 }
@@ -431,7 +431,7 @@ const twoStepBadge = (s) => {
   if (s.pendingActivation) return <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700"><Mail size={10} /> Invited</span>;
   if (s.totpEnabled) return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700"><ShieldCheck size={10} /> On</span>;
   if (s.totpRequired) return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700"><AlertCircle size={10} /> Setup due</span>;
-  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">Off</span>;
+  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Off</span>;
 };
 
 /* ---------- search + pagination helpers (presentational / local state only) ---------- */
@@ -452,7 +452,8 @@ function Pagination({ page, setPage, totalPages, total, className = "" }) {
   if (total === 0) return null;
   return (
     <div className={`flex flex-wrap items-center justify-between gap-2 ${className}`}>
-      <p className="text-xs font-semibold text-slate-400">Page {page} of {totalPages} · {total} result{total === 1 ? "" : "s"}</p>
+      {/* slate-600: the pager sits on the bg-slate-100 main, where slate-500 fails AA (4.34:1). */}
+      <p className="text-xs font-semibold text-slate-600">Page {page} of {totalPages} · {total} result{total === 1 ? "" : "s"}</p>
       <div className="flex items-center gap-1.5">
         <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="press flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white"><ChevronLeft size={14} /> Prev</button>
         <span className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}>{page}</span>
@@ -557,7 +558,7 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
   // a COLLEAGUE's profile, balance and check-ins as though they were the user's own.
   // Better to wait (or fall back to the token's own user) than to show someone else.
   const me = staff.find(s => s.id === currentStaffId) || (store.currentUser?.id === currentStaffId ? store.currentUser : null);
-  if (!me) return <div className="flex justify-center py-20 text-slate-400">Loading…</div>;
+  if (!me) return <div className="flex justify-center py-20 text-slate-500">Loading…</div>;
 
   const header = <AppHeader me={me} staff={staff} setCurrentStaffId={setCurrentStaffId} screen={screen} setScreen={setScreen} store={store} showNotes={showNotes} setShowNotes={setShowNotes} />;
 
@@ -724,16 +725,16 @@ function NotePanel({ store, onClose }) {
         <div className="mb-2 flex items-center justify-between">
           <p className="text-sm font-extrabold" style={{ color: NAVY }}>Notifications</p>
           <div className="flex gap-2">
-            {store.notes.length > 0 && <button onClick={() => store.setNotes([])} className="text-[11px] font-semibold text-slate-400 hover:text-slate-600">Clear</button>}
+            {store.notes.length > 0 && <button onClick={() => store.setNotes([])} className="text-[11px] font-semibold text-slate-500 hover:text-slate-600">Clear</button>}
             <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X size={16} /></button>
           </div>
         </div>
-        {store.notes.length === 0 && <p className="py-6 text-center text-xs text-slate-400">No notifications yet.</p>}
+        {store.notes.length === 0 && <p className="py-6 text-center text-xs text-slate-500">No notifications yet.</p>}
         <div className="space-y-1.5">
           {store.notes.map(n => (
             <div key={n.id} className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2">
               <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full" style={{ background: n.type === "success" ? "#059669" : n.type === "error" ? MAROON : NAVY }} />
-              <div><p className="text-xs font-medium text-slate-700">{n.msg}</p><p className="text-[10px] text-slate-400">{n.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</p></div>
+              <div><p className="text-xs font-medium text-slate-700">{n.msg}</p><p className="text-[10px] text-slate-600">{n.at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</p></div>
             </div>
           ))}
         </div>
@@ -1055,11 +1056,11 @@ function MyDayCard({ s, spotlight, live, onOpen }) {
     <button onClick={onOpen} className={`press flex w-full items-center gap-3 rounded-2xl bg-white p-3 text-left shadow-sm ring-1 transition hover:shadow-md ${spotlight ? "ring-2 ring-blue-300" : "ring-slate-200/70"}`}>
       <div className="flex h-12 w-14 shrink-0 flex-col items-center justify-center rounded-[14px]" style={{ background: "linear-gradient(160deg, #eef2ff, #e0e7ff)" }}>
         <span className="text-[13px] font-extrabold leading-none" style={{ color: NAVY }}>{s.startTime || "—"}</span>
-        <span className="mt-0.5 text-[9.5px] font-semibold text-slate-400">{s.endTime || ""}</span>
+        <span className="mt-0.5 text-[9.5px] font-semibold text-slate-500">{s.endTime || ""}</span>
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[13px] font-bold" style={{ color: NAVY }}>{s.unit ? `${s.unit.code} · ${s.unit.name}` : (s.description || "Class")}</p>
-        <p className="mt-0.5 truncate text-[11px] text-slate-400">
+        <p className="mt-0.5 truncate text-[11px] text-slate-500">
           {s.kind ? `${s.kind} · ` : ""}
           {/* marked/roster; a null roster renders the marks alone, because "size not
               recorded" must never read as "0 students". */}
@@ -1137,7 +1138,7 @@ function AnnounceScreen() {
         <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4} maxLength={500}
           placeholder="e.g. Tomorrow's 9am class moves to room B204."
           className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-200" />
-        <p className="mt-1 text-right text-[10px] tabular-nums text-slate-400">{message.length}/500</p>
+        <p className="mt-1 text-right text-[10px] tabular-nums text-slate-500">{message.length}/500</p>
 
         {note && (
           <p className={`mt-2 rounded-xl px-3 py-2 text-xs font-semibold ${note.tone === "ok" ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-1 ring-rose-200"}`}>
@@ -1152,7 +1153,7 @@ function AnnounceScreen() {
             ? <><Loader2 size={16} className="animate-spin" /> Sending…</>
             : <><Send size={15} /> {unit ? `Send to ${unit.students} student${unit.students === 1 ? "" : "s"}` : "Send"}</>}
         </button>
-        <p className="mt-2 text-center text-[10px] text-slate-400">
+        <p className="mt-2 text-center text-[10px] text-slate-500">
           Lands in each student's Inbox with a push notification. Five sends an hour.
         </p>
       </div>
@@ -1190,7 +1191,7 @@ function EmptyState({ Icon = Inbox, title = "Nothing here yet", msg = "", classN
     <div className={`flex flex-col items-center justify-center px-4 py-10 text-center fade-up ${className}`}>
       <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm" style={{ background: tone + "12", color: tone, boxShadow: `inset 0 0 0 1px ${alpha(tone, 13)}` }}><Icon size={26} /></span>
       <p className="text-sm font-bold text-slate-600">{title}</p>
-      {msg && <p className="mt-1 max-w-[240px] text-xs text-slate-400">{msg}</p>}
+      {msg && <p className="mt-1 max-w-[240px] text-xs text-slate-500">{msg}</p>}
     </div>
   );
 }
@@ -1306,7 +1307,7 @@ function TapOnsiteSheet({ onClose, onDone }) {
             <span className="glow-pulse mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full ring-4 ring-blue-100" style={{ background: alpha(NAVY, 10) }}><Nfc size={30} style={{ color: NAVY }} /></span>
             <p className="text-lg font-extrabold text-slate-800">Please tap the NFC sticker</p>
             <p className="mt-1 text-sm text-slate-500">Hold the top of your phone flat against the sticker — you'll be clocked in automatically.</p>
-            <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-400"><Loader2 size={12} className="animate-spin" /> Listening for a tap…</p>
+            <p className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-500"><Loader2 size={12} className="animate-spin" /> Listening for a tap…</p>
           </div>
         )}
       </div>
@@ -1401,7 +1402,7 @@ function CheckInScreen({ store, me }) {
                   <Nfc size={22} /><span className="text-[15px] font-extrabold">Tap onsite</span><span className="text-[10px] text-white/70">Clock in at the sticker</span>
                 </button>
                 <div className="my-4 flex items-center gap-3" aria-hidden="true">
-                  <span className="h-px flex-1 bg-slate-200" /><span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">or</span><span className="h-px flex-1 bg-slate-200" />
+                  <span className="h-px flex-1 bg-slate-200" /><span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">or</span><span className="h-px flex-1 bg-slate-200" />
                 </div>
                 <button onClick={() => store.checkIn("Online")}
                   className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[14px] font-extrabold ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
@@ -1411,7 +1412,7 @@ function CheckInScreen({ store, me }) {
               </>
             ) : (
               <>
-                <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-400">Where are you working today?</p>
+                <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Where are you working today?</p>
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => store.checkIn("Onsite")}
                     className="press flex flex-col items-center gap-1.5 rounded-2xl py-4 text-white shadow-md" style={{ background: NAVY }}>
@@ -1419,7 +1420,7 @@ function CheckInScreen({ store, me }) {
                   </button>
                   <button onClick={() => store.checkIn("Online")}
                     className="press flex flex-col items-center gap-1.5 rounded-2xl bg-white py-4 ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
-                    <Wifi size={20} /><span className="text-sm font-extrabold">Online</span><span className="text-[10px] text-slate-400">Working remotely</span>
+                    <Wifi size={20} /><span className="text-sm font-extrabold">Online</span><span className="text-[10px] text-slate-500">Working remotely</span>
                   </button>
                 </div>
               </>
@@ -1438,7 +1439,7 @@ function CheckInScreen({ store, me }) {
         )}
         {store.checkins.filter(c => c.staffId === me.id && c.in).slice(0, 6).map((c, i, a) => (
           <div key={c.id} className={`flex items-center justify-between px-4 py-3 transition-colors hover:bg-slate-50/70 fade-up ${i < a.length - 1 ? "border-b border-slate-100" : ""}`} style={{ animationDelay: `${i * 50}ms` }}>
-            <div><p className="text-sm font-semibold text-slate-700">{fmtDay(c.date)}{c.site && <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 align-middle">{c.site}</span>}</p><p className="text-xs text-slate-400">In {c.in}{c.out ? ` · Out ${c.out}` : " · still in"}</p></div>
+            <div><p className="text-sm font-semibold text-slate-700">{fmtDay(c.date)}{c.site && <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 align-middle">{c.site}</span>}</p><p className="text-xs text-slate-600">In {c.in}{c.out ? ` · Out ${c.out}` : " · still in"}</p></div>
             <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${c.out ? "bg-slate-100 text-slate-500" : "bg-emerald-100 text-emerald-700"}`}>{c.out ? "Complete" : "Active"}</span>
           </div>
         ))}
@@ -1479,16 +1480,16 @@ function BalanceScreen({ store, me }) {
               <circle cx="60" cy="60" r="52" fill="none" stroke="#eef1f6" strokeWidth="14" />
               <circle cx="60" cy="60" r="52" fill="none" stroke={NAVY} strokeWidth="14" strokeLinecap="round" strokeDasharray={`${2 * Math.PI * 52}`} strokeDashoffset={`${2 * Math.PI * 52 * (1 - (bookable > 0 ? left / bookable : 0))}`} style={{ transition: "stroke-dashoffset 1s ease" }} />
             </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center scale-in"><span className="text-4xl font-extrabold tabular-nums" style={{ color: NAVY }}>{animLeft}</span><span className="text-xs font-medium text-slate-400">days left</span></div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center scale-in"><span className="text-4xl font-extrabold tabular-nums" style={{ color: NAVY }}>{animLeft}</span><span className="text-xs font-medium text-slate-500">days left</span></div>
           </div>
         </div>
-        <p className="mt-2 text-center text-[11px] font-semibold text-slate-400">{used} of {bookable} days booked · {usedPct}% used</p>
+        <p className="mt-2 text-center text-[11px] font-semibold text-slate-500">{used} of {bookable} days booked · {usedPct}% used</p>
         {/* The two pots, matching the design — each shows "taken — total". */}
         <div className="mt-4 grid grid-cols-2 gap-3 text-center">
           <div className="rounded-2xl border border-slate-100 bg-slate-50 py-3">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Holiday Allowance</p>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Holiday Allowance</p>
             <p className="mt-1 text-2xl font-extrabold tabular-nums" style={{ color: NAVY }}>{used}<span className="mx-1.5 text-slate-300">—</span>{bookable}</p>
-            <p className="text-[11px] text-slate-400">taken · total</p>
+            <p className="text-[11px] text-slate-600">taken · total</p>
           </div>
           <div className="rounded-2xl border border-amber-100 bg-amber-50 py-3">
             <p className="text-[11px] font-bold uppercase tracking-wide text-amber-500">Bank Holidays</p>
@@ -1496,18 +1497,18 @@ function BalanceScreen({ store, me }) {
             <p className="text-[11px] text-amber-500/80">passed · total</p>
           </div>
         </div>
-        <div className="mt-2 rounded-xl bg-emerald-50 py-2 text-center"><span className="text-lg font-extrabold text-emerald-600">{left}</span> <span className="text-[11px] text-slate-400">days remaining to book</span></div>
-        {myAdj.length > 0 && <p className="mt-3 text-center text-[11px] text-slate-400">Includes {store.adjDays(me.id) >= 0 ? "+" : ""}{store.adjDays(me.id)}d HR adjustment</p>}
+        <div className="mt-2 rounded-xl bg-emerald-50 py-2 text-center"><span className="text-lg font-extrabold text-emerald-600">{left}</span> <span className="text-[11px] text-slate-500">days remaining to book</span></div>
+        {myAdj.length > 0 && <p className="mt-3 text-center text-[11px] text-slate-500">Includes {store.adjDays(me.id) >= 0 ? "+" : ""}{store.adjDays(me.id)}d HR adjustment</p>}
       </Card>
       {byType.length > 0 && (
         <Card className="mt-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Your leave by type</p>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Your leave by type</p>
           <div className="space-y-2">
             {byType.map(t => { const T = t.icon; return (
               <div key={t.key} className="flex items-center gap-2.5">
                 <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: t.colour + "1a" }}><T size={14} style={{ color: t.colour }} /></span>
                 <span className="flex-1 text-sm font-semibold text-slate-600">{t.label}</span>
-                <span className="text-xs font-bold text-slate-400">{t.count} req · {t.days}d</span>
+                <span className="text-xs font-bold text-slate-500">{t.count} req · {t.days}d</span>
               </div>
             ); })}
           </div>
@@ -1539,7 +1540,7 @@ function LeaveRow({ l, i = 0, store }) {
     <Card className="!p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}>
       <div className="flex items-center gap-3">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl transition-transform duration-300 hover:scale-110" style={{ background: t.colour + "1a" }}><T size={18} style={{ color: t.colour }} /></span>
-        <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{t.label}</p><p className="text-xs text-slate-400">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`} · {store.chargeableDays(l.start, l.end)}d</p></div>
+        <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{t.label}</p><p className="text-xs text-slate-500">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`} · {store.chargeableDays(l.start, l.end)}d</p></div>
         {canWithdraw && (
           <button onClick={withdraw} disabled={busy} title="Withdraw this request"
             className="press rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-40">
@@ -1610,7 +1611,7 @@ function StaffOnSiteScreen({ store, me }) {
       {err && <Card className="mb-3 !p-3"><p className="text-xs font-semibold text-rose-600">{err}</p></Card>}
 
       {data === null ? (
-        <div className="flex flex-col items-center gap-2 py-12 text-slate-400"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading who's in…</p></div>
+        <div className="flex flex-col items-center gap-2 py-12 text-slate-500"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading who's in…</p></div>
       ) : shown.length === 0 ? (
         <Card><EmptyState Icon={Users} title={site ? `Nobody from ${site} yet` : "Nobody has checked in yet"}
           msg={site ? "Try another building, or All." : "Check-ins appear here as people arrive."} /></Card>
@@ -1621,9 +1622,9 @@ function StaffOnSiteScreen({ store, me }) {
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p.colour || NAVY }}>{p.initials}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold text-slate-700">
-                  {p.name}{p.staffId === me?.id && <span className="ml-1.5 text-[10px] font-bold text-slate-400">(you)</span>}
+                  {p.name}{p.staffId === me?.id && <span className="ml-1.5 text-[10px] font-bold text-slate-500">(you)</span>}
                 </p>
-                <p className="truncate text-[11px] text-slate-400">{[p.jobTitle, p.dept].filter(Boolean).join(" · ") || "Staff"}</p>
+                <p className="truncate text-[11px] text-slate-500">{[p.jobTitle, p.dept].filter(Boolean).join(" · ") || "Staff"}</p>
                 {/* The check-in records Onsite/Online, which is a different question
                     from which building someone belongs to. Only "Online" is worth
                     saying — it means they are not in the building at all. */}
@@ -1636,7 +1637,7 @@ function StaffOnSiteScreen({ store, me }) {
                 {p.site
                   ? <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{p.site}</span>
                   : <span className="mt-0.5 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">No site</span>}
-                {p.timeOut && <p className="mt-0.5 text-[10px] text-slate-400">Left {p.timeOut}</p>}
+                {p.timeOut && <p className="mt-0.5 text-[10px] text-slate-500">Left {p.timeOut}</p>}
               </div>
             </Card>
           ))}
@@ -1649,7 +1650,7 @@ function StaffOnSiteScreen({ store, me }) {
             Checked in today{site ? ` (${site})` : ""}: <span style={{ color: NAVY }}>{shown.length}</span>
           </p>
           {!site && noSite > 0 && (
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-500">
               {noSite} {noSite === 1 ? "person has" : "people have"} no building on their record — set it on their staff profile.
             </p>
           )}
@@ -1706,17 +1707,17 @@ function DayDetail({ store, iso, onClose, showPending }) {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-extrabold leading-snug" style={{ color: NAVY }}>{p?.name || "Unknown staff member"}</p>
             {(p?.role || p?.dept) && <p className="text-[11px] leading-snug text-slate-500">{[p.role, p.dept].filter(Boolean).join(" · ")}</p>}
-            {p?.email && <p className="break-all text-[11px] leading-snug text-slate-400">{p.email}</p>}
+            {p?.email && <p className="break-all text-[11px] leading-snug text-slate-500">{p.email}</p>}
           </div>
           <span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}><T size={11} /> {t.label}</span>
         </div>
         <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-slate-100 pt-2.5 text-[11px]">
-          <div><span className="text-slate-400">Away</span><p className="font-semibold text-slate-600">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
-          <div><span className="text-slate-400">This day</span><p className="font-semibold text-slate-600">{span === 1 ? "Single day" : `Day ${nth} of ${span}`}</p></div>
-          <div><span className="text-slate-400">Working days charged</span><p className="font-semibold text-slate-600">{NON_ALLOWANCE_TYPES.includes(l.type) ? `${charged} (unpaid — no allowance used)` : `${charged} day${charged === 1 ? "" : "s"}`}</p></div>
-          <div><span className="text-slate-400">Status</span><p className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${statusBadge(l.status)}`}>{l.status}</p></div>
+          <div><span className="text-slate-500">Away</span><p className="font-semibold text-slate-600">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
+          <div><span className="text-slate-500">This day</span><p className="font-semibold text-slate-600">{span === 1 ? "Single day" : `Day ${nth} of ${span}`}</p></div>
+          <div><span className="text-slate-500">Working days charged</span><p className="font-semibold text-slate-600">{NON_ALLOWANCE_TYPES.includes(l.type) ? `${charged} (unpaid — no allowance used)` : `${charged} day${charged === 1 ? "" : "s"}`}</p></div>
+          <div><span className="text-slate-500">Status</span><p className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${statusBadge(l.status)}`}>{l.status}</p></div>
         </div>
-        {l.reason && <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-500"><span className="font-semibold text-slate-400">Reason: </span>{l.reason}</p>}
+        {l.reason && <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-500"><span className="font-semibold text-slate-600">Reason: </span>{l.reason}</p>}
         {l.note && <p className="mt-1.5 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] italic text-slate-500">Manager: "{l.note}"</p>}
       </div>
     );
@@ -1733,17 +1734,17 @@ function DayDetail({ store, iso, onClose, showPending }) {
         )}
 
         <div>
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
             {approved.length === 0 ? "Nobody on leave" : `On leave · ${approved.length}`}
           </p>
           {approved.length === 0
-            ? <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-xs text-slate-400">{bh ? "The college is closed, and no leave is booked on top of it." : "Everyone is in on this day."}</p>
+            ? <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-xs text-slate-600">{bh ? "The college is closed, and no leave is booked on top of it." : "Everyone is in on this day."}</p>
             : <div className="space-y-2">{approved.map(l => <Person key={l.id} l={l} />)}</div>}
         </div>
 
         {pending.length > 0 && (
           <div className="border-t border-slate-100 pt-3">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Awaiting a decision · {pending.length}</p>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Awaiting a decision · {pending.length}</p>
             <div className="space-y-2">{pending.map(l => <Person key={l.id} l={l} />)}</div>
           </div>
         )}
@@ -1767,7 +1768,7 @@ function MonthGrid({ store, big, showPending }) {
         <p className={`font-extrabold ${big ? "text-lg" : "text-base"}`} style={{ color: NAVY }}>{cursor.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</p>
         <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg p-1.5 transition hover:bg-slate-100 active:scale-90"><ChevronRight size={18} /></button>
       </div>
-      <div className={`grid grid-cols-7 ${big ? "gap-1.5" : "gap-1"} text-center text-[10px] font-bold text-slate-400`}>
+      <div className={`grid grid-cols-7 ${big ? "gap-1.5" : "gap-1"} text-center text-[10px] font-bold text-slate-500`}>
         {(big ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["M", "T", "W", "T", "F", "S", "S"]).map((d, i) => <div key={i} className="py-1">{d}</div>)}
       </div>
       <div className={`grid grid-cols-7 ${big ? "gap-1.5" : "gap-1"}`}>
@@ -1784,9 +1785,9 @@ function MonthGrid({ store, big, showPending }) {
               className={`press min-h-[78px] rounded-xl border p-1.5 text-left transition-all duration-200 hover:shadow-sm ${bh ? "border-amber-300 bg-amber-50 hover:border-amber-400" : isToday ? "border-blue-300 bg-blue-50/40 glow-pulse" : "border-slate-100 hover:border-blue-200 hover:bg-blue-50/30"}`}>
               {/* spans, not p/div: a <button> may only contain phrasing content, and
                   the cell itself is the hit target. */}
-              <span className={`block text-xs font-bold ${isToday ? "text-blue-700" : bh ? "text-amber-700" : "text-slate-400"}`}>{d}</span>
+              <span className={`block text-xs font-bold ${isToday ? "text-blue-700" : bh ? "text-amber-700" : "text-slate-500"}`}>{d}</span>
               {bh && <span className="mt-0.5 block truncate rounded bg-amber-400 px-1 py-0.5 text-[8px] font-bold text-white">🏛 {bh}</span>}
-              <span className="mt-1 block space-y-0.5">{evts.slice(0, 3).map(e => { const p = store.staff.find(s => s.id === e.staffId); const t = leaveTypeMeta(e.type); /* safe fallback so an unknown type can't crash the calendar */ return <span key={e.id} title={`${p?.name || "Unknown"} — ${t.label}`} className="block truncate rounded px-1 py-0.5 text-[9px] font-bold text-white" style={{ background: t.colour }}>{shortName(p?.name) || p?.initials}</span>; })}{evts.length > 3 && <span className="block text-[9px] font-semibold text-slate-400">+{evts.length - 3} more</span>}</span>
+              <span className="mt-1 block space-y-0.5">{evts.slice(0, 3).map(e => { const p = store.staff.find(s => s.id === e.staffId); const t = leaveTypeMeta(e.type); /* safe fallback so an unknown type can't crash the calendar */ return <span key={e.id} title={`${p?.name || "Unknown"} — ${t.label}`} className="block truncate rounded px-1 py-0.5 text-[9px] font-bold text-white" style={{ background: t.colour }}>{shortName(p?.name) || p?.initials}</span>; })}{evts.length > 3 && <span className="block text-[9px] font-semibold text-slate-500">+{evts.length - 3} more</span>}</span>
             </button>
           );
           return (
@@ -1817,8 +1818,8 @@ function BankHolidayList({ store }) {
         {list.map((h, i, a) => { const done = h.date <= today; return (
           <div key={h.date} className={`flex items-center gap-3 px-4 py-2.5 ${i < a.length - 1 ? "border-b border-slate-100" : ""}`}>
             <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm ${done ? "bg-amber-100" : "bg-slate-100"}`}>🏛</span>
-            <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{h.name}</p><p className="text-[11px] text-slate-400">{fmtDate(h.date)}</p></div>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${done ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"}`}>{done ? "Passed" : "Upcoming"}</span>
+            <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{h.name}</p><p className="text-[11px] text-slate-500">{fmtDate(h.date)}</p></div>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${done ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{done ? "Passed" : "Upcoming"}</span>
           </div>
         ); })}
       </Card>
@@ -1833,7 +1834,7 @@ function CalendarScreen({ store }) {
       <Card>
         <MonthGrid store={store} />
         <div className="mt-3 border-t border-slate-100 pt-3">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Leave types</p>
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Leave types</p>
           <LeaveLegend />
           <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" /> Bank holiday — a fixed day off for everyone, separate from your bookable allowance</div>
         </div>
@@ -1845,7 +1846,7 @@ function CalendarScreen({ store }) {
         {approved.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); return (
           <Card key={l.id} className="flex items-center gap-3 !p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}>
             <span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
-            <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-400">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
+            <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
             <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}>{t.label}</span>
           </Card>
         ); })}
@@ -1905,7 +1906,7 @@ function RequestLeaveScreen({ store, me, setScreen }) {
   return (
     <Screen>
       <Card>
-        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Leave type</label>
+        <label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Leave type</label>
         <div className="mb-4 mt-2 grid grid-cols-2 gap-2">
           {LEAVE_TYPES.map((t, i) => { const T = t.icon; const on = type === t.key; return (
             <button key={t.key} onClick={() => setType(t.key)} className={`flex items-center gap-2 rounded-xl border-2 p-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 active:scale-95 pop ${on ? "border-transparent shadow-sm" : "border-slate-200 bg-white"}`} style={on ? { background: t.colour + "12", borderColor: t.colour, animationDelay: `${i * 50}ms` } : { animationDelay: `${i * 50}ms` }}>
@@ -1961,7 +1962,7 @@ function DocumentsScreen({ store, me }) {
       <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
         {types.map(t => <button key={t} onClick={() => setFilter(t)} className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold transition-all duration-200 active:scale-95 ${filter === t ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200 hover:ring-slate-300"}`} style={filter === t ? { background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` } : {}}>{t}</button>)}
       </div>
-      <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold text-slate-400">
+      <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold text-slate-500">
         <span>{filtered.length} document{filtered.length === 1 ? "" : "s"}{filter !== "All" ? ` · ${filter}` : ""}</span>
         {visible.some(d => d.scope === "personal" && d.assignedTo === me.id) && <span className="flex items-center gap-1"><ShieldCheck size={12} /> includes private</span>}
       </div>
@@ -1974,7 +1975,7 @@ function DocumentsScreen({ store, me }) {
               <p className="truncate text-sm font-semibold text-slate-700">{d.name}</p>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold" style={{ background: dc + "1a", color: dc }}>{d.type}</span>
-                <span className="text-xs text-slate-400">{fmtDate(d.date)}{d.scope === "personal" ? " · Private" : ""}</span>
+                <span className="text-xs text-slate-500">{fmtDate(d.date)}{d.scope === "personal" ? " · Private" : ""}</span>
               </div>
             </div>
             {/* A real download. This used to toast "Downloading…" and do nothing —
@@ -1996,7 +1997,7 @@ function DocumentsScreen({ store, me }) {
 /* ----- Manager Approval (in app) ----- */
 function ApprovalScreen({ store, me }) {
   // A leave page, not merely being an admin — matches the tile gate and the server.
-  if (!canDecideLeaveFor(store.currentUser)) return <div className="p-4 text-slate-400">Access denied</div>;
+  if (!canDecideLeaveFor(store.currentUser)) return <div className="p-4 text-slate-500">Access denied</div>;
   const pending = store.leave.filter(l => l.status === "pending");
   const act = (l, status) => store.decideLeave(l.id, status);
   return (
@@ -2008,7 +2009,7 @@ function ApprovalScreen({ store, me }) {
           <Card key={l.id} className="fade-up" style={{ animationDelay: `${i * 60}ms` }}>
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
-              <div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-400">{p?.role}</p></div>
+              <div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{p?.role}</p></div>
               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}>{t.label}</span>
             </div>
             <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600"><p><b>{fmtDate(l.start)}</b>{l.end !== l.start && <> → <b>{fmtDate(l.end)}</b></>} · {store.chargeableDays(l.start, l.end)} day(s)</p><p className="mt-1 italic text-slate-500">"{l.reason}"</p></div>
@@ -2042,7 +2043,7 @@ function SummaryScreen({ store, me }) {
   return (
     <Screen>
       <Card>
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{fmtDay(today)}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{fmtDay(today)}</p>
         <p className="mb-3 text-lg font-extrabold" style={{ color: NAVY }}>What did you work on today?</p>
         <textarea value={text} onChange={e => { setTouched(true); setText(e.target.value); }} rows={6} placeholder="e.g. Taught Y12 Maths, marked mock papers, met admissions about September intake…" className={inputCls + " resize-none"} />
         <PrimaryBtn onClick={save} colour={saved ? "#059669" : NAVY} className="mt-3 w-full !py-3">{saved ? <><Check size={18} /> Saved & shared</> : "Save Daily Summary"}</PrimaryBtn>
@@ -2050,7 +2051,7 @@ function SummaryScreen({ store, me }) {
       <SectionLabel className="mt-5">Recent summaries</SectionLabel>
       <div className="space-y-2">
         {store.checkins.filter(c => c.staffId === me.id && c.summary).length === 0 && <Card><EmptyState Icon={ClipboardList} title="No summaries yet" msg="Save a daily summary above and it will appear here." /></Card>}
-        {store.checkins.filter(c => c.staffId === me.id && c.summary).slice(0, 4).map((c, i) => <Card key={c.id} className="!p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}><p className="text-xs font-bold text-slate-400">{fmtDay(c.date)}</p><p className="mt-1 text-sm text-slate-600">{c.summary}</p></Card>)}
+        {store.checkins.filter(c => c.staffId === me.id && c.summary).slice(0, 4).map((c, i) => <Card key={c.id} className="!p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}><p className="text-xs font-bold text-slate-500">{fmtDay(c.date)}</p><p className="mt-1 text-sm text-slate-600">{c.summary}</p></Card>)}
       </div>
     </Screen>
   );
@@ -2111,7 +2112,7 @@ function TimesheetForm({ store, me, month, entry, onDone }) {
         <Field label="To"><input type="time" value={end} onChange={e => setEnd(e.target.value)} className={inputCls} /></Field>
       </div>
       <div>
-        <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Delivery</label>
+        <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Delivery</label>
         <div className="grid grid-cols-2 gap-2">
           {[{ k: "campus", label: "On campus", I: Building2 }, { k: "online", label: "Online", I: Wifi }].map(o => {
             const on = mode === o.k; const O = o.I;
@@ -2165,7 +2166,7 @@ function TimesheetMonthGrid({ month, byDate, onPick }) {
 
   return (
     <Card className="!p-3">
-      <div className="grid grid-cols-7 gap-1 text-center text-[9px] font-bold uppercase text-slate-400">
+      <div className="grid grid-cols-7 gap-1 text-center text-[9px] font-bold uppercase text-slate-500">
         {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <div key={i} className="py-0.5">{d}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-1">
@@ -2187,22 +2188,22 @@ function TimesheetMonthGrid({ month, byDate, onPick }) {
               className={`press min-h-[62px] rounded-lg border p-1 text-left transition ${
                 list.length ? "border-transparent" : isToday ? "border-blue-300 bg-blue-50/50" : "border-slate-100 hover:border-blue-200 hover:bg-blue-50/30"}`}
               style={list.length ? { background: locked ? "#f1f5f9" : "#eef2ff" } : {}}>
-              <span className={`block text-[10px] font-bold ${isToday ? "text-blue-700" : "text-slate-400"}`}>{d}</span>
+              <span className={`block text-[10px] font-bold ${isToday ? "text-blue-700" : "text-slate-500"}`}>{d}</span>
               {list.length > 0 && (
                 <>
                   <span className={`block text-[8px] font-bold uppercase ${locked ? "text-slate-500" : "text-indigo-600"}`}>Present</span>
                   {list.slice(0, 2).map(e => (
                     <span key={e.id} className="block truncate text-[8px] font-semibold leading-tight text-slate-500">{shortTime(e.start)}–{shortTime(e.end)}</span>
                   ))}
-                  {list.length > 2 && <span className="block text-[8px] text-slate-400">+{list.length - 2}</span>}
-                  <span className="block text-[8px] font-bold text-slate-400">{fmtHours(mins)}h</span>
+                  {list.length > 2 && <span className="block text-[8px] text-slate-500">+{list.length - 2}</span>}
+                  <span className="block text-[8px] font-bold text-slate-500">{fmtHours(mins)}h</span>
                 </>
               )}
             </button>
           );
         })}
       </div>
-      <p className="mt-2 px-0.5 text-[10px] text-slate-400">Tap any day to record the hours you worked.</p>
+      <p className="mt-2 px-0.5 text-[10px] text-slate-500">Tap any day to record the hours you worked.</p>
     </Card>
   );
 }
@@ -2267,7 +2268,7 @@ function TimesheetDayModal({ store, date, entries, onClose, onSaved }) {
             straight away rather than behind a "Present" toggle, because opening a blank
             day already says the day is blank. */}
         <div>
-          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Common shifts</p>
+          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Common shifts</p>
           <div className="grid grid-cols-2 gap-1.5">
             {SHIFT_PRESETS.map(pre => {
               const on = sig(pre.shifts.map(([a, b]) => ({ start: a, end: b }))) === sig(shifts);
@@ -2289,14 +2290,14 @@ function TimesheetDayModal({ store, date, entries, onClose, onSaved }) {
                 <div key={i} className="rounded-xl bg-slate-50 p-2.5 ring-1 ring-slate-200">
                   <div className="flex items-center gap-2">
                     <input type="time" value={sh.start} onChange={e => setShift(i, { start: e.target.value })} className={inputCls + " !py-2"} />
-                    <span className="shrink-0 text-xs font-bold text-slate-400">to</span>
+                    <span className="shrink-0 text-xs font-bold text-slate-600">to</span>
                     <input type="time" value={sh.end} onChange={e => setShift(i, { end: e.target.value })} className={inputCls + " !py-2"} />
                     <button type="button" onClick={() => removeShift(i)} aria-label="Remove this shift"
                       className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600">
                       <Trash2 size={15} />
                     </button>
                   </div>
-                  <p className={`mt-1 text-[10px] font-semibold ${minutesBetween(sh.start, sh.end) <= 0 ? "text-rose-500" : "text-slate-400"}`}>
+                  <p className={`mt-1 text-[10px] font-semibold ${minutesBetween(sh.start, sh.end) <= 0 ? "text-rose-500" : "text-slate-600"}`}>
                     {minutesBetween(sh.start, sh.end) <= 0 ? "The end time must be after the start." : `${fmtHours(minutesBetween(sh.start, sh.end))}h`}
                   </p>
                 </div>
@@ -2304,7 +2305,7 @@ function TimesheetDayModal({ store, date, entries, onClose, onSaved }) {
             </div>
 
             <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
-              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Total</span>
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Total</span>
               <span className="text-sm font-extrabold" style={{ color: NAVY }}>{fmtHours(total)}h</span>
             </div>
           </>
@@ -2442,23 +2443,23 @@ function TimesheetScreen({ store, me }) {
 
       {/* Entries grouped by day */}
       {entries === null ? (
-        <div className="flex flex-col items-center gap-2 py-12 text-slate-400"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading your timesheet…</p></div>
+        <div className="flex flex-col items-center gap-2 py-12 text-slate-500"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading your timesheet…</p></div>
       ) : days.length === 0 ? (
-        <Card className="text-center"><ClipboardList size={30} className="mx-auto mb-2 text-slate-300" /><p className="text-sm font-semibold text-slate-500">No sessions logged for {monthLabel(month)}.</p><p className="mt-0.5 text-xs text-slate-400">Tap “Add a session” to record the classes you taught.</p></Card>
+        <Card className="text-center"><ClipboardList size={30} className="mx-auto mb-2 text-slate-300" /><p className="text-sm font-semibold text-slate-500">No sessions logged for {monthLabel(month)}.</p><p className="mt-0.5 text-xs text-slate-500">Tap “Add a session” to record the classes you taught.</p></Card>
       ) : (
         days.map(day => {
           const dayEntries = byDate[day].sort((a, b) => a.start.localeCompare(b.start));
           const dayMin = dayEntries.reduce((s, e) => s + e.minutes, 0);
           return (
             <div key={day} className="mb-3">
-              <div className="mb-1.5 flex items-center justify-between px-1"><p className="text-xs font-bold text-slate-500">{prettyDay(day)}</p><p className="text-[11px] font-bold text-slate-400">{fmtHours(dayMin)}h</p></div>
+              <div className="mb-1.5 flex items-center justify-between px-1"><p className="text-xs font-bold text-slate-500">{prettyDay(day)}</p><p className="text-[11px] font-bold text-slate-500">{fmtHours(dayMin)}h</p></div>
               <Card className="!p-0">
                 {dayEntries.map((e, i) => (
                   <div key={e.id} className={`flex items-center gap-3 px-3.5 py-3 ${i < dayEntries.length - 1 ? "border-b border-slate-100" : ""}`}>
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white" style={{ background: e.mode === "campus" ? NAVY : "#0d7a5f" }}>{e.mode === "campus" ? <Building2 size={17} /> : <Wifi size={17} />}</div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-slate-700">{e.title}</p>
-                      <p className="text-[11px] text-slate-400">{e.start}–{e.end} · {fmtHours(e.minutes)}h · {e.mode === "campus" ? "On campus" : "Online"}</p>
+                      <p className="text-[11px] text-slate-500">{e.start}–{e.end} · {fmtHours(e.minutes)}h · {e.mode === "campus" ? "On campus" : "Online"}</p>
                     </div>
                     {(e.status === "draft" || e.status === "changes_requested") ? (
                       <div className="flex shrink-0 gap-1">
@@ -2527,13 +2528,13 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
       <Card className="mb-3 overflow-hidden !p-0">
         <div className="flex items-center gap-3 p-4" style={{ background: "linear-gradient(135deg, rgba(26,58,143,.07), rgba(158,27,50,.05))" }}>
           <span className="float flex h-14 w-14 items-center justify-center rounded-2xl text-lg font-bold text-white shadow-lg ring-2 ring-white" style={{ background: me.colour }}>{me.initials}</span>
-          <div className="min-w-0 flex-1"><p className="truncate font-bold text-slate-800">{me.name}</p><p className="truncate text-xs text-slate-500">{me.role} · {me.dept}</p><p className="truncate text-xs text-slate-400">{me.email}</p></div>
+          <div className="min-w-0 flex-1"><p className="truncate font-bold text-slate-800">{me.name}</p><p className="truncate text-xs text-slate-500">{me.role} · {me.dept}</p><p className="truncate text-xs text-slate-500">{me.email}</p></div>
           {store.isAdmin && <span className="flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] font-bold shadow-sm ring-1 ring-slate-200" style={{ color: MAROON }}><ShieldCheck size={12} /> Admin</span>}
         </div>
         <div className="grid grid-cols-3 divide-x divide-slate-100 border-t border-slate-100 text-center">
-          <div className="py-2.5"><p className="text-base font-extrabold" style={{ color: NAVY }}>{left}d</p><p className="text-[10px] text-slate-400">Holiday left</p></div>
-          <div className="py-2.5"><p className="text-base font-extrabold text-slate-700">{myLeaveCount}</p><p className="text-[10px] text-slate-400">Leave records</p></div>
-          <div className="py-2.5"><p className="text-base font-extrabold text-emerald-600">{myCheckins}</p><p className="text-[10px] text-slate-400">Check-ins</p></div>
+          <div className="py-2.5"><p className="text-base font-extrabold" style={{ color: NAVY }}>{left}d</p><p className="text-[10px] text-slate-500">Holiday left</p></div>
+          <div className="py-2.5"><p className="text-base font-extrabold text-slate-700">{myLeaveCount}</p><p className="text-[10px] text-slate-500">Leave records</p></div>
+          <div className="py-2.5"><p className="text-base font-extrabold text-emerald-600">{myCheckins}</p><p className="text-[10px] text-slate-500">Check-ins</p></div>
         </div>
       </Card>
       {/* THE TOOL DIRECTORY — every screen the home grid used to flatten into equal
@@ -2554,7 +2555,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[13px] font-bold text-slate-700">{it.label}</span>
-                    <span className="block truncate text-[11px] text-slate-400">{it.sub}</span>
+                    <span className="block truncate text-[11px] text-slate-500">{it.sub}</span>
                   </span>
                   {it.badge === "approvals" && approvalsWaiting > 0 && (
                     <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-900">{approvalsWaiting}</span>
@@ -2617,7 +2618,7 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
           <Trash2 size={18} className="transition-transform group-hover:scale-110" style={{ color: MAROON }} />
           <span className="flex-1">
             <span className="block text-sm font-semibold" style={{ color: MAROON }}>Delete my account</span>
-            <span className="block text-[11px] text-slate-400">Permanently remove your account and personal data</span>
+            <span className="block text-[11px] text-slate-500">Permanently remove your account and personal data</span>
           </span>
           <ChevronRight size={16} className="text-slate-300 transition-transform group-hover:translate-x-1" />
         </button>
@@ -2631,8 +2632,8 @@ function MoreScreen({ store, me, logout, onChangePassword, onSwitchToAdmin, setS
       )}
       <ConfirmDialog open={confirmOut} title="Sign out?" message="You'll need to sign in again to get back in." confirmLabel="Sign out" cancelLabel="Stay" danger onConfirm={logout} onCancel={() => setConfirmOut(false)} />
 
-      <p className="mt-4 text-center text-[11px] text-slate-400">EdTech · Staff Hub</p>
-      <p className="text-center text-[11px] text-slate-400">© {new Date().getFullYear()} Syed Muhammad Raza</p>
+      <p className="mt-4 text-center text-[11px] text-slate-500">EdTech · Staff Hub</p>
+      <p className="text-center text-[11px] text-slate-500">© {new Date().getFullYear()} Syed Muhammad Raza</p>
 
       <Modal open={showDelete} onClose={() => setShowDelete(false)} title="Delete my account">
         <DeleteAccount user={me} onCancel={() => setShowDelete(false)} />
@@ -2808,7 +2809,7 @@ const kNum = (n) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replac
 function FilterSelect({ label, value, onChange, options }) {
   return (
     <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs ring-1 ring-slate-200">
-      <span className="font-semibold text-slate-400">{label}</span>
+      <span className="font-semibold text-slate-500">{label}</span>
       <select value={value} onChange={e => onChange(e.target.value)} className="max-w-[180px] bg-transparent text-sm font-medium text-slate-700 outline-none">
         {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
@@ -2980,7 +2981,7 @@ function ExecKpi({ label, value, tone = NAVY, sub, Icon }) {
         )}
       </div>
       <p className="relative mt-1.5 text-[32px] font-extrabold leading-none tracking-tight" style={{ color: tone }}>{value}</p>
-      {sub && <p className="relative mt-1.5 text-[11px] font-medium text-slate-400">{sub}</p>}
+      {sub && <p className="relative mt-1.5 text-[11px] font-medium text-slate-500">{sub}</p>}
     </div>
   );
 }
@@ -2988,7 +2989,7 @@ function MiniKpi({ label, value, tone = NAVY }) {
   return (
     <div className="rounded-xl bg-white p-2.5 text-center shadow-sm ring-1 ring-slate-200/70">
       <p className="text-lg font-extrabold tabular-nums" style={{ color: tone }}>{value}</p>
-      <p className="text-[10px] font-medium text-slate-400">{label}</p>
+      <p className="text-[10px] font-medium text-slate-500">{label}</p>
     </div>
   );
 }
@@ -3166,7 +3167,7 @@ function ExecutiveDashboard({ store }) {
   return (
     <>
       <AdminHeader title="Executive Dashboard" subtitle="College-wide attendance & results at a glance" Icon={BarChart3}
-        action={<div className="flex items-center gap-2 text-[11px] text-slate-400">{refreshed && <span className="hidden sm:inline">Last refreshed {refreshed.toLocaleString("en-GB")}</span>}<button onClick={() => load(scopeOf(course, unit, stage), true)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" title="Refresh"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div>} />
+        action={<div className="flex items-center gap-2 text-[11px] text-slate-600">{refreshed && <span className="hidden sm:inline">Last refreshed {refreshed.toLocaleString("en-GB")}</span>}<button onClick={() => load(scopeOf(course, unit, stage), true)} className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100" title="Refresh"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div>} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {/* The shared school filter, first in the row because it re-scopes every
             figure on the page where the rest narrow only part of it. */}
@@ -3182,7 +3183,7 @@ function ExecutiveDashboard({ store }) {
         <FilterSelect label="Unit" value={unit} onChange={onUnit} options={[{ v: "all", l: "All units" }, ...unitsForCourse.map(m => ({ v: m.id, l: course === "all" ? `${m.code} — ${m.name} · ${courses.find(c => c.courseId === m.courseId)?.code || "unassigned"}` : `${m.code} — ${m.name}` }))]} />
       </div>
       {err && <div className="mb-3 flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 ring-1 ring-rose-200"><AlertCircle size={15} /> {err}</div>}
-      {unitScoped && <p className="mb-3 text-[11px] text-slate-400">The {unit !== "all" && stage !== "all" ? "Year / Term and Unit filters apply" : unit !== "all" ? "Unit filter applies" : "Year / Term filter applies"} to the attendance figures; student and results figures cover the whole {course !== "all" ? "course" : school ? "school" : "college"}.</p>}
+      {unitScoped && <p className="mb-3 text-[11px] text-slate-500">The {unit !== "all" && stage !== "all" ? "Year / Term and Unit filters apply" : unit !== "all" ? "Unit filter applies" : "Year / Term filter applies"} to the attendance figures; student and results figures cover the whole {course !== "all" ? "course" : school ? "school" : "college"}.</p>}
       <ExecHero attPct={attPct} passRate={shownPassRate} students={exec ? shownStudents : null}
         courses={exec ? totalCourses : null} marks={totalMarks} />
       {/* Five tiles, so five columns on a wide screen — at four they wrapped to a
@@ -3238,7 +3239,7 @@ function ExecutiveDashboard({ store }) {
       <ChartCard title="Results by Course" className="mt-3">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="py-2 pr-4">Course</th><th className="px-2 py-2 text-right">Students</th><th className="px-2 py-2 text-right">Assessed</th><th className="px-2 py-2 text-right">Passed</th><th className="py-2 pl-2 text-right">Pass Rate</th></tr></thead>
+            <thead className="text-left text-xs font-bold uppercase tracking-wide text-slate-500"><tr><th className="py-2 pr-4">Course</th><th className="px-2 py-2 text-right">Students</th><th className="px-2 py-2 text-right">Assessed</th><th className="px-2 py-2 text-right">Passed</th><th className="py-2 pl-2 text-right">Pass Rate</th></tr></thead>
             <tbody>
               {courses.map(c => (
                 <tr key={c.courseId} className="border-t border-slate-100">
@@ -3258,7 +3259,7 @@ function ExecutiveDashboard({ store }) {
                   <td className="py-2 pl-2 text-right tabular-nums" style={{ color: pctColour(shownPassRate) }}>{shownPassRate == null ? "—" : `${shownPassRate}%`}</td>
                 </tr>
               )}
-              {courses.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{loading ? "Loading…" : "No course data yet."}</td></tr>}
+              {courses.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-500">{loading ? "Loading…" : "No course data yet."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -3552,14 +3553,14 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // independent barrier, not the only one. It is here because "the dashboard is
   // unreachable for students" should be true of this component on its own, not only
   // true of the two things that happen to sit in front of it.
-  if (me?.kind === "student" || me?.isStudent) return <div className="p-4 text-slate-400">Access denied</div>;
-  if (!store.isAdmin) return <div className="p-4 text-slate-400">Access denied</div>;
+  if (me?.kind === "student" || me?.isStudent) return <div className="p-4 text-slate-500">Access denied</div>;
+  if (!store.isAdmin) return <div className="p-4 text-slate-500">Access denied</div>;
   return (
     <div className="flex min-h-[calc(100vh-40px)] w-full overflow-x-hidden">
       <aside className={`hidden w-60 shrink-0 flex-col bg-white px-4 py-5 ring-1 ring-slate-200 ${sidebarOpen ? "md:flex" : ""}`}>
         <div className="mb-6 flex items-center gap-2 px-1">
           <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded-md ring-1 ring-slate-200"><Logo small /></div>
-          <div className="min-w-0"><p className="text-[13px] font-extrabold leading-tight" style={{ color: NAVY }}>Staff Hub</p><p className="text-[10px] font-semibold text-slate-400">ADMIN CONSOLE</p></div>
+          <div className="min-w-0"><p className="text-[13px] font-extrabold leading-tight" style={{ color: NAVY }}>Staff Hub</p><p className="text-[10px] font-semibold text-slate-500">ADMIN CONSOLE</p></div>
           <button onClick={() => toggleSidebar(false)} title="Hide menu" aria-label="Hide menu" className="press ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><PanelLeftClose size={18} /></button>
         </div>
         <nav className="flex-1 space-y-1">
@@ -3603,7 +3604,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
             );
           })}
         </nav>
-        <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-400">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}</div>
+        <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-600">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}</div>
       </aside>
       <main className="min-w-0 flex-1 overflow-x-hidden bg-slate-100 p-5 md:p-7">
         {!sidebarOpen && (
@@ -3661,7 +3662,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
             key as the fallback — a queue must still render for a department the
             college has since removed from the list entirely, and rendering the slug is
             better than rendering nothing. */}
-        {referralNavPending && <div className="flex items-center gap-2 rounded-2xl bg-white p-4 text-sm text-slate-400 shadow-sm ring-1 ring-slate-200/70"><Loader2 size={16} className="animate-spin" /> Opening referrals…</div>}
+        {referralNavPending && <div className="flex items-center gap-2 rounded-2xl bg-white p-4 text-sm text-slate-500 shadow-sm ring-1 ring-slate-200/70"><Loader2 size={16} className="animate-spin" /> Opening referrals…</div>}
         {activeKey === "referrals-mine" && <ReferralsMine store={store} />}
         {activeKey && activeKey !== "referrals-mine" && activeKey.startsWith("referrals-") && (() => {
           const deptKey = activeKey.slice("referrals-".length);
@@ -3895,7 +3896,7 @@ const OUTCOME_LABELS = {
 const pctOrDash = (v) => (v == null ? "—" : `${v}%`);
 
 function DirectionChip({ value }) {
-  if (!value || value === "NEW") return <span className="text-[11px] text-slate-400">{DIRECTION_LABELS.NEW}</span>;
+  if (!value || value === "NEW") return <span className="text-[11px] text-slate-500">{DIRECTION_LABELS.NEW}</span>;
   const up = value === "IMPROVING", down = value === "DECLINING";
   const tone = up ? "#059669" : down ? "#dc2626" : "#64748b";
   const I = up ? TrendingUp : down ? TrendingDown : MoreHorizontal;
@@ -3976,7 +3977,7 @@ function AdminMitigations() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-extrabold text-slate-800">Mitigating Circumstances</h2>
-          <p className="max-w-prose text-xs text-slate-400">
+          <p className="max-w-prose text-xs text-slate-500">
             Extensions, deferrals and excused absence. An approved claim stops the progression
             score counting the work it covers — in both directions, so it is never counted as
             handed in on time either.
@@ -4012,7 +4013,7 @@ function AdminMitigations() {
       </div>
 
       {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
-      {!rows && <Card><p className="text-xs text-slate-400">Loading…</p></Card>}
+      {!rows && <Card><p className="text-xs text-slate-500">Loading…</p></Card>}
       {shown && shown.length === 0 && (
         <EmptyState Icon={LifeBuoy} title="No claims recorded" msg="Nothing has been logged against this filter." />
       )}
@@ -4024,7 +4025,7 @@ function AdminMitigations() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-bold text-slate-800">
                   {m.student ? `${m.student.firstName} ${m.student.lastName}` : "Unknown student"}
-                  {m.student && <span className="ml-1.5 text-xs font-semibold text-slate-400">{m.student.studentRef}</span>}
+                  {m.student && <span className="ml-1.5 text-xs font-semibold text-slate-500">{m.student.studentRef}</span>}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500">
                   Covers {m.coversFrom} to {m.coversTo}
@@ -4032,7 +4033,7 @@ function AdminMitigations() {
                   {m.coversAttendance ? " · excuses attendance" : ""}
                 </p>
                 {m.adjustments.length > 0 && (
-                  <p className="mt-0.5 text-[11px] text-slate-400">
+                  <p className="mt-0.5 text-[11px] text-slate-500">
                     {m.adjustments.length} assessment{m.adjustments.length === 1 ? "" : "s"} adjusted
                   </p>
                 )}
@@ -4084,7 +4085,7 @@ function MitigationForm({ students, onClose, onSaved }) {
             silently defaults to today. */}
         <Field label="Date the student raised it">
           <input type="date" className={inputCls} value={f.raisedOn} onChange={set("raisedOn")} />
-          <p className="mt-1 text-[11px] text-slate-400">When they told you — not when this record was created. Leave blank for today.</p>
+          <p className="mt-1 text-[11px] text-slate-500">When they told you — not when this record was created. Leave blank for today.</p>
         </Field>
         <Field label="Category">
           <select className={inputCls} value={f.category} onChange={set("category")}>
@@ -4094,7 +4095,7 @@ function MitigationForm({ students, onClose, onSaved }) {
         </Field>
         <Field label="Detail">
           <textarea rows={3} className={inputCls} value={f.detail} onChange={set("detail")} placeholder="What the student told you." />
-          <p className="mt-1 text-[11px] text-slate-400">
+          <p className="mt-1 text-[11px] text-slate-500">
             Only people granted this page can read this. It is never used to score the student.
           </p>
         </Field>
@@ -4168,7 +4169,7 @@ function MitigationDrawer({ claim, onClose, onChanged }) {
             piece due inside its window. Setting dates here narrows that to specific
             assessments. */}
         <div>
-          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Assessments adjusted</p>
+          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Assessments adjusted</p>
           {claim.adjustments.length === 0 && (
             <p className="mb-2 rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500">
               None set. While this claim is approved or undecided it covers <em>every</em> assessment
@@ -4199,7 +4200,7 @@ function MitigationDrawer({ claim, onClose, onChanged }) {
             </select>
             {adj.adjustmentType === "extension"
               ? <input type="date" className={inputCls} value={adj.revisedDueDate} onChange={(e) => setAdj({ ...adj, revisedDueDate: e.target.value })} />
-              : <div className="text-[11px] text-slate-400">Leaves both sides of every fraction.</div>}
+              : <div className="text-[11px] text-slate-600">Leaves both sides of every fraction.</div>}
           </div>
           <button
             disabled={busy || !adj.assessmentId || (adj.adjustmentType === "extension" && !adj.revisedDueDate)}
@@ -4257,7 +4258,7 @@ function AdminPrediction({ store }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-extrabold text-slate-800">Predictive Analysis</h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             Progression risk from attendance, submissions and grades.{summary ? ` Model ${summary.modelVersion}.` : ""}
           </p>
         </div>
@@ -4315,7 +4316,7 @@ function PredictionOutcomes({ bands }) {
   }, [school]);
 
   if (err) return <Card><p className="text-xs font-semibold text-rose-700">{err}</p></Card>;
-  if (!rows) return <Card><p className="text-xs text-slate-400">Loading…</p></Card>;
+  if (!rows) return <Card><p className="text-xs text-slate-500">Loading…</p></Card>;
 
   const bandLabel = (k) => (k === "UNSCORED" ? "Never scored" : (bands || []).find(b => b.key === k)?.label || k);
   const order = [...(bands || []).map(b => b.key), "UNSCORED"];
@@ -4324,7 +4325,7 @@ function PredictionOutcomes({ bands }) {
   return (
     <div className="space-y-3">
       <Card>
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Did the model get it right?</p>
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Did the model get it right?</p>
         <p className="mb-3 max-w-prose text-[11px] text-slate-500">
           Recorded outcomes, grouped by the risk band each student was carrying when the outcome was
           recorded. Withdrawals should concentrate in the worse bands. If they do not, the weights on
@@ -4340,7 +4341,7 @@ function PredictionOutcomes({ bands }) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[11px]">
               <thead>
-                <tr className="text-slate-400">
+                <tr className="text-slate-500">
                   <th className="py-1 pr-3 font-semibold">Band at the time</th>
                   <th className="py-1 pr-3 font-semibold">Withdrew</th>
                   <th className="py-1 pr-3 font-semibold">Progressed</th>
@@ -4368,14 +4369,14 @@ function PredictionOutcomes({ bands }) {
             </table>
             {/* Counts, never percentages. "100% withdrawal" drawn from one student is
                 the kind of figure that gets quoted in a meeting and believed. */}
-            <p className="mt-2 text-[11px] text-slate-400">{cal.caveat}</p>
+            <p className="mt-2 text-[11px] text-slate-500">{cal.caveat}</p>
           </div>
         )}
       </Card>
 
       <Card>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Recorded outcomes · {rows.length}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Recorded outcomes · {rows.length}</p>
           <SchoolFilter schools={schools} value={school} onChange={setSchool} />
         </div>
         {rows.length === 0 ? (
@@ -4386,9 +4387,9 @@ function PredictionOutcomes({ bands }) {
               <div key={o.id} className="flex flex-wrap items-baseline gap-x-2 py-1.5 text-[11px]">
                 <b className="text-slate-700">{o.student ? `${o.student.firstName} ${o.student.lastName}` : o.studentId}</b>
                 <span className="text-slate-600">{STUDENT_OUTCOME_LABELS[o.outcome] || o.outcome}</span>
-                {o.reason && <span className="text-slate-400">· {STUDENT_OUTCOME_REASON_LABELS[o.reason] || o.reason}</span>}
-                <span className="text-slate-400">· {o.effectiveOn}</span>
-                {o.riskLevelAtOutcome && <span className="text-slate-400">· was {o.riskLevelAtOutcome}</span>}
+                {o.reason && <span className="text-slate-500">· {STUDENT_OUTCOME_REASON_LABELS[o.reason] || o.reason}</span>}
+                <span className="text-slate-500">· {o.effectiveOn}</span>
+                {o.riskLevelAtOutcome && <span className="text-slate-500">· was {o.riskLevelAtOutcome}</span>}
               </div>
             ))}
           </div>
@@ -4458,7 +4459,7 @@ function PredictionRegister({ bands, summary, onChanged }) {
               <button key={b.key} onClick={() => setLevel(level === b.key ? "" : b.key)} className="rounded-2xl bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md" style={level === b.key ? { boxShadow: `0 0 0 2px ${toneForBand(bands, b.key)}` } : {}}>
                 <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: toneForBand(bands, b.key) }}>{b.key}</p>
                 <p className="mt-0.5 text-2xl font-extrabold tabular-nums text-slate-800">{b.count}</p>
-                <p className="mt-0.5 text-[10px] leading-tight text-slate-400">{b.label}</p>
+                <p className="mt-0.5 text-[10px] leading-tight text-slate-500">{b.label}</p>
               </button>
             ))}
           </div>
@@ -4473,7 +4474,7 @@ function PredictionRegister({ bands, summary, onChanged }) {
               )}
               <span className="text-slate-500"><b style={{ color: "#dc2626" }}>{summary.interventionRequired}</b> need an intervention</span>
               {summary.staleCount > 0 && <span className="font-bold text-amber-600">{summary.staleCount} out of date</span>}
-              <span className="text-slate-400">{summary.lastCalculated ? `Last run ${new Date(summary.lastCalculated).toLocaleString("en-GB")}` : "Never run"}</span>
+              <span className="text-slate-500">{summary.lastCalculated ? `Last run ${new Date(summary.lastCalculated).toLocaleString("en-GB")}` : "Never run"}</span>
             </div>
           </Card>
         </>
@@ -4503,7 +4504,7 @@ function PredictionRegister({ bands, summary, onChanged }) {
           </button>
         </div>
         {note && <p className="mt-2 text-[11px] font-semibold text-slate-500">{note}</p>}
-        <p className="mt-2 text-[11px] text-slate-400">
+        <p className="mt-2 text-[11px] text-slate-500">
           <b>Recalculate</b> scores the students whose data has changed, plus anyone never scored before.
           <b> Rescore everyone</b> rebuilds every active student's score from scratch — use it after changing
           the model, or if a score looks out of date when it should not be. Nothing is scored automatically,
@@ -4546,7 +4547,7 @@ function PredictionRow({ row, bands, open, onToggle, onChanged }) {
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[11px] font-extrabold text-white" style={{ background: grad(s.colour || toneForBand(bands, row.riskLevel)) }}>{s.initials}</span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-slate-800">{s.firstName} {s.lastName}</p>
-          <p className="truncate text-[11px] text-slate-400">{s.studentRef}{s.cohortName ? ` · ${s.cohortName}` : ""}{row.scopeLabel ? ` · ${row.scopeLabel}` : ""}</p>
+          <p className="truncate text-[11px] text-slate-600">{s.studentRef}{s.cohortName ? ` · ${s.cohortName}` : ""}{row.scopeLabel ? ` · ${row.scopeLabel}` : ""}</p>
         </div>
         <div className="hidden shrink-0 sm:block"><DirectionChip value={row.directionOfTravel} /></div>
         <RiskPill bands={bands} level={row.riskLevel} score={row.progressionScore} />
@@ -4675,7 +4676,7 @@ function PredictionDetail({ detail, bands, onChanged }) {
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">The measurements</p>
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">The measurements</p>
           <dl className="space-y-1">
             {metricRows.map(([k, v]) => (
               <div key={k} className="flex items-baseline justify-between gap-3 text-xs">
@@ -4684,7 +4685,7 @@ function PredictionDetail({ detail, bands, onChanged }) {
               </div>
             ))}
           </dl>
-          <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] leading-relaxed text-slate-400">
+          <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] leading-relaxed text-slate-500">
             A dash means the college holds no data for that measure. It is left out of the score entirely
             rather than counted as zero.
           </p>
@@ -4692,7 +4693,7 @@ function PredictionDetail({ detail, bands, onChanged }) {
 
         <div className="space-y-3">
           <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">How the score was reached</p>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">How the score was reached</p>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500">The maths said</span>
               <span className="font-bold tabular-nums text-slate-800">{p.baseProgressionScore} · {p.baseRiskLevel}</span>
@@ -4795,7 +4796,7 @@ function PredictionDetail({ detail, bands, onChanged }) {
 
       {detail.history.length > 1 && (
         <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
-          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Score over time</p>
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Score over time</p>
           <ResponsiveContainer width="100%" height={120}>
             <AreaChart data={[...detail.history].reverse().map(h => ({ d: new Date(h.calculationDateTime).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), score: h.progressionScore }))}>
               <defs><linearGradient id="predGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={BLUE} stopOpacity={0.35} /><stop offset="100%" stopColor={BLUE} stopOpacity={0} /></linearGradient></defs>
@@ -4811,20 +4812,20 @@ function PredictionDetail({ detail, bands, onChanged }) {
 
       <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200/70">
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Interventions</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Interventions</p>
           <button onClick={() => setRaising(true)} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-white" style={{ background: grad(MAROON) }}><PlusCircle size={13} /> Record one</button>
         </div>
         {detail.interventions.length === 0 ? (
-          <p className="text-[11px] text-slate-400">Nothing recorded for this student.</p>
+          <p className="text-[11px] text-slate-500">Nothing recorded for this student.</p>
         ) : (
           <ul className="space-y-1.5">
             {detail.interventions.map(i => (
               <li key={i.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px]">
                 <b className="text-slate-700">{INTERVENTION_TYPE_LABELS[i.interventionType] || i.interventionType}</b>
-                <span className="text-slate-400">{fmtDate(i.interventionDate)}</span>
+                <span className="text-slate-600">{fmtDate(i.interventionDate)}</span>
                 <span className="rounded-full bg-white px-1.5 py-0.5 font-bold text-slate-500 ring-1 ring-slate-200">{i.status}</span>
                 {i.outcome && <span className="text-slate-500">→ {OUTCOME_LABELS[i.outcome] || i.outcome}</span>}
-                <span className="text-slate-400">was {i.riskLevelAtIntervention}</span>
+                <span className="text-slate-600">was {i.riskLevelAtIntervention}</span>
               </li>
             ))}
           </ul>
@@ -4904,7 +4905,7 @@ function OutcomeModal({ open, onClose, student, onSaved }) {
             <select value={reason} onChange={e => setReason(e.target.value)} className={inputCls}>
               {Object.entries(STUDENT_OUTCOME_REASON_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-500">
               “Not known” is a real answer. Recording a guess here is worse than recording the gap.
             </p>
           </Field>
@@ -4923,7 +4924,7 @@ function OutcomeModal({ open, onClose, student, onSaved }) {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={inputCls} placeholder="Anything that would help somebody reading this in a year." />
         </Field>
 
-        <p className="text-[11px] text-slate-400">
+        <p className="text-[11px] text-slate-500">
           Use the date it actually took effect, not today’s date — they are often weeks apart, and the
           difference matters when this record is compared against what the model predicted.
         </p>
@@ -4970,7 +4971,7 @@ function InterventionModal({ open, onClose, student, onSaved }) {
           <Field label="Review on (optional)"><input type="date" value={reviewDate} onChange={e => setReviewDate(e.target.value)} className={inputCls} /></Field>
         </div>
         <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={inputCls} placeholder="What was discussed, and what was agreed." /></Field>
-        <p className="text-[11px] text-slate-400">
+        <p className="text-[11px] text-slate-500">
           The student's current figures are stored on this record, so that "were they worse when we stepped
           in?" stays answerable later even after their score moves.
         </p>
@@ -5029,7 +5030,7 @@ function PredictionInterventions({ onChanged }) {
           <div className="flex flex-wrap items-center gap-2">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold text-slate-800">{i.student.firstName} {i.student.lastName}</p>
-              <p className="truncate text-[11px] text-slate-400">
+              <p className="truncate text-[11px] text-slate-500">
                 {INTERVENTION_TYPE_LABELS[i.interventionType] || i.interventionType} · {fmtDate(i.interventionDate)}
                 {i.reviewDate ? ` · review ${fmtDate(i.reviewDate)}` : ""} · was {i.riskLevelAtIntervention} at {i.progressionScoreAtIntervention}
               </p>
@@ -5133,7 +5134,7 @@ function PredictionModel({ data, summary, onSaved }) {
               <Field key={k} label={COMPONENT_LABELS[k] || k}>
                 <div className="flex items-center gap-1.5">
                   <input type="number" step="0.05" min="0" max="1" value={draft.weights[k]} onChange={e => setWeight(k, e.target.value)} className={inputCls} />
-                  <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-400">{Math.round(Number(draft.weights[k] || 0) * 100)}%</span>
+                  <span className="w-10 shrink-0 text-right text-[11px] font-bold text-slate-500">{Math.round(Number(draft.weights[k] || 0) * 100)}%</span>
                 </div>
                 {dead && <p className="mt-1 text-[10px] font-semibold text-amber-600">No data — not currently scored</p>}
               </Field>
@@ -5163,7 +5164,7 @@ function PredictionModel({ data, summary, onSaved }) {
             </div>
           ))}
         </div>
-        <p className="mt-2 text-[11px] text-slate-400">
+        <p className="mt-2 text-[11px] text-slate-500">
           The bands must cover 0 to 100 with no gap and no overlap. A gap means a student whose score lands in
           it is given no risk level at all, and is silently skipped by everything the score is meant to trigger.
         </p>
@@ -5382,11 +5383,11 @@ function AdminAccess({ store }) {
             {list.map(p => (
               <button key={p.id} onClick={() => pick(p)} className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition ${selId === p.id ? "bg-blue-50 ring-1 ring-blue-200" : "hover:bg-slate-50"}`}>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: p.colour }}>{p.initials}</span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-700">{p.name}</span><span className="block truncate text-[11px] text-slate-400">{p.email}</span></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-700">{p.name}</span><span className="block truncate text-[11px] text-slate-600">{p.email}</span></span>
                 <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold" style={p.isSuperAdmin ? { background: MAROON, color: "white" } : p.accountRole === "ADMIN" ? { background: "#e0e7ff", color: "#4338ca" } : { background: "#f1f5f9", color: "#64748b" }}>{roleLabel(p)}</span>
               </button>
             ))}
-            {list.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-400">No people match.</p>}
+            {list.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-500">No people match.</p>}
           </div>
         </div>
 
@@ -5414,7 +5415,7 @@ function AdminAccess({ store }) {
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span>
-                  <div><p className="font-bold text-slate-800">{sel.name}</p><p className="text-[11px] text-slate-400">{pages.length === 0 ? "No admin access" : allOn ? "Full admin access" : `${pages.length} of ${ADMIN_PAGES.length} pages`}</p></div>
+                  <div><p className="font-bold text-slate-800">{sel.name}</p><p className="text-[11px] text-slate-500">{pages.length === 0 ? "No admin access" : allOn ? "Full admin access" : `${pages.length} of ${ADMIN_PAGES.length} pages`}</p></div>
                 </div>
                 <button onClick={toggleAll} className="text-xs font-bold text-blue-600 hover:underline">{allOn ? "Clear all" : "Select all"}</button>
               </div>
@@ -5441,10 +5442,10 @@ function AdminAccess({ store }) {
           {sel && supportDepts.length > 0 && (
                 <div className="mt-5">
                   <div className="mb-2 flex items-center gap-1.5">
-                    <HeartHandshake size={14} className="text-slate-400" />
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Support department queues</p>
+                    <HeartHandshake size={14} className="text-slate-500" />
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Support department queues</p>
                   </div>
-                  <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-400">
+                  <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-500">
                     Which referral queues this person works — these decide what they see inside the
                     Referrals feature, including the case notes, which the tutor who raised a referral never
                     sees. Somebody with the page and no departments gets only their own “Sent by me”, and
@@ -5460,7 +5461,7 @@ function AdminAccess({ store }) {
                           <span className="min-w-0 truncate">{d.name}</span>
                           {/* A retired department still lists, because somebody has to
                               be able to finish the cases already in its queue. */}
-                          {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">Retired</span>}
+                          {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Retired</span>}
                         </button>
                       );
                     })}
@@ -5482,9 +5483,9 @@ function AdminAccess({ store }) {
             <div className="mt-5 border-t border-slate-100 pt-4">
               <div className="mb-2 flex items-center gap-1.5">
                 <GraduationCap size={14} className="text-slate-400" />
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Academic departments</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Academic departments</p>
               </div>
-              <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-400">
+              <p className="mb-2 max-w-prose text-[11px] leading-relaxed text-slate-500">
                 Which teaching departments&apos; students, courses and registers this person can see. Not the
                 support queues above &mdash; those decide who reads a wellbeing disclosure; these decide who a
                 student is visible to at all.
@@ -5531,14 +5532,14 @@ function AdminAccess({ store }) {
                         <span className="min-w-0 truncate">{d.name}</span>
                         {/* A retired department still lists: its students and courses are
                             still attached to it, so somebody must be able to see them. */}
-                        {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-400">Retired</span>}
+                        {!d.active && <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Retired</span>}
                       </button>
                     );
                   })}
                 </div>
               )}
               {academicDepts.length === 0 && (
-                <p className="mt-2 text-[11px] text-slate-400">No academic departments yet &mdash; add them in Settings first.</p>
+                <p className="mt-2 text-[11px] text-slate-500">No academic departments yet &mdash; add them in Settings first.</p>
               )}
               {/* Dirty-guarded like both sibling panels. The one button on this screen that
                   can change who sees a student's records was the one without a guard. */}
@@ -5631,9 +5632,9 @@ function AdminTimesheets({ store }) {
       <AdminHeader title="Timesheets" subtitle="Timesheets staff have sent, by month" Icon={Timer} action={
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-xl bg-white px-1 py-1 shadow-sm ring-1 ring-slate-200">
-            <button onClick={() => shiftMonth(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"><ChevronLeft size={16} /></button>
+            <button onClick={() => shiftMonth(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><ChevronLeft size={16} /></button>
             <span className="min-w-[120px] text-center text-xs font-bold text-slate-600">{monthLabel(month)}</span>
-            <button onClick={() => shiftMonth(1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100"><ChevronRight size={16} /></button>
+            <button onClick={() => shiftMonth(1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><ChevronRight size={16} /></button>
           </div>
           <button onClick={exportCsv} disabled={!list.length} className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-50"><Download size={14} /> Export</button>
         </div>
@@ -5649,7 +5650,7 @@ function AdminTimesheets({ store }) {
       </div>
 
       {entries === null ? (
-        <div className="flex flex-col items-center gap-2 py-16 text-slate-400"><Loader2 size={24} className="animate-spin" /><p className="text-sm font-semibold">Loading timesheets…</p></div>
+        <div className="flex flex-col items-center gap-2 py-16 text-slate-500"><Loader2 size={24} className="animate-spin" /><p className="text-sm font-semibold">Loading timesheets…</p></div>
       ) : people.length === 0 ? (
         <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-slate-100"><Timer size={34} className="mx-auto mb-2 text-slate-300" /><p className="text-sm font-semibold text-slate-500">No timesheets sent for {monthLabel(month)} yet.</p></div>
       ) : (
@@ -5667,10 +5668,10 @@ function AdminTimesheets({ store }) {
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white" style={{ background: p.colour || NAVY }}>{p.initials}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold text-slate-700">{p.name}</p>
-                    <p className="truncate text-[11px] text-slate-400">{p.dept} · {p.entries.length} session{p.entries.length === 1 ? "" : "s"}</p>
+                    <p className="truncate text-[11px] text-slate-600">{p.dept} · {p.entries.length} session{p.entries.length === 1 ? "" : "s"}</p>
                   </div>
                   <span className={`hidden shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ring-1 sm:inline-flex ${badge.cls}`}><badge.I size={11} /> {badge.label}</span>
-                  <div className="shrink-0 text-right"><p className="text-base font-extrabold" style={{ color: NAVY }}>{fmtHours(pMin)}h</p><p className="text-[10px] text-slate-400">{fmtHours(pCampus)}h campus</p></div>
+                  <div className="shrink-0 text-right"><p className="text-base font-extrabold" style={{ color: NAVY }}>{fmtHours(pMin)}h</p><p className="text-[10px] text-slate-600">{fmtHours(pCampus)}h campus</p></div>
                   <ChevronDown size={18} className={`shrink-0 text-slate-300 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 </button>
                 {isOpen && (
@@ -5679,7 +5680,7 @@ function AdminTimesheets({ store }) {
                     {p.entries.slice().sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)).map(e => (
                       <div key={e.id} className="flex items-center gap-3 rounded-xl px-2.5 py-2">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white" style={{ background: e.mode === "campus" ? NAVY : "#0d7a5f" }}>{e.mode === "campus" ? <Building2 size={14} /> : <Wifi size={14} />}</span>
-                        <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-slate-700">{e.title}</p><p className="text-[10px] text-slate-400">{prettyDay(e.date)} · {e.start}–{e.end} · {e.mode === "campus" ? "Campus" : "Online"}</p></div>
+                        <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-slate-700">{e.title}</p><p className="text-[10px] text-slate-600">{prettyDay(e.date)} · {e.start}–{e.end} · {e.mode === "campus" ? "Campus" : "Online"}</p></div>
                         <span className="shrink-0 text-xs font-bold text-slate-500">{fmtHours(e.minutes)}h</span>
                       </div>
                     ))}
@@ -5749,7 +5750,9 @@ function AdminHeader({ title, subtitle, action, Icon, tone = BLUE }) {
         {Icon && <span className="hidden h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg transition-transform duration-300 hover:scale-105 hover:-rotate-3 sm:flex" style={{ background: grad(tone), boxShadow: `0 10px 22px -8px ${alpha(tone, 56)}` }}><Icon size={24} /></span>}
         <div>
           <h2 className="text-2xl font-extrabold tracking-tight" style={{ color: NAVY_DARK }}>{title}</h2>
-          {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+          {/* slate-600, not slate-500: the header sits directly on the bg-slate-100
+              main (no white card), where slate-500 measures 4.34:1 and fails AA. */}
+          {subtitle && <p className="text-sm text-slate-600">{subtitle}</p>}
         </div>
       </div>
       {action}
@@ -5813,7 +5816,7 @@ function AdminOverview({ store, setTab }) {
           <div className="grid gap-2 sm:grid-cols-2">
             {inToday.length === 0 && <div className="sm:col-span-2"><EmptyState Icon={Clock3} title="No check-ins yet" msg="Staff who clock in today will appear here." /></div>}
             {inToday.map((c, i) => { const p = store.staff.find(s => s.id === c.staffId); return (
-              <div key={c.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-sm pop" style={{ animationDelay: `${i * 40}ms` }}><span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-400">In {c.in}{c.out ? ` · Out ${c.out}` : ""}</p></div><span className={`h-2.5 w-2.5 rounded-full ${c.out ? "bg-slate-300" : "bg-emerald-500"}`} /></div>
+              <div key={c.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-sm pop" style={{ animationDelay: `${i * 40}ms` }}><span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-600">In {c.in}{c.out ? ` · Out ${c.out}` : ""}</p></div><span className={`h-2.5 w-2.5 rounded-full ${c.out ? "bg-slate-300" : "bg-emerald-500"}`} /></div>
             ); })}
           </div>
         </div>
@@ -5827,10 +5830,10 @@ function AdminOverview({ store, setTab }) {
             {pending.slice(0, 5).map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); return (
               <div key={l.id} className="flex items-center gap-2.5 rounded-xl bg-amber-50/60 px-3 py-2 ring-1 ring-amber-100 pop" style={{ animationDelay: `${i * 40}ms` }}>
                 <span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{p?.name}</p><p className="truncate text-xs text-slate-400">{t.label} · {store.chargeableDays(l.start, l.end)}d</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{p?.name}</p><p className="truncate text-xs text-slate-500">{t.label} · {store.chargeableDays(l.start, l.end)}d</p></div>
               </div>
             ); })}
-            {pending.length > 5 && <p className="text-center text-[11px] font-semibold text-slate-400">+{pending.length - 5} more</p>}
+            {pending.length > 5 && <p className="text-center text-[11px] font-semibold text-slate-500">+{pending.length - 5} more</p>}
           </div>
         </div>
       </div>
@@ -5878,7 +5881,7 @@ function AdminCheckin({ store }) {
       })()}
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Staff</th><th className="px-5 py-3">Dept</th><th className="px-5 py-3">Site</th><th className="px-5 py-3">In</th><th className="px-5 py-3">Out</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Action</th></tr></thead>
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600"><tr><th className="px-5 py-3">Staff</th><th className="px-5 py-3">Dept</th><th className="px-5 py-3">Site</th><th className="px-5 py-3">In</th><th className="px-5 py-3">Out</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Action</th></tr></thead>
           <tbody>
             {paged.slice.map(s => { const r = recs.find(c => c.staffId === s.id); const checkedIn = r && r.in; return (
               <tr key={s.id} className="border-t border-slate-100 transition-colors duration-150 hover:bg-blue-50/40">
@@ -5887,7 +5890,7 @@ function AdminCheckin({ store }) {
                 <td className="px-5 py-3">{r?.site ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{r.site}</span> : <span className="text-slate-300">—</span>}</td>
                 <td className="px-5 py-3 font-medium text-slate-600">{r?.in || "—"}</td><td className="px-5 py-3 font-medium text-slate-600">{r?.out || (checkedIn ? "in" : "—")}</td>
                 <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${checkedIn ? (r.out ? "bg-slate-100 text-slate-500" : "bg-emerald-100 text-emerald-700") : "bg-rose-100 text-rose-600"}`}>{checkedIn ? (r.out ? "Complete" : "Present") : "Absent"}</span></td>
-                <td className="px-5 py-3">{checkedIn && !r.out ? <button onClick={() => setOut(r)} className="text-xs font-bold text-blue-600 hover:underline">Check out</button> : <button onClick={() => { setForm({ staffId: s.id, in: r?.in || "09:00", out: r?.out || "", site: r?.site || "" }); setModal(true); }} className="text-xs font-bold text-slate-400 hover:text-slate-600">Edit</button>}</td>
+                <td className="px-5 py-3">{checkedIn && !r.out ? <button onClick={() => setOut(r)} className="text-xs font-bold text-blue-600 hover:underline">Check out</button> : <button onClick={() => { setForm({ staffId: s.id, in: r?.in || "09:00", out: r?.out || "", site: r?.site || "" }); setModal(true); }} className="text-xs font-bold text-slate-500 hover:text-slate-600">Edit</button>}</td>
               </tr>
             ); })}
             {paged.slice.length === 0 && <tr><td colSpan={7} className="px-5 py-10"><EmptyState Icon={Search} title="No staff match" msg="Try a different name or department." /></td></tr>}
@@ -5900,7 +5903,7 @@ function AdminCheckin({ store }) {
           <Field label="Staff member"><select value={form.staffId} onChange={e => setForm(f => ({ ...f, staffId: e.target.value }))} className={inputCls}><option value="">Choose…</option>{store.staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
           <div className="grid grid-cols-2 gap-3"><Field label="Time in"><input type="time" value={form.in} onChange={e => setForm(f => ({ ...f, in: e.target.value }))} className={inputCls} /></Field><Field label="Time out (optional)"><input type="time" value={form.out} onChange={e => setForm(f => ({ ...f, out: e.target.value }))} className={inputCls} /></Field></div>
           <Field label="Site (optional)"><select value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} className={inputCls}><option value="">—</option>{SITES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
-          <p className="text-xs text-slate-400">Date: {fmtDate(day)}</p>
+          <p className="text-xs text-slate-500">Date: {fmtDate(day)}</p>
           <PrimaryBtn onClick={addCheckin} className="w-full"><Save size={16} /> Save record</PrimaryBtn>
         </div>
       </Modal>
@@ -5947,11 +5950,11 @@ function AdminBalances({ store }) {
       </div>
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Staff</th><th className="px-5 py-3">Base</th><th className="px-5 py-3">Adj</th><th className="px-5 py-3">Used</th><th className="px-5 py-3">Bank</th><th className="px-5 py-3">Remaining</th><th className="px-5 py-3 w-40">Usage</th><th className="px-5 py-3">Actions</th></tr></thead>
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600"><tr><th className="px-5 py-3">Staff</th><th className="px-5 py-3">Base</th><th className="px-5 py-3">Adj</th><th className="px-5 py-3">Used</th><th className="px-5 py-3">Bank</th><th className="px-5 py-3">Remaining</th><th className="px-5 py-3 w-40">Usage</th><th className="px-5 py-3">Actions</th></tr></thead>
           <tbody>
             {paged.slice.map(s => { const bookable = store.bookableAllowance(s.id); const used = store.usedDays(s.id); const bank = store.bankHolidayTotal; const left = store.remaining(s.id); const adjv = store.adjDays(s.id); const pct = bookable > 0 ? Math.round(used / bookable * 100) : 0; return (
               <tr key={s.id} className="border-t border-slate-100 transition-colors duration-150 hover:bg-blue-50/40">
-                <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-400">{s.dept}</p></div></div></td>
+                <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-500">{s.dept}</p></div></div></td>
                 <td className="px-5 py-3 font-medium text-slate-600">{s.allowance}d</td>
                 <td className="px-5 py-3 font-medium" style={{ color: adjv > 0 ? "#059669" : adjv < 0 ? MAROON : "#94a3b8" }}>{adjv > 0 ? "+" : ""}{adjv}d</td>
                 <td className="px-5 py-3 font-medium" style={{ color: MAROON }}>{used}d</td>
@@ -5966,7 +5969,7 @@ function AdminBalances({ store }) {
         </table>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
-      {store.adjustments.length > 0 && <div className="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up"><p className="mb-3 text-sm font-bold text-slate-700">Adjustment history</p><div className="space-y-2">{store.adjustments.slice().reverse().map(a => { const s = store.staff.find(x => x.id === a.staffId); return <div key={a.id} className="flex items-center gap-3 text-sm"><span className="font-semibold" style={{ color: a.days >= 0 ? "#059669" : MAROON }}>{a.days >= 0 ? "+" : ""}{a.days}d</span><span className="text-slate-700">{s?.name}</span><span className="text-slate-400">— {a.note}</span><span className="ml-auto text-xs text-slate-400">{fmtDate(a.date)}</span><button onClick={() => removeAdj(a)} title="Delete adjustment" className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>; })}</div></div>}
+      {store.adjustments.length > 0 && <div className="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up"><p className="mb-3 text-sm font-bold text-slate-700">Adjustment history</p><div className="space-y-2">{store.adjustments.slice().reverse().map(a => { const s = store.staff.find(x => x.id === a.staffId); return <div key={a.id} className="flex items-center gap-3 text-sm"><span className="font-semibold" style={{ color: a.days >= 0 ? "#059669" : MAROON }}>{a.days >= 0 ? "+" : ""}{a.days}d</span><span className="text-slate-700">{s?.name}</span><span className="text-slate-500">— {a.note}</span><span className="ml-auto text-xs text-slate-500">{fmtDate(a.date)}</span><button onClick={() => removeAdj(a)} title="Delete adjustment" className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>; })}</div></div>}
       <Modal open={!!adjModal} onClose={() => setAdjModal(null)} title={`Adjust days — ${adjModal?.name || ""}`}>
         <div className="space-y-3">
           <Field label="Days (use negative to deduct)"><div className="flex items-center gap-2"><button onClick={() => setAdj(a => ({ ...a, days: a.days - 1 }))} className="rounded-lg bg-slate-100 p-2 hover:bg-slate-200"><MinusCircle size={18} /></button><input type="number" value={adj.days} onChange={e => setAdj(a => ({ ...a, days: e.target.value }))} className={inputCls + " text-center"} /><button onClick={() => setAdj(a => ({ ...a, days: Number(a.days) + 1 }))} className="rounded-lg bg-slate-100 p-2 hover:bg-slate-200"><PlusCircle size={18} /></button></div></Field>
@@ -6024,7 +6027,7 @@ function AdminCalendar({ store }) {
         action={<PrimaryBtn onClick={openAdd}><Plus size={16} /> Add holiday</PrimaryBtn>} />
       <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
         <MonthGrid store={store} big showPending />
-        <div className="mt-4 border-t border-slate-100 pt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Leave types</p><LeaveLegend />
+        <div className="mt-4 border-t border-slate-100 pt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Leave types</p><LeaveLegend />
           <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" /> Bank holiday — a fixed day off for all staff, separate from the bookable allowance</div>
         </div>
       </div>
@@ -6211,7 +6214,7 @@ function AdminDocuments({ store }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {store.docs.map((d, i) => { const I = iconFor(d.type); const dc = docTypeColour(d.type); const assignee = d.assignedTo ? store.staff.find(s => s.id === d.assignedTo) : null; return (
           <div key={d.id} className="hover-lift group rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:shadow-lg hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${i * 40}ms` }}>
-            <div className="flex items-start gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: dc + "14" }}><I size={20} style={{ color: dc }} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-700">{d.name}</p><p className="text-xs text-slate-400">{fmtDate(d.date)}{d.hasFile && d.sizeBytes ? ` · ${fmtBytes(d.sizeBytes)}` : ""}</p></div><button onClick={() => del(d)} className="rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 group-hover:opacity-100"><Trash2 size={15} /></button></div>
+            <div className="flex items-start gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: dc + "14" }}><I size={20} style={{ color: dc }} /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-700">{d.name}</p><p className="text-xs text-slate-500">{fmtDate(d.date)}{d.hasFile && d.sizeBytes ? ` · ${fmtBytes(d.sizeBytes)}` : ""}</p></div><button onClick={() => del(d)} className="rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-500 group-hover:opacity-100"><Trash2 size={15} /></button></div>
             <div className="mt-3 flex flex-wrap gap-1.5"><span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: dc + "1a", color: dc }}>{d.type}</span><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${d.scope === "all" ? "bg-blue-100 text-blue-700" : "bg-amber-100 text-amber-700"}`}>{d.scope === "all" ? "All staff" : assignee ? `Private · ${assignee.name.split(" ")[0]}` : "Personal template"}</span></div>
             {/* A file-bearing document opens; a fileless one (created before uploads
                 existed, or whose upload failed) can now have a file ATTACHED from here
@@ -6240,7 +6243,7 @@ function AdminDocuments({ store }) {
           <Field label="Visibility"><select value={form.scope} onChange={e => setForm(f => ({ ...f, scope: e.target.value }))} className={inputCls}><option value="all">All staff</option><option value="personal">Private (one person)</option></select></Field>
           {form.scope === "personal" && <Field label="Assign to"><select value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))} className={inputCls}><option value="">Select staff…</option>{store.staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>}
           <Field label="File (optional)">
-            <label className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl border-2 border-dashed py-5 text-center text-xs transition ${file ? "border-emerald-300 bg-emerald-50/50 text-emerald-700" : "border-slate-200 text-slate-400 hover:border-slate-300 hover:bg-slate-50"}`}>
+            <label className={`flex cursor-pointer flex-col items-center gap-1 rounded-xl border-2 border-dashed py-5 text-center text-xs transition ${file ? "border-emerald-300 bg-emerald-50/50 text-emerald-700" : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"}`}>
               <input
                 type="file" className="hidden" disabled={uploading}
                 onChange={(e) => { const f = e.target.files?.[0] || null; setUploadErr(""); if (f && f.size > MAX_UPLOAD_BYTES) { setUploadErr(`That file is ${fmtBytes(f.size)} — the limit is ${fmtBytes(MAX_UPLOAD_BYTES)}.`); setFile(null); } else setFile(f); }}
@@ -6277,7 +6280,7 @@ function AdminApprovals({ store }) {
             {pending.length === 0 && <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200"><EmptyState Icon={CheckCircle2} title="Nothing to approve" msg="You're all caught up." /></div>}
             {pending.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); const T = t.icon; return (
               <div key={l.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${i * 50}ms` }}>
-                <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-400">{p?.role}</p></div><span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}><T size={11} /> {t.label}</span></div>
+                <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{p?.role}</p></div><span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}><T size={11} /> {t.label}</span></div>
                 <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600"><p><b>{fmtDate(l.start)}</b>{l.end !== l.start && <> → <b>{fmtDate(l.end)}</b></>} · {store.chargeableDays(l.start, l.end)}d</p><p className="mt-1 italic text-slate-500">"{l.reason}"</p></div>
                 <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => { setNoteModal({ leave: l, action: "rejected" }); setNote(""); }} className="flex items-center justify-center gap-1.5 rounded-xl border-2 border-rose-200 py-2.5 text-sm font-bold text-rose-600 hover:bg-rose-50"><XCircle size={16} /> Decline</button><PrimaryBtn colour="#059669" onClick={() => { setNoteModal({ leave: l, action: "approved" }); setNote(""); }} className="!py-2.5"><CheckCircle2 size={16} /> Approve</PrimaryBtn></div>
               </div>
@@ -6477,7 +6480,7 @@ function AdminSignups({ store }) {
                   </span>
                   <div className="flex-1">
                     <p className="text-sm font-bold text-slate-700">{r.name}</p>
-                    <p className="text-xs text-slate-400">{r.kind === "student" ? "Student" : `${r.role} · ${r.dept}`}</p>
+                    <p className="text-xs text-slate-500">{r.kind === "student" ? "Student" : `${r.role} · ${r.dept}`}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${r.kind === "student" ? "bg-violet-100 text-violet-700" : "bg-blue-100 text-blue-700"}`}>{r.kind === "student" ? <><GraduationCap size={10} /> Student</> : <><Briefcase size={10} /> Staff</>}</span>
@@ -6489,14 +6492,14 @@ function AdminSignups({ store }) {
                   {r.kind === "student"
                     ? <>
                         <p className="flex items-center gap-1.5"><GraduationCap size={12} className="text-slate-400" /> Student{r.collegeId ? ` · College ID ${r.collegeId}` : ""}</p>
-                        <p className="flex items-center gap-1.5 text-slate-400">{r.studentId ? "Matches an existing student record" : "No matching record — a new one will be created on approval"}</p>
+                        <p className="flex items-center gap-1.5 text-slate-600">{r.studentId ? "Matches an existing student record" : "No matching record — a new one will be created on approval"}</p>
                       </>
                     : <>
                         <p className="flex items-center gap-1.5"><Briefcase size={12} className="text-slate-400" /> {r.role}</p>
                         <p className="flex items-center gap-1.5"><Building2 size={12} className="text-slate-400" /> {r.dept}</p>
                         {r.site && <p className="flex items-center gap-1.5"><MapPin size={12} className="text-slate-400" /> {r.site}</p>}
                       </>}
-                  <p className="flex items-center gap-1.5 text-slate-400"><Clock3 size={12} /> Requested {fmtDate(String(r.requestedAt).slice(0, 10))}</p>
+                  <p className="flex items-center gap-1.5 text-slate-600"><Clock3 size={12} /> Requested {fmtDate(String(r.requestedAt).slice(0, 10))}</p>
                 </div>
                 <button onClick={() => open(r, "edit")}
                   className="press mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 bg-white py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">
@@ -6548,7 +6551,7 @@ function AdminSignups({ store }) {
         <div className="space-y-3">
           {modal?.action !== "rejected" ? (
             <div className="space-y-2.5 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600">
                 {modal?.action === "edit" ? "What they submitted — correct anything and save" : "What they submitted — correct anything before approving"}
               </p>
               <Field label="Full name">
@@ -6581,7 +6584,7 @@ function AdminSignups({ store }) {
               )}
               {/* The password is stored hashed and is never shown or changed here — the
                   applicant must still be able to sign in with the one they chose. */}
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-600">
                 Their password is not shown and cannot be changed — they keep the one they chose.
               </p>
             </div>
@@ -6756,12 +6759,12 @@ function AdminPasswords() {
                       <span className={"truncate text-sm font-bold " + (isPicked(p) ? "text-white" : "text-slate-700")}>{p.name}</span>
                       {p.isSuperAdmin && <span className="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-700">SUPER ADMIN</span>}
                     </span>
-                    <span className={"block truncate text-[11px] " + (isPicked(p) ? "text-white/70" : "text-slate-400")}>{p.detail} - {p.email}</span>
+                    <span className={"block truncate text-[11px] " + (isPicked(p) ? "text-white/70" : "text-slate-500")}>{p.detail} - {p.email}</span>
                     {p.note && <span className={"block truncate text-[10px] " + (isPicked(p) ? "text-white/60" : "text-amber-600")}>{p.note}</span>}
                   </span>
                 </button>
               ))}
-              {list.length === 0 && <p className="px-1 py-8 text-center text-xs text-slate-400">Nobody matches that search.</p>}
+              {list.length === 0 && <p className="px-1 py-8 text-center text-xs text-slate-500">Nobody matches that search.</p>}
             </div>
           )}
         </div>
@@ -6775,7 +6778,7 @@ function AdminPasswords() {
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: picked.colour || NAVY }}>{picked.initials}</span>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-extrabold" style={{ color: NAVY }}>{picked.name}</p>
-                  <p className="truncate text-[11px] text-slate-400">{picked.detail} - {picked.email}</p>
+                  <p className="truncate text-[11px] text-slate-600">{picked.detail} - {picked.email}</p>
                 </div>
               </div>
 
@@ -6862,15 +6865,15 @@ function AdminStudentQueries({ store }) {
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: q.studentColour || NAVY }}>{q.studentInitials || "S"}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-slate-700">{q.studentName || "Student"} <span className="text-[11px] font-medium text-slate-400">{q.studentRef ? `· ${q.studentRef}` : ""}</span></p>
-                <p className="truncate text-xs text-slate-400">{q.subject}</p>
+                <p className="truncate text-sm font-bold text-slate-700">{q.studentName || "Student"} <span className="text-[11px] font-medium text-slate-500">{q.studentRef ? `· ${q.studentRef}` : ""}</span></p>
+                <p className="truncate text-xs text-slate-500">{q.subject}</p>
               </div>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${q.status === "open" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{q.status === "open" ? "Open" : "Answered"}</span>
             </div>
             <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">{q.message}</p>
             {q.response && <div className="mt-2 rounded-xl bg-blue-50 px-3 py-2 text-sm text-blue-800 ring-1 ring-blue-100"><p className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-500">Your reply{q.respondedBy ? ` · ${q.respondedBy}` : ""}{q.respondedAt ? ` · ${fmtDate(q.respondedAt)}` : ""}</p>{q.response}</div>}
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-[11px] text-slate-400">Sent {fmtDate(String(q.createdAt).slice(0, 10))}</p>
+              <p className="text-[11px] text-slate-500">Sent {fmtDate(String(q.createdAt).slice(0, 10))}</p>
               <PrimaryBtn onClick={() => openReply(q)} className="!py-2 !px-3 text-xs">{q.status === "open" ? <><Send size={14} /> Reply</> : <><Edit3 size={14} /> Edit reply</>}</PrimaryBtn>
             </div>
           </div>
@@ -6881,7 +6884,7 @@ function AdminStudentQueries({ store }) {
         <div className="space-y-3">
           <div className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
             <p className="text-sm font-bold text-slate-700">{modal?.studentName}</p>
-            <p className="text-[11px] text-slate-400">{modal?.subject}</p>
+            <p className="text-[11px] text-slate-600">{modal?.subject}</p>
             <p className="mt-1.5 text-sm text-slate-600">{modal?.message}</p>
           </div>
           <Field label="Your acknowledgement / feedback">
@@ -6922,8 +6925,8 @@ function AdminSummaries({ store }) {
       <div className="grid gap-3 md:grid-cols-2">
         {paged.slice.map(({ s, rec }, i) => (
           <div key={s.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${i * 35}ms` }}>
-            <div className="mb-2 flex items-center gap-2.5"><span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="text-sm font-bold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-400">{s.dept}{rec && rec.in ? ` · In ${rec.in}${rec.out ? ` · Out ${rec.out}` : ""}` : ""}</p></div></div>
-            {rec?.summary ? <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">{rec.summary}</p> : <p className="rounded-xl border border-dashed border-slate-200 px-3 py-2.5 text-sm italic text-slate-400">No summary submitted</p>}
+            <div className="mb-2 flex items-center gap-2.5"><span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="text-sm font-bold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-500">{s.dept}{rec && rec.in ? ` · In ${rec.in}${rec.out ? ` · Out ${rec.out}` : ""}` : ""}</p></div></div>
+            {rec?.summary ? <p className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">{rec.summary}</p> : <p className="rounded-xl border border-dashed border-slate-200 px-3 py-2.5 text-sm italic text-slate-500">No summary submitted</p>}
           </div>
         ))}
       </div>
@@ -7076,7 +7079,7 @@ function HndSemesterPicker({ store }) {
   return (
     <label className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
       <CalendarDays size={14} className="text-slate-400" />
-      <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Semester</span>
+      <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Semester</span>
       <select value={semesterId} onChange={e => setSemesterId(e.target.value)} className="bg-transparent text-xs font-bold outline-none" style={{ color: NAVY }}>
         <option value="">All semesters</option>
         {semesters.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -7232,7 +7235,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300 sm:flex-none">
           <BookOpen size={15} className="shrink-0 text-slate-400" />
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Unit</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Unit</span>
           <select value={unitId || ""} onChange={e => setUnitId(e.target.value)}
             className="min-w-0 max-w-[26rem] flex-1 bg-transparent text-sm font-bold text-slate-700 outline-none">
             {!unitId && <option value="">Choose a unit…</option>}
@@ -7262,7 +7265,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-lg font-extrabold" style={{ color: NAVY_DARK }}>{selected.name}</p>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               {selected.code}{selected.tutor ? ` · Tutor: ${selected.tutor}` : ""}
               {store.semesterId ? ` · ${semesterLabel(store.semesterId, store.semesters)}` : ""}
             </p>
@@ -7282,7 +7285,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Date</th><th className="px-5 py-3">Time</th><th className="px-5 py-3">Type</th><th className="px-5 py-3">Description</th><th className="px-5 py-3">Register</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
@@ -7297,7 +7300,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
                       {s.date === today && <span className="ml-2 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-700">TODAY</span>}
                       {/* Only worth showing when it isn't already implied by the picker. */}
                       {!store.semesterId && store.semesters.length > 0 && (
-                        <p className={`mt-0.5 text-[10px] font-semibold ${sem ? "text-slate-400" : "text-amber-600"}`}>{sem ? sem.name : "Outside any semester"}</p>
+                        <p className={`mt-0.5 text-[10px] font-semibold ${sem ? "text-slate-500" : "text-amber-600"}`}>{sem ? sem.name : "Outside any semester"}</p>
                       )}
                     </td>
                     <td className="px-5 py-3 font-medium text-slate-600 whitespace-nowrap tabular-nums">{fmt12(s.start)} – {fmt12(s.end)}</td>
@@ -7376,7 +7379,7 @@ function HndSessions({ store, unitId, setUnitId, selected, onTake, onLive, check
               </span>
             </div>
           )}
-          <p className="text-xs text-slate-400">Unit: {selected?.code} — {selected?.name}</p>
+          <p className="text-xs text-slate-500">Unit: {selected?.code} — {selected?.name}</p>
           <PrimaryBtn onClick={save} className="w-full"><Save size={16} /> {edit ? "Save changes" : "Add session"}</PrimaryBtn>
         </div>
       </Modal>
@@ -7604,7 +7607,7 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-5 py-3">Student</th>
                 <th className="px-5 py-3">Email address</th>
@@ -7644,7 +7647,7 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span>
                         <div>
                           <p className="font-semibold" style={{ color: NAVY }}>{r.student.name}</p>
-                          <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                          <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
                             {r.student.studentRef}
                             {/* HOW this mark got here, on the row it belongs to. Icon plus
                                 title plus sr-only, the same three parts the live view uses,
@@ -7714,7 +7717,7 @@ function HndRegister({ store, sessionId, onBack, onLive, checkIn }) {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-slate-500">
           P = Present (2 pts) · L = Late (1) · E = Excused (1) · A = Absent (0). Click a selected mark again to clear it.
           {/* WHO TOOK THIS REGISTER, and how much of it the students took themselves.
               The first half used to read `rows.find(r => r.takenBy)?.takenBy`, which on a
@@ -7895,7 +7898,7 @@ function HndPercentages({ store }) {
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center scale-in">
                 <span className="text-3xl font-extrabold tabular-nums" style={{ color: pctTone(overall.pct).colour }}>{fmtPct(overall.pct)}</span>
-                <span className="text-[11px] font-medium text-slate-400">overall</span>
+                <span className="text-[11px] font-medium text-slate-500">overall</span>
               </div>
             </div>
           </div>
@@ -7903,11 +7906,11 @@ function HndPercentages({ store }) {
             {ATT_STATUSES.map(s => (
               <div key={s.key} className="rounded-lg py-1.5" style={{ background: s.colour + "12" }}>
                 <p className="text-sm font-extrabold" style={{ color: s.colour }}>{overall[s.key]}</p>
-                <p className="text-[9px] font-medium text-slate-400">{s.label}</p>
+                <p className="text-[9px] font-medium text-slate-500">{s.label}</p>
               </div>
             ))}
           </div>
-          <p className="mt-3 text-center text-[11px] text-slate-400">{overall.earned} of {overall.possible} points across {overall.marked} marks</p>
+          <p className="mt-3 text-center text-[11px] text-slate-500">{overall.earned} of {overall.possible} points across {overall.marked} marks</p>
         </div>
       </div>
 
@@ -7940,7 +7943,7 @@ function HndPercentages({ store }) {
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-5 py-3">Student</th>
                 {visibleUnits.map(m => <th key={m.id} className="px-4 py-3 text-center" title={m.name}>{m.code}</th>)}
@@ -7953,7 +7956,7 @@ function HndPercentages({ store }) {
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span>
-                      <div><p className="font-semibold text-slate-700">{r.student.name}</p><p className="text-[11px] text-slate-400">{r.student.studentRef}</p></div>
+                      <div><p className="font-semibold text-slate-700">{r.student.name}</p><p className="text-[11px] text-slate-500">{r.student.studentRef}</p></div>
                     </div>
                   </td>
                   {visibleUnits.map(m => {
@@ -7965,7 +7968,7 @@ function HndPercentages({ store }) {
                         <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${tone.bg} ${tone.text} ${tone.ring}`} title={`${cell.P} present · ${cell.L} late · ${cell.E} excused · ${cell.A} absent (${cell.earned}/${cell.possible} pts)`}>
                           {fmtPct(cell.pct)}
                         </span>
-                        <p className="mt-0.5 text-[9px] text-slate-400">{cell.marked} session{cell.marked === 1 ? "" : "s"}</p>
+                        <p className="mt-0.5 text-[9px] text-slate-500">{cell.marked} session{cell.marked === 1 ? "" : "s"}</p>
                       </td>
                     );
                   })}
@@ -8099,7 +8102,7 @@ function HndStudents({ store }) {
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Number</th><th className="px-5 py-3">Email address</th><th className="px-5 py-3">Units</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
@@ -8142,7 +8145,7 @@ function HndStudents({ store }) {
           </div>
           <Field label="Student number"><input value={form.studentRef} onChange={e => setForm(f => ({ ...f, studentRef: e.target.value }))} placeholder="e.g. 100121" className={inputCls} /></Field>
           <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@edtech.co.uk"} className={inputCls} /></Field>
-          {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-400">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
+          {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-500">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
           <Field label="Cohort (intake)">
             <select value={form.cohortId} onChange={e => setForm(f => ({ ...f, cohortId: e.target.value }))} className={inputCls}>
               <option value="">— none —</option>
@@ -8155,7 +8158,7 @@ function HndStudents({ store }) {
               <option value="">— all courses —</option>
               {store.courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-500">
               {courseId ? "Only this course's units are listed below." : "Pick a course to narrow the list — every unit in the college is shown."}
             </p>
           </Field>
@@ -8171,7 +8174,7 @@ function HndStudents({ store }) {
                   {m.code}
                 </button>
               ))}
-              {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-400">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
+              {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-500">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
             </div>
             {otherCourseUnits.length > 0 && (
               <div className="mt-2.5 rounded-xl bg-amber-50/60 p-2.5 ring-1 ring-amber-200">
@@ -8184,7 +8187,7 @@ function HndStudents({ store }) {
                       <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
                         {form.unitIds.includes(m.id) && <Check size={10} className="text-white" />}
                       </span>
-                      <span className="min-w-0"><span className="block">{m.code}</span><span className={`block truncate text-[9px] font-semibold ${form.unitIds.includes(m.id) ? "text-white/70" : "text-slate-400"}`}>{shortCourse(c?.name) || "Other course"}</span></span>
+                      <span className="min-w-0"><span className="block">{m.code}</span><span className={`block truncate text-[9px] font-semibold ${form.unitIds.includes(m.id) ? "text-white/70" : "text-slate-500"}`}>{shortCourse(c?.name) || "Other course"}</span></span>
                     </button>
                   ); })}
                 </div>
@@ -8432,13 +8435,13 @@ function AdminStudents({ store }) {
         </select>
         <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         {riskFilter === "High Risk" && <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-600 ring-1 ring-rose-200">Showing red flags</span>}
-        <span className="ml-auto text-xs font-semibold text-slate-400">{filtered.length} of {total}</span>
+        <span className="ml-auto text-xs font-semibold text-slate-500">{filtered.length} of {total}</span>
       </div>
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[680px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Email address</th><th className="px-5 py-3 whitespace-nowrap" title="Based on attendance across ALL units">Attendance risk</th><th className="px-5 py-3 text-center whitespace-nowrap" title="Current units only">Current %</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
@@ -8453,7 +8456,7 @@ function AdminStudents({ store }) {
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span>
                         <div className="min-w-0">
                           <p className="font-semibold text-slate-700">{s.name}</p>
-                          <p className="text-[11px] tabular-nums text-slate-400">{s.studentRef}</p>
+                          <p className="text-[11px] tabular-nums text-slate-500">{s.studentRef}</p>
                         </div>
                       </div>
                     </td>
@@ -8490,7 +8493,7 @@ function AdminStudents({ store }) {
           </div>
           <Field label="Student number"><input value={form.studentRef} onChange={e => setForm(f => ({ ...f, studentRef: e.target.value }))} placeholder="e.g. 100121" className={inputCls} /></Field>
           <Field label="Email address"><input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder={emailPreview || "100121@edtech.co.uk"} className={inputCls} /></Field>
-          {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-400">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
+          {!form.email && emailPreview && <p className="-mt-1 text-[11px] text-slate-500">Leave blank to use <span className="font-semibold">{emailPreview}</span></p>}
           <Field label="Cohort (intake)">
             <select value={form.cohortId} onChange={e => setForm(f => ({ ...f, cohortId: e.target.value }))} className={inputCls}>
               <option value="">— none —</option>
@@ -8502,7 +8505,7 @@ function AdminStudents({ store }) {
             <Field label="Status">
               <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                 {[{ v: true, l: "Active" }, { v: false, l: "Inactive" }].map(o => (
-                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, active: o.v }))} className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.active === o.v ? "bg-white text-slate-700 shadow-sm" : "text-slate-400"}`}>{o.l}</button>
+                  <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, active: o.v }))} className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.active === o.v ? "bg-white text-slate-700 shadow-sm" : "text-slate-500"}`}>{o.l}</button>
                 ))}
               </div>
             </Field>
@@ -8512,7 +8515,7 @@ function AdminStudents({ store }) {
               <option value="">— all courses —</option>
               {store.courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <p className="mt-1 text-[11px] text-slate-400">
+            <p className="mt-1 text-[11px] text-slate-500">
               {courseId ? "Only this course's units are listed below." : "Pick a course to narrow the list — every unit in the college is shown."}
             </p>
           </Field>
@@ -8528,7 +8531,7 @@ function AdminStudents({ store }) {
                   {m.code}
                 </button>
               ))}
-              {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-400 sm:col-span-3">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
+              {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-500 sm:col-span-3">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
             </div>
             {otherCourseUnits.length > 0 && (
               <div className="mt-2.5 rounded-xl bg-amber-50/60 p-2.5 ring-1 ring-amber-200">
@@ -8541,7 +8544,7 @@ function AdminStudents({ store }) {
                       <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
                         {form.unitIds.includes(m.id) && <Check size={10} className="text-white" />}
                       </span>
-                      <span className="min-w-0"><span className="block">{m.code}</span><span className={`block truncate text-[9px] font-semibold ${form.unitIds.includes(m.id) ? "text-white/70" : "text-slate-400"}`}>{shortCourse(c?.name) || "Other course"}</span></span>
+                      <span className="min-w-0"><span className="block">{m.code}</span><span className={`block truncate text-[9px] font-semibold ${form.unitIds.includes(m.id) ? "text-white/70" : "text-slate-500"}`}>{shortCourse(c?.name) || "Other course"}</span></span>
                     </button>
                   ); })}
                 </div>
@@ -8679,7 +8682,7 @@ function StudentAttendanceDetail({ student, store }) {
       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm" style={{ background: student.colour }}>{student.initials}</span>
       <div className="min-w-0">
         <p className="truncate text-base font-extrabold" style={{ color: NAVY_DARK }}>{student.name}</p>
-        <p className="truncate text-xs text-slate-400">{student.studentRef} · {student.email}</p>
+        <p className="truncate text-xs text-slate-500">{student.studentRef} · {student.email}</p>
       </div>
     </div>
   );
@@ -8694,10 +8697,10 @@ function StudentAttendanceDetail({ student, store }) {
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-bold text-slate-700" title={mod.name}>{mod.name}</p>
           {end
-            ? <p className="mt-0.5 text-[10px] font-medium text-slate-400">{ended ? "Ended" : "Ends"} {fmtDate(end)}</p>
+            ? <p className="mt-0.5 text-[10px] font-medium text-slate-500">{ended ? "Ended" : "Ends"} {fmtDate(end)}</p>
             : <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${stats.pct ?? 0}%`, background: t.colour }} /></div>}
         </div>
-        <div className="shrink-0 text-right text-[10px] font-semibold tabular-nums text-slate-400">
+        <div className="shrink-0 text-right text-[10px] font-semibold tabular-nums text-slate-500">
           <span style={{ color: ATT_STATUSES[0].colour }}>P{stats.P}</span> <span style={{ color: ATT_STATUSES[1].colour }}>L{stats.L}</span> <span style={{ color: ATT_STATUSES[2].colour }}>E{stats.E}</span> <span style={{ color: ATT_STATUSES[3].colour }}>A{stats.A}</span>
           <span className="ml-1 text-slate-300">· {stats.marked} marked</span>
         </div>
@@ -8721,23 +8724,23 @@ function StudentAttendanceDetail({ student, store }) {
         <div className="rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-200/70">
           <p className="text-3xl font-extrabold tabular-nums" style={{ color: oTone.colour }}>{fmtPct(current.overall.pct ?? null)}</p>
           <p className="mt-0.5 text-xs font-bold text-slate-600">Current units</p>
-          <p className="text-[10px] text-slate-400">{current.overall.marked} marked · {current.units.length} running</p>
+          <p className="text-[10px] text-slate-500">{current.overall.marked} marked · {current.units.length} running</p>
         </div>
         <div className="rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-200/70">
           <p className="text-3xl font-extrabold tabular-nums" style={{ color: allTone.colour }}>{fmtPct(allOverall.pct ?? null)}</p>
           <p className="mt-0.5 text-xs font-bold text-slate-600">All units</p>
-          <p className="text-[10px] text-slate-400">{allOverall.marked} marked · {unitRows.length} total</p>
+          <p className="text-[10px] text-slate-500">{allOverall.marked} marked · {unitRows.length} total</p>
         </div>
       </div>
 
       {/* ---- Student dashboard: course, rating, results, charts ---- */}
       <div className="flex items-center justify-between gap-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Cohort</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Cohort</p>
           <p className="truncate text-sm font-bold text-slate-700">{firstCourse}</p>
         </div>
         <div className="text-right">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Attendance rating</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Attendance rating</p>
           <span className="mt-0.5 inline-block rounded-lg px-3 py-1 text-sm font-extrabold" style={{ background: rating.bg, color: rating.colour }}>{rating.label}</span>
         </div>
       </div>
@@ -8790,11 +8793,11 @@ function StudentAttendanceDetail({ student, store }) {
               {ATT_STATUSES.map(s => (
                 <div key={s.key} className="rounded-lg py-1.5" style={{ background: s.colour + "12" }}>
                   <p className="text-sm font-extrabold tabular-nums" style={{ color: s.colour }}>{current.overall[s.key] ?? 0}</p>
-                  <p className="text-[9px] font-medium text-slate-400">{s.label}</p>
+                  <p className="text-[9px] font-medium text-slate-600">{s.label}</p>
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">{current.overall.marked ?? 0} session{(current.overall.marked ?? 0) === 1 ? "" : "s"} marked across current units</p>
+            <p className="mt-2 text-[11px] text-slate-600">{current.overall.marked ?? 0} session{(current.overall.marked ?? 0) === 1 ? "" : "s"} marked across current units</p>
           </div>
         </div>
         <div className="mt-3 overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200/70">
@@ -8806,7 +8809,7 @@ function StudentAttendanceDetail({ student, store }) {
       {/* Previous assigned units — finished ones, moved here automatically */}
       {previous.length > 0 && (
         <div>
-          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Previous assigned units · {previous.length}</p>
+          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Previous assigned units · {previous.length}</p>
           <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200/70">
             {previous.map((mr, i) => <UnitRow key={mr.unit.id} mod={mr.unit} stats={mr.summary} i={i} end={mr.endDate} ended={true} />)}
           </div>
@@ -8822,13 +8825,13 @@ function StudentAttendanceDetail({ student, store }) {
           into one empty message: no permission to see it, a student the model has
           never been able to score, and a score. */}
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Progression risk</p>
+        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Progression risk</p>
         {predDenied ? (
           <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500 ring-1 ring-slate-100">
             Hidden — your account doesn’t have access to Predictive Analysis.
           </p>
         ) : pred === null ? (
-          <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-400 ring-1 ring-slate-100">Loading…</p>
+          <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-600 ring-1 ring-slate-100">Loading…</p>
         ) : (
           /* PredictionDetail handles the unscored student itself — it renders the
              server's own `reason` and still offers "Record an intervention", because
@@ -8850,9 +8853,9 @@ function StudentAttendanceDetail({ student, store }) {
                   <div key={o.id} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
                     <b className="text-slate-700">{STUDENT_OUTCOME_LABELS[o.outcome] || o.outcome}</b>
                     {o.reason && <span className="text-slate-500">· {STUDENT_OUTCOME_REASON_LABELS[o.reason] || o.reason}</span>}
-                    <span className="text-slate-400">· {o.effectiveOn}</span>
+                    <span className="text-slate-500">· {o.effectiveOn}</span>
                     {o.riskLevelAtOutcome && (
-                      <span className="text-slate-400">
+                      <span className="text-slate-500">
                         · model said <b className="text-slate-600">{o.riskLevelAtOutcome}</b>
                         {o.scoreAtOutcome != null && ` (${o.scoreAtOutcome})`}
                       </span>
@@ -8889,7 +8892,7 @@ function StudentAttendanceDetail({ student, store }) {
         />
       </div>
 
-      <p className="text-[11px] text-slate-400">A unit moves to “previous” automatically once its last session date has passed. “Current units” counts only running units; “All units” is across everything the student has studied. P = Present (2) · L = Late (1) · E = Excused (1) · A = Absent (0). Only marked sessions count.</p>
+      <p className="text-[11px] text-slate-500">A unit moves to “previous” automatically once its last session date has passed. “Current units” counts only running units; “All units” is across everything the student has studied. P = Present (2) · L = Late (1) · E = Excused (1) · A = Absent (0). Only marked sessions count.</p>
     </div>
   );
 }
@@ -9111,8 +9114,8 @@ function SelfReflectionScreen({ store, me }) {
                 </button>
               : <Card className="text-sm text-slate-500">No self-reflection form is available yet.</Card>}
 
-            <p className="px-1 pt-1 text-[11px] font-extrabold uppercase tracking-widest text-slate-400">My reflections</p>
-            {rows.length === 0 && <Card className="text-sm text-slate-400">You haven't completed one yet. Tap “Start a new reflection” above.</Card>}
+            <p className="px-1 pt-1 text-[11px] font-extrabold uppercase tracking-widest text-slate-500">My reflections</p>
+            {rows.length === 0 && <Card className="text-sm text-slate-500">You haven't completed one yet. Tap “Start a new reflection” above.</Card>}
             {rows.map((r, i) => (
               <Card key={r.id} className="!p-3.5 fade-up" style={{ animationDelay: `${i * 55}ms` }}>
                 <div className="flex items-center gap-3">
@@ -9121,7 +9124,7 @@ function SelfReflectionScreen({ store, me }) {
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-bold text-slate-700">{r.formTitle}</p>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-500">
                       {[r.term, r.academicYear].filter(Boolean).join(" · ") || "Not yet dated"}
                       {r.dateCompleted ? ` · ${fmtDate(r.dateCompleted)}` : ""}
                     </p>
@@ -9139,7 +9142,7 @@ function SelfReflectionScreen({ store, me }) {
                 </div>
               </Card>
             ))}
-            <p className="px-1 pb-2 text-center text-[10px] leading-relaxed text-slate-400">
+            <p className="px-1 pb-2 text-center text-[10px] leading-relaxed text-slate-500">
               Once submitted, your reflection goes to the college and can no longer be edited here.
             </p>
           </>
@@ -9165,7 +9168,7 @@ function SelfReflectionScreen({ store, me }) {
         <button onClick={() => setMode("list")} className="press flex items-center gap-1.5 text-sm font-bold text-slate-500"><ChevronLeft size={16} /> Back to my reflections</button>
         <Card>
           <p className="text-sm font-extrabold text-slate-700">{current?.formTitle}</p>
-          <p className="mt-0.5 text-[11px] text-slate-400">
+          <p className="mt-0.5 text-[11px] text-slate-500">
             {[current?.term, current?.academicYear].filter(Boolean).join(" · ") || "—"}
             {current?.dateCompleted ? ` · ${fmtDate(current.dateCompleted)}` : ""}
             {" · "}{current?.status === "draft" ? "Draft" : "Submitted"}
@@ -9182,7 +9185,7 @@ function SelfReflectionScreen({ store, me }) {
   return (
     <Screen>
       <div>
-        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-400">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-500">
           <span className="truncate pr-2">{page?.title}</span>
           <span className="shrink-0">Page {step + 1} of {pages.length}</span>
         </div>
@@ -9221,7 +9224,7 @@ function SelfReflectionScreen({ store, me }) {
               Next <ArrowRight size={16} />
             </button>}
       </div>
-      <p className="pb-2 text-center text-[10px] text-slate-400">“Save draft” keeps your answers without submitting, so you can finish later.</p>
+      <p className="pb-2 text-center text-[10px] text-slate-500">“Save draft” keeps your answers without submitting, so you can finish later.</p>
     </Screen>
   );
 }
@@ -9387,7 +9390,7 @@ function ReviewField({ q, value, onChange, disabled }) {
             );
           })}
         </div>
-        {chosen.length > 0 && <p className="mt-1.5 text-[11px] font-semibold text-slate-400">{chosen.length} selected</p>}
+        {chosen.length > 0 && <p className="mt-1.5 text-[11px] font-semibold text-slate-500">{chosen.length} selected</p>}
       </div>
     );
   }
@@ -9411,7 +9414,7 @@ function ReviewField({ q, value, onChange, disabled }) {
             scroll sideways on a laptop. */}
         <div className="overflow-x-auto rounded-xl ring-1 ring-slate-200">
           <table className="w-full min-w-[640px] text-sm">
-            <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-3 py-2.5 text-left">&nbsp;</th>
                 {q.options.map(o => <th key={o} className="px-2 py-2.5 text-center font-bold normal-case leading-tight">{o}</th>)}
@@ -9454,14 +9457,14 @@ function ReviewAnswers({ form, answers }) {
                 || (q.kind === "checkbox" && Array.isArray(v) && !v.length);
               return (
                 <div key={q.id}>
-                  <p className="text-[11px] font-semibold text-slate-400">{q.label}</p>
+                  <p className="text-[11px] font-semibold text-slate-500">{q.label}</p>
                   {empty
                     ? <p className="text-sm text-slate-300">— not answered</p>
                     : q.kind === "checkbox"
                       ? <ul className="mt-0.5 space-y-0.5">{(Array.isArray(v) ? v : [v]).map(x => <li key={x} className="text-sm text-slate-700">· {x}</li>)}</ul>
                     : q.kind === "grid"
                       ? <ul className="mt-0.5 space-y-0.5">
-                          {q.rows.map(r => v[r.key] ? <li key={r.key} className="text-sm text-slate-700"><span className="text-slate-400">{r.label}:</span> <b>{v[r.key]}</b></li> : null)}
+                          {q.rows.map(r => v[r.key] ? <li key={r.key} className="text-sm text-slate-700"><span className="text-slate-500">{r.label}:</span> <b>{v[r.key]}</b></li> : null)}
                         </ul>
                       : <p className="whitespace-pre-wrap text-sm text-slate-700">{String(v)}</p>}
                 </div>
@@ -9632,7 +9635,7 @@ function AdminStaffReviews({ store }) {
         <>
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
                 <tr><th className="px-5 py-3">Staff member</th><th className="px-5 py-3">Review</th><th className="px-5 py-3">Term</th><th className="px-5 py-3">Completed</th><th className="px-5 py-3">Status</th><th className="px-5 py-3"></th></tr>
               </thead>
               <tbody>
@@ -9643,7 +9646,7 @@ function AdminStaffReviews({ store }) {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2.5">
                           <span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.staff?.colour || NAVY }}>{r.staff?.initials || "?"}</span>
-                          <div><p className="font-semibold text-slate-700">{r.staff?.name || "—"}</p><p className="text-[11px] text-slate-400">{r.staff?.role}</p></div>
+                          <div><p className="font-semibold text-slate-700">{r.staff?.name || "—"}</p><p className="text-[11px] text-slate-500">{r.staff?.role}</p></div>
                         </div>
                       </td>
                       <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${t.bg} ${t.text}`}>{r.formTitle}</span></td>
@@ -9688,7 +9691,7 @@ function AdminStaffReviews({ store }) {
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={{ background: typeTone(f.type).colour }}><ClipboardList size={18} /></span>
                   <div className="flex-1">
                     <p className="text-sm font-bold text-slate-700">{f.title}</p>
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[11px] text-slate-500">
                       {f.pending ? "Questions not set up yet" : `${f.sections.reduce((n, s) => n + s.questions.length, 0)} questions · ${f.sections.length} sections`}
                     </p>
                   </div>
@@ -9702,16 +9705,16 @@ function AdminStaffReviews({ store }) {
             <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
               <div>
                 <p className="text-sm font-bold text-slate-700">{activeForm?.title}</p>
-                <p className="text-[11px] text-slate-400">{activeForm?.blurb}</p>
+                <p className="text-[11px] text-slate-600">{activeForm?.blurb}</p>
               </div>
-              {!editing && <button onClick={() => setPickedType("")} className="press text-[11px] font-bold text-slate-400 hover:text-slate-600">Change</button>}
+              {!editing && <button onClick={() => setPickedType("")} className="press text-[11px] font-bold text-slate-600 hover:text-slate-600">Change</button>}
             </div>
 
             {/* One section per page, as the original form does. 31 questions on a
                 single scroll is unusable; this also means a conditional question can
                 appear on the very next page rather than jumping the reader around. */}
             <div>
-              <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-400">
+              <div className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-slate-500">
                 <span>{step === 0 ? "Who is this review for?" : pages[step - 1]?.title}</span>
                 <span>Page {step + 1} of {pages.length + 1}</span>
               </div>
@@ -9727,7 +9730,7 @@ function AdminStaffReviews({ store }) {
                     <option value="">Select a staff member</option>
                     {store.staff.map(s => <option key={s.id} value={s.id}>{s.name}{s.dept ? ` — ${s.dept}` : ""}</option>)}
                   </select>
-                  <p className="mt-2 text-[11px] text-slate-400">The review is filed against this person. Their name pre-fills the first question.</p>
+                  <p className="mt-2 text-[11px] text-slate-500">The review is filed against this person. Their name pre-fills the first question.</p>
                 </Field>
               ) : (
                 pages[step - 1]?.questions.map(q => <ReviewField key={q.id} q={q} value={answers[q.id]} onChange={setAnswer} disabled={busy} />)
@@ -9752,7 +9755,7 @@ function AdminStaffReviews({ store }) {
                     {busy ? <Loader size={16} /> : <Save size={16} />} {editing ? "Save changes" : "Submit review"}
                   </PrimaryBtn>}
             </div>
-            <p className="text-center text-[10px] text-slate-400">“Save draft” works from any page and skips the required-field checks, so you can finish later.</p>
+            <p className="text-center text-[10px] text-slate-500">“Save draft” works from any page and skips the required-field checks, so you can finish later.</p>
           </div>
         )}
       </Modal>
@@ -9765,7 +9768,7 @@ function AdminStaffReviews({ store }) {
               <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: viewing.staff?.colour || NAVY }}>{viewing.staff?.initials}</span>
               <div className="flex-1">
                 <p className="text-sm font-bold text-slate-700">{viewing.staff?.name}</p>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[11px] text-slate-600">
                   {viewing.term || "—"}{viewing.academicYear ? ` · ${viewing.academicYear}` : ""}
                   {viewing.completedBy ? ` · recorded by ${viewing.completedBy}` : ""}
                 </p>
@@ -9801,7 +9804,7 @@ function AdminStaffReviews({ store }) {
           <PrimaryBtn colour={MAROON} onClick={confirmRemove} disabled={busy} className="w-full">
             <Trash2 size={16} /> {busy ? "Deleting…" : "Delete review"}
           </PrimaryBtn>
-          <button onClick={() => setDeleteTarget(null)} disabled={busy} className="press w-full text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">Cancel</button>
+          <button onClick={() => setDeleteTarget(null)} disabled={busy} className="press w-full text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">Cancel</button>
         </div>
       </Modal>
     </>
@@ -10048,7 +10051,7 @@ function StudentReviewScreen({ store, me }) {
                 <Plus size={17} /> New review
               </button>
 
-              <p className="px-1 pt-1 text-[11px] font-extrabold uppercase tracking-widest text-slate-400">My reviews</p>
+              <p className="px-1 pt-1 text-[11px] font-extrabold uppercase tracking-widest text-slate-500">My reviews</p>
 
               {/* Only worth showing once there is enough to sift through. */}
               {rows.length > 3 && (
@@ -10059,7 +10062,7 @@ function StudentReviewScreen({ store, me }) {
                       value={query} onChange={e => setQuery(e.target.value)}
                       type="search" inputMode="search" autoComplete="off"
                       placeholder="Search name, college ID or email"
-                      className="w-full rounded-2xl bg-white py-3 pl-9 pr-9 text-sm shadow-sm ring-1 ring-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2"
+                      className="w-full rounded-2xl bg-white py-3 pl-9 pr-9 text-sm shadow-sm ring-1 ring-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2"
                       style={{ WebkitAppearance: "none" }}
                     />
                     {query && (
@@ -10085,15 +10088,15 @@ function StudentReviewScreen({ store, me }) {
                 </div>
               )}
 
-              {rows.length === 0 && <Card className="text-sm text-slate-400">You haven't recorded a student review yet. Tap “New review” above.</Card>}
+              {rows.length === 0 && <Card className="text-sm text-slate-500">You haven't recorded a student review yet. Tap “New review” above.</Card>}
               {rows.length > 0 && visibleRows.length === 0 && (
-                <Card className="text-sm text-slate-400">
+                <Card className="text-sm text-slate-500">
                   No reviews match{query ? <> “<b className="text-slate-500">{query}</b>”</> : null}.
                   <button type="button" onClick={() => { setQuery(""); setProgressFilter("all"); }} className="ml-1 font-bold text-slate-500 underline">Clear</button>
                 </Card>
               )}
               {filtering && visibleRows.length > 0 && (
-                <p className="px-1 text-[11px] font-semibold text-slate-400">{visibleRows.length} of {rows.length}</p>
+                <p className="px-1 text-[11px] font-semibold text-slate-500">{visibleRows.length} of {rows.length}</p>
               )}
               {visibleRows.map((r, i) => {
                 const t = progressTone(r.progress);
@@ -10103,7 +10106,7 @@ function StudentReviewScreen({ store, me }) {
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student?.colour || NAVY }}>{r.student?.initials || "?"}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-bold text-slate-700">{r.student?.name || "—"}</p>
-                        <p className="truncate text-[11px] text-slate-400">{fmtDate(r.date)}{r.unit ? ` · ${r.unit.code}` : ""}{r.student?.studentRef ? ` · ${r.student.studentRef}` : ""}</p>
+                        <p className="truncate text-[11px] text-slate-500">{fmtDate(r.date)}{r.unit ? ` · ${r.unit.code}` : ""}{r.student?.studentRef ? ` · ${r.student.studentRef}` : ""}</p>
                       </div>
                       <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.bg} ${t.text}`}>{r.progress}</span>
                     </div>
@@ -10121,7 +10124,7 @@ function StudentReviewScreen({ store, me }) {
                   </Card>
                 );
               })}
-              <p className="px-1 pb-2 text-center text-[10px] leading-relaxed text-slate-400">
+              <p className="px-1 pb-2 text-center text-[10px] leading-relaxed text-slate-500">
                 Reviews you file are visible to the student they are about and to the college.
               </p>
             </>
@@ -10156,7 +10159,7 @@ function StudentReviewScreen({ store, me }) {
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: chosenStudent.colour || NAVY }}>{chosenStudent.initials}</span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-bold text-slate-700">{chosenStudent.name}</p>
-                      <p className="truncate text-[11px] text-slate-400">{chosenStudent.studentRef}</p>
+                      <p className="truncate text-[11px] text-slate-600">{chosenStudent.studentRef}</p>
                     </div>
                     <button type="button" disabled={busy}
                       onClick={() => { set("studentId", ""); set("unitId", ""); setReviewCourse(""); setStudentQuery(""); }}
@@ -10181,11 +10184,11 @@ function StudentReviewScreen({ store, me }) {
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: stu.colour || NAVY }}>{stu.initials}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-bold text-slate-700">{stu.name}</span>
-                              <span className="block truncate text-[11px] text-slate-400">{stu.studentRef}</span>
+                              <span className="block truncate text-[11px] text-slate-500">{stu.studentRef}</span>
                             </span>
                           </button>
                         ))}
-                        {studentMatches.length === 0 && <p className="px-1 py-2 text-[11px] text-slate-400">No student matches that.</p>}
+                        {studentMatches.length === 0 && <p className="px-1 py-2 text-[11px] text-slate-500">No student matches that.</p>}
                       </div>
                     )}
                   </>
@@ -10207,7 +10210,7 @@ function StudentReviewScreen({ store, me }) {
                     keep a unit belonging to a course you have moved away from. */}
                 <select value={form.unitId} disabled={busy || !reviewCourse}
                   onChange={e => set("unitId", e.target.value)}
-                  className={`${inputCls} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`}>
+                  className={`${inputCls} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600`}>
                   <option value="">{reviewCourse ? "— not about a particular unit —" : "Choose a course first"}</option>
                   {unitsInCourse.map(u => <option key={u.id} value={u.id}>{u.code} — {u.name}</option>)}
                 </select>
@@ -10245,7 +10248,7 @@ function StudentReviewScreen({ store, me }) {
                     );
                   })}
                 </div>
-                <p className="mt-1.5 text-[11px] text-slate-400">“No Concerns” can't be combined with a specific concern.</p>
+                <p className="mt-1.5 text-[11px] text-slate-500">“No Concerns” can't be combined with a specific concern.</p>
               </Field>
 
               <Field label="Summary of discussion">
@@ -10261,7 +10264,7 @@ function StudentReviewScreen({ store, me }) {
                   {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
                     <button key={String(o.v)} type="button" disabled={busy}
                       onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
-                      className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
+                      className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-500"}`}>{o.l}</button>
                   ))}
                 </div>
               </Field>
@@ -10285,7 +10288,7 @@ function StudentReviewScreen({ store, me }) {
               {busy ? <Loader size={16} /> : <Save size={16} />} {editing ? "Save changes" : "Save review"}
             </button>
           </div>
-          <p className="pb-2 text-center text-[10px] text-slate-400">Filed as {me.name}.</p>
+          <p className="pb-2 text-center text-[10px] text-slate-500">Filed as {me.name}.</p>
         </div>
       </Screen>
     );
@@ -10302,7 +10305,7 @@ function StudentReviewScreen({ store, me }) {
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: current?.student?.colour || NAVY }}>{current?.student?.initials || "?"}</span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-extrabold text-slate-700">{current?.student?.name || "—"}</p>
-              <p className="truncate text-[11px] text-slate-400">{current?.student?.studentRef}{current?.unit ? ` · ${current.unit.code} — ${current.unit.name}` : ""}</p>
+              <p className="truncate text-[11px] text-slate-500">{current?.student?.studentRef}{current?.unit ? ` · ${current.unit.code} — ${current.unit.name}` : ""}</p>
             </div>
             <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${t.bg} ${t.text}`}>{current?.progress}</span>
           </div>
@@ -10319,7 +10322,7 @@ function StudentReviewScreen({ store, me }) {
 function DetailRow({ label, children }) {
   return (
     <div>
-      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
       <div className="mt-0.5 text-sm text-slate-600">{children}</div>
     </div>
   );
@@ -10332,8 +10335,8 @@ function StudentReviewDetail({ r }) {
   return (
     <div className="space-y-3.5">
       <div className="grid grid-cols-2 gap-3.5">
-        <DetailRow label="Student">{r.student?.name || "—"}<span className="block text-[11px] text-slate-400">{r.student?.studentRef}</span></DetailRow>
-        <DetailRow label="Unit">{r.unit ? <>{r.unit.code}<span className="block text-[11px] text-slate-400">{r.unit.name}</span></> : <span className="text-slate-300">Not unit specific</span>}</DetailRow>
+        <DetailRow label="Student">{r.student?.name || "—"}<span className="block text-[11px] text-slate-500">{r.student?.studentRef}</span></DetailRow>
+        <DetailRow label="Unit">{r.unit ? <>{r.unit.code}<span className="block text-[11px] text-slate-500">{r.unit.name}</span></> : <span className="text-slate-300">Not unit specific</span>}</DetailRow>
         <DetailRow label="Date">{fmtDate(r.date)}</DetailRow>
         <DetailRow label="Progress"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${t.bg} ${t.text}`}>{r.progress}</span></DetailRow>
       </div>
@@ -10348,7 +10351,7 @@ function StudentReviewDetail({ r }) {
         <DetailRow label="Follow-up required">
           {r.followUp
             ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">Yes</span>
-            : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
+            : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">No</span>}
         </DetailRow>
         {/* Labelled "was arranged for", because the date now survives the follow-up
             being closed or stood down — it is the record that one was promised, not a
@@ -10356,7 +10359,7 @@ function StudentReviewDetail({ r }) {
             without saying so read as a contradiction. */}
         <DetailRow label="Follow-up was arranged for">{r.followUpDate ? fmtDate(r.followUpDate) : <span className="text-slate-300">—</span>}</DetailRow>
         <DetailRow label="Follow-up happened">{r.followUpCompletedOn
-          ? <>{fmtDate(r.followUpCompletedOn)}<span className="block text-[11px] text-slate-400">recorded by {r.followUpCompletedBy || "—"}</span></>
+          ? <>{fmtDate(r.followUpCompletedOn)}<span className="block text-[11px] text-slate-500">recorded by {r.followUpCompletedBy || "—"}</span></>
           : <span className="text-slate-300">Not recorded</span>}</DetailRow>
       </div>
       <DetailRow label="Submitted by">{r.staffName || <span className="text-slate-300">—</span>}</DetailRow>
@@ -10517,7 +10520,7 @@ function AdminStudentReviews({ store }) {
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
             <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
               <table className="w-full min-w-[900px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="px-5 py-3">Student</th><th className="px-5 py-3">Unit</th><th className="px-5 py-3 whitespace-nowrap">Date</th>
                     <th className="px-5 py-3">Progress</th><th className="px-5 py-3 text-center">Concerns</th><th className="px-5 py-3">Submitted by</th>
@@ -10533,7 +10536,7 @@ function AdminStudentReviews({ store }) {
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2.5">
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student?.colour || "#94a3b8" }}>{r.student?.initials || "?"}</span>
-                            <div className="min-w-0"><p className="font-semibold text-slate-700">{r.student?.name || "—"}</p><p className="text-[11px] tabular-nums text-slate-400">{r.student?.studentRef || ""}</p></div>
+                            <div className="min-w-0"><p className="font-semibold text-slate-700">{r.student?.name || "—"}</p><p className="text-[11px] tabular-nums text-slate-500">{r.student?.studentRef || ""}</p></div>
                           </div>
                         </td>
                         <td className="px-5 py-3">{r.unit ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{r.unit.code}</span> : <span className="text-slate-300">—</span>}</td>
@@ -10562,7 +10565,7 @@ function AdminStudentReviews({ store }) {
                                       className="press rounded-lg bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">Done</button>
                                   )}
                                 </span>
-                              : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400" title={r.followUpDate ? `Was arranged for ${fmtDate(r.followUpDate)}` : undefined}>No</span>}
+                              : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600" title={r.followUpDate ? `Was arranged for ${fmtDate(r.followUpDate)}` : undefined}>No</span>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-1 whitespace-nowrap">
@@ -10605,7 +10608,7 @@ function AdminStudentReviews({ store }) {
             <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
               {progressChoices.map(p => (
                 <button key={p} type="button" onClick={() => set("progress", p)}
-                  className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.progress === p ? "text-white shadow-sm" : "text-slate-400 hover:text-slate-600"}`}
+                  className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.progress === p ? "text-white shadow-sm" : "text-slate-600 hover:text-slate-600"}`}
                   style={form.progress === p ? { background: progressTone(p).colour } : {}}>{p}</button>
               ))}
             </div>
@@ -10623,7 +10626,7 @@ function AdminStudentReviews({ store }) {
                 );
               })}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400">“No Concerns” can't be combined with a specific concern.</p>
+            <p className="mt-1.5 text-[11px] text-slate-500">“No Concerns” can't be combined with a specific concern.</p>
           </Field>
           <Field label="Summary of discussion"><textarea rows={4} value={form.summary} onChange={e => set("summary", e.target.value)} placeholder="What was discussed…" className={`${inputCls} resize-y`} /></Field>
           <Field label="Agreed actions"><textarea rows={3} value={form.agreedActions} onChange={e => set("agreedActions", e.target.value)} placeholder="Actions agreed with the student…" className={`${inputCls} resize-y`} /></Field>
@@ -10632,14 +10635,14 @@ function AdminStudentReviews({ store }) {
               <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
                 {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
                   <button key={String(o.v)} type="button" onClick={() => setForm(f => ({ ...f, followUp: o.v }))}
-                    className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
+                    className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUp === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-500"}`}>{o.l}</button>
                 ))}
               </div>
             </Field>
             {form.followUp && <Field label="Follow-up date"><input type="date" value={form.followUpDate} min={form.date} onChange={e => set("followUpDate", e.target.value)} className={inputCls} /></Field>}
           </div>
           {formErr && <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200"><AlertCircle size={13} className="mt-px shrink-0" />{formErr}</p>}
-          {editing?.staffName && <p className="text-[11px] text-slate-400">Originally submitted by {editing.staffName}.</p>}
+          {editing?.staffName && <p className="text-[11px] text-slate-500">Originally submitted by {editing.staffName}.</p>}
           <PrimaryBtn onClick={save} disabled={busy} className="w-full">{busy ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> {editing ? "Save changes" : "Add review"}</>}</PrimaryBtn>
         </div>
       </Modal>
@@ -10771,7 +10774,7 @@ function HndCourses({ store, onOpen }) {
               </div>
               <div className="flex flex-1 flex-col p-4">
                 <h3 className="text-base font-extrabold leading-snug" style={{ color: NAVY_DARK }}>{p.name}</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-400">{p.unitCount || 0} unit{(p.unitCount || 0) === 1 ? "" : "s"}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">{p.unitCount || 0} unit{(p.unitCount || 0) === 1 ? "" : "s"}</p>
                 {(() => {
                   const cs = (store.cohorts || []).filter(c => c.courseId === p.id);
                   return cs.length > 0
@@ -10813,7 +10816,7 @@ function HndCourses({ store, onOpen }) {
                 <option value="">Not assigned</option>
                 {academicDepts.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
-              <p className="mt-1 text-[11px] text-slate-400">
+              <p className="mt-1 text-[11px] text-slate-500">
                 Moving a course to another department moves its students with it.
               </p>
             </Field>
@@ -10836,7 +10839,7 @@ function HndCourses({ store, onOpen }) {
                   {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">Creates the first intake — <b>{MONTHS[form.cohortMonth - 1]} {form.cohortYear}</b>. You can add more later via Manage cohorts.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Creates the first intake — <b>{MONTHS[form.cohortMonth - 1]} {form.cohortYear}</b>. You can add more later via Manage cohorts.</p>
             </Field>
           ) : (
             /* Editing: intakes are managed here too, not only on the create screen —
@@ -10848,11 +10851,11 @@ function HndCourses({ store, onOpen }) {
                   ? <div className="mb-2 flex flex-wrap gap-1.5">
                       {editCohorts.map(c => (
                         <span key={c.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
-                          {c.name}{c.startDate ? <span className="ml-1 font-medium text-slate-400">· {c.startDate}</span> : null}
+                          {c.name}{c.startDate ? <span className="ml-1 font-medium text-slate-600">· {c.startDate}</span> : null}
                         </span>
                       ))}
                     </div>
-                  : <p className="mb-2 text-[11px] text-slate-400">No intakes on this course yet.</p>}
+                  : <p className="mb-2 text-[11px] text-slate-500">No intakes on this course yet.</p>}
                 <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
                   <select value={form.cohortMonth} onChange={e => setForm(f => ({ ...f, cohortMonth: Number(e.target.value) }))} className={inputCls}>
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
@@ -10866,7 +10869,7 @@ function HndCourses({ store, onOpen }) {
                     {cohortBusy ? <Loader size={14} /> : <Plus size={14} />} Add
                   </button>
                 </div>
-                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
+                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">
                   {cohortExists
                     ? <><b>{newCohortName}</b> already exists on this course.</>
                     : <>Adds <b>{newCohortName}</b> straight away — no need to press Save. Use <b>Manage cohorts</b> for start dates and terms.</>}
@@ -10974,7 +10977,7 @@ function CohortManager({ store, course, onClose }) {
               <div key={c.id} className="flex items-center justify-between rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-200">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-slate-700">{c.name}</p>
-                  <p className="text-[11px] text-slate-400">{c.startDate ? `Starts ${fmtDate(c.startDate)}` : "No start date"} · {n} term{n === 1 ? "" : "s"}</p>
+                  <p className="text-[11px] text-slate-500">{c.startDate ? `Starts ${fmtDate(c.startDate)}` : "No start date"} · {n} term{n === 1 ? "" : "s"}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <button onClick={() => setTermCohort(c)} className="press flex items-center gap-1 rounded-lg border-2 border-slate-200 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50"><CalendarDays size={13} /> Terms</button>
@@ -11050,7 +11053,7 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
   // several bars that happen to sit together — which is what it was.
   const Pick = ({ label, value, onChange, children, wide }) => (
     <label className="flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       <select value={value} onChange={onChange}
         className={`bg-transparent text-sm font-semibold text-slate-700 outline-none ${wide ? "max-w-[16rem]" : ""}`}>
         {children}
@@ -11077,7 +11080,7 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
                 unexplained. */}
             <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-300"
               style={chosenCourse?.colour ? { background: chosenCourse.colour } : { background: "transparent" }} />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Course</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Course</span>
             <select value={f.course || ""} title={chosenCourse?.full || ""}
               onChange={e => { on.course?.(e.target.value); on.year?.(""); on.term?.(""); on.status?.(""); }}
               className="max-w-[18rem] bg-transparent text-sm font-semibold text-slate-700 outline-none">
@@ -11161,7 +11164,7 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
           </>
         )}
         {chosenCourse?.id && chosenCourse.full !== chosenCourse.label && (
-          <span className="truncate text-slate-400" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
+          <span className="truncate text-slate-500" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
         )}
       </div>
     </div>
@@ -11396,9 +11399,9 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
 
                 {/* Attendance figures kept — this is a register system, after all */}
                 <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
-                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{m.studentCount ?? "—"}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Students</p></div>
-                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{sessionCount}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Sessions</p></div>
-                  <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(pct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Attend.</p></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{m.studentCount ?? "—"}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Students</p></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{sessionCount}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Sessions</p></div>
+                  <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(pct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-500">Attend.</p></div>
                 </div>
 
                 <button onClick={() => onView(m.id)} className="press mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold transition hover:border-indigo-300 hover:bg-indigo-50" style={{ color: NAVY }}>
@@ -11433,14 +11436,14 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
                 imported units; it is set by hand for the rest. Purely descriptive —
                 it classifies and filters, and never affects registers. */}
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Where it sits in the course</p>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-600">Where it sits in the course</p>
               <PlaceFields form={form} setForm={setForm} />
-              <p className="mt-2 text-[10px] leading-relaxed text-slate-400">Used to group and filter units. Terms run 1-6 across the two years.</p>
+              <p className="mt-2 text-[10px] leading-relaxed text-slate-600">Used to group and filter units. Terms run 1-6 across the two years.</p>
             </div>
             {/* The teaching window. Decides whether the unit counts as running or
                 finished, and pre-fills the register generator. */}
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">When it is taught</p>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-600">When it is taught</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Start date"><input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} className={inputCls} /></Field>
                 <Field label="End date"><input type="date" value={form.endDate} min={form.startDate || undefined} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} className={inputCls} /></Field>
@@ -11450,7 +11453,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
               </div>
               {form.startDate && form.endDate && form.endDate < form.startDate
                 ? <p className="mt-2 flex items-center gap-1.5 text-[10px] font-semibold text-rose-600"><AlertCircle size={12} /> The end date is before the start date.</p>
-                : <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+                : <p className="mt-2 text-[10px] leading-relaxed text-slate-600">
                     {form.startDate && form.endDate
                       ? <>Registers can be generated across this window, and the unit counts as {unitStatus({ startDate: form.startDate, endDate: form.endDate }, todayISO()) === "current" ? "running now" : unitStatus({ startDate: form.startDate, endDate: form.endDate }, todayISO()) === "past" ? "finished" : "not started yet"}.</>
                       : "Set both dates to mark this unit as running or finished, and to create its registers."}
@@ -11479,7 +11482,7 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
                   own units, and renaming an account cannot silently break the link.
                   Units assigned before this still show their old free-text name. */}
               <Field label="Tutor"><select value={form.tutorStaffId} onChange={e => setForm(f => ({ ...f, tutorStaffId: e.target.value }))} className={inputCls}><option value="">— unassigned —</option>{store.staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
-                {!form.tutorStaffId && form.tutor && <p className="mt-1 text-[11px] text-slate-400">Currently shown as "{form.tutor}" — pick a staff member to link it properly.</p>}
+                {!form.tutorStaffId && form.tutor && <p className="mt-1 text-[11px] text-slate-500">Currently shown as "{form.tutor}" — pick a staff member to link it properly.</p>}
               </Field>
             </div>
             <Field label="Unit name"><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Organisational Behaviour Management" className={inputCls} /></Field>
@@ -11527,12 +11530,12 @@ function StudentPicker({ students, picked, onToggle, query, setQuery, onAll, onN
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: s.colour }}>{s.initials}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold text-slate-700">{s.name}</span>
-                <span className="block truncate text-[11px] text-slate-400">{s.studentRef}</span>
+                <span className="block truncate text-[11px] text-slate-600">{s.studentRef}</span>
               </span>
             </button>
           );
         })}
-        {shown.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-400">{students.length === 0 ? "No students yet — add students on the Students tab first." : "No students match your search."}</p>}
+        {shown.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-500">{students.length === 0 ? "No students yet — add students on the Students tab first." : "No students match your search."}</p>}
       </div>
     </div>
   );
@@ -11658,7 +11661,7 @@ function HndSemesters({ store }) {
                       {s.name}
                       {current && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">CURRENT</span>}
                     </p>
-                    <p className="text-[11px] text-slate-400">{fmtDate(s.start)} → {fmtDate(s.end)}</p>
+                    <p className="text-[11px] text-slate-500">{fmtDate(s.start)} → {fmtDate(s.end)}</p>
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -11691,7 +11694,7 @@ function HndSemesters({ store }) {
           {form.start && form.end && form.end < form.start && (
             <p className="text-[11px] font-semibold text-rose-600">The end date must be on or after the start date.</p>
           )}
-          <p className="text-[11px] text-slate-400">Both dates are inclusive. Sessions dated inside this range count toward this semester automatically.</p>
+          <p className="text-[11px] text-slate-500">Both dates are inclusive. Sessions dated inside this range count toward this semester automatically.</p>
           <PrimaryBtn onClick={save} disabled={invalid} className="w-full"><Save size={16} /> {edit ? "Save changes" : "Add semester"}</PrimaryBtn>
         </div>
       </Modal>
@@ -11832,11 +11835,11 @@ function AssessmentCourses({ store, onView }) {
               </div>
               <div className="p-4">
                 <p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }} title={c.name}>{c.name}</p>
-                <p className="mt-0.5 text-xs font-semibold text-slate-400">{unitsOf(c.id).length} unit{unitsOf(c.id).length === 1 ? "" : "s"} · {st.assessments} assessment{st.assessments === 1 ? "" : "s"}</p>
+                <p className="mt-0.5 text-xs font-semibold text-slate-500">{unitsOf(c.id).length} unit{unitsOf(c.id).length === 1 ? "" : "s"} · {st.assessments} assessment{st.assessments === 1 ? "" : "s"}</p>
                 <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
-                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.graded}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Marks</p></div>
-                  <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(st.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Average</p></div>
-                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums" style={{ color: pctColour(st.passRate) }}>{fmtPct(st.passRate)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Marks 50%+</p></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.graded}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Marks</p></div>
+                  <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(st.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-500">Average</p></div>
+                  <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums" style={{ color: pctColour(st.passRate) }}>{fmtPct(st.passRate)}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Marks 50%+</p></div>
                 </div>
                 <button onClick={() => onView(c.id)} className="press mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 py-2 text-xs font-bold transition hover:border-indigo-300 hover:bg-indigo-50" style={{ color: NAVY }}>View units <ArrowRight size={15} /></button>
               </div>
@@ -11898,16 +11901,16 @@ function AssessmentUnits({ store, courseFilter, setCourseFilter, onView }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }} title={u.name}>{u.name}</p>
                   <UnitFacts unit={u} className="mt-1" />
-                  <p className="truncate text-[11px] text-slate-400">
+                  <p className="truncate text-[11px] text-slate-500">
                     {isPlaced(u) && <span className="mr-1 rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: `${alpha(NAVY, 8)}`, color: NAVY }}>{placeShort(u)}</span>}
                     {u.unitNumber ? `Unit ${u.unitNumber} · ` : ""}{course ? course.name : "No course"} · {u.studentCount == null ? "students not recorded" : `${u.studentCount} student${u.studentCount === 1 ? "" : "s"}`}
                   </p>
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
-                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.assessmentCount || 0}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Assessments</p></div>
-                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.gradedCount || 0}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Marks</p></div>
-                <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(st.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Average</p></div>
+                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.assessmentCount || 0}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Assessments</p></div>
+                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold tabular-nums text-slate-700">{st.gradedCount || 0}</p><p className="text-[9px] uppercase tracking-wide text-slate-600">Marks</p></div>
+                <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(st.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-500">Average</p></div>
               </div>
               <button onClick={() => onView(u.id)} className="press mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 py-2 text-xs font-bold transition hover:border-indigo-300 hover:bg-indigo-50" style={{ color: NAVY }}><ClipboardList size={14} /> Marks &amp; assessments</button>
             </Card>
@@ -11956,7 +11959,7 @@ function AssessmentsOverview({ store }) {
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search course…" className="w-44 bg-transparent text-sm outline-none sm:w-56" /></div>
         <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
         <div className="ml-auto flex items-center gap-3">
-          <span className="hidden items-center gap-2 text-[11px] font-semibold text-slate-400 sm:flex">
+          <span className="hidden items-center gap-2 text-[11px] font-semibold text-slate-500 sm:flex">
             {GRADE_BANDS.map(b => <span key={b} className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: gradeTone(b).colour }} />{b}</span>)}
           </span>
           <ExportBtn onClick={exportCSV} label="Export" />
@@ -11965,7 +11968,7 @@ function AssessmentsOverview({ store }) {
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[760px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Unit</th><th className="px-5 py-3 text-center whitespace-nowrap">Students</th><th className="px-5 py-3 text-center whitespace-nowrap">Assessments</th><th className="px-5 py-3 text-center whitespace-nowrap">Graded</th><th className="px-5 py-3 whitespace-nowrap">Grade spread</th><th className="px-5 py-3 text-center whitespace-nowrap">Average</th></tr>
             </thead>
             <tbody>
@@ -12040,7 +12043,7 @@ function AssessmentsManage({ store, onGrade, unitId, setUnitId, courseFilter = "
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-lg font-extrabold" style={{ color: NAVY_DARK }}>{selected.name}</p>
-            <p className="text-xs text-slate-400">{selected.unitNumber ? `Unit ${selected.unitNumber} · ` : ""}{selected.code}{courseOf ? ` · ${courseOf.name}` : ""} · {selected.studentCount == null ? "students not recorded" : `${selected.studentCount} student${selected.studentCount === 1 ? "" : "s"}`}</p>
+            <p className="text-xs text-slate-500">{selected.unitNumber ? `Unit ${selected.unitNumber} · ` : ""}{selected.code}{courseOf ? ` · ${courseOf.name}` : ""} · {selected.studentCount == null ? "students not recorded" : `${selected.studentCount} student${selected.studentCount === 1 ? "" : "s"}`}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {/* Switchable views for the same unit. */}
@@ -12061,12 +12064,12 @@ function AssessmentsManage({ store, onGrade, unitId, setUnitId, courseFilter = "
           return (
             <Card key={a.id} className="fade-up" style={{ animationDelay: `${i * 40}ms` }}>
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0"><p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }} title={a.title}>{a.title}</p><p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400"><span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-500">{a.type}</span>· out of {a.maxMarks}{a.weight ? ` · ${a.weight}%` : ""}{a.dueDate ? ` · due ${fmtDate(a.dueDate)}` : ""}</p></div>
+                <div className="min-w-0"><p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }} title={a.title}>{a.title}</p><p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500"><span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-500">{a.type}</span>· out of {a.maxMarks}{a.weight ? ` · ${a.weight}%` : ""}{a.dueDate ? ` · due ${fmtDate(a.dueDate)}` : ""}</p></div>
                 <div className="flex gap-1"><button onClick={() => openEdit(a)} className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"><Edit3 size={14} /></button><button onClick={() => remove(a)} className="rounded-lg p-1.5 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-1.5 text-center">
-                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{a.gradedCount || 0}<span className="text-[10px] font-medium text-slate-400">/{selected?.studentCount ?? "—"}</span></p><p className="text-[9px] uppercase tracking-wide text-slate-400">Graded</p></div>
-                <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(a.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-400">Average</p></div>
+                <div className="rounded-lg bg-slate-50 py-1.5"><p className="text-sm font-extrabold text-slate-700 tabular-nums">{a.gradedCount || 0}<span className="text-[10px] font-medium text-slate-600">/{selected?.studentCount ?? "—"}</span></p><p className="text-[9px] uppercase tracking-wide text-slate-600">Graded</p></div>
+                <div className={`rounded-lg py-1.5 ${tone.bg}`}><p className={`text-sm font-extrabold tabular-nums ${tone.text}`}>{fmtPct(a.avgPct)}</p><p className="text-[9px] uppercase tracking-wide text-slate-500">Average</p></div>
               </div>
               <button onClick={() => onGrade(a)} className="press mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-slate-200 py-2 text-xs font-bold transition hover:border-indigo-300 hover:bg-indigo-50" style={{ color: NAVY }}><ClipboardList size={14} /> Enter grades</button>
             </Card>
@@ -12162,7 +12165,7 @@ function UnitGradeGrid({ store, unit, assessments }) {
       </div>
       <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
             <tr>
               <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3">Student</th>
               {assessments.map(a => <th key={a.id} className="px-3 py-3 text-center whitespace-nowrap" title={`${a.type} · out of ${a.maxMarks}`}>{a.title}<span className="ml-1 font-normal text-slate-300">/{a.maxMarks}</span></th>)}
@@ -12180,7 +12183,7 @@ function UnitGradeGrid({ store, unit, assessments }) {
                   <td className="sticky left-0 z-10 bg-white px-4 py-2">
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: s.colour }}>{s.initials}</span>
-                      <div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{s.name}</p><p className="text-[10px] tabular-nums text-slate-400">{s.studentRef}</p></div>
+                      <div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-700">{s.name}</p><p className="text-[10px] tabular-nums text-slate-500">{s.studentRef}</p></div>
                     </div>
                   </td>
                   {assessments.map(a => {
@@ -12201,7 +12204,7 @@ function UnitGradeGrid({ store, unit, assessments }) {
           </tbody>
         </table>
       </div>
-      <p className="px-4 py-3 text-[11px] text-slate-400">Type a mark to change it, or clear the box to remove it. Nothing is saved until you press <b>Save marks</b>. Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail.</p>
+      <p className="px-4 py-3 text-[11px] text-slate-500">Type a mark to change it, or clear the box to remove it. Nothing is saved until you press <b>Save marks</b>. Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail.</p>
     </div>
   );
 }
@@ -12224,7 +12227,7 @@ function UnitGradeGrid({ store, unit, assessments }) {
  */
 function SubmittedCell({ submission, recordsSubmissions }) {
   if (!submission) {
-    return <span className="text-[11px] italic text-slate-400">{recordsSubmissions ? "Awaiting sync" : "Not synced"}</span>;
+    return <span className="text-[11px] italic text-slate-500">{recordsSubmissions ? "Awaiting sync" : "Not synced"}</span>;
   }
   if (submission.status === "submitted") {
     return (
@@ -12242,7 +12245,7 @@ function SubmittedCell({ submission, recordsSubmissions }) {
     // The one case that earns a warning colour: the LMS actually said so.
     return <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 ring-1 ring-rose-100">NOT SUBMITTED</span>;
   }
-  return <span className="text-[11px] italic text-slate-400">Unknown</span>;
+  return <span className="text-[11px] italic text-slate-500">Unknown</span>;
 }
 
 /* ----- Grade entry for one assessment (all enrolled students) ----- */
@@ -12344,7 +12347,7 @@ function GradeEntry({ store, assessment, onBack }) {
           {/* 560 → 700 because a sixth column was added; the old floor let the
               Submitted and Marks columns collide before the scroll container kicked in. */}
           <table className="w-full min-w-[700px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Submitted</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600"><tr><th className="px-5 py-3">Student</th><th className="px-5 py-3 whitespace-nowrap">Last updated</th><th className="px-5 py-3 whitespace-nowrap">Submitted</th><th className="px-5 py-3 whitespace-nowrap">Marks (/{max})</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th></tr></thead>
             <tbody>
               {paged.slice.map(r => {
                 const v = draft[r.student.id] ?? "";
@@ -12355,7 +12358,7 @@ function GradeEntry({ store, assessment, onBack }) {
                 const bad = num != null && num > max;
                 return (
                   <tr key={r.student.id} className="border-t border-slate-100 transition-colors hover:bg-blue-50/30">
-                    <td className="px-5 py-2.5"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span><div><p className="font-semibold" style={{ color: NAVY }}>{r.student.name}</p><p className="text-[11px] text-slate-400">{r.student.studentRef}{!r.enrolled && <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NOT ENROLLED</span>}</p></div></div></td>
+                    <td className="px-5 py-2.5"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span><div><p className="font-semibold" style={{ color: NAVY }}>{r.student.name}</p><p className="text-[11px] text-slate-500">{r.student.studentRef}{!r.enrolled && <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">NOT ENROLLED</span>}</p></div></div></td>
                     <td className="px-5 py-2.5 whitespace-nowrap">
                       {markStamp(r.gradedAt, r.gradedOn)
                         ? <><span className="text-[11px] font-semibold text-slate-500">{markStamp(r.gradedAt, r.gradedOn)}</span>
@@ -12375,11 +12378,11 @@ function GradeEntry({ store, assessment, onBack }) {
         </div>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
-      <p className="mt-3 text-[11px] text-slate-400">Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail. Leave a mark blank to clear it.</p>
+      <p className="mt-3 text-[11px] text-slate-500">Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail. Leave a mark blank to clear it.</p>
       {/* Says why the column is empty, so nobody reads a missing integration as a
           cohort that handed nothing in. */}
       {!data.recordsSubmissions && (
-        <p className="mt-1 text-[11px] text-slate-400">Submission data is imported from the LMS and no import has run yet, so the Submitted column reads “Not synced”.</p>
+        <p className="mt-1 text-[11px] text-slate-500">Submission data is imported from the LMS and no import has run yet, so the Submitted column reads “Not synced”.</p>
       )}
     </>
   );
@@ -12421,7 +12424,7 @@ function StudentAssessments({ store }) {
                   <tbody>
                     {m.items.map((a, i) => { const gt = gradeTone(a.grade); return (
                       <tr key={a.id} className={`${i ? "border-t border-slate-100" : ""}`}>
-                        <td className="px-5 py-2.5"><p className="font-semibold text-slate-700">{a.title}</p><p className="text-[11px] text-slate-400">{a.type}{a.weight ? ` · ${a.weight}%` : ""}</p></td>
+                        <td className="px-5 py-2.5"><p className="font-semibold text-slate-700">{a.title}</p><p className="text-[11px] text-slate-500">{a.type}{a.weight ? ` · ${a.weight}%` : ""}</p></td>
                         <td className="px-5 py-2.5 text-right tabular-nums text-slate-600">{a.marks == null ? <span className="text-slate-300">not graded</span> : `${a.marks}/${a.maxMarks}`}</td>
                         <td className="px-5 py-2.5 text-right tabular-nums text-slate-500">{a.pct == null ? "" : `${a.pct}%`}</td>
                         <td className="px-5 py-2.5 text-right">{a.grade ? <span className={`rounded-lg px-2 py-1 text-[11px] font-extrabold ${gt.bg} ${gt.text}`}>{a.grade}</span> : <span className="text-slate-300">—</span>}</td>
@@ -12526,17 +12529,17 @@ function AssessmentRecords({ store }) {
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[860px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Student</th><th className="px-5 py-3">Course</th><th className="px-5 py-3">Unit</th><th className="px-5 py-3">Assessment</th><th className="px-5 py-3 whitespace-nowrap">Marks</th><th className="px-5 py-3 text-center">%</th><th className="px-5 py-3 text-center">Grade</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-400">Loading…</td></tr>}
+              {loading && <tr><td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-500">Loading…</td></tr>}
               {!loading && paged.slice.map(r => { const gt = gradeTone(r.grade); const prog = courseById[r.unit.courseId]; return (
                 <tr key={r.id} className="border-t border-slate-100 transition-colors hover:bg-blue-50/30">
-                  <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span><div className="min-w-0"><p className="font-semibold text-slate-700">{r.student.name}</p><p className="text-[11px] tabular-nums text-slate-400">{r.student.studentRef}</p></div></div></td>
+                  <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: r.student.colour }}>{r.student.initials}</span><div className="min-w-0"><p className="font-semibold text-slate-700">{r.student.name}</p><p className="text-[11px] tabular-nums text-slate-500">{r.student.studentRef}</p></div></div></td>
                   <td className="px-5 py-3"><span className="rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: (prog?.colour || "#64748b") + "1a", color: prog?.colour || "#64748b" }}>{prog?.name || "—"}</span></td>
                   <td className="px-5 py-3"><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-600" title={r.unit.name}>{r.unit.code}</span></td>
-                  <td className="px-5 py-3 text-slate-600"><p className="font-medium">{r.assessment.title}</p><p className="text-[11px] text-slate-400">{r.assessment.type}</p></td>
+                  <td className="px-5 py-3 text-slate-600"><p className="font-medium">{r.assessment.title}</p><p className="text-[11px] text-slate-500">{r.assessment.type}</p></td>
                   <td className="px-5 py-3 font-bold tabular-nums text-slate-700">{r.marks}<span className="text-slate-300">/{r.assessment.maxMarks}</span></td>
                   <td className="px-5 py-3 text-center tabular-nums text-slate-500">{r.pct == null ? "—" : `${r.pct}%`}</td>
                   <td className="px-5 py-3 text-center">{r.grade ? <span className={`rounded-lg px-2 py-1 text-[11px] font-extrabold ${gt.bg} ${gt.text}`}>{r.grade}</span> : <span className="text-slate-300">—</span>}</td>
@@ -12549,13 +12552,13 @@ function AssessmentRecords({ store }) {
         </div>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
-      <p className="mt-3 text-[11px] text-slate-400">{list.length.toLocaleString()} record{list.length === 1 ? "" : "s"}{query ? " matching" : ""}{fUnit ? " for this unit" : fCourse ? " for this course" : ""}{meta.capped ? ` (of ${meta.total.toLocaleString()} total — narrow the filter to load all)` : ""}. Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail.</p>
+      <p className="mt-3 text-[11px] text-slate-500">{list.length.toLocaleString()} record{list.length === 1 ? "" : "s"}{query ? " matching" : ""}{fUnit ? " for this unit" : fCourse ? " for this course" : ""}{meta.capped ? ` (of ${meta.total.toLocaleString()} total — narrow the filter to load all)` : ""}. Grades: 70%+ Distinction · 60–69 Merit · 50–59 Pass · below 50 Fail.</p>
 
       <Modal open={modal} onClose={() => !busy && setModal(false)} title={edit ? "Edit grade record" : "Add grade record"} width={520}>
         <div className="space-y-3">
           {edit ? (
             <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
-              <div className="flex items-center gap-2.5"><span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: editStudent?.colour }}>{editStudent?.initials}</span><div><p className="text-sm font-bold text-slate-700">{editStudent?.name}</p><p className="text-[11px] text-slate-400">{edit.unit.code} · {edit.assessment.title} · {courseById[edit.unit.courseId]?.name || ""}</p></div></div>
+              <div className="flex items-center gap-2.5"><span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: editStudent?.colour }}>{editStudent?.initials}</span><div><p className="text-sm font-bold text-slate-700">{editStudent?.name}</p><p className="text-[11px] text-slate-600">{edit.unit.code} · {edit.assessment.title} · {courseById[edit.unit.courseId]?.name || ""}</p></div></div>
             </div>
           ) : (
             <>
@@ -12567,7 +12570,7 @@ function AssessmentRecords({ store }) {
           )}
           <Field label={`Total marks (out of ${maxMarks})`}><input type="text" inputMode="numeric" value={form.marks} onChange={e => { const v = e.target.value; if (v === "" || /^\d{1,4}$/.test(v)) setForm(f => ({ ...f, marks: v })); }} placeholder={`0–${maxMarks}`} className={inputCls} /></Field>
           {form.marks !== "" && Number(form.marks) >= 0 && Number(form.marks) <= maxMarks && (
-            <p className="text-[11px] text-slate-400">= {Math.round(Number(form.marks) / maxMarks * 1000) / 10}% · <span className="font-bold" style={{ color: gradeTone(bandOf(Math.round(Number(form.marks) / maxMarks * 1000) / 10)).colour }}>{bandOf(Math.round(Number(form.marks) / maxMarks * 1000) / 10)}</span></p>
+            <p className="text-[11px] text-slate-500">= {Math.round(Number(form.marks) / maxMarks * 1000) / 10}% · <span className="font-bold" style={{ color: gradeTone(bandOf(Math.round(Number(form.marks) / maxMarks * 1000) / 10)).colour }}>{bandOf(Math.round(Number(form.marks) / maxMarks * 1000) / 10)}</span></p>
           )}
           {form.marks !== "" && Number(form.marks) > maxMarks && <p className="text-[11px] font-semibold text-rose-600">Marks can't exceed the maximum of {maxMarks}.</p>}
           <PrimaryBtn onClick={save} disabled={busy || !formValid} className="w-full">{busy ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> {edit ? "Save marks" : "Add record"}</>}</PrimaryBtn>
@@ -12617,8 +12620,8 @@ function StudentCombo({ students, value, onChange }) {
     <div className="relative" ref={box}>
       <button type="button" onClick={() => setOpen(o => !o)} className={`${inputCls} flex items-center justify-between text-left`}>
         {sel
-          ? <span className="flex min-w-0 items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span><span className="truncate">{sel.name}</span><span className="shrink-0 text-slate-400">{sel.studentRef}</span></span>
-          : <span className="text-slate-400">Choose a student…</span>}
+          ? <span className="flex min-w-0 items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span><span className="truncate">{sel.name}</span><span className="shrink-0 text-slate-500">{sel.studentRef}</span></span>
+          : <span className="text-slate-500">Choose a student…</span>}
         <ChevronDown size={16} className="shrink-0 text-slate-400" />
       </button>
       {open && (
@@ -12632,11 +12635,11 @@ function StudentCombo({ students, value, onChange }) {
               {shown.map(s => (
                 <button type="button" key={s.id} onClick={() => { onChange(s.id); setOpen(false); setQ(""); }} className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition ${s.id === value ? "bg-blue-50" : "hover:bg-slate-50"}`}>
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white" style={{ background: s.colour }}>{s.initials}</span>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-700">{s.name}</span><span className="block truncate text-[11px] text-slate-400">{s.studentRef}</span></span>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-700">{s.name}</span><span className="block truncate text-[11px] text-slate-600">{s.studentRef}</span></span>
                 </button>
               ))}
-              {shown.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-400">No students match.</p>}
-              {matches.length > shown.length && <p className="px-2 py-2 text-center text-[11px] text-slate-400">Showing 40 of {matches.length} — keep typing to narrow.</p>}
+              {shown.length === 0 && <p className="px-2 py-6 text-center text-xs text-slate-500">No students match.</p>}
+              {matches.length > shown.length && <p className="px-2 py-2 text-center text-[11px] text-slate-500">Showing 40 of {matches.length} — keep typing to narrow.</p>}
             </div>
           </div>
         </>
@@ -12786,13 +12789,13 @@ function AdminPAT({ store }) {
           ))}
         </div>
         <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
-        <span className="ml-auto text-xs font-semibold text-slate-400">{list.length} of {total}</span>
+        <span className="ml-auto text-xs font-semibold text-slate-500">{list.length} of {total}</span>
       </div>
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[960px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-5 py-3">Student</th><th className="px-5 py-3">Course</th><th className="px-5 py-3 whitespace-nowrap">Date / time</th>
                 <th className="px-5 py-3">Query type</th><th className="px-5 py-3">Summary</th><th className="px-5 py-3">Follow-up actions</th>
@@ -12808,18 +12811,18 @@ function AdminPAT({ store }) {
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2.5">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: it.student?.colour || "#94a3b8" }}>{it.student?.initials || "?"}</span>
-                        <div className="min-w-0"><p className="font-semibold text-slate-700">{it.student?.name || "—"}</p><p className="text-[11px] tabular-nums text-slate-400">{it.student?.studentRef || ""}</p></div>
+                        <div className="min-w-0"><p className="font-semibold text-slate-700">{it.student?.name || "—"}</p><p className="text-[11px] tabular-nums text-slate-500">{it.student?.studentRef || ""}</p></div>
                       </div>
                     </td>
                     <td className="px-5 py-3"><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{courseOf(it.studentId)}</span></td>
-                    <td className="px-5 py-3 whitespace-nowrap text-slate-500"><p className="font-medium text-slate-600">{fmtDate(it.date)}</p><p className="text-[11px] tabular-nums text-slate-400">{it.time}</p></td>
+                    <td className="px-5 py-3 whitespace-nowrap text-slate-500"><p className="font-medium text-slate-600">{fmtDate(it.date)}</p><p className="text-[11px] tabular-nums text-slate-500">{it.time}</p></td>
                     <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${t.bg} ${t.text}`}>{it.queryType}</span></td>
                     <td className="px-5 py-3"><p className="line-clamp-2 max-w-[240px] text-[13px] text-slate-600">{it.summary || <span className="text-slate-300">—</span>}</p></td>
                     <td className="px-5 py-3"><p className="line-clamp-2 max-w-[240px] text-[13px] text-slate-600">{it.followUpActions || <span className="text-slate-300">—</span>}</p></td>
                     <td className="px-5 py-3 text-center">
                       {it.followUpRequired
                         ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">Yes</span>
-                        : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-400">No</span>}
+                        : <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">No</span>}
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap">
                       {it.followUpRequired && it.followUpDate ? (
@@ -12879,7 +12882,7 @@ function AdminPAT({ store }) {
               {[{ v: false, l: "No" }, { v: true, l: "Yes" }].map(o => (
                 <button key={String(o.v)} type="button"
                   onClick={() => setForm(f => ({ ...f, followUpRequired: o.v, followUpDate: o.v ? f.followUpDate : "" }))}
-                  className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUpRequired === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
+                  className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${form.followUpRequired === o.v ? (o.v ? "bg-amber-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-500"}`}>{o.l}</button>
               ))}
             </div>
           </Field>
@@ -12892,7 +12895,7 @@ function AdminPAT({ store }) {
               {!form.followUpDate && <p className="mt-1 text-[11px] font-semibold text-amber-600">Set the date the follow-up is due.</p>}
             </Field>
           )}
-          {edit?.loggedBy && <p className="text-[11px] text-slate-400">Logged by {edit.loggedBy}.</p>}
+          {edit?.loggedBy && <p className="text-[11px] text-slate-500">Logged by {edit.loggedBy}.</p>}
           <PrimaryBtn onClick={save} disabled={busy || !formValid} className="w-full">{busy ? <><Loader size={16} /> Saving…</> : <><Save size={16} /> {edit ? "Save changes" : "Log interaction"}</>}</PrimaryBtn>
         </div>
       </Modal>
@@ -13057,7 +13060,7 @@ function ReferralModal({ open, onClose, student, interactionId, department, onSa
           <Field label="Student">
             <div className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: student.colour || "#94a3b8" }}>{student.initials || "?"}</span>
-              <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{student.name}</p><p className="text-[11px] tabular-nums text-slate-400">{student.studentRef}</p></div>
+              <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{student.name}</p><p className="text-[11px] tabular-nums text-slate-600">{student.studentRef}</p></div>
             </div>
           </Field>
         ) : (
@@ -13081,17 +13084,17 @@ function ReferralModal({ open, onClose, student, interactionId, department, onSa
           {/* Said plainly, because the alternative is a tutor assuming otherwise and
               writing something they would not have written. The reason is the one
               field BOTH sides see — the department's case notes are theirs alone. */}
-          <p className="mt-1 text-[11px] text-slate-400">The receiving team reads this, and so does anyone else on that team. Their own case notes are not shown back to you.</p>
+          <p className="mt-1 text-[11px] text-slate-500">The receiving team reads this, and so does anyone else on that team. Their own case notes are not shown back to you.</p>
         </Field>
 
         <Field label="How urgent">
           <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
             {[{ v: "routine", l: "Routine" }, { v: "urgent", l: "Urgent" }].map(o => (
               <button key={o.v} type="button" onClick={() => setUrgency(o.v)}
-                className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${urgency === o.v ? (o.v === "urgent" ? "bg-rose-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-400"}`}>{o.l}</button>
+                className={`press flex-1 rounded-lg py-2 text-xs font-bold transition ${urgency === o.v ? (o.v === "urgent" ? "bg-rose-500 text-white shadow-sm" : "bg-white text-slate-700 shadow-sm") : "text-slate-500"}`}>{o.l}</button>
             ))}
           </div>
-          <p className="mt-1 text-[11px] text-slate-400">Urgent sits at the top of their queue and reaches them as a red notification.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Urgent sits at the top of their queue and reaches them as a red notification.</p>
         </Field>
 
         {/* The tickbox. Rendered as an explicit control with its consequence written
@@ -13103,14 +13106,14 @@ function ReferralModal({ open, onClose, student, interactionId, department, onSa
           <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md ring-1" style={notifyStudent ? { background: NAVY, borderColor: "transparent" } : { boxShadow: "inset 0 0 0 1px #cbd5e1" }}>{notifyStudent && <Check size={13} className="text-white" />}</span>
           <span className="min-w-0">
             <span className="block text-sm font-semibold text-slate-700">Tell the student</span>
-            <span className="block text-[11px] leading-relaxed text-slate-400">
+            <span className="block text-[11px] leading-relaxed text-slate-500">
               Emails them to say they have been referred to this team and somebody will be in touch. It never
               includes your reason. Leave this off for anything you would not want landing in their inbox.
             </span>
           </span>
         </button>
 
-        {interactionId && <p className="text-[11px] text-slate-400">Linked to the meeting you were looking at, so the department can see where this came from.</p>}
+        {interactionId && <p className="text-[11px] text-slate-500">Linked to the meeting you were looking at, so the department can see where this came from.</p>}
         {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
         <PrimaryBtn onClick={save} disabled={busy || !valid} className="w-full">
           {busy ? <><Loader size={16} /> Sending…</> : <><Forward size={16} /> Refer</>}
@@ -13182,7 +13185,7 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
         {[["open", "Waiting"], ["accepted", "Being worked"], ["closed", "Closed"], ["", "All"]].map(([k, label]) => (
           <button key={k} onClick={() => setStatus(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${status === k ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={status === k ? { background: grad(BLUE) } : {}}>{label}</button>
         ))}
-        <span className="ml-auto text-xs font-semibold text-slate-400">
+        <span className="ml-auto text-xs font-semibold text-slate-500">
           {counts.total} referral{counts.total === 1 ? "" : "s"}{counts.urgent > 0 ? ` · ${counts.urgent} urgent` : ""}
         </span>
       </div>
@@ -13202,10 +13205,10 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-slate-800">
                     {r.student?.name || "Unknown student"}
-                    {r.student?.studentRef && <span className="ml-1.5 text-xs font-semibold text-slate-400">{r.student.studentRef}</span>}
+                    {r.student?.studentRef && <span className="ml-1.5 text-xs font-semibold text-slate-500">{r.student.studentRef}</span>}
                   </p>
                   <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-slate-500">
                     {/* WHO ASKED changes how you open the conversation, so it leads the
                         line rather than sitting at the end of it. A self-referral has no
                         raisedBy at all — the student is not a colleague — so the old
@@ -13355,7 +13358,7 @@ function ReferralCloseModal({ referral, onClose, onSaved }) {
         </Field>
         <Field label="Detail (optional)">
           <textarea rows={4} value={detail} onChange={e => setDetail(e.target.value)} className={`${inputCls} resize-y`} placeholder="Anything the team needs on the record." />
-          <p className="mt-1 text-[11px] text-slate-400">Stays with the department. The referrer sees the outcome above and not this.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Stays with the department. The referrer sees the outcome above and not this.</p>
         </Field>
         {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
         <PrimaryBtn onClick={save} disabled={busy || !outcome} className="w-full">{busy ? <><Loader size={16} /> Closing…</> : <><CheckCircle2 size={16} /> Close referral</>}</PrimaryBtn>
@@ -13424,7 +13427,7 @@ function ReferralsMine({ store }) {
 
       {rows && rows.length > 0 && (
         <>
-          <p className="mb-3 text-xs font-semibold text-slate-400">
+          <p className="mb-3 text-xs font-semibold text-slate-500">
             {rows.length} referral{rows.length === 1 ? "" : "s"}{openCount > 0 ? ` · ${openCount} still open` : ""}
           </p>
           <div className="space-y-2">
@@ -13436,12 +13439,12 @@ function ReferralsMine({ store }) {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-slate-800">
                         {r.student?.name || "Unknown student"}
-                        <span className="ml-1.5 text-xs font-semibold text-slate-400">→ {nameOf(r.department)}</span>
+                        <span className="ml-1.5 text-xs font-semibold text-slate-500">→ {nameOf(r.department)}</span>
                       </p>
                       {/* The reason is shown because the tutor WROTE it. It is the one
                           field both sides of this feature can read. */}
                       <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
-                      <p className="mt-1 text-[11px] text-slate-400">
+                      <p className="mt-1 text-[11px] text-slate-500">
                         Sent {fmtDate(r.raisedOn)}
                         {r.acceptedOn ? ` · picked up ${fmtDate(r.acceptedOn)}` : ""}
                         {r.closedOn ? ` · closed ${fmtDate(r.closedOn)}` : ""}
@@ -13551,13 +13554,13 @@ function ReferralTransferModal({ referral, currentName, onClose, onSaved }) {
         </Field>
         <Field label="Why you are handing it on">
           <textarea rows={4} value={reason} onChange={e => setReason(e.target.value)} className={`${inputCls} resize-y`} placeholder="What the next team needs to know to pick this up." />
-          <p className="mt-1 text-[11px] text-slate-400">Shared with the receiving team and with the tutor who raised it.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Shared with the receiving team and with the tutor who raised it.</p>
         </Field>
         {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
         <PrimaryBtn onClick={save} disabled={busy || !valid} className="w-full">
           {busy ? <><Loader size={16} /> Handing on…</> : <><Forward size={16} /> Hand this on</>}
         </PrimaryBtn>
-        <p className="text-[11px] leading-relaxed text-slate-400">
+        <p className="text-[11px] leading-relaxed text-slate-500">
           It goes back to <span className="font-semibold text-slate-500">waiting</span> so the new team picks it
           up themselves — a case arriving already marked as accepted by somebody else is a case nobody works.
         </p>
@@ -13619,13 +13622,13 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
             passed between is the department's operational record, not the tutor's. */}
         {showHistory && (history || []).length > 0 && (
           <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-100">
-            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400"><History size={12} /> Where this case has been</p>
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-600"><History size={12} /> Where this case has been</p>
             <div className="mt-2 space-y-2">
               {history.map(t => (
                 <div key={t.id} className="text-[12px] leading-relaxed text-slate-600">
                   <p className="font-semibold text-slate-700">{t.fromName} <ArrowRight size={11} className="inline" /> {t.toName}</p>
                   <p className="whitespace-pre-wrap">{t.reason}</p>
-                  <p className="text-[11px] text-slate-400">{t.transferredBy || "A member of staff"} · {fmtDate(t.transferredOn)}</p>
+                  <p className="text-[11px] text-slate-600">{t.transferredBy || "A member of staff"} · {fmtDate(t.transferredOn)}</p>
                   {/* Present ONLY when this reader is on the department that wrote them.
                       Absent is not empty: for everybody else the field never arrives, so
                       the block is not rendered rather than rendered blank. */}
@@ -13642,7 +13645,7 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
 
         {messages === null && <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-slate-300" /></div>}
         {messages && messages.length === 0 && (
-          <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-[12px] text-slate-400 ring-1 ring-slate-100">
+          <p className="rounded-xl bg-slate-50 px-3 py-4 text-center text-[12px] text-slate-600 ring-1 ring-slate-100">
             Nothing yet. Use this to ask the other side a question — it is on the record, and an email is not.
           </p>
         )}
@@ -13752,7 +13755,7 @@ function AcademicDepartmentSettings() {
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
       <div className="mb-1 flex items-center gap-1.5"><GraduationCap size={15} style={{ color: NAVY }} /><p className="text-sm font-bold text-slate-700">Academic departments</p></div>
-      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-500">
         The teaching departments this college runs — Business, Computing, Law. Courses belong to one, and staff
         can be scoped to see only their own. A department&apos;s key is fixed once it exists. Finished with one?
         Retire it — deleting would detach its courses and students from everybody.
@@ -13781,9 +13784,9 @@ function AcademicDepartmentSettings() {
         </div>
       )}
 
-      {rows === null && <p className="text-xs text-slate-400">Loading…</p>}
+      {rows === null && <p className="text-xs text-slate-500">Loading…</p>}
       {rows !== null && rows.length === 0 && (
-        <p className="mb-3 text-xs text-slate-400">No departments yet. Add the first one below — e.g. Business.</p>
+        <p className="mb-3 text-xs text-slate-500">No departments yet. Add the first one below — e.g. Business.</p>
       )}
 
       <div className="space-y-2">
@@ -13795,9 +13798,9 @@ function AcademicDepartmentSettings() {
             {/* Shown and NOT editable, for the reason in the block comment above. Shown at
                 all because it appears in saved filters and on the VLE mapping rows, and
                 somebody will otherwise wonder where it came from. */}
-            <code className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-400 ring-1 ring-slate-200" title="The key is fixed once the department exists">{r.key}</code>
+            <code className="shrink-0 rounded-lg bg-white px-2 py-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200" title="The key is fixed once the department exists">{r.key}</code>
             {r.saved && (
-              <span className="shrink-0 text-[11px] text-slate-400">
+              <span className="shrink-0 text-[11px] text-slate-500">
                 {r.courseCount ?? 0} course{(r.courseCount ?? 0) === 1 ? "" : "s"} · {r.studentCount ?? 0} student{(r.studentCount ?? 0) === 1 ? "" : "s"}
               </span>
             )}
@@ -13806,7 +13809,7 @@ function AcademicDepartmentSettings() {
               Active
             </label>
             {!r.saved && (
-              <button onClick={() => drop(r.key)} className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-slate-400 hover:bg-slate-100 hover:text-slate-600">Remove</button>
+              <button onClick={() => drop(r.key)} className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 hover:text-slate-600">Remove</button>
             )}
           </div>
         ))}
@@ -13852,7 +13855,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
     } catch (e) { setErr(e.message); } finally { setBusyId(null); }
   };
 
-  if (cats === null) return <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-400">Loading VLE categories…</p>;
+  if (cats === null) return <p className="mt-5 border-t border-slate-100 pt-4 text-xs text-slate-500">Loading VLE categories…</p>;
   // THE ERROR IS RENDERED BEFORE THE EMPTY EARLY-RETURN, and that ordering was the bug.
   // The catch sets both err and cats=[], so a 403, a 500 or a half-migrated column made
   // this whole section vanish with no message — indistinguishable from "this college has
@@ -13860,7 +13863,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
   if (err) return (
     <div className="mt-5 border-t border-slate-100 pt-4">
       <p className="text-xs font-semibold text-rose-600">Could not load your VLE categories — {err}</p>
-      <p className="mt-1 text-[11px] text-slate-400">Courses may still be unmapped. This is a loading failure, not an empty college.</p>
+      <p className="mt-1 text-[11px] text-slate-500">Courses may still be unmapped. This is a loading failure, not an empty college.</p>
     </div>
   );
   if (!cats.length) return null;
@@ -13868,7 +13871,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
   return (
     <div className="mt-5 border-t border-slate-100 pt-4">
       <div className="mb-1 flex items-center gap-1.5"><Layers size={14} style={{ color: NAVY }} /><p className="text-xs font-bold text-slate-700">Courses from your VLE</p></div>
-      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-500">
         Your VLE already groups courses — Moodle calls them categories. Map each group to a department once and
         every future sync follows it. Mapping a group moves its courses <em>and</em> their students.
       </p>
@@ -13883,7 +13886,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
               <p className="text-xs font-semibold text-slate-700">
                 {c.name || (c.externalId ? "Category " + c.externalId : "Not from a VLE")}
               </p>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-600">
                 {c.courseCount} course{c.courseCount === 1 ? "" : "s"} — {c.sampleCourses.join(", ")}{c.courseCount > c.sampleCourses.length ? " …" : ""}
               </p>
               {/* A category can be PARTLY assigned — most often because a sync added a
@@ -13919,7 +13922,7 @@ function VleDepartmentMapping({ departments, onMapped }) {
               // nothing to map them by. Shown anyway, because a college whose Moodle
               // predates the capture has EVERY course here, and a screen that omitted them
               // would report the mapping as finished before it had begun.
-              <span className="text-[11px] text-slate-400">Assign each on the course itself, under Registers</span>
+              <span className="text-[11px] text-slate-600">Assign each on the course itself, under Registers</span>
             )}
           </div>
         ))}
@@ -13995,12 +13998,12 @@ function SupportDepartmentSettings() {
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
       <div className="mb-1 flex items-center gap-1.5"><HeartHandshake size={15} style={{ color: NAVY }} /><p className="text-sm font-bold text-slate-700">Support departments</p></div>
-      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-400">
+      <p className="mb-3 max-w-prose text-[11px] leading-relaxed text-slate-500">
         The teams staff can refer students to. Yours, not ours — rename them to whatever this college calls
         them. A department's key is fixed once it exists, because every referral is stored against it.
       </p>
 
-      {rows === null && <p className="text-xs text-slate-400">Loading…</p>}
+      {rows === null && <p className="text-xs text-slate-500">Loading…</p>}
 
       <div className="space-y-2">
         {(rows || []).map(r => (
@@ -14022,19 +14025,19 @@ function SupportDepartmentSettings() {
             )}
           </div>
         ))}
-        {rows && rows.length === 0 && <p className="text-xs text-slate-400">No departments yet — nobody can raise a referral until there is at least one.</p>}
+        {rows && rows.length === 0 && <p className="text-xs text-slate-500">No departments yet — nobody can raise a referral until there is at least one.</p>}
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }} placeholder="New department, e.g. Careers" className={`${inputCls} !w-auto min-w-[200px] flex-1`} />
         <button onClick={add} disabled={!newName.trim()} className="press flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold text-white disabled:opacity-40" style={{ background: grad(BLUE) }}><Plus size={14} /> Add</button>
       </div>
-      {newName.trim() && <p className="mt-1.5 text-[11px] text-slate-400">Its key will be <span className="font-mono text-slate-500">{slugifyDeptKey(newName) || "—"}</span>, and cannot be changed later.</p>}
+      {newName.trim() && <p className="mt-1.5 text-[11px] text-slate-500">Its key will be <span className="font-mono text-slate-500">{slugifyDeptKey(newName) || "—"}</span>, and cannot be changed later.</p>}
 
       {err && <p className="mt-3 text-xs font-semibold text-rose-600">{err}</p>}
       {ok && <p className="mt-3 text-xs font-semibold text-emerald-600">{ok}</p>}
       <PrimaryBtn onClick={save} disabled={busy || !dirty || rows === null} className="mt-3 w-full"><Save size={16} /> {busy ? "Saving…" : "Save departments"}</PrimaryBtn>
-      <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+      <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
         Retiring a department stops new referrals reaching it. Its queue stays open to its members so the
         cases already there can be finished.
       </p>
@@ -14157,7 +14160,7 @@ function AdminKPI({ store }) {
 
       {/* KPI score by tutor */}
       <div className="mb-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
-        <p className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700"><BarChart3 size={15} /> KPI score by staff {tutors.length > 12 && <span className="text-[11px] font-medium text-slate-400">(top 12)</span>}</p>
+        <p className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700"><BarChart3 size={15} /> KPI score by staff {tutors.length > 12 && <span className="text-[11px] font-medium text-slate-500">(top 12)</span>}</p>
         {chartData.length ? (
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={chartData}>
@@ -14177,7 +14180,7 @@ function AdminKPI({ store }) {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <p className="text-sm font-bold text-slate-700">Per-staff breakdown</p>
         <div className="ml-auto flex items-center gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
-          <span className="px-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Sort</span>
+          <span className="px-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Sort</span>
           {[{ k: "score", l: "Score" }, { k: "submission", l: "Registers" }, { k: "cohort", l: "Attendance" }, { k: "name", l: "Name" }].map(o => (
             <button key={o.k} onClick={() => setSort(o.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${sort === o.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={sort === o.k ? { background: NAVY } : {}}>{o.l}</button>
           ))}
@@ -14187,7 +14190,7 @@ function AdminKPI({ store }) {
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[900px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-5 py-3">Staff</th>
                 <th className="px-5 py-3 text-center whitespace-nowrap">Courses</th>
@@ -14205,7 +14208,7 @@ function AdminKPI({ store }) {
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2.5">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: k.s.colour }}>{k.s.initials}</span>
-                      <div className="min-w-0"><p className="font-semibold text-slate-700">{k.s.name}</p><p className="text-[11px] text-slate-400">{k.s.dept}</p></div>
+                      <div className="min-w-0"><p className="font-semibold text-slate-700">{k.s.name}</p><p className="text-[11px] text-slate-500">{k.s.dept}</p></div>
                     </div>
                   </td>
                   <td className="px-5 py-3 text-center font-bold tabular-nums text-slate-600">{k.courses || <span className="text-slate-300">0</span>}</td>
@@ -14224,7 +14227,8 @@ function AdminKPI({ store }) {
           </table>
         </div>
       </div>
-      <p className="mt-3 text-[11px] text-slate-400">
+      {/* slate-600: this legend sits on the bg-slate-100 main, below the card. */}
+      <p className="mt-3 text-[11px] text-slate-600">
         <b>KPI score</b> is the mean of register submission, student attendance and own punctuality (whichever apply). Green 70%+ · amber 50–70% · orange 40–50% · red below 40% (90%+ shows violet). Click a row for the full breakdown.
       </p>
 
@@ -14247,28 +14251,28 @@ function StaffKpiDetail({ k, store }) {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm" style={{ background: k.s.colour }}>{k.s.initials}</span>
-        <div className="min-w-0 flex-1"><p className="truncate text-base font-extrabold" style={{ color: NAVY_DARK }}>{k.s.name}</p><p className="truncate text-xs text-slate-400">{k.s.role} · {k.s.dept}</p></div>
+        <div className="min-w-0 flex-1"><p className="truncate text-base font-extrabold" style={{ color: NAVY_DARK }}>{k.s.name}</p><p className="truncate text-xs text-slate-500">{k.s.role} · {k.s.dept}</p></div>
         {k.score != null && <span className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-extrabold text-white shadow" style={{ background: pctTone(k.score).colour }}>{k.score}</span>}
       </div>
 
       <div className="grid grid-cols-3 gap-2">
         {metrics.map(m => (
           <div key={m.label} className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{m.label}</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{m.label}</p>
             <p className="text-lg font-extrabold tabular-nums" style={{ color: pctTone(m.value ?? null).colour }}>{fmtPct(m.value ?? null)}</p>
-            <p className="mt-0.5 text-[10px] text-slate-400">{m.hint}</p>
+            <p className="mt-0.5 text-[10px] text-slate-600">{m.hint}</p>
           </div>
         ))}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Teaching load</p><p className="text-sm font-bold text-slate-700">{k.courses} course{k.courses === 1 ? "" : "s"} · {k.studentsTaught} students</p></div>
-        <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Leave used</p><p className="text-sm font-bold text-slate-700">{k.used} of {k.allowance} days</p></div>
+        <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Teaching load</p><p className="text-sm font-bold text-slate-700">{k.courses} course{k.courses === 1 ? "" : "s"} · {k.studentsTaught} students</p></div>
+        <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Leave used</p><p className="text-sm font-bold text-slate-700">{k.used} of {k.allowance} days</p></div>
       </div>
 
       {k.mods.length > 0 ? (
         <div>
-          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Courses tutored</p>
+          <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Courses tutored</p>
           <div className="rounded-2xl ring-1 ring-slate-200/70">
             {k.mods.map((m, i) => {
               const mt = unitTotals[m.id];
@@ -14278,17 +14282,17 @@ function StaffKpiDetail({ k, store }) {
               return (
                 <div key={m.id} className={`flex items-center gap-3 px-3.5 py-2.5 ${i ? "border-t border-slate-100" : ""}`}>
                   <span className="flex h-8 w-11 shrink-0 items-center justify-center rounded-lg text-[10px] font-extrabold text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>{m.code.slice(0, 5)}</span>
-                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-700" title={m.name}>{m.name}</p><p className="text-[10px] text-slate-400">{m.studentCount ?? "—"} students · {taken}/{due.length} registers taken</p></div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-slate-700" title={m.name}>{m.name}</p><p className="text-[10px] text-slate-500">{m.studentCount ?? "—"} students · {taken}/{due.length} registers taken</p></div>
                   <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold tabular-nums ${pctTone(subPct).bg} ${pctTone(subPct).text}`}>{fmtPct(subPct)}</span>
                   <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold tabular-nums ${pctTone(mt?.pct ?? null).bg} ${pctTone(mt?.pct ?? null).text}`}>{fmtPct(mt?.pct ?? null)}</span>
                 </div>
               );
             })}
           </div>
-          <p className="mt-1.5 text-[10px] text-slate-400">Per course: register submission % · student attendance %.</p>
+          <p className="mt-1.5 text-[10px] text-slate-500">Per course: register submission % · student attendance %.</p>
         </div>
       ) : (
-        <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-xs text-slate-400">Not assigned as a tutor on any course. Assign them on <b>Courses → Edit</b> to track teaching KPIs.</div>
+        <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-xs text-slate-600">Not assigned as a tutor on any course. Assign them on <b>Courses → Edit</b> to track teaching KPIs.</div>
       )}
     </div>
   );
@@ -14319,8 +14323,8 @@ function StaffTeachingModal({ staffMember, onClose }) {
   const Tile = ({ label, value, sub, tone = NAVY }) => (
     <div className="rounded-xl bg-white p-3 text-center shadow-sm ring-1 ring-slate-200/70">
       <p className="text-xl font-extrabold leading-none" style={{ color: tone }}>{value}</p>
-      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
-      {sub && <p className="text-[10px] text-slate-400">{sub}</p>}
+      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+      {sub && <p className="text-[10px] text-slate-500">{sub}</p>}
     </div>
   );
 
@@ -14331,7 +14335,7 @@ function StaffTeachingModal({ staffMember, onClose }) {
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm" style={{ background: staffMember?.colour || NAVY }}>{staffMember?.initials}</span>
           <div className="min-w-0">
             <p className="truncate text-base font-extrabold" style={{ color: NAVY }}>{staffMember?.name}</p>
-            <p className="truncate text-[11px] text-slate-400">{staffMember?.role}{staffMember?.dept ? ` · ${staffMember.dept}` : ""}</p>
+            <p className="truncate text-[11px] text-slate-500">{staffMember?.role}{staffMember?.dept ? ` · ${staffMember.dept}` : ""}</p>
           </div>
         </div>
 
@@ -14349,13 +14353,13 @@ function StaffTeachingModal({ staffMember, onClose }) {
             </div>
 
             {data.units.length === 0 ? (
-              <div className="rounded-xl bg-slate-50 px-3 py-6 text-center text-xs text-slate-400 ring-1 ring-slate-200">
+              <div className="rounded-xl bg-slate-50 px-3 py-6 text-center text-xs text-slate-600 ring-1 ring-slate-200">
                 No units are assigned to {staffMember?.name} yet.
                 <span className="mt-1 block">Assign one in <b>Registers → Units → Edit → Tutor</b>.</span>
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Units taught</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Units taught</p>
                 {data.units.map(u => {
                   const tone = pctTone(u.attendance?.pct);
                   return (
@@ -14363,7 +14367,7 @@ function StaffTeachingModal({ staffMember, onClose }) {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-extrabold" style={{ color: NAVY_DARK }}>{u.code} — {u.name}</p>
-                          <p className="truncate text-[11px] text-slate-400">{u.course?.name || "No course"}</p>
+                          <p className="truncate text-[11px] text-slate-500">{u.course?.name || "No course"}</p>
                         </div>
                         <span className={`shrink-0 rounded-lg px-2 py-1 text-[11px] font-extrabold ${tone.bg} ${tone.text}`}>{u.attendance?.pct == null ? "—" : `${u.attendance.pct}%`}</span>
                       </div>
@@ -14526,13 +14530,13 @@ function AdminStaff({ store }) {
           </select>
         </div>
         <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
-        <span className="ml-auto text-xs font-semibold text-slate-400">{filtered.length} of {total}</span>
+        <span className="ml-auto text-xs font-semibold text-slate-500">{filtered.length} of {total}</span>
       </div>
 
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
         <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[900px] text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+            <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
               <tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Department</th><th className="px-5 py-3">Site</th><th className="px-5 py-3 whitespace-nowrap">Hours ({monthLabel(month).split(" ")[0]})</th><th className="px-5 py-3 whitespace-nowrap">Account</th><th className="px-5 py-3 whitespace-nowrap">Allowance</th><th className="px-5 py-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
@@ -14543,7 +14547,7 @@ function AdminStaff({ store }) {
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span>
                       <div className="min-w-0">
                         <p className="font-semibold text-slate-700">{s.name}</p>
-                        <p className="max-w-[200px] truncate text-[11px] text-slate-400" title={s.email}>{s.email}</p>
+                        <p className="max-w-[200px] truncate text-[11px] text-slate-500" title={s.email}>{s.email}</p>
                       </div>
                     </div>
                   </td>
@@ -14624,7 +14628,7 @@ function AdminStaff({ store }) {
             <Field label="Site"><select value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))} className={inputCls}><option value="">Not set</option>{HOME_SITES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
             <Field label="Holiday allowance (days)"><input type="number" min={0} value={form.allowance} onChange={e => setForm(f => ({ ...f, allowance: e.target.value }))} className={inputCls} /></Field>
           </div>
-          {!edit && <p className="text-[11px] text-slate-400">The new account is created inactive — they get an email invitation to set their own password before they can sign in.</p>}
+          {!edit && <p className="text-[11px] text-slate-500">The new account is created inactive — they get an email invitation to set their own password before they can sign in.</p>}
           <PrimaryBtn onClick={save} disabled={!form.name.trim() || !form.email.trim()} className="w-full"><Save size={16} /> {edit ? "Save changes" : "Add staff"}</PrimaryBtn>
         </div>
       </Modal>
@@ -14633,7 +14637,7 @@ function AdminStaff({ store }) {
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
             <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: deleteTarget?.colour }}>{deleteTarget?.initials}</span>
-            <div><p className="text-sm font-bold text-slate-700">{deleteTarget?.name}</p><p className="text-[11px] text-slate-400">{deleteTarget?.role} · {deleteTarget?.dept}</p></div>
+            <div><p className="text-sm font-bold text-slate-700">{deleteTarget?.name}</p><p className="text-[11px] text-slate-600">{deleteTarget?.role} · {deleteTarget?.dept}</p></div>
           </div>
           <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-700 ring-1 ring-rose-200">
             <AlertCircle size={13} className="mt-px shrink-0" />
@@ -14642,7 +14646,7 @@ function AdminStaff({ store }) {
             original sign-up record (so the same email can register again). It cannot be undone.
           </p>
           <PrimaryBtn colour={MAROON} onClick={confirmRemove} disabled={deleteBusy} className="w-full"><Trash2 size={16} /> {deleteBusy ? "Removing…" : `Remove ${deleteTarget?.name || ""}`}</PrimaryBtn>
-          <button onClick={() => setDeleteTarget(null)} disabled={deleteBusy} className="press w-full text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">Cancel</button>
+          <button onClick={() => setDeleteTarget(null)} disabled={deleteBusy} className="press w-full text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">Cancel</button>
         </div>
       </Modal>
 
@@ -14661,7 +14665,7 @@ function AdminStaff({ store }) {
                 </div>
                 <span className="text-xl font-extrabold text-emerald-700">{fmtDuration(h.totalMin)}</span>
               </div>
-              <p className="px-1 text-xs font-bold uppercase tracking-wide text-slate-400">Per week (from check-in → check-out)</p>
+              <p className="px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Per week (from check-in → check-out)</p>
               {h.weekList.length === 0 && <EmptyState Icon={Timer} title="Nothing to show yet" msg="Hours appear once a check-in has a matching check-out this month." />}
               {h.weekList.map(w => (
                 <div key={w.monday} className="flex items-center justify-between rounded-xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-100">
@@ -14824,7 +14828,7 @@ function MoodleCard({ store }) {
 
       {status?.configured && (
         <>
-          <p className="mb-3 truncate text-[11px] text-slate-400" title={status.url}>{status.url.replace(/^https?:\/\//, "")}</p>
+          <p className="mb-3 truncate text-[11px] text-slate-500" title={status.url}>{status.url.replace(/^https?:\/\//, "")}</p>
           <p className="mb-3 text-[11px] text-slate-500">
             {status.running || busy === "sync"
               ? <span className="flex items-center gap-1.5 font-semibold text-blue-600"><Loader2 size={12} className="animate-spin" /> Importing from Moodle…</span>
@@ -14856,7 +14860,7 @@ function MoodleCard({ store }) {
                 {counts.map(([k, label]) => (
                   <div key={k} className="rounded-xl bg-slate-50 px-2.5 py-2">
                     <p className="text-base font-extrabold leading-none" style={{ color: k === "gradesSkippedManual" ? "#b45309" : NAVY }}>{result.summary[k]}</p>
-                    <p className="mt-1 text-[10px] leading-tight text-slate-400">{label}</p>
+                    <p className="mt-1 text-[10px] leading-tight text-slate-600">{label}</p>
                   </div>
                 ))}
               </div>
@@ -14877,7 +14881,7 @@ function MoodleCard({ store }) {
             </div>
           )}
 
-          <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-slate-400">
+          <p className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-slate-500">
             <Info size={12} className="mt-px shrink-0" />
             Reads Moodle only — it never writes back, never deletes anything here, and
             never overwrites a mark someone typed in by hand.
@@ -15036,13 +15040,13 @@ function AdminSlc({ store }) {
           <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
             <div className="overflow-x-auto max-w-full">
               <table className="w-full min-w-[900px] text-sm">
-                <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-500">
                   <th className="px-3 py-2">Student</th><th className="px-3 py-2">Course / Intake</th><th className="px-3 py-2">Loan type</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">CRN</th><th className="px-3 py-2">Applied</th><th className="px-3 py-2">Decision</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2 text-right">Actions</th>
                 </tr></thead>
                 <tbody>
                   {filtered.map(r => (
                     <tr key={r.id} className="border-t border-slate-50 align-top hover:bg-slate-50/60">
-                      <td className="px-3 py-2"><p className="font-semibold text-slate-700">{r.studentName}</p>{r.studentRef && <p className="text-[11px] text-slate-400">{r.studentRef}</p>}</td>
+                      <td className="px-3 py-2"><p className="font-semibold text-slate-700">{r.studentName}</p>{r.studentRef && <p className="text-[11px] text-slate-600">{r.studentRef}</p>}</td>
                       <td className="px-3 py-2 text-slate-500">{r.course || "—"}{r.intake ? ` · ${r.intake}` : ""}</td>
                       <td className="px-3 py-2 text-slate-500">{r.loanType || "—"}</td>
                       <td className="px-3 py-2">{badge(r.status)}</td>
@@ -15053,7 +15057,7 @@ function AdminSlc({ store }) {
                       <td className="px-3 py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => openEdit(r)} title="Edit" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Edit3 size={15} /></button><button onClick={() => setDel(r)} title="Delete" className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={15} /></button></div></td>
                     </tr>
                   ))}
-                  {filtered.length === 0 && <tr><td colSpan={9} className="px-3 py-10 text-center text-sm text-slate-400">No SLC records{statusFilter || q ? " match your filter" : " yet — add one with “New record”"}.</td></tr>}
+                  {filtered.length === 0 && <tr><td colSpan={9} className="px-3 py-10 text-center text-sm text-slate-500">No SLC records{statusFilter || q ? " match your filter" : " yet — add one with “New record”"}.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -15349,11 +15353,11 @@ function AdminAttendanceEmails({ store }) {
           recalculate the %, bands and email period over any month. */}
       <div className="mb-4 flex flex-wrap items-end gap-x-4 gap-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
         <div className="mr-auto">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reporting period</p>
-          <p className="max-w-xs text-xs text-slate-400">Leave blank to use the current term, or pick a date range to send for any month.</p>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Reporting period</p>
+          <p className="max-w-xs text-xs text-slate-500">Leave blank to use the current term, or pick a date range to send for any month.</p>
         </div>
-        <div><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">From</label><input type="date" value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className={`${inputCls} mt-1`} /></div>
-        <div><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">To</label><input type="date" value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className={`${inputCls} mt-1`} /></div>
+        <div><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">From</label><input type="date" value={range.from} onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className={`${inputCls} mt-1`} /></div>
+        <div><label className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">To</label><input type="date" value={range.to} onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className={`${inputCls} mt-1`} /></div>
         <button onClick={applyRange} disabled={!range.from || !range.to || loading} className="press h-[38px] rounded-lg px-3.5 text-xs font-bold text-white transition disabled:opacity-40" style={{ background: NAVY }}>Apply range</button>
         {(data?.custom || range.from || range.to) && <button onClick={resetRange} disabled={loading} className="press h-[38px] rounded-lg border border-slate-200 px-3.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Current term</button>}
         {data?.custom && <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 ring-1 ring-blue-200">Custom · {term?.start} → {term?.end}</span>}
@@ -15368,11 +15372,11 @@ function AdminAttendanceEmails({ store }) {
       ) : (
         <>
           <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-            <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{data?.custom ? "Reporting period" : "Current term"}</p><p className="text-sm font-bold text-slate-700">{term.name || "—"}</p><p className="text-xs text-slate-400">{term.start} → {term.end}</p></div>
-            <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Students with data</p><p className="text-sm font-bold text-slate-700">{withData.length}{noData ? <span className="font-normal text-slate-400"> · {noData} no marks yet</span> : null}</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{data?.custom ? "Reporting period" : "Current term"}</p><p className="text-sm font-bold text-slate-700">{term.name || "—"}</p><p className="text-xs text-slate-500">{term.start} → {term.end}</p></div>
+            <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Students with data</p><p className="text-sm font-bold text-slate-700">{withData.length}{noData ? <span className="font-normal text-slate-500"> · {noData} no marks yet</span> : null}</p></div>
             <div className="ml-auto flex items-center gap-2">
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${config?.autoEnabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{config?.autoEnabled ? "Automation ON" : "Automation OFF"}</span>
-              {config?.lastRunPeriod && <span className="text-xs text-slate-400">last sent {config.lastRunPeriod}</span>}
+              {config?.lastRunPeriod && <span className="text-xs text-slate-500">last sent {config.lastRunPeriod}</span>}
             </div>
           </div>
 
@@ -15400,16 +15404,16 @@ function AdminAttendanceEmails({ store }) {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[780px] text-sm">
-                <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <thead><tr className="text-left text-[11px] uppercase tracking-wide text-slate-500">
                   <th className="px-3 py-2">Student</th><th className="px-3 py-2">Programme</th><th className="px-3 py-2 text-right">Overall</th><th className="px-3 py-2">Band</th><th className="px-3 py-2">Modules (this term)</th><th className="px-3 py-2 text-right">Send</th>
                 </tr></thead>
                 <tbody>
                   {shown.map(s => (
                     <tr key={s.id} className="border-t border-slate-50 align-top hover:bg-slate-50/60">
-                      <td className="px-3 py-2"><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-400">{s.email}</p></td>
+                      <td className="px-3 py-2"><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-600">{s.email}</p></td>
                       <td className="px-3 py-2 text-slate-500">{s.programme || "—"}</td>
                       <td className="px-3 py-2 text-right font-bold text-slate-700">{s.pct}%</td>
-                      <td className="px-3 py-2"><span style={bandTint(s.bandColour)} className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold">{bandLabel(s.bandKey)}</span>{s.bandKey && !s.bandTriggers && <span className="mt-0.5 block text-[10px] text-slate-400">not emailed automatically</span>}</td>
+                      <td className="px-3 py-2"><span style={bandTint(s.bandColour)} className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold">{bandLabel(s.bandKey)}</span>{s.bandKey && !s.bandTriggers && <span className="mt-0.5 block text-[10px] text-slate-600">not emailed automatically</span>}</td>
                       <td className="px-3 py-2 text-[11px] text-slate-500">{s.modules?.length ? s.modules.map(m => `${m.code} ${m.pct}%`).join(" · ") : "—"}</td>
                       <td className="px-3 py-2 text-right">
                         <button onClick={() => sendOne(s)} disabled={sendingId === s.id || !s.email || !s.bandKey}
@@ -15420,7 +15424,7 @@ function AdminAttendanceEmails({ store }) {
                       </td>
                     </tr>
                   ))}
-                  {shown.length === 0 && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-slate-400">No students match.</td></tr>}
+                  {shown.length === 0 && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-slate-500">No students match.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -15448,10 +15452,10 @@ function AdminAttendanceEmails({ store }) {
               Send automatically on the last day of each month
             </label>
             <div className="mt-3 flex flex-wrap gap-4">
-              <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Send at hour (0–23)</label><input type="number" min={0} max={23} value={config?.sendHour ?? 9} onChange={e => setCfg({ sendHour: Number(e.target.value) })} className={`${inputCls} mt-1 w-24`} /></div>
-              <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">"Respond by" working days</label><input type="number" min={1} max={30} value={config?.respondDays ?? 5} onChange={e => setCfg({ respondDays: Number(e.target.value) })} className={`${inputCls} mt-1 w-24`} /></div>
+              <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-600">Send at hour (0–23)</label><input type="number" min={0} max={23} value={config?.sendHour ?? 9} onChange={e => setCfg({ sendHour: Number(e.target.value) })} className={`${inputCls} mt-1 w-24`} /></div>
+              <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-600">"Respond by" working days</label><input type="number" min={1} max={30} value={config?.respondDays ?? 5} onChange={e => setCfg({ respondDays: Number(e.target.value) })} className={`${inputCls} mt-1 w-24`} /></div>
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">Scoped to the current semester and sent to every enrolled student, using the template for their attendance band.</p>
+            <p className="mt-2 text-[11px] text-slate-600">Scoped to the current semester and sent to every enrolled student, using the template for their attendance band.</p>
           </div>
 
           {/* ---- Attendance bands ------------------------------------------------
@@ -15462,7 +15466,7 @@ function AdminAttendanceEmails({ store }) {
           <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <p className="text-sm font-extrabold" style={{ color: NAVY_DARK }}>Attendance bands</p>
-              <p className="mt-0.5 max-w-lg text-[11px] leading-relaxed text-slate-400">
+              <p className="mt-0.5 max-w-lg text-[11px] leading-relaxed text-slate-500">
                 Each band runs from its start percentage up to the next band's. Only bands with <b>Sends email</b> ticked are written to by the monthly run — the others are for monitoring only. Up to 10 bands.
               </p>
             </div>
@@ -15474,7 +15478,7 @@ function AdminAttendanceEmails({ store }) {
 
           <div className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-200">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-400">
+              <thead><tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-600">
                 <th className="px-2 py-2 w-14">Order</th>
                 <th className="px-2 py-2">Band name</th>
                 <th className="px-2 py-2 w-24">Starts at</th>
@@ -15496,7 +15500,7 @@ function AdminAttendanceEmails({ store }) {
                     <td className="px-2 py-1.5">
                       {/* The floor is fixed at 0: bands must cover a student attending nothing. */}
                       {i === bandsDraft.length - 1
-                        ? <span className="inline-block px-2 py-1.5 text-xs font-bold text-slate-400">0% (floor)</span>
+                        ? <span className="inline-block px-2 py-1.5 text-xs font-bold text-slate-500">0% (floor)</span>
                         : <input type="number" min={0} max={100} value={b.min} onChange={e => setBandMin(i, e.target.value)} className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-400" />}
                     </td>
                     {/* Derived, never entered — see the ladder comment above. */}
@@ -15514,9 +15518,9 @@ function AdminAttendanceEmails({ store }) {
               a threshold is "so where does a student on 68% end up?". Answered here with
               the same top-down rule the server sends by, decimals included. */}
           <div className="mt-2 flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
-            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">A student on</span>
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">A student on</span>
             <input type="number" min={0} max={100} step="0.1" value={previewPct} onChange={e => setPreviewPct(e.target.value)} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-400" />
-            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">% lands in</span>
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">% lands in</span>
             {previewBand
               ? <>
                   <span style={bandTint(previewBand.colour)} className="rounded-full px-2.5 py-1 text-xs font-bold">{previewBand.label} · {previewBand.min}–{previewBand.max}%</span>
@@ -15533,7 +15537,7 @@ function AdminAttendanceEmails({ store }) {
           </div>
 
           <p className="mb-2 mt-5 text-sm font-extrabold" style={{ color: NAVY_DARK }}>Band templates</p>
-          <p className="mb-3 text-[11px] leading-relaxed text-slate-400">Placeholders: <b>{"{firstName}"}</b> <b>{"{pct}"}</b> <b>{"{period}"}</b> <b>{"{programme}"}</b> <b>{"{missedRate}"}</b> <b>{"{modules}"}</b> plus the signature/contact fields above. <b>{"{modules}"}</b> becomes the per-module table.</p>
+          <p className="mb-3 text-[11px] leading-relaxed text-slate-500">Placeholders: <b>{"{firstName}"}</b> <b>{"{pct}"}</b> <b>{"{period}"}</b> <b>{"{programme}"}</b> <b>{"{missedRate}"}</b> <b>{"{modules}"}</b> plus the signature/contact fields above. <b>{"{modules}"}</b> becomes the per-module table.</p>
           {/* Driven by the EDITED band list, not the loaded one: a band added a moment
               ago needs its letter now, and a band just deleted must stop asking for one.
               The headcount still comes from the loaded data, and is simply absent for a
@@ -15545,7 +15549,7 @@ function AdminAttendanceEmails({ store }) {
               const sample = students.find(s => s.bandKey === b.key);
               return (
                 <details key={b.key || `new-${di}`} className="rounded-xl ring-1 ring-slate-200">
-                  <summary className="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700"><span style={bandTint(b.colour)} className="rounded-full px-2 py-0.5 text-[10px]">{b.min}–{b.max}%</span> {b.label} <span className="ml-auto text-[11px] font-normal text-slate-400">{b.count == null ? "" : `${b.count} student${b.count === 1 ? "" : "s"}`}</span></summary>
+                  <summary className="flex cursor-pointer items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700"><span style={bandTint(b.colour)} className="rounded-full px-2 py-0.5 text-[10px]">{b.min}–{b.max}%</span> {b.label} <span className="ml-auto text-[11px] font-normal text-slate-500">{b.count == null ? "" : `${b.count} student${b.count === 1 ? "" : "s"}`}</span></summary>
                   <div className="border-t border-slate-100 p-4">
                     {/* A band added in this session has no key yet — the server derives one
                         from its label on save. Editing a letter before then would file it
@@ -15557,7 +15561,7 @@ function AdminAttendanceEmails({ store }) {
                     <div className="mt-3"><Field label="Body"><textarea rows={10} value={config?.templates?.[b.key]?.body ?? ""} onChange={e => setTemplate(b.key, "body", e.target.value)} className={`${inputCls} resize-y font-mono text-xs`} /></Field></div>
                     {sample && (
                       <div className="mt-3 rounded-lg bg-slate-50 p-3">
-                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Preview · {sample.name} ({sample.pct}%)</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Preview · {sample.name} ({sample.pct}%)</p>
                         <p className="mt-1 text-xs font-bold text-slate-600">{previewAttendance(config?.templates?.[b.key]?.subject, config?.values, sample, data?.period)}</p>
                         <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{previewAttendance(config?.templates?.[b.key]?.body, config?.values, sample, data?.period)}</p>
                       </div>
@@ -15616,11 +15620,11 @@ function AdmissionConfigManager({ open, onClose, store, onSaved }) {
 
   const list = (rows, kind) => (
     rows.length === 0
-      ? <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-xs text-slate-400 ring-1 ring-slate-200">None yet — add one above.</p>
+      ? <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-xs text-slate-600 ring-1 ring-slate-200">None yet — add one above.</p>
       : <ul className="flex flex-col gap-1.5">
           {rows.map(r => (
             <li key={r.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${r.active ? "border-slate-200 bg-white" : "border-slate-200 bg-slate-50"}`}>
-              <span className={`min-w-0 flex-1 truncate text-sm font-semibold ${r.active ? "text-slate-700" : "text-slate-400 line-through"}`} title={r.name || r.label}>{r.name || r.label}</span>
+              <span className={`min-w-0 flex-1 truncate text-sm font-semibold ${r.active ? "text-slate-700" : "text-slate-500 line-through"}`} title={r.name || r.label}>{r.name || r.label}</span>
               <button title={r.active ? "Hide from the application form" : "Show on the application form"} disabled={busy}
                 onClick={() => run(() => kind === "course" ? api.updateAdmissionCourse(r.id, { active: !r.active }) : api.updateAdmissionIntake(r.id, { active: !r.active }))}
                 className={`rounded-md px-2 py-1 text-[10px] font-bold ${r.active ? "bg-emerald-50 text-emerald-600" : "bg-slate-200 text-slate-500"}`}>{r.active ? "Active" : "Hidden"}</button>
@@ -15675,7 +15679,7 @@ function AdmissionField({ f, value, onChange, missing }) {
   return (
     <div data-akey={f.key} className={f.span === 2 ? "sm:col-span-2" : ""}>
       <label className="text-[13px] font-semibold leading-snug text-slate-600">{f.label}{f.required && <span className="ml-0.5 text-rose-500">*</span>}</label>
-      {f.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{f.hint}</p>}
+      {f.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{f.hint}</p>}
       <div className="mt-1.5">{control}</div>
     </div>
   );
@@ -15694,7 +15698,7 @@ function AdmissionDetail({ r }) {
             <dl className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               {answered.map(f => (
                 <div key={f.key} className={f.type === "textarea" ? "sm:col-span-2" : ""}>
-                  <dt className="text-[11px] font-semibold text-slate-400">{f.label}</dt>
+                  <dt className="text-[11px] font-semibold text-slate-500">{f.label}</dt>
                   <dd className="text-sm text-slate-700 whitespace-pre-wrap break-words">{f.type === "date" ? fmtDate(r[f.key]) : r[f.key]}</dd>
                 </div>
               ))}
@@ -15778,7 +15782,7 @@ function AdmissionDocsPanel({ r, store, onChanged }) {
       </div>
 
       {!r.email && <p className="mb-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600"><AlertCircle size={12} className="mt-px shrink-0" /> This application has no email address — add one (Edit) before requesting documents.</p>}
-      {requested && <p className="mb-2 text-[11px] text-slate-400">Requested {fmtDate(String(r.docsRequestedAt).slice(0, 10))}. The applicant can upload any time until the link expires (30 days).</p>}
+      {requested && <p className="mb-2 text-[11px] text-slate-600">Requested {fmtDate(String(r.docsRequestedAt).slice(0, 10))}. The applicant can upload any time until the link expires (30 days).</p>}
       {link && (
         <div className="mb-3 flex items-center gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-slate-200">
           <input readOnly value={link} className="min-w-0 flex-1 bg-transparent text-[11px] text-slate-500 outline-none" onFocus={e => e.target.select()} />
@@ -15797,7 +15801,7 @@ function AdmissionDocsPanel({ r, store, onChanged }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-bold text-slate-700">{t.label}</p>
-                {d ? <p className="truncate text-[11px] text-slate-400">{d.fileName}{d.confirmed ? ` · verified${d.confirmedBy ? ` by ${d.confirmedBy}` : ""}` : ""}</p> : <p className="text-[11px] text-slate-300">Not uploaded</p>}
+                {d ? <p className="truncate text-[11px] text-slate-500">{d.fileName}{d.confirmed ? ` · verified${d.confirmedBy ? ` by ${d.confirmedBy}` : ""}` : ""}</p> : <p className="text-[11px] text-slate-300">Not uploaded</p>}
               </div>
               {d && (
                 <div className="flex items-center gap-1">
@@ -15870,7 +15874,7 @@ function AdmissionOfferPanel({ r, store, onChanged }) {
           ? <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">Accepted{r.offerAcceptedAt ? ` · ${fmtDate(String(r.offerAcceptedAt).slice(0, 10))}` : ""}</span>
           : sent
             ? <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">Sent{r.offerSentAt ? ` · ${fmtDate(String(r.offerSentAt).slice(0, 10))}` : ""}</span>
-            : <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-400">Not sent</span>}
+            : <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-600">Not sent</span>}
         <div className="ml-auto flex items-center gap-2">
           <button onClick={async () => { try { await api.downloadAdmissionOfferLetterPdf(r.id, `Offer Letter - ${[r.firstName, r.surname].filter(Boolean).join(" ") || "Applicant"}.pdf`); } catch (e) { store.notify(e.message || "Could not download the offer letter", "error"); } }}
             className="press flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50">
@@ -15883,7 +15887,7 @@ function AdmissionOfferPanel({ r, store, onChanged }) {
         </div>
       </div>
       {!r.email && <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600"><AlertCircle size={12} className="mt-px shrink-0" /> This application has no email address — add one (Edit) before sending an offer.</p>}
-      {accepted && <p className="mt-2 text-[11px] text-slate-400">The applicant accepted their place. Enrolment stays a manual decision in the Enroll column.</p>}
+      {accepted && <p className="mt-2 text-[11px] text-slate-600">The applicant accepted their place. Enrolment stays a manual decision in the Enroll column.</p>}
 
       {dialog && (
         <div className="mt-3 rounded-xl bg-white p-3 ring-1 ring-slate-200">
@@ -15895,7 +15899,7 @@ function AdmissionOfferPanel({ r, store, onChanged }) {
               <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} placeholder="e.g. Swaroop Arja" className={inputCls} />
             </Field>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-400">The letter carries the induction date you pick above, arrival 09:45 am and a 10:00 am start. The PDF is generated with the applicant's name and course, signed with your name, and emailed with an Accept link.</p>
+          <p className="mt-1.5 text-[11px] text-slate-500">The letter carries the induction date you pick above, arrival 09:45 am and a 10:00 am start. The PDF is generated with the applicant's name and course, signed with your name, and emailed with an Accept link.</p>
           <PrimaryBtn colour={MAROON} onClick={send} disabled={busy} className="mt-3 w-full">{busy ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <><Send size={16} /> Generate & send offer letter</>}</PrimaryBtn>
         </div>
       )}
@@ -15946,7 +15950,7 @@ function AdmissionInterviewPanel({ r, store, onChanged }) {
         <p className="text-sm font-extrabold" style={{ color: NAVY_DARK }}>Interview call</p>
         {invited
           ? <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">Scheduled{r.interviewInviteDate ? ` · ${fmtDate(r.interviewInviteDate)}` : ""}</span>
-          : <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-400">Not scheduled</span>}
+          : <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-600">Not scheduled</span>}
         {outcome && <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${outcome === "Yes" ? "bg-emerald-100 text-emerald-700" : outcome === "No" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>Outcome: {outcome}</span>}
         <div className="ml-auto">
           <button onClick={() => { setOpen(o => !o); if (!open) seed(); }} disabled={!r.email} title={!r.email ? "Add an email address first" : ""}
@@ -15956,7 +15960,7 @@ function AdmissionInterviewPanel({ r, store, onChanged }) {
         </div>
       </div>
       {!r.email && <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600"><AlertCircle size={12} className="mt-px shrink-0" /> This application has no email address — add one (Edit) before scheduling an interview.</p>}
-      <p className="mt-2 text-[11px] text-slate-400">The applicant sees these details in the Student Portal and receives a branded email. The interview <b>outcome</b> is recorded separately in the Interviews (ISM) tab.</p>
+      <p className="mt-2 text-[11px] text-slate-600">The applicant sees these details in the Student Portal and receives a branded email. The interview <b>outcome</b> is recorded separately in the Interviews (ISM) tab.</p>
 
       {open && (
         <div className="mt-3 rounded-xl bg-white p-3 ring-1 ring-slate-200">
@@ -16078,7 +16082,7 @@ function AdminIsm({ store }) {
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
             <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
               <table className="w-full min-w-[820px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="px-5 py-3">Applicant</th><th className="px-5 py-3">Course</th>
                     <th className="px-5 py-3 whitespace-nowrap">Admitted?</th><th className="px-5 py-3">Interviewer</th>
@@ -16139,7 +16143,7 @@ function AdminIsm({ store }) {
             {ISM_FIELDS.map(f => <AdmissionField key={f.key} f={f} value={form[f.key]} onChange={set} />)}
           </div>
           {formErr && <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200"><AlertCircle size={13} className="mt-px shrink-0" />{formErr}</p>}
-          {editing?.interviewerName && <p className="text-[11px] text-slate-400">Recorded by {editing.interviewerName}.</p>}
+          {editing?.interviewerName && <p className="text-[11px] text-slate-500">Recorded by {editing.interviewerName}.</p>}
           <PrimaryBtn onClick={save} disabled={busy} className="w-full">{busy ? <><Loader2 size={16} className="animate-spin" /> Saving…</> : <><Save size={16} /> {editing ? "Save changes" : "Save ISM record"}</>}</PrimaryBtn>
         </div>
       </Modal>
@@ -16156,7 +16160,7 @@ function AdminIsm({ store }) {
             </div>
             <dl className="space-y-2">
               {ISM_FIELDS.filter(f => (viewing[f.key] ?? "") !== "").map(f => (
-                <div key={f.key}><dt className="text-[11px] font-semibold text-slate-400">{f.label}</dt><dd className="text-sm text-slate-700 whitespace-pre-wrap break-words">{viewing[f.key]}</dd></div>
+                <div key={f.key}><dt className="text-[11px] font-semibold text-slate-500">{f.label}</dt><dd className="text-sm text-slate-700 whitespace-pre-wrap break-words">{viewing[f.key]}</dd></div>
               ))}
             </dl>
           </div>
@@ -16413,7 +16417,7 @@ function AdminAdmissions({ store }) {
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up">
             <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
               <table className="w-full min-w-[1320px] text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="w-10 px-4 py-3"><input ref={selectAllRef} type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all applications" className="h-4 w-4 cursor-pointer align-middle accent-blue-600" /></th>
                     <th className="px-5 py-3">Applicant</th><th className="px-5 py-3">Course</th>
@@ -16446,7 +16450,7 @@ function AdminAdmissions({ store }) {
                         <td className="px-5 py-3 whitespace-nowrap">
                           {!r.docsRequestedAt && dUp === 0
                             ? <span className="text-slate-300">—</span>
-                            : <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${dUp === 0 ? "bg-slate-100 text-slate-400" : dUp === dTot ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{dUp === dTot && dVer === dTot && <ShieldCheck size={11} />}{dUp}/{dTot}</span>}
+                            : <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ${dUp === 0 ? "bg-slate-100 text-slate-600" : dUp === dTot ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{dUp === dTot && dVer === dTot && <ShieldCheck size={11} />}{dUp}/{dTot}</span>}
                         </td>
                         <td className="px-5 py-3 whitespace-nowrap">
                           {r.ismOutcome
@@ -16534,7 +16538,7 @@ function AdminAdmissions({ store }) {
               <Field label="Induction date"><input type="date" value={enrollDate} onChange={e => setEnrollDate(e.target.value)} className={inputCls} /></Field>
               <Field label="Induction time"><input type="time" value={enrollTime} onChange={e => setEnrollTime(e.target.value)} className={inputCls} /></Field>
             </div>
-            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">The email location is EdTech, 42 The Burroughs, Hendon, London NW4 4AP. On enrol, the applicant's SharePoint folder is renamed to "&lt;Student ID&gt; - {admissionName(enrollFor)}".</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">The email location is EdTech, 42 The Burroughs, Hendon, London NW4 4AP. On enrol, the applicant's SharePoint folder is renamed to "&lt;Student ID&gt; - {admissionName(enrollFor)}".</p>
             <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
               <button onClick={() => setEnrollFor(null)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
               <PrimaryBtn colour="#059669" onClick={doEnroll} disabled={enrolling}>{enrolling ? <><Loader2 size={16} className="animate-spin" /> Enrolling…</> : <><CheckCircle2 size={16} /> Enrol &amp; send email</>}</PrimaryBtn>
@@ -16623,9 +16627,9 @@ function AuditDiff({ before, after }) {
   const keys = Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after || {})]));
   if (!keys.length) return null;
   const show = (v) => {
-    if (v === null || v === undefined) return <span className="text-slate-400">(none)</span>;
+    if (v === null || v === undefined) return <span className="text-slate-500">(none)</span>;
     if (typeof v === "object") return <code className="text-[11px]">{JSON.stringify(v)}</code>;
-    if (v === "") return <span className="text-slate-400">(empty)</span>;
+    if (v === "") return <span className="text-slate-500">(empty)</span>;
     return String(v);
   };
   return (
@@ -16722,11 +16726,11 @@ function AuditTrail() {
           {actions.map(a => <option key={a.action} value={a.action}>{a.action} ({a.count})</option>)}
         </select>
         <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200">
-          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">From</span>
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">From</span>
           <input type="date" value={filters.from} onChange={e => setFilters(f => ({ ...f, from: e.target.value }))} className="w-full bg-transparent outline-none" />
         </label>
         <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200">
-          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">To</span>
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">To</span>
           <input type="date" value={filters.to} onChange={e => setFilters(f => ({ ...f, to: e.target.value }))} className="w-full bg-transparent outline-none" />
         </label>
       </div>
@@ -16735,13 +16739,13 @@ function AuditTrail() {
 
       <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch]">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+          <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600">
             <tr><th className="px-5 py-3">When</th><th className="px-5 py-3">Who</th><th className="px-5 py-3">What happened</th><th className="px-5 py-3">Action</th><th className="px-5 py-3"></th></tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={5} className="px-5 py-10 text-center text-slate-400"><Loader2 size={18} className="mx-auto animate-spin" /></td></tr>}
             {!loading && !shown.length && (
-              <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">
+              <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-500">
                 {rows.length ? "Nothing on this page matches that search." : "No entries for these filters yet."}
               </td></tr>
             )}
@@ -16771,7 +16775,7 @@ function AuditTrail() {
                     <tr className="border-t border-slate-100 bg-slate-50/60">
                       <td colSpan={5} className="px-5 py-3">
                         <AuditDiff before={r.before} after={r.after} />
-                        <p className="mt-2 text-[11px] text-slate-400">
+                        <p className="mt-2 text-[11px] text-slate-600">
                           {r.entity ? `${r.entity} ${r.entityId || ""} · ` : ""}{r.ip ? `from ${r.ip}` : "no address recorded"}
                         </p>
                       </td>
@@ -16791,7 +16795,7 @@ function AuditTrail() {
           </button>
         </div>
       )}
-      <p className="mt-3 text-center text-[11px] text-slate-400">
+      <p className="mt-3 text-center text-[11px] text-slate-500">
         Entries are written automatically and cannot be edited or deleted from here.
       </p>
     </>
@@ -16939,19 +16943,19 @@ function AdminSettings({ store }) {
     <>
       <AdminHeader title="Settings" subtitle="Manage staff members and departments" Icon={Settings} action={<div className="flex flex-wrap items-center gap-2"><ExportBtn onClick={exportStaff} label="Export staff" /><PrimaryBtn onClick={openAdd}><UserPlus size={16} /> Add staff</PrimaryBtn></div>} />
       <div className="mb-4">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Your institution</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Your institution</p>
         {/* Name, colours and logo — this college's own, used across the app, its
             emails and its letters. Nothing here is shared with any other institution. */}
         <BrandingSettings />
       </div>
       <div className="mb-4">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Letters &amp; emails</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Letters &amp; emails</p>
         {/* This college's own offer letter and application form, and its own wording for
             every email sent on its behalf. */}
         <DocumentSettings />
       </div>
       <div className="mb-4">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Conduct points</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Conduct points</p>
         {/* The behaviour/merit entries a lecturer taps in class — this college's words
             and points, not the platform's. */}
         <ConductVocabularySettings notify={store.notify} />
@@ -16966,13 +16970,13 @@ function AdminSettings({ store }) {
           a screen that shows a control nobody can use teaches people to ignore errors. */}
       {canAccessPage(store.currentUser, "referrals") && (
         <div className="mb-4">
-          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Student support</p>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Student support</p>
           <AcademicDepartmentSettings />
           <SupportDepartmentSettings />
         </div>
       )}
       <div className="mb-4">
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Connected systems</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Connected systems</p>
         {/* This institution's OWN Moodle / SharePoint credentials — encrypted at rest,
             and never returned to any client once saved. */}
         <IntegrationSettings />
@@ -16982,11 +16986,11 @@ function AdminSettings({ store }) {
           <div className="mb-3 flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, role or dept…" className="w-full bg-transparent text-sm outline-none" /></div>
           <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-400"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Dept</th><th className="px-5 py-3">Allowance</th><th className="px-5 py-3">2-Step</th><th className="px-5 py-3"></th></tr></thead>
+              <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-600"><tr><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Dept</th><th className="px-5 py-3">Allowance</th><th className="px-5 py-3">2-Step</th><th className="px-5 py-3"></th></tr></thead>
               <tbody>
                 {paged.slice.map(s => (
                   <tr key={s.id} className="border-t border-slate-100 transition-colors duration-150 hover:bg-blue-50/40">
-                    <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-400">{s.email}</p></div></div></td>
+                    <td className="px-5 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-sm" style={{ background: s.colour }}>{s.initials}</span><div><p className="font-semibold text-slate-700">{s.name}</p><p className="text-[11px] text-slate-500">{s.email}</p></div></div></td>
                     <td className="px-5 py-3 text-slate-500">{s.role}</td><td className="px-5 py-3 text-slate-500">{s.dept}</td><td className="px-5 py-3 font-medium text-slate-600">{s.allowance}d</td>
                     <td className="px-5 py-3">{twoStepBadge(s)}</td>
                     <td className="px-5 py-3"><div className="flex gap-1">
@@ -17017,10 +17021,10 @@ function AdminSettings({ store }) {
           <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
             <p className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Award size={15} style={{ color: MAROON }} /> At a glance</p>
             <div className="grid grid-cols-2 gap-2 text-center">
-              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.staff.length}</p><p className="text-[10px] text-slate-400">Staff</p></div>
-              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{depts.length}</p><p className="text-[10px] text-slate-400">Departments</p></div>
-              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.staff.length > 0 ? Math.round(store.staff.reduce((a, s) => a + (s.allowance || 0), 0) / store.staff.length) : 0}d</p><p className="text-[10px] text-slate-400">Avg allowance</p></div>
-              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.docs.length}</p><p className="text-[10px] text-slate-400">Documents</p></div>
+              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.staff.length}</p><p className="text-[10px] text-slate-600">Staff</p></div>
+              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{depts.length}</p><p className="text-[10px] text-slate-600">Departments</p></div>
+              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.staff.length > 0 ? Math.round(store.staff.reduce((a, s) => a + (s.allowance || 0), 0) / store.staff.length) : 0}d</p><p className="text-[10px] text-slate-600">Avg allowance</p></div>
+              <div className="rounded-xl bg-slate-50 py-2.5"><p className="text-lg font-extrabold" style={{ color: NAVY }}>{store.docs.length}</p><p className="text-[10px] text-slate-600">Documents</p></div>
             </div>
           </div>
           <div className="animated-gradient relative overflow-hidden rounded-2xl p-5 text-white shadow-md transition-all duration-300 hover:shadow-xl fade-up" style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 45%, ${MAROON} 130%)`, backgroundSize: "200% 200%" }}><Building2 size={64} className="float-slow absolute -right-3 -top-3 text-white/10" /><div className="relative mb-2 flex h-9 w-12 items-center justify-center rounded-md bg-white"><Logo small /></div><p className="relative text-sm font-bold">EdTech</p><p className="relative mt-1 flex items-center gap-1.5 text-xs text-white/70"><MapPin size={12} /> 42 The Burroughs, London NW4 4AP</p><p className="relative flex items-center gap-1.5 text-xs text-white/70"><Phone size={12} /> 020 8202 2007</p><p className="relative mt-3 text-[11px] text-white/50">Staff Hub Admin Console v2.0</p><p className="relative text-[11px] text-white/50">© 2026 Syed Muhammad Raza</p></div>
@@ -17030,7 +17034,7 @@ function AdminSettings({ store }) {
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
             <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: deleteTarget?.colour }}>{deleteTarget?.initials}</span>
-            <div><p className="text-sm font-bold text-slate-700">{deleteTarget?.name}</p><p className="text-[11px] text-slate-400">{deleteTarget?.role} · {deleteTarget?.dept}</p></div>
+            <div><p className="text-sm font-bold text-slate-700">{deleteTarget?.name}</p><p className="text-[11px] text-slate-600">{deleteTarget?.role} · {deleteTarget?.dept}</p></div>
           </div>
           <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-700 ring-1 ring-rose-200">
             <AlertCircle size={13} className="mt-px shrink-0" />
@@ -17040,14 +17044,14 @@ function AdminSettings({ store }) {
           <PrimaryBtn colour={MAROON} onClick={confirmRemove} disabled={deleteBusy} className="w-full">
             <Trash2 size={16} /> {deleteBusy ? "Removing…" : `Remove ${deleteTarget?.name || ""}`}
           </PrimaryBtn>
-          <button onClick={() => setDeleteTarget(null)} disabled={deleteBusy} className="press w-full text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">Cancel</button>
+          <button onClick={() => setDeleteTarget(null)} disabled={deleteBusy} className="press w-full text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">Cancel</button>
         </div>
       </Modal>
       <Modal open={!!resetTarget} onClose={() => !resetBusy && setResetTarget(null)} title="Reset two-step verification">
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
             <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: resetTarget?.colour }}>{resetTarget?.initials}</span>
-            <div><p className="text-sm font-bold text-slate-700">{resetTarget?.name}</p><p className="text-[11px] text-slate-400">{resetTarget?.email}</p></div>
+            <div><p className="text-sm font-bold text-slate-700">{resetTarget?.name}</p><p className="text-[11px] text-slate-600">{resetTarget?.email}</p></div>
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
             Use this when someone has lost or replaced the phone holding their authenticator app.
@@ -17059,7 +17063,7 @@ function AdminSettings({ store }) {
               ? "Two-step verification is required for this account, so they'll be asked to set up a new authenticator the next time they sign in."
               : "This account will sign in with just a password until they choose to turn two-step verification back on."}
           </p>
-          <p className="text-[11px] text-slate-400">Their password is not changed, so this on its own doesn't let anyone in.</p>
+          <p className="text-[11px] text-slate-500">Their password is not changed, so this on its own doesn't let anyone in.</p>
           <PrimaryBtn colour="#b45309" onClick={confirmReset} disabled={resetBusy} className="w-full">
             <ShieldCheck size={16} /> {resetBusy ? "Resetting…" : "Reset two-step verification"}
           </PrimaryBtn>

@@ -36,7 +36,7 @@ function Banner({ tone, Icon, children }) {
 // "Not recorded" — never a blank cell and never a warning colour. A module whose leader
 // nobody has named yet is unmeasured, not a finding, and colouring it red would report
 // a college part-way through configuring this page as having a problem it does not have.
-const NotSet = () => <span className="text-slate-400">— not set —</span>;
+const NotSet = () => <span className="text-slate-500">— not set —</span>;
 
 export default function AssessmentTrackerSetup() {
   const [modules, setModules] = useState(null);
@@ -146,7 +146,7 @@ export default function AssessmentTrackerSetup() {
                   </h3>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-slate-500">
                     <span>{m.cohortName || <NotSet />}</span>
-                    {m.courseName && <span className="text-slate-400">{m.courseName}</span>}
+                    {m.courseName && <span className="text-slate-500">{m.courseName}</span>}
                     <span className="inline-flex items-center gap-1"><Users size={12} />{m.enrolled} enrolled</span>
                     {/* Read-only on purpose — the lecturer is set on Registers. */}
                     <span>Lecturer: {m.lecturerName || <NotSet />}</span>

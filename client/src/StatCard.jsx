@@ -41,12 +41,12 @@ export default function StatCard({ label, value, sub, Icon, tone = NAVY, delay =
       <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-60 transition-transform duration-500 group-hover:scale-150" style={{ background: tone + "12" }} />
       <div className="relative flex items-start justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
           {/* The value wears the accent colour; the label and sub-line stay in text
               tokens. A figure is identified by the tile it sits in, not by being
               coloured — so nothing here depends on colour alone to be readable. */}
           <p className="mt-1 text-3xl font-extrabold tabular-nums" style={{ color: tone }}>{canAnimate ? av : value}</p>
-          {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+          {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
           {trend && <span className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold" style={{ background: tc + "1a", color: tc }}>{trend.up ? "▲" : "▼"} {trend.text}</span>}
         </div>
         <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${alpha(tone, 50)}` }}><Icon size={22} /></span>

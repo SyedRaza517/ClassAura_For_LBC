@@ -140,7 +140,7 @@ function EmailTemplateRow({ t, onSaved }) {
           </label>
 
           <div>
-            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">Values you can use</p>
+            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">Values you can use</p>
             <div className="flex flex-wrap gap-1">
               {t.fields.map((f) => (
                 <button key={f} type="button" onClick={() => setBody((b) => b + "{{" + f + "}}")}
@@ -149,7 +149,7 @@ function EmailTemplateRow({ t, onSaved }) {
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] text-slate-400">
+            <p className="mt-1.5 text-[11px] text-slate-600">
               Click one to insert it. Anything in double braces is replaced when the email is sent, and
               your institution&rsquo;s name, colours and contact details are added automatically.
             </p>

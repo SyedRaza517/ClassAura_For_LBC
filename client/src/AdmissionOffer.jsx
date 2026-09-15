@@ -76,7 +76,7 @@ export default function AdmissionOffer({ token }) {
     <Shell center>
       <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
-        <div className="flex items-center justify-center gap-2 py-2 text-slate-400">
+        <div className="flex items-center justify-center gap-2 py-2 text-slate-500">
           <Loader2 size={22} className="animate-spin" />
           <span className="text-sm font-semibold text-slate-500">Loading your offer…</span>
         </div>

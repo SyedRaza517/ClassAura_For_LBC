@@ -210,12 +210,12 @@ export function TotpSetup({ challengeToken, onDone, onCancel }) {
   if (loadError) return (
     <div className="flex flex-col gap-3">
       <ErrorNote>{loadError}</ErrorNote>
-      {onCancel && <button onClick={onCancel} className="press text-xs font-semibold text-slate-400 hover:text-slate-600">Back to sign in</button>}
+      {onCancel && <button onClick={onCancel} className="press text-xs font-semibold text-slate-500 hover:text-slate-600">Back to sign in</button>}
     </div>
   );
 
   if (!setup) return (
-    <div className="flex flex-col items-center gap-2 py-8 text-slate-400">
+    <div className="flex flex-col items-center gap-2 py-8 text-slate-500">
       <Loader2 size={22} className="animate-spin" />
       <p className="text-xs font-semibold">Preparing your security key…</p>
     </div>
@@ -248,7 +248,7 @@ export function TotpSetup({ challengeToken, onDone, onCancel }) {
       >
         <Smartphone size={16} /> Add to your authenticator app
       </a>
-      <p className="-mt-2 text-center text-[10px] leading-relaxed text-slate-400">
+      <p className="-mt-2 text-center text-[10px] leading-relaxed text-slate-500">
         Opens Google Authenticator / Authy with your account details already filled in.
         Then come back here and enter the 6-digit code.
       </p>
@@ -266,7 +266,7 @@ export function TotpSetup({ challengeToken, onDone, onCancel }) {
           `open` keeps it visible by default; the user can still collapse it. */}
       {qr ? (
         <details open className="rounded-xl bg-slate-50 ring-1 ring-slate-200">
-          <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600">
             Or scan this QR code with another device
           </summary>
           <div className="flex justify-center pb-3">
@@ -280,24 +280,24 @@ export function TotpSetup({ challengeToken, onDone, onCancel }) {
       )}
 
       <div className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200">
-        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Or enter this key by hand</p>
+        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Or enter this key by hand</p>
         <div className="mt-1 flex items-center gap-2">
           <code className="flex-1 break-all font-mono text-[11px] font-bold text-slate-700">{setup.formattedSecret}</code>
           <button type="button" onClick={copySecret} title="Copy key" className="press flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200 transition hover:text-slate-800">
             {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
           </button>
         </div>
-        <p className="mt-1 text-[10px] text-slate-400">Account: {setup.account}</p>
+        <p className="mt-1 text-[10px] text-slate-600">Account: {setup.account}</p>
       </div>
 
       <div>
-        <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">Code from your app</p>
+        <p className="mb-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-500">Code from your app</p>
         <CodeInput value={code} onChange={setCode} onComplete={() => {}} disabled={busy} />
       </div>
 
       <ErrorNote>{error}</ErrorNote>
       <SubmitBtn busy={busy} disabled={code.length !== 6} busyLabel="Verifying…" label="Confirm & finish setup" />
-      {onCancel && <button type="button" onClick={onCancel} className="press text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">Cancel</button>}
+      {onCancel && <button type="button" onClick={onCancel} className="press text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">Cancel</button>}
     </form>
   );
 }
@@ -342,7 +342,7 @@ export function TotpVerify({ challengeToken, onDone, onCancel, name }) {
       <CodeInput value={code} onChange={setCode} onComplete={(v) => submit(null, v)} disabled={busy} />
       <ErrorNote>{error}</ErrorNote>
       <SubmitBtn busy={busy} disabled={code.length !== 6} busyLabel="Checking…" label="Verify & sign in" Icon={KeyRound} />
-      {onCancel && <button type="button" onClick={onCancel} className="press text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">Use a different account</button>}
+      {onCancel && <button type="button" onClick={onCancel} className="press text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">Use a different account</button>}
     </form>
   );
 }

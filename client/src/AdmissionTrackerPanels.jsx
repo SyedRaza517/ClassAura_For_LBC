@@ -66,7 +66,7 @@ export function Panel({ title, hint, right, children, className = "" }) {
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-bold text-slate-700">{title}</h3>
-          {hint && <p className="mt-0.5 text-xs text-slate-400">{hint}</p>}
+          {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
         </div>
         {right}
       </header>
@@ -78,7 +78,7 @@ export function Panel({ title, hint, right, children, className = "" }) {
 // Nothing to draw is a sentence, not an empty box. An empty chart area reads as a
 // failed render, which sends somebody looking for a bug in the dashboard.
 export const Empty = ({ children }) => (
-  <p className="py-10 text-center text-sm text-slate-400">{children}</p>
+  <p className="py-10 text-center text-sm text-slate-500">{children}</p>
 );
 
 // A small segmented control, for the panels that answer two questions.
@@ -132,7 +132,7 @@ export function Funnel({ funnel = [], overallConversion }) {
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wide text-slate-400">
+      <div className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wide text-slate-500">
         <span>Stage</span>
         <span>Conversion</span>
       </div>
@@ -146,7 +146,7 @@ export function Funnel({ funnel = [], overallConversion }) {
             <li key={s.key} className="flex items-center gap-3">
               <div className="w-32 shrink-0 text-right">
                 <p className="text-xs font-semibold text-slate-600">{s.label}</p>
-                <p className="text-xs tabular-nums text-slate-400">{fmtNum(s.count)}</p>
+                <p className="text-xs tabular-nums text-slate-500">{fmtNum(s.count)}</p>
               </div>
               <div className="flex-1">
                 <div
@@ -247,7 +247,7 @@ export function SourcesDonut({ sources = [] }) {
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-xl font-extrabold tabular-nums text-slate-800">{fmtNum(total)}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Total</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total</span>
         </div>
       </div>
       {/* The legend carries the figures, not just the names — that is the "visible
@@ -256,9 +256,9 @@ export function SourcesDonut({ sources = [] }) {
         {sources.map((s, i) => (
           <li key={s.source} className="flex items-center gap-2 text-xs">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colourOf(s, i) }} />
-            <span className={s.source === "Not recorded" ? "text-slate-400" : "text-slate-600"}>{s.source}</span>
+            <span className={s.source === "Not recorded" ? "text-slate-500" : "text-slate-600"}>{s.source}</span>
             <span className="ml-auto tabular-nums font-bold text-slate-700">{fmtPct(s.pct)}</span>
-            <span className="w-10 text-right tabular-nums text-slate-400">{fmtNum(s.count)}</span>
+            <span className="w-10 text-right tabular-nums text-slate-500">{fmtNum(s.count)}</span>
           </li>
         ))}
       </ul>
@@ -289,7 +289,7 @@ function BarList({ rows, labelKey, valueKey, format = fmtNum, mutedWhen, scaleMa
         const muted = mutedWhen?.(r);
         return (
           <li key={r[labelKey]} className="flex items-center gap-3 text-xs">
-            <span className={`w-32 shrink-0 truncate ${muted ? "text-slate-400" : "text-slate-600"}`} title={r[labelKey]}>
+            <span className={`w-32 shrink-0 truncate ${muted ? "text-slate-500" : "text-slate-600"}`} title={r[labelKey]}>
               {r[labelKey]}
             </span>
             <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
@@ -298,7 +298,7 @@ function BarList({ rows, labelKey, valueKey, format = fmtNum, mutedWhen, scaleMa
                 style={{ width: `${v == null ? 0 : (Number(v) / max) * 100}%`, background: muted ? MUTED : SERIES[0] }}
               />
             </span>
-            <b className={`w-14 shrink-0 text-right tabular-nums ${muted ? "text-slate-400" : "text-slate-700"}`}>
+            <b className={`w-14 shrink-0 text-right tabular-nums ${muted ? "text-slate-500" : "text-slate-700"}`}>
               {format(v)}
             </b>
           </li>
@@ -367,7 +367,7 @@ export function Geography({ geography }) {
               {split.map((s, i) => (
                 <li key={s.label} className="flex items-center gap-1.5 text-xs">
                   <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.muted ? MUTED : SERIES[i % SERIES.length] }} />
-                  <span className={s.muted ? "text-slate-400" : "text-slate-600"}>{s.label}</span>
+                  <span className={s.muted ? "text-slate-500" : "text-slate-600"}>{s.label}</span>
                   <b className="tabular-nums text-slate-700">{fmtNum(s.value)}</b>
                 </li>
               ))}
@@ -375,7 +375,7 @@ export function Geography({ geography }) {
             {!splitTotal && <Empty>No citizenship recorded in this scope.</Empty>}
           </div>
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Top countries</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Top countries</p>
             <BarList rows={(geography?.topCountries || []).slice(0, 8)} labelKey="country" valueKey="count" />
           </div>
         </div>
@@ -389,7 +389,7 @@ export function Geography({ geography }) {
             // be mistaken for a complete one. Greyed so it reads as the caveat it is.
             mutedWhen={(r) => r.region === "Unknown"}
           />
-          <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
             Regions come from the postcode area. Some areas straddle a boundary, so a small
             number of applicants sit one region out; “Unknown” is an address we could not read,
             not an address we do not have.
@@ -425,8 +425,8 @@ export function CycleProgress({ funnel = [] }) {
             >
               {complete && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
             </span>
-            <p className={`text-xs font-bold ${reached ? "text-slate-700" : "text-slate-400"}`}>{s.label}</p>
-            <p className="text-xs tabular-nums text-slate-400">
+            <p className={`text-xs font-bold ${reached ? "text-slate-700" : "text-slate-500"}`}>{s.label}</p>
+            <p className="text-xs tabular-nums text-slate-500">
               {/* The status is spelled out, never left to the colour of a dot. */}
               {reached ? `${fmtNum(s.count)} reached` : "not started"}
             </p>
@@ -450,7 +450,7 @@ export function TargetsTable({ targets = [] }) {
   return (
     <table className="w-full text-xs">
       <thead>
-        <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-400">
+        <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-500">
           <th className="pb-2 font-bold">Metric</th>
           <th className="pb-2 text-right font-bold">Actual</th>
           <th className="pb-2 text-right font-bold">Target</th>

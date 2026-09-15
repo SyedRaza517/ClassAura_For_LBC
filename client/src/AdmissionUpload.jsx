@@ -99,7 +99,7 @@ export default function AdmissionUpload({ token }) {
     <Shell center>
       <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
-        <div className="flex items-center justify-center gap-2 py-2 text-slate-400">
+        <div className="flex items-center justify-center gap-2 py-2 text-slate-500">
           <Loader2 size={22} className="animate-spin" />
           <span className="text-sm font-semibold text-slate-500">Loading your documents…</span>
         </div>
@@ -161,7 +161,7 @@ export default function AdmissionUpload({ token }) {
 
         {/* Progress */}
         <div className="mb-4 flex items-center justify-between gap-3">
-          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Documents</span>
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Documents</span>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200">
             {uploadedCount} of {docs.length} uploaded
           </span>
@@ -215,7 +215,7 @@ export default function AdmissionUpload({ token }) {
                       </div>
 
                       {doc.uploaded && doc.fileName && (
-                        <p className="mt-1 truncate text-xs text-slate-400" title={doc.fileName}>{doc.fileName}</p>
+                        <p className="mt-1 truncate text-xs text-slate-500" title={doc.fileName}>{doc.fileName}</p>
                       )}
 
                       {err && (

@@ -166,7 +166,7 @@ function Row({ label, children, hint }) {
     <label className="block">
       <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-slate-500">{hint}</span>}
     </label>
   );
 }
@@ -360,7 +360,7 @@ function ProviderCard({ item, onSaved, onRemoved }) {
                   {preview.issues.map((s, i) => <li key={i}>{s}</li>)}
                 </ul>
               )}
-              <p className="mt-2 text-[11px] text-slate-400">Nothing was imported — this reads Canvas and writes nothing.</p>
+              <p className="mt-2 text-[11px] text-slate-600">Nothing was imported — this reads Canvas and writes nothing.</p>
             </div>
           )}
 
@@ -396,7 +396,7 @@ function ProviderCard({ item, onSaved, onRemoved }) {
           </div>
 
           {item.configured && (
-            <p className="text-[11px] leading-relaxed text-slate-400">
+            <p className="text-[11px] leading-relaxed text-slate-500">
               Disconnecting removes the stored credential and stops all future syncing. Records already
               imported are kept.
             </p>

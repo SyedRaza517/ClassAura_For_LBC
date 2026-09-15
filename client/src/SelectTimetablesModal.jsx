@@ -83,14 +83,14 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
 
         <div className="grid flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 sm:grid-cols-2">
           <div>
-            <p className="mb-2 border-b border-slate-200 pb-1 text-sm font-bold text-slate-600">Result <span className="font-normal text-slate-400">({total})</span></p>
+            <p className="mb-2 border-b border-slate-200 pb-1 text-sm font-bold text-slate-600">Result <span className="font-normal text-slate-500">({total})</span></p>
             {err && <p className="text-xs font-semibold text-rose-600">{err}</p>}
-            {!type && <p className="py-6 text-center text-xs text-slate-400">Choose a timetable type to search.</p>}
+            {!type && <p className="py-6 text-center text-xs text-slate-500">Choose a timetable type to search.</p>}
             {/* The server says WHY the list is empty. "Search for a student by name or
                 reference" is a next step; a bare "no results" reads as "this college
                 has no students". */}
-            {type && needsQuery && <p className="py-6 text-center text-xs text-slate-400">Search for a student by name or reference.</p>}
-            {type && !needsQuery && !busy && !results.length && <p className="py-6 text-center text-xs text-slate-400">No timetables match your search criteria.</p>}
+            {type && needsQuery && <p className="py-6 text-center text-xs text-slate-500">Search for a student by name or reference.</p>}
+            {type && !needsQuery && !busy && !results.length && <p className="py-6 text-center text-xs text-slate-500">No timetables match your search criteria.</p>}
             <div className="space-y-0.5">
               {results.map((r) => (
                 <button key={r.id} type="button" onClick={() => add(r)}
@@ -98,19 +98,19 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
                   <PlusCircle size={18} className="shrink-0 text-slate-400" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-slate-700">{r.label}</span>
-                    {r.sub && <span className="block truncate text-[11px] text-slate-400">{r.sub}</span>}
+                    {r.sub && <span className="block truncate text-[11px] text-slate-600">{r.sub}</span>}
                   </span>
                 </button>
               ))}
             </div>
             {total > results.length && (
-              <p className="pt-2 text-[11px] text-slate-400">Showing {results.length} of {total} — narrow your search to see the rest.</p>
+              <p className="pt-2 text-[11px] text-slate-500">Showing {results.length} of {total} — narrow your search to see the rest.</p>
             )}
           </div>
 
           <div>
-            <p className="mb-2 border-b border-slate-200 pb-1 text-sm font-bold text-slate-600">Selected <span className="font-normal text-slate-400">({selected.length})</span></p>
-            {!selected.length && <p className="py-6 text-center text-xs text-slate-400">There are no selected timetables.</p>}
+            <p className="mb-2 border-b border-slate-200 pb-1 text-sm font-bold text-slate-600">Selected <span className="font-normal text-slate-500">({selected.length})</span></p>
+            {!selected.length && <p className="py-6 text-center text-xs text-slate-500">There are no selected timetables.</p>}
             <div className="space-y-0.5">
               {selected.map((r) => (
                 <button key={r.id} type="button" onClick={() => drop(r.id)}

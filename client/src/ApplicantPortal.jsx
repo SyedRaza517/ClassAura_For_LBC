@@ -31,7 +31,7 @@ function Field({ label, hint, required, children }) {
     <label className="block">
       <span className="mb-1 block text-[12px] font-bold text-slate-600">{label}{required && <span className="text-rose-500"> *</span>}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] leading-snug text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] leading-snug text-slate-500">{hint}</span>}
     </label>
   );
 }
@@ -143,7 +143,7 @@ export function ApplicantAuth({ onBack }) {
             <Field label="Password" required hint={mode === "register" ? "At least 8 characters." : undefined}>
               <div className="relative">
                 <input className={`${inputCls} pr-10`} type={showPw ? "text" : "password"} value={f.password} onChange={set("password")} autoComplete={mode === "register" ? "new-password" : "current-password"} />
-                <button type="button" onClick={() => setShowPw((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">{showPw ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                <button type="button" onClick={() => setShowPw((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-600">{showPw ? <EyeOff size={16} /> : <Eye size={16} />}</button>
               </div>
             </Field>
             {mode === "register" && (
@@ -154,7 +154,7 @@ export function ApplicantAuth({ onBack }) {
             </PrimaryBtn>
           </form>
 
-          <p className="mt-4 text-center text-[11px] text-slate-400">
+          <p className="mt-4 text-center text-[11px] text-slate-500">
             {mode === "register"
               ? <>Already registered? <button onClick={() => setMode("signin")} className="font-bold text-teal-700">Sign in</button></>
               : <>New here? <button onClick={() => setMode("register")} className="font-bold text-teal-700">Create an account</button></>}
@@ -187,7 +187,7 @@ function Stepper({ p }) {
           </span>
           <div className="min-w-0">
             <p className="truncate text-[13px] font-bold text-slate-700">{s.label}</p>
-            <p className="truncate text-[11px] text-slate-400">{s.hint}</p>
+            <p className="truncate text-[11px] text-slate-500">{s.hint}</p>
           </div>
         </div>
       ))}
@@ -259,7 +259,7 @@ export default function ApplicantPortal({ user, logout }) {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LT})` }}><GraduationCap size={18} /></div>
           <div className="mr-auto min-w-0">
             <p className="truncate text-sm font-extrabold text-slate-800">Student Portal</p>
-            <p className="truncate text-[11px] text-slate-400">{me?.name || user?.name}</p>
+            <p className="truncate text-[11px] text-slate-500">{me?.name || user?.name}</p>
           </div>
           <button onClick={logout} className="press inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><LogOut size={14} /> Sign out</button>
         </div>
@@ -303,7 +303,7 @@ function Overview({ me, go }) {
       <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <Sparkles size={16} className="text-teal-600" />
-          <h2 className="text-sm font-extrabold uppercase tracking-wide text-slate-400">Your application progress</h2>
+          <h2 className="text-sm font-extrabold uppercase tracking-wide text-slate-500">Your application progress</h2>
         </div>
         <Stepper p={p} />
       </div>
@@ -347,7 +347,7 @@ function SummaryCard({ Icon, label, value, tone, onClick }) {
     <button onClick={onClick} className={`press flex items-center gap-3 rounded-2xl bg-white p-4 text-left shadow-sm ring-1 ${ring}`}>
       <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-slate-50 ${col}`}><Icon size={18} /></span>
       <div className="min-w-0">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
         <p className="truncate text-[14px] font-extrabold text-slate-700">{value}</p>
       </div>
     </button>
@@ -405,7 +405,7 @@ function ApplicationTab({ me, onSaved, flash }) {
       {ADMISSION_SECTIONS.map((sec) => (
         <div key={sec.title} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
           <h3 className="text-sm font-extrabold" style={{ color: NAVY_DARK }}>{sec.title}</h3>
-          {sec.note && <p className="mt-1 text-[11px] leading-relaxed text-slate-400">{sec.note}</p>}
+          {sec.note && <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{sec.note}</p>}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             {sec.fields.map((f) => (
               <div key={f.key} className={`${f.span === 2 ? "sm:col-span-2" : ""} ${missing.includes(f.key) ? "rounded-xl ring-2 ring-rose-300" : ""}`} style={missing.includes(f.key) ? { padding: 2 } : undefined}>
@@ -457,12 +457,12 @@ function DocumentsTab({ me, onChange, flash }) {
       <div className="flex flex-col gap-2.5">
         {docs.map((d) => (
           <div key={d.key} className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3.5 shadow-sm">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${d.confirmed ? "bg-emerald-50 text-emerald-600" : d.uploaded ? "bg-teal-50 text-teal-600" : "bg-slate-50 text-slate-400"}`}>
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${d.confirmed ? "bg-emerald-50 text-emerald-600" : d.uploaded ? "bg-teal-50 text-teal-600" : "bg-slate-50 text-slate-600"}`}>
               {d.confirmed ? <ShieldCheck size={18} /> : d.uploaded ? <FileText size={18} /> : <Circle size={16} />}
             </span>
             <div className="mr-auto min-w-0">
               <p className="truncate text-[14px] font-bold text-slate-700">{d.label}</p>
-              <p className="truncate text-[11px] text-slate-400">
+              <p className="truncate text-[11px] text-slate-500">
                 {d.confirmed ? <span className="font-bold text-emerald-600">Verified</span> : d.uploaded ? <span className="font-bold text-teal-600">Uploaded · awaiting review</span> : "Not uploaded yet"}
                 {d.fileName ? ` · ${d.fileName}` : ""}
               </p>
@@ -498,7 +498,7 @@ function InterviewTab({ me }) {
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
           <CalendarClock size={30} className="mx-auto mb-2 text-slate-300" />
           <p className="font-bold text-slate-600">No interview scheduled yet</p>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-400">When the admissions team schedules your interview, the date, time and joining details will appear here — and we'll email you.</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">When the admissions team schedules your interview, the date, time and joining details will appear here — and we'll email you.</p>
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -510,7 +510,7 @@ function InterviewTab({ me }) {
             <Row Icon={iv.mode === "Online" ? Video : MapPin} label="Where" value={iv.mode === "Online" ? "Online" : (iv.location || "EdTech")} />
             {iv.mode === "Online" && iv.link && <Row Icon={Video} label="Join link" value={<a href={iv.link} target="_blank" rel="noreferrer" className="break-all font-bold text-teal-700 underline">{iv.link}</a>} />}
             {iv.note && <div className="rounded-xl bg-slate-50 p-3.5 text-[13px] leading-relaxed text-slate-600">{iv.note}</div>}
-            <p className="text-[12px] text-slate-400">If the time doesn't suit you, reply to the invitation email and we'll rearrange.</p>
+            <p className="text-[12px] text-slate-500">If the time doesn't suit you, reply to the invitation email and we'll rearrange.</p>
           </div>
         </div>
       )}
@@ -521,7 +521,7 @@ function Row({ Icon, label, value }) {
   return (
     <div className="flex items-start gap-3">
       <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-500"><Icon size={16} /></span>
-      <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</p><p className="text-[14px] font-bold text-slate-700">{value}</p></div>
+      <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="text-[14px] font-bold text-slate-700">{value}</p></div>
     </div>
   );
 }
@@ -542,7 +542,7 @@ function OfferTab({ me, onAccepted, flash }) {
     <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
       <Award size={30} className="mx-auto mb-2 text-slate-300" />
       <p className="font-bold text-slate-600">No offer yet</p>
-      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-400">Once your application and interview are complete, your offer letter will appear here for you to download and accept.</p>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">Once your application and interview are complete, your offer letter will appear here for you to download and accept.</p>
     </div>
   );
 
@@ -563,7 +563,7 @@ function OfferTab({ me, onAccepted, flash }) {
             ? <PrimaryBtn onClick={accept} disabled={busy === "accept"}>{busy === "accept" ? <><Loader2 size={16} className="animate-spin" /> Accepting…</> : <>Accept my offer <CheckCircle2 size={16} /></>}</PrimaryBtn>
             : <span className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 ring-1 ring-emerald-200"><CheckCircle2 size={16} /> Offer accepted</span>}
         </div>
-        {accepted && <p className="text-[12px] text-slate-400">Thank you for accepting. The admissions team will be in touch about enrolment and your first day.</p>}
+        {accepted && <p className="text-[12px] text-slate-500">Thank you for accepting. The admissions team will be in touch about enrolment and your first day.</p>}
       </div>
     </div>
   );

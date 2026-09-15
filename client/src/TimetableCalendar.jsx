@@ -107,7 +107,7 @@ function HScroll({ minWidth, hint, children }) {
   return (
     <div>
       {(more || back) && hint && (
-        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-slate-500">
           <MoveHorizontal size={12} /> {hint}
         </p>
       )}
@@ -495,7 +495,7 @@ function MonthGrid({ dates, events, settings, today, onSelectEvent, selectedId, 
                         width={cellW - 10}
                         style={{ display: "block", width: "100%" }} />
                     ))}
-                    {list.length > 3 && <p className="pl-1 text-[10px] font-semibold text-slate-400">+{list.length - 3} more</p>}
+                    {list.length > 3 && <p className="pl-1 text-[10px] font-semibold text-slate-500">+{list.length - 3} more</p>}
                   </div>
                 </div>
               );
@@ -579,7 +579,7 @@ function TimelineBody({ span, gridStart, gridEnd, hourWidth, dates, byDate, sett
   return (
     <div>
       {(more || back) && (
-        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-slate-400">
+        <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-slate-500">
           <MoveHorizontal size={12} /> Scroll sideways for later in the day
         </p>
       )}
@@ -599,7 +599,7 @@ function TimelineBody({ span, gridStart, gridEnd, hourWidth, dates, byDate, sett
                   // which are the two an axis can least afford to lose.
                   <span
                     key={t.m}
-                    className="absolute top-1 text-[10px] tabular-nums text-slate-400"
+                    className="absolute top-1 text-[10px] tabular-nums text-slate-500"
                     style={{ left: `${t.pct}%`, transform: t.pct < 2 ? "none" : t.pct > 98 ? "translateX(-100%)" : "translateX(-50%)" }}
                   >
                     {t.label}

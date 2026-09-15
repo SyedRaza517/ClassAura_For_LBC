@@ -222,7 +222,7 @@ export default function TemplateEditor({ kind, label, spec, template, onChanged,
         <div className="rounded-xl border-2 border-dashed border-slate-300 p-10 text-center">
           <FileText size={28} className="mx-auto mb-2 text-slate-300" />
           <p className="text-sm font-semibold text-slate-600">Upload the {label.toLowerCase()} you already send</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-slate-400">
+          <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
             Your PDF is used as the page itself — it is never redrawn, so your letterhead,
             fonts and footer come out exactly as you designed them. You then drag each
             applicant detail onto the page.
@@ -267,7 +267,7 @@ export default function TemplateEditor({ kind, label, spec, template, onChanged,
                 ))}
               </div>
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-[11px] text-slate-500">
               Each chip shows a sample value where it will print. Drag it into place; the position
               is stored as a proportion of the page, so it holds even if the PDF is re-exported at a
               different size.
@@ -277,9 +277,9 @@ export default function TemplateEditor({ kind, label, spec, template, onChanged,
           {/* --- the fields --- */}
           <div className="flex flex-col gap-3">
             <div>
-              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Add a detail</p>
+              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Add a detail</p>
               <div className="flex flex-wrap gap-1.5">
-                {unplaced.length === 0 && <span className="text-[11px] text-slate-400">All of them are placed.</span>}
+                {unplaced.length === 0 && <span className="text-[11px] text-slate-500">All of them are placed.</span>}
                 {unplaced.map((f) => (
                   <button key={f.key} onClick={() => addField(f.key)} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-200">
                     <Plus size={11} /> {f.label}

@@ -63,7 +63,7 @@ function Banner({ tone, Icon, children }) {
 // assessment has not been covered, which is "Awaiting sync" — a gap, not an absence.
 // Neither is a statement about any student.
 const Unknown = ({ recordsSubmissions }) => (
-  <span className="text-[12px] italic text-slate-400">
+  <span className="text-[12px] italic text-slate-500">
     {recordsSubmissions ? "Awaiting sync" : "Not synced"}
   </span>
 );
@@ -109,11 +109,11 @@ const DEADLINE_TEXT = {
   complete: "text-emerald-700", none: "text-slate-400", unknown: "text-slate-400",
 };
 function DeadlineCell({ date, state }) {
-  if (!date) return <span className="text-[12px] italic text-slate-400">Not set</span>;
+  if (!date) return <span className="text-[12px] italic text-slate-500">Not set</span>;
   return (
     <div className="leading-tight">
       <div className={`tabular-nums font-semibold ${DEADLINE_TEXT[state] || DEADLINE_TEXT.none}`}>{date}</div>
-      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{STATE_LABEL[state] || ""}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{STATE_LABEL[state] || ""}</div>
     </div>
   );
 }
@@ -418,9 +418,9 @@ export default function AssessmentTracker({ me }) {
                     <span style={{ color: NAVY }}>{unit.unitCode}</span> · {unit.unitName}
                   </h3>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[12px] text-slate-500">
-                    <span>{unit.cohortName || <span className="text-slate-400">— no class —</span>}</span>
-                    <span>Leader: {unit.leaderName || <span className="text-slate-400">— not set —</span>}</span>
-                    <span>Lecturer: {unit.lecturerName || <span className="text-slate-400">— not set —</span>}</span>
+                    <span>{unit.cohortName || <span className="text-slate-500">— no class —</span>}</span>
+                    <span>Leader: {unit.leaderName || <span className="text-slate-500">— not set —</span>}</span>
+                    <span>Lecturer: {unit.lecturerName || <span className="text-slate-500">— not set —</span>}</span>
                     <span className="inline-flex items-center gap-1"><Users size={12} />{unit.enrolled}</span>
                   </p>
                 </div>
@@ -469,7 +469,7 @@ export default function AssessmentTracker({ me }) {
                       <tr key={r.assessmentId}>
                         <td className="px-5 py-2.5 font-semibold text-slate-700">
                           {r.title}
-                          <span className="ml-2 text-[11px] font-medium text-slate-400">{r.type}</span>
+                          <span className="ml-2 text-[11px] font-medium text-slate-500">{r.type}</span>
                         </td>
                         {/* Total students — the denominator of the submission rate, and
                             previously only visible in the module heading. */}

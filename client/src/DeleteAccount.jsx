@@ -82,7 +82,7 @@ export default function DeleteAccount({ user, onCancel }) {
       </div>
 
       <label className="block">
-        <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Your password</span>
+        <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Your password</span>
         <div className="relative">
           <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <div className="relative"><input type={pw.type} value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy}
@@ -100,7 +100,7 @@ export default function DeleteAccount({ user, onCancel }) {
       )}
 
       <label className="block">
-        <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">
+        <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
           Type <span className="font-mono text-rose-600">DELETE</span> to confirm
         </span>
         <input value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy} autoComplete="off"

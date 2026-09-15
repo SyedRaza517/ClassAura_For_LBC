@@ -153,18 +153,18 @@ function SettingsModal({ intake, onClose, onSaved }) {
         <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h3 className="text-sm font-bold text-slate-800">Tracker settings</h3>
-            <p className="text-xs text-slate-400">Targets for <b>{scopeLabel}</b>, required documents and course fees</p>
+            <p className="text-xs text-slate-500">Targets for <b>{scopeLabel}</b>, required documents and course fees</p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" aria-label="Close"><X size={18} /></button>
         </header>
 
         {!cfg ? (
-          <p className="p-8 text-center text-sm text-slate-400">Loading…</p>
+          <p className="p-8 text-center text-sm text-slate-500">Loading…</p>
         ) : (
           <div className="space-y-6 p-5">
             <section>
               <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Targets</h4>
-              <p className="mb-3 text-xs text-slate-400">
+              <p className="mb-3 text-xs text-slate-500">
                 Leave a box empty for “no target” — the dashboard then shows a dash rather than
                 measuring against zero.
                 {intake && " These apply to this intake only; empty boxes fall back to the default."}
@@ -182,7 +182,7 @@ function SettingsModal({ intake, onClose, onSaved }) {
 
             <section>
               <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Required documents</h4>
-              <p className="mb-3 text-xs text-slate-400">
+              <p className="mb-3 text-xs text-slate-500">
                 Which documents this college actually asks for. “Documents complete” in the funnel
                 counts only these — untick the ones you do not chase, or the stage reads low for
                 everybody. Unticking them all falls back to requiring every type.
@@ -204,7 +204,7 @@ function SettingsModal({ intake, onClose, onSaved }) {
 
             <section>
               <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Course fees</h4>
-              <p className="mb-3 text-xs text-slate-400">
+              <p className="mb-3 text-xs text-slate-500">
                 Used for the estimated revenue tile. A course left blank is <b>excluded</b> from the
                 estimate and reported as uncovered — it is not treated as free. This is an estimate
                 until real funding data is available.
@@ -320,7 +320,7 @@ export default function AdmissionTracker() {
           <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-800">
             <TrendingUp size={20} style={{ color: NAVY }} /> Admission Tracker
           </h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             Conversion across the admission cycle. Aggregate figures only — no applicant records are shown here.
           </p>
         </div>
@@ -344,29 +344,29 @@ export default function AdmissionTracker() {
           once rather than implied per panel. */}
       <div className="grid grid-cols-2 gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 lg:grid-cols-5">
         <label className="block">
-          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Intake</span>
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Intake</span>
           <select className={inputCls} value={intake} onChange={(e) => setIntake(e.target.value)}>
             <option value="">All intakes</option>
             {options.intakes.map((i) => <option key={i.label} value={i.label}>{i.label}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Course</span>
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Course</span>
           <select className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)}>
             <option value="">All courses</option>
             {options.courses.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Enquired from</span>
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Enquired from</span>
           <input type="date" className={inputCls} value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Enquired to</span>
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Enquired to</span>
           <input type="date" className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
         <label className="block">
-          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Compare to</span>
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Compare to</span>
           <select className={inputCls} value={compare} onChange={(e) => setCompare(e.target.value)}>
             {/* "Automatic" is the previous intake, or the preceding window of the same
                 length — and honestly nothing at all when neither exists. */}
@@ -384,7 +384,7 @@ export default function AdmissionTracker() {
       )}
 
       {busy && (
-        <p className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400">
+        <p className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
           <Loader2 size={18} className="animate-spin" /> Loading the admission funnel…
         </p>
       )}

@@ -87,7 +87,7 @@ export default function Login({ onBack }) {
           >
             Staff Hub
           </h1>
-          <p className="mt-0.5 text-sm text-slate-400">{challenge ? "One more step" : forgot ? "Account recovery" : "Sign in to continue"}</p>
+          <p className="mt-0.5 text-sm text-slate-500">{challenge ? "One more step" : forgot ? "Account recovery" : "Sign in to continue"}</p>
         </div>
 
         {forgot ? (
@@ -111,7 +111,7 @@ export default function Login({ onBack }) {
               the question has a single answer and the failure mode it existed to rescue
               cannot occur. */}
           <div className="fade-up" style={{ animationDelay: "0.05s" }}>
-            <label htmlFor="login-email" className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Email</label>
+            <label htmlFor="login-email" className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Email</label>
             <div className="group relative mt-1">
               <Mail size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-500" />
               <input id="login-email" name="email" type="email" autoComplete="username" autoCapitalize="none" spellCheck={false}
@@ -128,7 +128,7 @@ export default function Login({ onBack }) {
             </div>
           </div>
           <div className="fade-up" style={{ animationDelay: "0.12s" }}>
-            <label htmlFor="login-password" className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Password</label>
+            <label htmlFor="login-password" className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Password</label>
             <div className="group relative mt-1">
               <Lock size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors group-focus-within:text-blue-500" />
               <input id="login-password" name="password" type={pwFromStore ? "password" : pw.type} autoComplete="current-password"

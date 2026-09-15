@@ -45,7 +45,7 @@ export default function MiniMonth({ anchor, today, weekFrom, weekTo, onPick }) {
 
       <div className="grid grid-cols-7 text-center">
         {HEAD.map((h, i) => (
-          <div key={i} className="py-1 text-[11px] font-semibold text-slate-400">{h}</div>
+          <div key={i} className="py-1 text-[11px] font-semibold text-slate-500">{h}</div>
         ))}
         {days.map((d) => {
           const inMonth = d.slice(0, 7) === month;

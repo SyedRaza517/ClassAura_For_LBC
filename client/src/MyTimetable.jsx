@@ -102,7 +102,7 @@ function Section({ label, count, icon, open, onToggle, onAction, children }) {
     <div className="border-t" style={{ borderColor: TT.rule }}>
       <div className="flex items-center gap-1 px-3 py-3">
         <p className="flex-1 text-[15px] text-slate-700">
-          {label} <span className="text-slate-400">({count})</span>
+          {label} <span className="text-slate-500">({count})</span>
         </p>
         {icon}
         {onAction && (
@@ -310,7 +310,7 @@ export default function MyTimetable({ onBack }) {
           </div>
         ) : !scope.ids.length ? (
           <>
-            <p className="text-sm text-slate-400">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
+            <p className="text-sm text-slate-600">Showing your own teaching. Use the magnifier to look up a room, group, module, colleague or student.</p>
             {/* THE ONE-CLICK ANSWER TO AN EMPTY OWN-TIMETABLE. Whoever builds the term
                 is usually not teaching any of it, so their own view is blank and the
                 screen reads as broken. Offering "every class" right where that
@@ -337,7 +337,7 @@ export default function MyTimetable({ onBack }) {
         onToggle={() => setOpenSections((s) => ({ ...s, categories: !s.categories }))}
         onAction={() => setPrefs(true)}
       >
-        <p className="text-sm text-slate-400">Colour is currently carrying <b className="text-slate-600">{settings?.colourBy || "category"}</b>. Change it under the gear.</p>
+        <p className="text-sm text-slate-500">Colour is currently carrying <b className="text-slate-600">{settings?.colourBy || "category"}</b>. Change it under the gear.</p>
       </Section>
     </>
   );
@@ -403,7 +403,7 @@ export default function MyTimetable({ onBack }) {
                   {l}
                 </p>
               ))}
-              <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] text-slate-400">Change this under the gear, on the Events tab.</p>
+              <p className="mt-2 border-t border-slate-100 pt-2 text-[11px] text-slate-500">Change this under the gear, on the Events tab.</p>
             </div>
           </>
         )}
@@ -680,7 +680,7 @@ export default function MyTimetable({ onBack }) {
                               {roster.map((st) => (
                                 <li key={st.id} className="flex items-center justify-between gap-2 text-xs text-slate-700">
                                   <span className="truncate">{`${st.firstName || ""} ${st.lastName || ""}`.trim()}</span>
-                                  <span className="shrink-0 text-slate-400">{st.studentRef}</span>
+                                  <span className="shrink-0 text-slate-500">{st.studentRef}</span>
                                 </li>
                               ))}
                             </ul>

@@ -115,7 +115,7 @@ export default function StaffTimetable({ meId }) {
             </div>
             <table className="w-full border-collapse text-left">
               <thead>
-                <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-600">
                   <th scope="col" className="px-3 py-1.5">Wk</th>
                   <th scope="col" className="px-2 py-1.5">Date</th>
                   {!time && <th scope="col" className="px-2 py-1.5">Time</th>}
@@ -133,7 +133,7 @@ export default function StaffTimetable({ meId }) {
                   return (
                     <tr key={ev.id} className={isToday ? "bg-blue-50/60" : ""}>
                       <td className={`px-3 py-2 text-[12px] tabular-nums ${past ? "text-slate-300" : "text-slate-500"}`}>{firstOfDay ? weekNo : ""}</td>
-                      <td className={`whitespace-nowrap px-2 py-2 text-[12px] font-semibold tabular-nums ${past ? "text-slate-400" : "text-slate-700"}`}>{firstOfDay ? ttDMY(ev.date) : ""}</td>
+                      <td className={`whitespace-nowrap px-2 py-2 text-[12px] font-semibold tabular-nums ${past ? "text-slate-500" : "text-slate-700"}`}>{firstOfDay ? ttDMY(ev.date) : ""}</td>
                       {!time && <td className="whitespace-nowrap px-2 py-2 text-[12px] tabular-nums text-slate-500">{ev.start}–{ev.end}</td>}
                       {!room && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{roomOf(ev) || "—"}</td>}
                       {!who && <td className="px-2 py-2 text-[12px] leading-snug text-slate-500">{groupsOf(ev) || "—"}</td>}
@@ -153,7 +153,7 @@ export default function StaffTimetable({ meId }) {
           </div>
         );
       })}
-      <p className="mt-1 px-1 text-center text-[11px] text-slate-400">
+      <p className="mt-1 px-1 text-center text-[11px] text-slate-500">
         Times, rooms and groups come from Scheduling. Spot something wrong? Tell whoever runs the timetable.
       </p>
     </div>

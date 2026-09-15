@@ -281,7 +281,7 @@ function TapSettings({ settings, onSaved }) {
           onsite/online behaviour spelled out, because it is a different audience and a
           different decision from everything above it. */}
       <div className="mt-4 border-t border-slate-200 pt-4">
-        <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-400">Staff clock-in</p>
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500">Staff clock-in</p>
         <label className="flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
           <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
@@ -387,7 +387,7 @@ function NetworkPanel({ draft, saving, save, rejected }) {
                     className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 hover:bg-slate-50">
                     Add this address
                   </button>
-                  <span className="text-slate-400">
+                  <span className="text-slate-600">
                     If you're on the college WiFi now, this is usually the one you want — but check with
                     IT that it's the college's own address. If your traffic goes through a filtering or
                     security service, this is that service's address, and allowlisting it would let in
@@ -560,7 +560,7 @@ function GeofencePanel({ draft, saving, save }) {
           <div>
             <span className="text-[12px] font-semibold text-slate-700">Your campuses</span>
             {!campuses ? (
-              <p className="mt-1 text-[12px] text-slate-400">Loading…</p>
+              <p className="mt-1 text-[12px] text-slate-600">Loading…</p>
             ) : !campuses.length ? (
               <p className="mt-1 text-[12px] text-slate-500">No campuses set up yet — add them under Timetabling → Rooms.</p>
             ) : (
@@ -744,7 +744,7 @@ function TeamsAttendance() {
           {syncing || running ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
           {running ? "A sync is already running…" : syncing ? "Syncing…" : "Sync now"}
         </button>
-        <span className="text-[11px] text-slate-400">
+        <span className="text-[11px] text-slate-500">
           Runs on its own once an hour as well — this is for checking a class right after
           it ends, without waiting.
         </span>
@@ -785,7 +785,7 @@ function TeamsAttendance() {
           <History size={13} />Recent runs
         </h4>
         {!runs ? (
-          <p className="text-[12px] text-slate-400">Loading…</p>
+          <p className="text-[12px] text-slate-500">Loading…</p>
         ) : !runs.length ? (
           <p className="text-[12px] text-slate-500">No syncs have run yet — scheduled runs happen hourly once this is switched on.</p>
         ) : (
@@ -797,7 +797,7 @@ function TeamsAttendance() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[12px] font-semibold text-slate-700">{fmtWhen(r.startedAt)}</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ${TONES[tone]}`}>{r.status}</span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-500">
                       {r.mode === "scheduled" ? "hourly" : "manual"}{r.startedBy ? ` · ${r.startedBy}` : ""}
                     </span>
                   </div>
@@ -1023,7 +1023,7 @@ function TeamsAutomation() {
           <History size={13} />Recent runs
         </h4>
         {!runs ? (
-          <p className="text-[12px] text-slate-400">Loading…</p>
+          <p className="text-[12px] text-slate-500">Loading…</p>
         ) : !runs.length ? (
           <p className="text-[12px] text-slate-500">No runs yet — meetings run hourly and provisioning runs nightly once switched on.</p>
         ) : (
@@ -1038,7 +1038,7 @@ function TeamsAutomation() {
                     </span>
                     <span className="text-[12px] font-semibold text-slate-700">{fmtWhen(r.startedAt)}</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ${TONES[tone]}`}>{r.status}</span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[11px] text-slate-500">
                       {r.mode === "scheduled" ? "scheduled" : "manual"}{r.startedBy ? ` · ${r.startedBy}` : ""}
                     </span>
                   </div>
@@ -1230,8 +1230,8 @@ function TapLog({ tag, onClose }) {
                     <span className="min-w-[6.5rem] flex-1 truncate text-[13px] font-medium text-slate-800">
                       {/* A refused tap can have no name at all — nobody was identified.
                           That is a real state and reads better than a blank. */}
-                      {t.who || <span className="italic text-slate-400">not identified</span>}
-                      {t.kind === "staff" && <span className="ml-1.5 text-[11px] font-semibold text-slate-400">staff</span>}
+                      {t.who || <span className="italic text-slate-500">not identified</span>}
+                      {t.kind === "staff" && <span className="ml-1.5 text-[11px] font-semibold text-slate-500">staff</span>}
                     </span>
                     <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${TONES[o.tone]}`}>
                       {o.label}{t.status ? ` · ${t.status}` : ""}

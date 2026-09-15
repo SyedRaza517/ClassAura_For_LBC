@@ -124,11 +124,11 @@ export default function AcceptInvite({ token, onDone }) {
           <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs ring-1 ring-slate-200">
             <p className="flex items-center gap-1.5 font-bold text-slate-700"><UserCheck size={13} /> {state.name}</p>
             <p className="mt-0.5 text-slate-500">{state.email}</p>
-            {(state.role || state.dept) && <p className="text-slate-400">{[state.role, state.dept].filter(Boolean).join(" · ")}</p>}
+            {(state.role || state.dept) && <p className="text-slate-500">{[state.role, state.dept].filter(Boolean).join(" · ")}</p>}
           </div>
 
           <label className="block">
-            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Choose a password</span>
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Choose a password</span>
             <div className="relative">
               <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <div className="relative"><input type={pw.type} value={password} onChange={(e) => setPassword(e.target.value)} disabled={busy}
@@ -136,14 +136,14 @@ export default function AcceptInvite({ token, onDone }) {
             </div>
           </label>
           <label className="block">
-            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-400">Confirm password</span>
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Confirm password</span>
             <div className="relative">
               <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <div className="relative"><input type={pw2.type} value={confirm} onChange={(e) => setConfirm(e.target.value)} disabled={busy}
                 autoComplete="new-password" className={`${inputClass} pr-11`} style={{ "--tw-ring-color": NAVY }} />{pw2.button}</div>
             </div>
           </label>
-          <p className="text-[11px] text-slate-400">At least 8 characters. Only you will know it.</p>
+          <p className="text-[11px] text-slate-500">At least 8 characters. Only you will know it.</p>
 
           {error && (
             <div className="pop flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">

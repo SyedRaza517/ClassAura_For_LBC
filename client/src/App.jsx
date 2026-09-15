@@ -150,7 +150,7 @@ function ChangePassword({ onSuccess, busyLabel = "Updating…", submitLabel = "U
       {field("Current password", current, setCurrent, Lock, revCurrent)}
       {field("New password", next, setNext, KeyRound, revNext)}
       {field("Confirm new password", confirm, setConfirm, KeyRound, revConfirm)}
-      <p className="text-[11px] text-slate-400">Use at least 8 characters. Choose something you haven't used here before.</p>
+      <p className="text-[11px] text-slate-500">Use at least 8 characters. Choose something you haven't used here before.</p>
       {error && (
         <div className="pop flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">
           <XCircle size={14} /> {error}
@@ -189,7 +189,7 @@ function ChangePasswordGate({ user, onDone, logout }) {
         <div className="fade-up mt-5">
           <ChangePassword onSuccess={onDone} busyLabel="Securing account…" submitLabel="Set password & continue" />
         </div>
-        <button onClick={logout} className="press mt-4 w-full text-center text-xs font-semibold text-slate-400 transition hover:text-slate-600">
+        <button onClick={logout} className="press mt-4 w-full text-center text-xs font-semibold text-slate-500 transition hover:text-slate-600">
           Sign out instead
         </button>
       </div>
@@ -624,7 +624,7 @@ function Shell({ user, logout, entry }) {
       {/* App footer — carries the copyright. Hidden on the mobile staff app, which
           has its own footer on the "More" screen. */}
       {!(handset && view === "app") && (
-        <footer className="shrink-0 border-t border-slate-200 bg-white/70 px-4 py-3 text-center text-[11px] text-slate-400">
+        <footer className="shrink-0 border-t border-slate-200 bg-white/70 px-4 py-3 text-center text-[11px] text-slate-500">
           © {new Date().getFullYear()} Syed Muhammad Raza · EdTech · Staff Hub
         </footer>
       )}

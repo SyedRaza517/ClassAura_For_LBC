@@ -86,7 +86,7 @@ export default function BiometricSignIn({ className = "", email = "" }) {
     <div className={className}>
       <div className="flex items-center gap-3 py-1">
         <span className="h-px flex-1 bg-slate-200" />
-        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">or</span>
+        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">or</span>
         <span className="h-px flex-1 bg-slate-200" />
       </div>
       <div className="space-y-2">
@@ -104,7 +104,7 @@ export default function BiometricSignIn({ className = "", email = "" }) {
               {busy
                 ? <><Loader2 size={16} className="animate-spin" /> Waiting for you…</>
                 : <><Icon size={17} /> Sign in with {m.label}</>}
-              {!busy && offer.owner && <span className="ml-1 max-w-[45%] truncate text-[11px] font-semibold text-slate-400">as {offer.owner}</span>}
+              {!busy && offer.owner && <span className="ml-1 max-w-[45%] truncate text-[11px] font-semibold text-slate-600">as {offer.owner}</span>}
             </button>
           );
         })}

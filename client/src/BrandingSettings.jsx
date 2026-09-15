@@ -24,7 +24,7 @@ function Row({ label, children, hint }) {
     <label className="block">
       <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-400">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-slate-500">{hint}</span>}
     </label>
   );
 }
@@ -241,7 +241,7 @@ export default function BrandingSettings() {
           </div>
 
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Colours</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Colours</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <ColourField label="Primary" value={form.primaryColor ?? ""} onChange={(v) => set("primaryColor", v)} disabled={busy} hint="Headers, navigation and links." />
               <ColourField label="Accent" value={form.accentColor ?? ""} onChange={(v) => set("accentColor", v)} disabled={busy} hint="The second colour in gradients and highlights." />
@@ -267,17 +267,17 @@ export default function BrandingSettings() {
                 </p>
               )}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-[11px] text-slate-500">
               Chart and category colours stay fixed — they have to remain distinguishable from one another,
               and an &ldquo;Absent&rdquo; mark should not change colour because the brand did.
             </p>
           </div>
 
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Logo</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Logo</p>
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex h-16 w-32 flex-none items-center justify-center rounded-lg bg-slate-50 ring-1 ring-slate-200">
-                {logo ? <img src={logo} alt="Logo" className="max-h-14 max-w-28 object-contain" /> : <span className="text-[11px] text-slate-400">No logo</span>}
+                {logo ? <img src={logo} alt="Logo" className="max-h-14 max-w-28 object-contain" /> : <span className="text-[11px] text-slate-600">No logo</span>}
               </div>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" onChange={pickLogo} className="hidden" />
               <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 transition hover:bg-slate-50">
@@ -289,14 +289,14 @@ export default function BrandingSettings() {
                 </button>
               )}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-[11px] text-slate-500">
               PNG, JPEG, SVG, WEBP or GIF, up to {Math.round((state.limits?.maxLogoBytes || 262144) / 1024)}KB. A wide
               transparent PNG works best. Uploading one replaces the wordmark.
             </p>
           </div>
 
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Names</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Names</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {TEXT_FIELDS.map((f) => (
                 <Row key={f.key} label={f.label} hint={f.hint}>
@@ -307,7 +307,7 @@ export default function BrandingSettings() {
           </div>
 
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Letters &amp; emails</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Letters &amp; emails</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {LETTER_FIELDS.map((f) => (
                 <Row key={f.key} label={f.label} hint={f.hint}>
@@ -317,7 +317,7 @@ export default function BrandingSettings() {
                 </Row>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-[11px] text-slate-500">
               These appear on offer letters, application PDFs and the emails sent to your applicants and students.
               Leave a field blank and it is simply omitted rather than filled with somebody else&rsquo;s.
             </p>

@@ -227,7 +227,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
       {!handset && <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
           <CalendarDays size={15} className="text-slate-400" />
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Day</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Day</span>
           <input type="date" value={date || today?.date || ""} onChange={(e) => setDate(e.target.value)}
             className="bg-transparent text-[13px] font-semibold text-slate-700 outline-none" />
         </label>
@@ -236,7 +236,7 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
             in, and a wrong end date silently changes what they are reading. */}
         {ranged ? (
           <>
-            <span className="text-[13px] text-slate-400">to</span>
+            <span className="text-[13px] text-slate-500">to</span>
             <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
               <input type="date" value={to} min={date || today?.date || undefined}
                 onChange={(e) => setTo(e.target.value)}
@@ -384,7 +384,7 @@ function TodayTotals({ totals, classes }) {
   if (!totals) return null;
   return (
     <div className="fade-up rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Today so far</p>
+      <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Today so far</p>
       {/* ONE ROW OF FIVE at every width. This was grid-cols-2 on the phone, which
           wrapped the five tiles 2+2+1 and left "Not marked" — the least alarming of
           the five — sitting alone on its own row looking like a headline. Five
@@ -565,7 +565,7 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
                 <button key={k} onClick={() => (k === "conduct" ? openConduct() : setTab(k))}
                   aria-pressed={tab === k}
                   className={`press rounded-t-lg px-3 py-1.5 text-[12px] font-bold transition ${
-                    tab === k ? "bg-slate-100 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}>
+                    tab === k ? "bg-slate-100 text-slate-800" : "text-slate-600 hover:text-slate-600"}`}>
                   {label}
                 </button>
               ))}
@@ -575,13 +575,13 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
               <div className="max-h-[55vh] overflow-y-auto p-4">
                 {conduct === null && <div className="flex justify-center py-8"><Loader2 className="animate-spin text-slate-300" size={20} /></div>}
                 {conduct === "denied" && (
-                  <p className="py-6 text-center text-xs text-slate-400">Conduct history is visible to this student's own lecturers.</p>
+                  <p className="py-6 text-center text-xs text-slate-500">Conduct history is visible to this student's own lecturers.</p>
                 )}
                 {conduct === "failed" && (
                   <p className="py-6 text-center text-xs text-rose-500">Could not load the conduct history.</p>
                 )}
                 {Array.isArray(conduct) && !conduct.length && (
-                  <p className="py-6 text-center text-xs text-slate-400">Nothing recorded — no merits, no concerns.</p>
+                  <p className="py-6 text-center text-xs text-slate-500">Nothing recorded — no merits, no concerns.</p>
                 )}
                 {Array.isArray(conduct) && conduct.length > 0 && (
                   <div className="space-y-2">
@@ -595,7 +595,7 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
                         <div className="min-w-0 flex-1">
                           <p className="text-[13px] font-bold text-slate-700">{e.label}</p>
                           {e.note && <p className="mt-0.5 text-[12px] text-slate-500">{e.note}</p>}
-                          <p className="mt-0.5 text-[11px] text-slate-400">
+                          <p className="mt-0.5 text-[11px] text-slate-500">
                             {e.staffName || "—"} · {new Date(e.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                           </p>
                         </div>
@@ -623,18 +623,18 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
                       <td className="whitespace-nowrap px-3 py-2 text-[12px] tabular-nums text-slate-500">{r.startTime}–{r.endTime}</td>
                       <td className="max-w-[14rem] px-3 py-2 text-[12px] text-slate-500">
                         <span className="block truncate">{r.description || "—"}</span>
-                        {r.checkedInAt && <span className="block text-[11px] text-slate-400">checked in {r.checkedInAt}</span>}
+                        {r.checkedInAt && <span className="block text-[11px] text-slate-600">checked in {r.checkedInAt}</span>}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <span className={`inline-block rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${
-                          r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-400 ring-slate-200"}`}>
+                          r.status ? STATUS[r.status].cls : "bg-slate-50 text-slate-600 ring-slate-200"}`}>
                           {r.status ? STATUS[r.status].label : "Not marked"}
                         </span>
                       </td>
                     </tr>
                   ))}
                   {!data.rows.length && (
-                    <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-slate-400">This module has no registers yet.</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-slate-500">This module has no registers yet.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -984,7 +984,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                           <RiskChip risk={r.risk} />
                           <ConductChip points={r.conductPoints} />
                         </p>
-                        <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                        <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
                           {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
                           {r.selfMarked && (() => {                            // WHICH self check-in, in checkInMethods.js's words — the
                             // same table the register on StaffHub reads, so the two screens
@@ -1026,7 +1026,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                   <td className="px-3 py-2.5 text-[12px] tabular-nums text-slate-600">{r.student.studentRef || "—"}</td>
                   <td className="max-w-[16rem] px-3 py-2.5 text-[12px] text-slate-600">
                     <span className="block truncate" title={r.course || ""}>{r.course || "—"}</span>
-                    {r.group && <span className="block truncate text-[11px] text-slate-400">{r.group}</span>}
+                    {r.group && <span className="block truncate text-[11px] text-slate-500">{r.group}</span>}
                   </td>
                   <td className="max-w-[14rem] px-3 py-2.5 text-[12px] text-slate-600">
                     <span className="block truncate" title={r.school || ""}>{r.school || "—"}</span>
@@ -1087,7 +1087,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
               ))}
               {!shownRows.length && (
                 <tr>
-                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-600">
                     {rows.length
                       ? "No student matches that filter."
                       : "Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it."}
@@ -1223,7 +1223,7 @@ function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
             style={{ background: row.student.colour || "#94a3b8" }}>{row.student.initials}</span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[14px] font-bold text-slate-800">{row.student.name}</p>
-            <p className="text-[11px] text-slate-400">Conduct points{row.conductPoints != null ? ` · net ${row.conductPoints > 0 ? "+" : ""}${row.conductPoints}` : ""}</p>
+            <p className="text-[11px] text-slate-500">Conduct points{row.conductPoints != null ? ` · net ${row.conductPoints > 0 ? "+" : ""}${row.conductPoints}` : ""}</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="press flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
         </div>
@@ -1235,7 +1235,7 @@ function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
         ) : vocabulary === null ? (
           <div className="flex justify-center py-8"><Loader2 className="animate-spin text-slate-300" size={22} /></div>
         ) : !entries.length ? (
-          <p className="py-6 text-center text-xs text-slate-400">No conduct entries are active. An administrator edits the vocabulary in Settings.</p>
+          <p className="py-6 text-center text-xs text-slate-500">No conduct entries are active. An administrator edits the vocabulary in Settings.</p>
         ) : (
           <>
             <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200}
@@ -1290,7 +1290,7 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
   });
   if (!rows.length) {
     return (
-      <p className="px-5 py-10 text-center text-sm text-slate-400">
+      <p className="px-5 py-10 text-center text-sm text-slate-500">
         {total
           ? "No student matches that filter."
           : "Nobody is on this register yet — no student is enrolled on the module and no group is timetabled for it."}
@@ -1319,7 +1319,7 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
                   <span className="truncate text-[13px] font-semibold text-slate-800">{r.student.name}</span>
                   <RiskChip risk={r.risk} />
                 </span>
-                <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
                   {r.student.studentRef && <span className="tabular-nums">{r.student.studentRef}</span>}
                   {r.checkedInAt && <span className="tabular-nums" title="When they checked in">{r.checkedInAt}</span>}
                   {r.selfMarked && (() => {
@@ -1367,7 +1367,7 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
                   aria-pressed={active}
                   title={canMark ? STATUS[k].label : "You can see this register but not change it."}
                   className={`press flex h-11 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${
-                    active ? `${STATUS[k].cls} ring-2 pop` : "bg-white text-slate-400 ring-slate-200"}`}>
+                    active ? `${STATUS[k].cls} ring-2 pop` : "bg-white text-slate-500 ring-slate-200"}`}>
                   <span className="text-[14px] font-extrabold leading-none">{k}</span>
                   <span className="mt-0.5 text-[9px] font-semibold leading-none opacity-80">{STATUS[k].label}</span>
                 </button>

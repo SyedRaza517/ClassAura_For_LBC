@@ -46,9 +46,9 @@ import useDismissOnOutside from "./useDismissOnOutside";
 function Field({ label, children, hint }) {
   return (
     <div className="block" role="group" aria-label={label}>
-      <span className="mb-0.5 block text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="mb-0.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       {children}
-      {hint && <span className="mt-0.5 block text-[11px] text-slate-400">{hint}</span>}
+      {hint && <span className="mt-0.5 block text-[11px] text-slate-500">{hint}</span>}
     </div>
   );
 }
@@ -112,7 +112,7 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
           so nobody discovers they can type — which is the whole reason it exists over
           one. The chevron stays because it still opens like a dropdown. */}
       <button type="button" onClick={() => { setOpen((v) => !v); setQ(""); }}
-        className={`${inputCls} flex items-center justify-between gap-2 text-left transition hover:border-slate-400 ${chosen ? "text-slate-700" : "text-slate-400"}`}>
+        className={`${inputCls} flex items-center justify-between gap-2 text-left transition hover:border-slate-400 ${chosen ? "text-slate-700" : "text-slate-500"}`}>
         <span className="flex min-w-0 items-center gap-2">
           <Search size={14} className="shrink-0 text-slate-400" />
           <span className="truncate">{chosen ? chosen.label : placeholder}</span>
@@ -130,14 +130,14 @@ function SearchOne({ value, options, onChange, placeholder, allowNone = true, no
           <ul className="max-h-56 overflow-y-auto py-1">
             {allowNone && (
               <li><button type="button" onClick={() => { onChange(""); setOpen(false); }}
-                className="w-full px-2.5 py-1.5 text-left text-sm text-slate-400 hover:bg-slate-50">{noneLabel}</button></li>
+                className="w-full px-2.5 py-1.5 text-left text-sm text-slate-600 hover:bg-slate-50">{noneLabel}</button></li>
             )}
-            {!shown.length && <li className="px-2.5 py-3 text-center text-sm text-slate-400">Nothing matches.</li>}
+            {!shown.length && <li className="px-2.5 py-3 text-center text-sm text-slate-500">Nothing matches.</li>}
             {shown.map((o) => (
               <li key={o.id}>
                 <button type="button" onClick={() => { onChange(o.id); setOpen(false); }}
                   className={`w-full px-2.5 py-1.5 text-left text-sm hover:bg-slate-50 ${o.id === value ? "font-bold text-slate-800" : "text-slate-700"}`}>
-                  {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-400">{o.sub}</span> : null}
+                  {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-600">{o.sub}</span> : null}
                 </button>
               </li>
             ))}
@@ -208,7 +208,7 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
       {focused && (
         <ul className="max-h-40 overflow-y-auto border-t border-slate-200 py-1">
           {!shown.length && (
-            <li className="px-2.5 py-2 text-center text-sm text-slate-400">
+            <li className="px-2.5 py-2 text-center text-sm text-slate-500">
               {term ? "Nothing matches." : "Everything here is already chosen."}
             </li>
           )}
@@ -221,7 +221,7 @@ function SearchMany({ value = [], options, onChange, placeholder }) {
               <button type="button"
                 onMouseDown={(e) => { e.preventDefault(); onChange([...value, o.id]); setQ(""); }}
                 className="w-full px-2.5 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
-                {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-400">{o.sub}</span> : null}
+                {o.label}{o.sub ? <span className="ml-1 text-xs text-slate-600">{o.sub}</span> : null}
               </button>
             </li>
           ))}
@@ -299,11 +299,11 @@ function RoomsTab() {
       {busy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
         <div className="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
               <th className="px-3 py-2">Room</th><th className="px-3 py-2">Campus</th><th className="px-3 py-2">Seats</th><th className="px-3 py-2">Kind</th><th className="px-3 py-2" />
             </tr></thead>
             <tbody>
-              {!rooms.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No rooms yet. Add the first one above.</td></tr>}
+              {!rooms.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-500">No rooms yet. Add the first one above.</td></tr>}
               {rooms.map((r) => (
                 <tr key={r.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-3 py-2 font-semibold text-slate-700">{r.label}</td>
@@ -367,11 +367,11 @@ function CampusesTab() {
       {busy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
         <div className="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
               <th className="px-3 py-2">Campus</th><th className="px-3 py-2">Status</th><th className="px-3 py-2" />
             </tr></thead>
             <tbody>
-              {!rows.length && <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">No campuses yet. Add the first one above.</td></tr>}
+              {!rows.length && <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-500">No campuses yet. Add the first one above.</td></tr>}
               {rows.map((c) => (
                 <tr key={c.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-3 py-2 font-semibold text-slate-700">{c.name}</td>
@@ -470,11 +470,11 @@ function SchoolsTab() {
       {busy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
         <div className="overflow-x-auto rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <thead><tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
               <th className="px-3 py-2">School</th><th className="px-3 py-2">Colour</th><th className="px-3 py-2">Status</th><th className="px-3 py-2" />
             </tr></thead>
             <tbody>
-              {!rows.length && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-400">No schools yet. Add the first one above.</td></tr>}
+              {!rows.length && <tr><td colSpan={4} className="px-3 py-8 text-center text-slate-500">No schools yet. Add the first one above.</td></tr>}
               {rows.map((d) => (
                 <tr key={d.id} className={`border-b border-slate-100 last:border-0 ${d.active === false ? "opacity-60" : ""}`}>
                   <td className="px-3 py-2 font-semibold text-slate-700">
@@ -928,8 +928,8 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
           other way to tell which group they are editing. */}
       {listBusy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
         <ul className="mb-4 divide-y divide-slate-100 overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
-          {!groups.length && <li className="px-3 py-8 text-center text-sm text-slate-400">No groups yet. Create the first one above.</li>}
-          {!!groups.length && !shownGroups.length && <li className="px-3 py-8 text-center text-sm text-slate-400">No group matches “{gq.trim()}”.</li>}
+          {!groups.length && <li className="px-3 py-8 text-center text-sm text-slate-500">No groups yet. Create the first one above.</li>}
+          {!!groups.length && !shownGroups.length && <li className="px-3 py-8 text-center text-sm text-slate-500">No group matches “{gq.trim()}”.</li>}
           {shownGroups.map((g) => (
             <li key={g.id} className={`flex flex-wrap items-center gap-2 px-3 py-2 ${g.id === groupId ? "bg-slate-50" : ""}`}
               style={g.id === groupId ? { boxShadow: `inset 3px 0 0 ${NAVY}` } : undefined}>
@@ -958,7 +958,7 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
                         A missing school prints as "No school" rather than as nothing —
                         a group whose course has no school is only visible to
                         college-wide accounts, and a blank would read as an ordinary row. */}
-                    <span className="block truncate text-xs text-slate-400">
+                    <span className="block truncate text-xs text-slate-600">
                       {g.courseName || "No course"} · {g.schoolName || "No school"}
                     </span>
                   </button>
@@ -985,22 +985,22 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
       )}
 
       {!groupId ? (
-        <p className="py-8 text-center text-sm text-slate-400">
+        <p className="py-8 text-center text-sm text-slate-500">
           {groups.length ? "Choose a group above to see and edit who is in it." : "Create your first group above, then pick students for it."}
         </p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
               In {selected ? `“${selected.name}”` : "this group"} ({members.length})
             </h4>
             {busy ? <div className="flex justify-center py-8 text-slate-400"><Loader2 className="animate-spin" size={18} /></div> : (
               <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
-                {!members.length && <li className="py-8 text-center text-sm text-slate-400">Nobody yet. Add students from the right.</li>}
+                {!members.length && <li className="py-8 text-center text-sm text-slate-500">Nobody yet. Add students from the right.</li>}
                 {members.map((s) => (
                   <li key={s.id} className="flex items-center gap-2 py-1.5">
                     <span className="flex-1 truncate text-sm text-slate-700">{`${s.firstName || ""} ${s.lastName || ""}`.trim()}</span>
-                    <span className="text-xs text-slate-400">{s.studentRef}</span>
+                    <span className="text-xs text-slate-500">{s.studentRef}</span>
                     <button onClick={() => removeOne(s)} aria-label={`Remove ${s.firstName} ${s.lastName}`} className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={14} /></button>
                   </li>
                 ))}
@@ -1009,10 +1009,10 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
           </div>
 
           <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Add students</h4>
+            <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Add students</h4>
             <input className={`${inputCls} mb-2`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or student number…" />
             <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
-              {!candidates.length && <li className="py-8 text-center text-sm text-slate-400">{term ? "Nobody matches that." : "Everyone is already in this group."}</li>}
+              {!candidates.length && <li className="py-8 text-center text-sm text-slate-500">{term ? "Nobody matches that." : "Everyone is already in this group."}</li>}
               {candidates.map((s) => {
                 const on = picked.includes(s.id);
                 return (
@@ -1020,7 +1020,7 @@ function GroupsTab({ courses = [], students = [], hndLoaded, refreshHnd }) {
                     <label className="flex cursor-pointer items-center gap-2 py-1.5">
                       <input type="checkbox" checked={on} onChange={() => setPicked(on ? picked.filter((x) => x !== s.id) : [...picked, s.id])} />
                       <span className="flex-1 truncate text-sm text-slate-700">{`${s.firstName || ""} ${s.lastName || ""}`.trim()}</span>
-                      <span className="text-xs text-slate-400">{s.studentRef}</span>
+                      <span className="text-xs text-slate-500">{s.studentRef}</span>
                       {/* Flagged BEFORE the click, not reported after it. */}
                       {s.cohortId && s.cohortId !== groupId && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">in another group</span>}
                     </label>
@@ -1112,7 +1112,7 @@ function CategoriesTab() {
 
       {busy ? <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" size={20} /></div> : (
         <div className="flex flex-wrap gap-2">
-          {!cats.length && <p className="py-8 text-center text-sm text-slate-400">No categories yet.</p>}
+          {!cats.length && <p className="py-8 text-center text-sm text-slate-500">No categories yet.</p>}
           {cats.map((c) => (
             <span key={c.id} className="flex items-center gap-2 rounded-full py-1.5 pl-3 pr-1.5 text-sm font-bold" style={{ background: alpha(c.colour, 14), color: c.colour }}>
               {c.name}
@@ -1143,7 +1143,7 @@ export default function AdminTimetablePlanner({ store }) {
       <div className="mb-4 flex gap-1 border-b border-slate-200">
         {TABS.map(([k, l, I]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
             style={tab === k ? { borderColor: NAVY } : undefined}>
             <I size={15} /> {l}
           </button>
@@ -1916,7 +1916,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
             <p className="text-sm font-bold text-slate-500">
               {allTotal === 0 ? "No classes have been created yet." : "No classes match these filters."}
             </p>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-slate-500">
               {allTotal === 0
                 ? "Press New event to schedule the first one, or draw one on the Calendar tab."
                 : `The college has ${allTotal ?? "some"} class${allTotal === 1 ? "" : "es"} in total.`}
@@ -1935,7 +1935,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                     the reader would otherwise answer by counting rows. */}
                 <div className="mb-1 flex items-baseline gap-2 border-b border-slate-200 pb-1">
                   <p className="text-sm font-extrabold text-slate-700">{dateHeading(day.date)}</p>
-                  <p className="text-xs font-semibold text-slate-400">{day.events.length} class{day.events.length === 1 ? "" : "es"}</p>
+                  <p className="text-xs font-semibold text-slate-500">{day.events.length} class{day.events.length === 1 ? "" : "es"}</p>
                 </div>
                 <ul>
                   {day.events.map((e) => (
@@ -1991,12 +1991,12 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                                 that a name is not repeated several hundred times per
                                 response. An id the list cannot resolve prints nothing
                                 rather than the raw cuid, which would be noise. */}
-                            {schoolName(e.academicDepartmentId) && <span className="text-slate-400">{schoolName(e.academicDepartmentId)}</span>}
+                            {schoolName(e.academicDepartmentId) && <span className="text-slate-600">{schoolName(e.academicDepartmentId)}</span>}
                             {/* Only that it IS one of a set. The id itself is a uuid and
                                 means nothing to a reader; that this Tuesday is part of a
                                 term rather than a one-off is what changes what they do
                                 next. */}
-                            {e.seriesId && <span className="text-slate-400">· part of a series</span>}
+                            {e.seriesId && <span className="text-slate-600">· part of a series</span>}
                           </span>
                         </span>
                       </button>
@@ -2224,7 +2224,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                         <p className="text-sm font-extrabold text-slate-700">{(b.title || "").trim() || "Module " + (i + 1)}</p>
                         {editing.blocks.length > 1 && (
                           <button type="button" onClick={() => setEditing({ ...editing, blocks: editing.blocks.filter((_, j) => j !== i) })}
-                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-[11px] font-bold text-slate-500 hover:bg-rose-50 hover:text-rose-600">
                             <X size={12} /> Remove
                           </button>
                         )}
@@ -2297,7 +2297,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                             reported as "there is no start and end date", which is
                             precisely what the layout was saying. */}
                         <div className="rounded-lg bg-white p-2.5 ring-1 ring-slate-200 sm:col-span-2">
-                          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">Module runs</p>
+                          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Module runs</p>
                           <div className="grid gap-2 sm:grid-cols-2">
                             <Field label="Start date" hint="The first class">
                               <input type="date" className={inputCls} value={b.date || ""} onChange={(e) => setBlock(i, { date: e.target.value })} />
@@ -2350,7 +2350,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
                             </div>
                           ))}
                           {b.sessionCount > 1 && (
-                            <p className="text-[11px] text-slate-400">
+                            <p className="text-[11px] text-slate-500">
                               Two blocks on the same day, each with its own class and its own register. They may sit back to back; they may not overlap.
                             </p>
                           )}
@@ -2524,7 +2524,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
             <input type="date" autoFocus className={`${inputCls} mt-3`} value={ask.until}
               min={editing?.date || undefined}
               onChange={(e) => setAsk({ ...ask, until: e.target.value })} />
-            <p className="mt-1 text-[11px] text-slate-400">UK bank holidays are skipped.</p>
+            <p className="mt-1 text-[11px] text-slate-500">UK bank holidays are skipped.</p>
             <div className="mt-5 flex gap-2">
               <button onClick={() => setAsk(null)} className="flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">Cancel</button>
               <button disabled={!ask.until}

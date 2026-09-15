@@ -87,7 +87,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
         <div className="flex gap-1 border-b border-slate-200 px-3 pt-2">
           {[["calendar", "Calendar view"], ["events", "Events"], ["annotations", "Annotations"]].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
-              className={`rounded-t-lg px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}
+              className={`rounded-t-lg px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
               style={tab === k ? { borderColor: TT.green } : undefined}>{l}</button>
           ))}
         </div>
@@ -97,14 +97,14 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
             <div className="grid gap-6 sm:grid-cols-2">
               <div>
                 <p className="mb-1 text-sm font-bold text-slate-600">Periods</p>
-                <p className="mb-2 text-[11px] text-slate-400">Hours to show on the grid. Switching one off hides that row entirely.</p>
+                <p className="mb-2 text-[11px] text-slate-500">Hours to show on the grid. Switching one off hides that row entirely.</p>
                 {ALL_PERIODS.map((p) => (
                   <Check key={p.start} on={hasPeriod(p)} onChange={(on) => togglePeriod(p, on)} label={`${p.start} – ${p.end}`} />
                 ))}
               </div>
               <div>
                 <p className="mb-1 text-sm font-bold text-slate-600">Days</p>
-                <p className="mb-2 text-[11px] text-slate-400">Weekdays to show as columns.</p>
+                <p className="mb-2 text-[11px] text-slate-500">Weekdays to show as columns.</p>
                 {DAYS.map(([n, l]) => (
                   <Check key={n} on={(draft.days || []).includes(n)}
                     onChange={(on) => set("days", on ? [...(draft.days || []), n].sort((a, b) => a - b) : (draft.days || []).filter((d) => d !== n))}
@@ -129,7 +129,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
               </div>
               <div>
                 <p className="mb-1 text-sm font-bold text-slate-600">Event colour key</p>
-                <p className="mb-2 text-[11px] text-slate-400">What colour should mean.</p>
+                <p className="mb-2 text-[11px] text-slate-500">What colour should mean.</p>
                 <select value={draft.colourBy || "category"} onChange={(e) => set("colourBy", e.target.value)}
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
                   {COLOUR_BY.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -149,7 +149,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
               {scope === "college" && (
                 <div className="border-t border-slate-100 pt-4">
                   <p className="mb-1 text-sm font-bold text-slate-600">Notice banner</p>
-                  <p className="mb-2 text-[11px] text-slate-400">Shown across the top of every timetable in this college. Staff cannot change it.</p>
+                  <p className="mb-2 text-[11px] text-slate-500">Shown across the top of every timetable in this college. Staff cannot change it.</p>
                   <Check on={draft.notice?.enabled} onChange={(v) => set("notice", { ...(draft.notice || {}), enabled: v })} label="Show the notice" />
                   <textarea rows={4} value={draft.notice?.text || ""} onChange={(e) => set("notice", { ...(draft.notice || {}), text: e.target.value })}
                     className="mt-2 w-full rounded-lg border border-slate-300 p-2 text-sm" placeholder="e.g. attendance requirements for funding eligibility" />
@@ -165,7 +165,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
                 <Check on={draft.showEventId} onChange={(v) => set("showEventId", v)} label="Show Event ID" />
                 <div className="mt-3">
                   <p className="text-sm text-slate-700">Highlight recently changed events</p>
-                  <p className="mb-1 text-[11px] text-slate-400">Days to look back. 0 switches the highlight off.</p>
+                  <p className="mb-1 text-[11px] text-slate-500">Days to look back. 0 switches the highlight off.</p>
                   <input type="number" min={0} max={90} value={draft.highlightChangedDays ?? 0}
                     onChange={(e) => set("highlightChangedDays", Number(e.target.value))}
                     className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
@@ -175,7 +175,7 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
                 <p className="mb-1 text-sm font-bold text-slate-600">Event annotations</p>
                 {/* The ORDER is the setting: it decides what a reader sees first when
                     a tile is too small for everything. */}
-                <p className="mb-2 text-[11px] text-slate-400">What appears inside an event, top first.</p>
+                <p className="mb-2 text-[11px] text-slate-500">What appears inside an event, top first.</p>
                 <div className="space-y-1">
                   {annotations.map((a, i) => (
                     <div key={a} className="flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1.5">
