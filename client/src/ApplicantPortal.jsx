@@ -16,7 +16,7 @@ import {
 import { useAuth } from "./auth";
 import { api } from "./api";
 import { BrandLockup } from "./Brand";
-import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./StaffHub";
+import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./admissionSections";
 
 import { NAVY, NAVY_DARK, MAROON } from "./branding";
 // TEAL is the student/applicant portal's own accent, not the institution's brand —
