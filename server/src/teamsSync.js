@@ -15,6 +15,9 @@ const { rosterForSession } = require("./timetabling/registers");
 const teamsConfig = require("./teamsAttendanceConfig");
 const tapConfig = require("./attendanceTapConfig");
 const { localDate, localTime } = require("./clock");
+// The cached college-wide attendance matrix must not outlive a sync that just wrote
+// marks into the data it summarises — see attendanceMatrixCache.js.
+const matrixCache = require("./attendanceMatrixCache");
 
 // In-process, like every lock in this codebase (see conventions.md): correct for one
 // Node process, and one process is what a deployment is. A clustered deployment would
@@ -279,6 +282,9 @@ async function runSync({ mode = "manual", startedBy = null } = {}) {
       // rather than colliding — and a person's mark, or the earlier machine mark,
       // stands exactly as it was.
       const res = await prisma.attendanceMark.createMany({ data: rows, skipDuplicates: true });
+      // Only when something was actually inserted: a session whose every row was a
+      // duplicate changed no figure, so the cached matrix still describes the data.
+      if (res.count > 0) matrixCache.invalidate();
       summary.marksCreated += res.count;
       summary.marksSkippedExisting += rows.length - res.count;
       // The audit trail, in the tap log every other method already writes — the spec

@@ -33,6 +33,13 @@ const { notifyStudent } = require("../notify");
 const { localDate, localTime } = require("../clock");
 
 router.use(requireAuth, requirePage("scheduling"));
+// Timetable groups and events decide session rosters and the per-unit student
+// counts the attendance matrix reports (rosterForSession / unitStudentCounts), so
+// a successful mutation here can move a matrix figure without ever touching an
+// AttendanceMark. Same middleware the hnd router mounts, for the same reason:
+// invalidation keys on "a write that did not fail", not on a hand-kept list of
+// handlers that happens to be complete today.
+router.use(require("../attendanceMatrixCache").invalidateOnWrite);
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 const MAX = 200;

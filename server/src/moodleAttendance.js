@@ -14,6 +14,9 @@
 //   * every register created carries `moodleSessionId` and every mark is stamped
 //     takenBy IMPORT_STAMP, so an import can be identified and removed precisely.
 const prisma = require("./db");
+// The cached college-wide attendance matrix must not outlive an import that just
+// changed the marks it summarises — see attendanceMatrixCache.js.
+const matrixCache = require("./attendanceMatrixCache");
 
 const IMPORT_STAMP = "Moodle import";
 
@@ -287,6 +290,10 @@ async function importAttendance({ call, dryRun = false, note = () => {} } = {}) 
   if (out.attendanceSkippedConflict) {
     note(`Attendance: ${out.attendanceSkippedConflict} mark(s) differ from a register already taken in Staff Hub — the Staff Hub value was kept`);
   }
+  // `touched` covers both ways an import moves the matrix: marks created, and
+  // enrolments added (which change whose marks count and every denominator). A dry
+  // run writes nothing, so it invalidates nothing.
+  if (!dryRun && touched.size) matrixCache.invalidate();
   out.studentIds = [...touched];
   return out;
 }
