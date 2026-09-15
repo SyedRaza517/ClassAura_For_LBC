@@ -1,0 +1,24 @@
+-- A FUNCTIONAL index on lower(email), hand-written because the Prisma schema
+-- language cannot express an index on an expression — @@index([email]) would index
+-- the raw column, and the login lookup never queries the raw column.
+--
+-- WHY lower(): the applicant sign-in path (src/routes/auth.js, /login) matches an
+-- Admission row case-insensitively, and it runs on EVERY failed staff/student login
+-- as well as every applicant one — /login tries staff, then student, then Admission.
+-- With no email index at all, each of those attempts sequential-scanned the whole
+-- Admission table, and the table is the college's entire applicant history.
+--
+-- WHY NOT keep Prisma's mode:"insensitive" and index the raw column: Prisma 5.x
+-- compiles an insensitive `equals` to `"email" ILIKE $1` (verified against the query
+-- log), and Postgres cannot answer ILIKE from a btree index, functional or plain —
+-- ILIKE is a pattern match, and only a pg_trgm GIN index serves it. A trigram index
+-- was rejected as the fix: it needs the pg_trgm extension on every environment
+-- (local, both Supabase projects), is far larger, and buys pattern-matching this
+-- lookup never wanted — % and _ in a typed email acting as wildcards was an
+-- accident, not a feature. So the LOOKUP was moved to raw SQL of exactly this
+-- shape — lower("email") = $1 — and this index is the other half of that change.
+--
+-- IF NOT EXISTS so a re-run (or an environment where someone applied it by hand
+-- during an incident) records as applied instead of failing the whole deploy —
+-- see .claude/rules/migrations.md on how a failed migration wedges every later one.
+CREATE INDEX IF NOT EXISTS "Admission_email_lower_idx" ON "Admission" (lower(email));

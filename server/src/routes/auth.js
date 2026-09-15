@@ -7,7 +7,15 @@ const { sStaff, sStudent, sApplicant } = require("../serializers");
 const { verifyPassword, hashPassword, signToken, signStudentToken, signApplicantToken, requireAuth, SECRET } = require("../auth");
 // A fixed hash to compare against on the login miss path, so a non-existent account
 // costs the same bcrypt time as a real one (see the /login handler). Computed once.
-const DUMMY_HASH = hashPassword("timing-equalizer-not-a-real-password");
+//
+// hashSync, deliberately, and the only sync bcrypt left in src/. hashPassword is now
+// async (it returns a Promise — see src/auth.js for why), so using it here would make
+// DUMMY_HASH a Promise at require time and every module-level consumer would need an
+// async init dance. This one hash is computed exactly once, at boot, before the server
+// is listening — there is no event loop traffic to block yet, so the ~100ms is paid
+// where nobody can notice it. The COMPARES against it stay async like every other.
+const bcryptjs = require("bcryptjs");
+const DUMMY_HASH = bcryptjs.hashSync("timing-equalizer-not-a-real-password", 10);
 const { sendEmail } = require("../email");
 const { notifyStaff, notifyAdmins } = require("../notify");
 const totp = require("../totp");
@@ -186,8 +194,9 @@ function sweep(map, now, windowMs) {
 router.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "Email and password required" });
-  // TYPE-check, not just truthiness. `{}` is truthy, and bcrypt.compareSync throws on
-  // a non-string — which produced a 500 when the account existed and a 401 when it
+  // TYPE-check, not just truthiness. `{}` is truthy, and bcrypt's compare throws on a
+  // non-string (the async variant rejects, which an await re-throws — same outcome)
+  // — which produced a 500 when the account existed and a 401 when it
   // didn't. That is a clean account-existence oracle, and because the throw happened
   // before the counters below were incremented, NEITHER rate limiter ever fired: the
   // whole staff and student roster could be enumerated at full speed.
@@ -212,7 +221,7 @@ router.post("/login", async (req, res) => {
   const staff = await prisma.staff.findFirst({ where: { email: emailLc } });
   // A pending-activation staff account cannot be signed into (its password is random
   // and unknown); treat it as a non-match so the generic error message applies.
-  const staffOk = staff && !staff.pendingActivation && verifyPassword(password, staff.passwordHash);
+  const staffOk = staff && !staff.pendingActivation && (await verifyPassword(password, staff.passwordHash));
 
   if (staffOk) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey); // successful login clears both counters
@@ -254,7 +263,7 @@ router.post("/login", async (req, res) => {
     "login: resolving a student account, which is what produces the scope",
     () => prisma.student.findFirst({ where: { email: emailLc } }),
   );
-  if (student && student.passwordHash && student.active !== false && verifyPassword(password, student.passwordHash)) {
+  if (student && student.passwordHash && student.active !== false && (await verifyPassword(password, student.passwordHash))) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
     audit.record(req, {
       actor: audit.asActor(student, "student"),
@@ -268,10 +277,35 @@ router.post("/login", async (req, res) => {
   // Not staff or student — try an applicant (prospective-student portal) account: an
   // Admission row that has been given a passwordHash via /api/applicant/register. Matched
   // case-insensitively; a deactivated one cannot sign in.
-  const applicant = await prisma.admission.findFirst({
-    where: { email: { equals: emailLc, mode: "insensitive" }, passwordHash: { not: null } },
-  });
-  if (applicant && applicant.active !== false && verifyPassword(password, applicant.passwordHash)) {
+  //
+  // RAW SQL ON lower(email), NOT Prisma's mode:"insensitive" — and the reason is what
+  // the query engine actually emits. Prisma 5.x compiles an insensitive `equals` to
+  //   "email" ILIKE $1
+  // (verified against the query log for this exact filter), and Postgres cannot answer
+  // ILIKE from ANY btree index, functional or otherwise. Admission carries no email
+  // index at all, so this lookup — which runs on EVERY failed staff/student login, not
+  // just applicant sign-ins — sequential-scanned the whole Admission table every time.
+  // lower(email) = <already-lowercased input> is the same case-insensitive equality,
+  // but it is exactly the expression the "Admission_email_lower_idx" functional index
+  // serves (see the migration of that name — a hand-written one, because the Prisma
+  // schema language cannot express an index on an expression).
+  //
+  // It is also STRICTER in a way that only removes an accident: ILIKE treats % and _
+  // in the caller's input as wildcards, so signing in as "j_hn@x.com" would have
+  // pattern-matched "john@x.com"'s row. Underscores are legal in real addresses; a
+  // login lookup was never meant to match by pattern. Plain equality can't.
+  //
+  // Only the id comes back raw; the row is re-read through the Prisma client so the
+  // serialiser and the checks below see a normal client object rather than the raw
+  // driver shape (Date columns, casing and null handling all differ on that path).
+  const applicantIds = await prisma.$queryRaw`
+    SELECT "id" FROM "Admission"
+    WHERE lower("email") = ${emailLc} AND "passwordHash" IS NOT NULL
+    LIMIT 1`;
+  const applicant = applicantIds.length
+    ? await prisma.admission.findUnique({ where: { id: applicantIds[0].id } })
+    : null;
+  if (applicant && applicant.active !== false && (await verifyPassword(password, applicant.passwordHash))) {
     ATTEMPTS.delete(key); ATTEMPTS.delete(acctKey);
     audit.record(req, {
       actor: audit.asActor(applicant, "applicant"),
@@ -287,8 +321,10 @@ router.post("/login", async (req, res) => {
   // email returns in a few milliseconds (both findUnique calls short-circuit before
   // any bcrypt) while a real account pays for the compare — a timing oracle that tells
   // an attacker which addresses have activated accounts, defeating the generic error
-  // message. The result is discarded; only the elapsed time matters.
-  verifyPassword(String(password), DUMMY_HASH);
+  // message. The result is discarded; only the elapsed time matters — which is why the
+  // await is load-bearing now that verifyPassword is async: fire-and-forget would
+  // return the 401 immediately and hand the fast path straight back to the attacker.
+  await verifyPassword(String(password), DUMMY_HASH);
 
   // count the failure and return generically.
   s.count += 1;
@@ -325,7 +361,7 @@ router.post("/totp/setup", async (req, res) => {
   // the caller just proved it at login (viaChallenge).
   if (!viaChallenge) {
     const { password } = req.body || {};
-    if (!password || !verifyPassword(password, staff.passwordHash)) {
+    if (!password || !(await verifyPassword(password, staff.passwordHash))) {
       return res.status(400).json({ error: "Enter your password to set up two-step verification" });
     }
   }
@@ -372,7 +408,7 @@ router.post("/totp/enable", async (req, res) => {
   if (!staff.totpSecret) return res.status(400).json({ error: "Start setup first" });
   if (!viaChallenge) {
     const { password } = req.body || {};
-    if (!password || !verifyPassword(password, staff.passwordHash)) {
+    if (!password || !(await verifyPassword(password, staff.passwordHash))) {
       return res.status(400).json({ error: "Enter your password to set up two-step verification" });
     }
   }
@@ -426,7 +462,7 @@ router.delete("/totp", requireAuth, async (req, res) => {
   const { password } = req.body || {};
   const staff = await prisma.staff.findUnique({ where: { id: req.user.id } });
   if (!staff?.totpEnabled) return res.status(400).json({ error: "Two-factor authentication is not enabled" });
-  if (!password || !verifyPassword(password, staff.passwordHash)) return res.status(400).json({ error: "Password is incorrect" });
+  if (!password || !(await verifyPassword(password, staff.passwordHash))) return res.status(400).json({ error: "Password is incorrect" });
   // Honour the same enforcement flag as everywhere else — while 2FA is off this
   // must not hard-block an account from removing an authenticator it can't use.
   if (TOTP_ENFORCED && staff.mustSetupTotp) return res.status(400).json({ error: "Two-factor authentication is required for this account" });
@@ -452,9 +488,9 @@ router.put("/change-password", requireAuth, async (req, res) => {
   // Student accounts change their own password too (the student app "More" screen).
   if (req.user.kind === "student") {
     const student = await prisma.student.findUnique({ where: { id: req.user.id } });
-    if (!student || !student.passwordHash || !verifyPassword(currentPassword, student.passwordHash)) return res.status(400).json({ error: "Current password is incorrect" });
-    if (verifyPassword(newPassword, student.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
-    const updated = await prisma.student.update({ where: { id: student.id }, data: { passwordHash: hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    if (!student || !student.passwordHash || !(await verifyPassword(currentPassword, student.passwordHash))) return res.status(400).json({ error: "Current password is incorrect" });
+    if (await verifyPassword(newPassword, student.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
+    const updated = await prisma.student.update({ where: { id: student.id }, data: { passwordHash: await hashPassword(newPassword), tokenVersion: { increment: 1 } } });
     audit.record(req, {
       action: "auth.password.changed", entity: "Student", entityId: updated.id,
       summary: `Student ${updated.firstName} ${updated.lastName} (${updated.studentRef}) changed their own password`,
@@ -466,9 +502,9 @@ router.put("/change-password", requireAuth, async (req, res) => {
   // Applicant (prospective-student portal) accounts change their own password too.
   if (req.user.kind === "applicant") {
     const applicant = await prisma.admission.findUnique({ where: { id: req.user.id } });
-    if (!applicant || !applicant.passwordHash || !verifyPassword(currentPassword, applicant.passwordHash)) return res.status(400).json({ error: "Current password is incorrect" });
-    if (verifyPassword(newPassword, applicant.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
-    const updated = await prisma.admission.update({ where: { id: applicant.id }, data: { passwordHash: hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    if (!applicant || !applicant.passwordHash || !(await verifyPassword(currentPassword, applicant.passwordHash))) return res.status(400).json({ error: "Current password is incorrect" });
+    if (await verifyPassword(newPassword, applicant.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
+    const updated = await prisma.admission.update({ where: { id: applicant.id }, data: { passwordHash: await hashPassword(newPassword), tokenVersion: { increment: 1 } } });
     audit.record(req, {
       action: "auth.password.changed", entity: "Admission", entityId: updated.id,
       summary: `Applicant ${updated.email} changed their own password`,
@@ -478,13 +514,13 @@ router.put("/change-password", requireAuth, async (req, res) => {
   }
 
   const staff = await prisma.staff.findUnique({ where: { id: req.user.id } });
-  if (!staff || !verifyPassword(currentPassword, staff.passwordHash)) return res.status(400).json({ error: "Current password is incorrect" });
-  if (verifyPassword(newPassword, staff.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
+  if (!staff || !(await verifyPassword(currentPassword, staff.passwordHash))) return res.status(400).json({ error: "Current password is incorrect" });
+  if (await verifyPassword(newPassword, staff.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
   const updated = await prisma.staff.update({
     where: { id: staff.id },
     // Bumping tokenVersion signs out every OTHER device. The caller gets a freshly
     // signed token below so their current session continues uninterrupted.
-    data: { passwordHash: hashPassword(newPassword), mustChangePassword: false, tokenVersion: { increment: 1 } },
+    data: { passwordHash: await hashPassword(newPassword), mustChangePassword: false, tokenVersion: { increment: 1 } },
   });
   // Any outstanding "forgot password" link is now meaningless — retire it.
   await prisma.passwordReset.updateMany({ where: { staffId: updated.id, usedAt: null }, data: { usedAt: new Date() } });
@@ -539,11 +575,15 @@ router.post("/invite/accept", async (req, res) => {
   });
   if (claimed.count === 0) return res.status(400).json({ error: INVITE_DEAD });
 
+  // Hashed BEFORE the transaction array is built: hashPassword is async now, and a
+  // pending Promise inside a Prisma data payload would be serialised as garbage
+  // rather than awaited.
+  const invitePasswordHash = await hashPassword(newPassword);
   await prisma.$transaction([
     prisma.staff.update({
       where: { id: row.staffId },
       data: {
-        passwordHash: hashPassword(newPassword),
+        passwordHash: invitePasswordHash,
         pendingActivation: false,
         mustChangePassword: false,
         tokenVersion: { increment: 1 },
@@ -589,7 +629,7 @@ router.delete("/account", requireAuth, async (req, res) => {
     const student = await prisma.student.findUnique({ where: { id: req.user.id } });
     if (!student) return res.status(404).json({ error: "Account not found" });
     if (String(confirm || "").trim().toUpperCase() !== "DELETE") return res.status(400).json({ error: 'Type DELETE to confirm' });
-    if (!password || !student.passwordHash || !verifyPassword(password, student.passwordHash)) return res.status(400).json({ error: "Password is incorrect" });
+    if (!password || !student.passwordHash || !(await verifyPassword(password, student.passwordHash))) return res.status(400).json({ error: "Password is incorrect" });
     await prisma.student.update({ where: { id: student.id }, data: { passwordHash: null, tokenVersion: { increment: 1 } } });
     audit.record(req, {
       action: "student.account.removed", entity: "Student", entityId: student.id,
@@ -606,7 +646,7 @@ router.delete("/account", requireAuth, async (req, res) => {
   if (String(confirm || "").trim().toUpperCase() !== "DELETE") {
     return res.status(400).json({ error: 'Type DELETE to confirm' });
   }
-  if (!password || !verifyPassword(password, staff.passwordHash)) {
+  if (!password || !(await verifyPassword(password, staff.passwordHash))) {
     return res.status(400).json({ error: "Password is incorrect" });
   }
   if (totpRequiredFor(staff)) {
@@ -808,7 +848,7 @@ router.post("/reset-password", async (req, res) => {
   }
 
   if (typeof newPassword !== "string" || newPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
-  if (verifyPassword(newPassword, staff.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
+  if (await verifyPassword(newPassword, staff.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
 
   // Claim the link before doing anything else. A conditional update is atomic, so
   // of two simultaneous submissions of the same link exactly one sees count === 1
@@ -819,11 +859,14 @@ router.post("/reset-password", async (req, res) => {
   });
   if (claimed.count === 0) return res.status(400).json({ error: "This reset link is invalid or has expired. Please request a new one." });
 
+  // Hashed before the transaction array is built — same reason as /invite/accept:
+  // a Promise dropped into a Prisma payload is not awaited, it is mangled.
+  const resetPasswordHash = await hashPassword(newPassword);
   await prisma.$transaction([
     prisma.staff.update({
       where: { id: staff.id },
       data: {
-        passwordHash: hashPassword(newPassword),
+        passwordHash: resetPasswordHash,
         mustChangePassword: false,
         // Choosing a password IS activating the account. Without this an invited
         // member of staff who reset their password was told "you can now sign in",

@@ -143,7 +143,7 @@ router.post("/", async (req, res) => {
     const liveRequest = existingRequest && existingRequest.status !== "rejected" && !staleApproved;
     if (staffClash || alreadyClaimed || liveRequest) return genericOk();
 
-    const data = { kind: "student", studentId: student?.id || null, collegeId, name, email, passwordHash: hashPassword(password), jobTitle: "", dept: "", site: null, status: "pending", note: null, decidedBy: null, decidedAt: null };
+    const data = { kind: "student", studentId: student?.id || null, collegeId, name, email, passwordHash: await hashPassword(password), jobTitle: "", dept: "", site: null, status: "pending", note: null, decidedBy: null, decidedAt: null };
     if (existingRequest) await prisma.signupRequest.update({ where: { id: existingRequest.id }, data });
     else await prisma.signupRequest.create({ data });
     notifyAdmins({ type: "info", message: `New STUDENT sign-up from ${name} (ID ${collegeId})${matchNote} — awaiting approval`, link: "signups" });
@@ -185,7 +185,7 @@ router.post("/", async (req, res) => {
   // A previously rejected applicant — or one whose account has since been deleted —
   // may apply again: overwrite the old row so the unique email constraint doesn't
   // permanently bar them.
-  const data = { name, email, passwordHash: hashPassword(password), jobTitle, dept, site, status: "pending", note: null, decidedBy: null, decidedAt: null };
+  const data = { name, email, passwordHash: await hashPassword(password), jobTitle, dept, site, status: "pending", note: null, decidedBy: null, decidedAt: null };
   if (existingRequest) await prisma.signupRequest.update({ where: { id: existingRequest.id }, data });
   else await prisma.signupRequest.create({ data });
 

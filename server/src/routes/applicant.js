@@ -140,7 +140,7 @@ router.post("/register", async (req, res) => {
   }
 
   const created = await prisma.admission.create({
-    data: { email, firstName, surname, passwordHash: hashPassword(password), active: true, source: "portal" },
+    data: { email, firstName, surname, passwordHash: await hashPassword(password), active: true, source: "portal" },
   });
   return res.status(201).json({ token: signApplicantToken(created), user: { ...sApplicant(created), kind: "applicant" } });
 });
