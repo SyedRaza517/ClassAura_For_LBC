@@ -196,6 +196,15 @@ async function assignCourses(prismaOrTx, courseIds, academicDepartmentId) {
     prismaOrTx.unit.updateMany({ where: { courseId: { in: courseIds } }, data: { academicDepartmentId } }),
     prismaOrTx.cohort.updateMany({ where: { courseId: { in: courseIds } }, data: { academicDepartmentId } }),
   ]);
+  // DELIBERATELY NOT INVALIDATING the requireAuth identity cache for the moved
+  // students (see identityCache.js). Their ids are never materialised here — the
+  // updateMany reaches them through a relational where — and the moved column plays
+  // no part in a student's authentication or authorization: the student token path
+  // scopes every read to the student's own id, not to a department. The only effect
+  // of staleness is the department name on an already-signed-in student's cached
+  // req.user for up to the cache TTL (seconds), during a reorganisation an admin is
+  // performing — a trade accepted over adding a second query here just to list ids
+  // for a Map delete.
   return {
     courseCount: courses.count, studentCount: students.count,
     unitCount: units.count, cohortCount: cohorts.count,

@@ -3,6 +3,11 @@
 // rest of the admin console.
 const router = require("express").Router();
 const prisma = require("../db");
+// requireAuth caches student identity rows (see identityCache.js). The student edit,
+// delete and group-move writes below change fields that cached copy carries — most
+// critically `active`, which is this platform's student suspension switch — so each
+// drops the affected entries when it commits.
+const { identityCache } = require("../identityCache");
 // THE RAW SQL IN THIS FILE USED TO CARRY A TENANT PREDICATE, AND NO LONGER DOES.
 //
 // One database served every college, and $queryRaw bypassed the isolation extension in
@@ -753,6 +758,11 @@ async function setCohortMembership(req, res, { remove }) {
     where: { id: { in: targets.map((s) => s.id) } },
     data: { cohortId, academicDepartmentId },
   });
+  // Not a security field, but cohortId/academicDepartmentId ride on the cached row
+  // into req.user and the student app's /me — a moved student should see their new
+  // group on the next request, not a TTL later. Bounded by the request's own id
+  // list, so this is cheap.
+  for (const s of targets) identityCache.invalidate("student", s.id);
 
   // A cohort change moves a student's scoring window to that cohort's term calendar,
   // so every one of them is restated as stale. Same call the single-student path makes.
@@ -1288,6 +1298,11 @@ router.put("/students/:id", requireAuth, requireStudentAdmin, async (req, res) =
     where: { id: existing.id }, data,
     include: { enrolments: { select: { unitId: true } } },
   });
+  // This route can set `active: false` — deactivation IS suspension here, and
+  // requireAuth refuses an inactive student row. A cached active copy must not keep
+  // the account signed in for the rest of the TTL. (Email and studentRef edits are
+  // identity changes too, per the audit note below — same immediacy, same line.)
+  identityCache.invalidate("student", existing.id);
   // Moving a student to another cohort moves their scoring window to that cohort's
   // term calendar; deactivating them takes them out of the register entirely.
   if (data.cohortId !== undefined || data.active !== undefined) {
@@ -1317,6 +1332,9 @@ router.delete("/students/:id", requireAuth, requireStudentAdmin, async (req, res
       prisma.signupRequest.deleteMany({ where: { email: existing.email } }),
       prisma.student.delete({ where: { id: existing.id } }),
     ]);
+    // The erasure must reach requireAuth immediately: a deleted student's cached row
+    // would otherwise keep their app signed in until the TTL ran out.
+    identityCache.invalidate("student", existing.id);
     // Their attendance, marks, grades and PAT interactions go with them. Under a
     // retention schedule this is the erasure the college has to be able to evidence,
     // and this row is what survives to evidence it.

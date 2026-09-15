@@ -17,6 +17,10 @@ const { sAcademicDepartment } = require("../serializers");
 const departments = require("../academicDepartments");
 const { withoutAcademicScope } = require("../academicScope");
 const audit = require("../audit");
+// requireAuth caches the caller's row WITH its academicDepartments memberships (see
+// identityCache.js) — scopeForStaff reads both collegeWide and the membership rows
+// from that cached copy, so the grant/narrow write below must drop it on commit.
+const { identityCache } = require("../identityCache");
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 
@@ -283,6 +287,10 @@ router.put("/staff/:staffId", requireAuth, requirePage("settings"), async (req, 
           prisma.staffAcademicDepartment.create({ data: { staffId: staff.id, academicDepartmentId } })),
         prisma.staff.update({ where: { id: staff.id }, data: { collegeWide } }),
       ]);
+      // This transaction just changed which students this account can see — the
+      // decision scopeForStaff makes from the cached row on every request. Narrowing
+      // someone must narrow their NEXT request, not the one after their TTL expires.
+      identityCache.invalidate("staff", staff.id);
       return { staff, beforeIds };
     },
   );

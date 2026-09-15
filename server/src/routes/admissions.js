@@ -17,6 +17,15 @@ const mailAssets = require("../mailAssets");
 const branding = require("../branding");
 const et = require("../emailTemplate");
 const audit = require("../audit");
+// requireAuth caches applicant identity rows (an Admission with a passwordHash — see
+// identityCache.js). Two writes in this file warrant dropping that entry: the full
+// edit (it can change the email, which is the applicant's login identity and rides
+// on req.user), and the delete (a removed applicant must stop authenticating NOW,
+// not when the TTL runs out). The workflow-column writes — upload tokens, SharePoint
+// folders, offer/interview state — deliberately do not invalidate: none of them feed
+// requireAuth's checks or req.user, and the portal re-reads the row for every view,
+// so the cache never answers those questions at all.
+const { identityCache } = require("../identityCache");
 
 // An applicant's name, for a log line a person can read. Never more than the name:
 // see the note on audit.changedKeys for why the rest of this record stays out of the
@@ -748,6 +757,11 @@ router.put("/:id", async (req, res) => {
     return res.status(400).json({ error: "An applicant needs at least a first name or surname." });
   }
   let row = await prisma.admission.update({ where: { id: req.params.id }, data });
+  // pick() covers the form's own fields, email included — and email is what this
+  // applicant signs in with and what the portal's uniqueness checks compare against
+  // req.user. Cheap to drop unconditionally; deciding per-field would cost more to
+  // read than the Map delete costs to run.
+  identityCache.invalidate("applicant", row.id);
 
   // If the course or intake changed, move the applicant's folder to the matching
   // Admissions / <course> / <intake> path in SharePoint (best-effort).
@@ -793,6 +807,10 @@ router.delete("/:id", async (req, res) => {
     else if (d.storagePath) await storage.removeObject(d.storagePath);
   }
   await prisma.admission.delete({ where: { id: req.params.id } });
+  // If this row had become an applicant login, its cached copy must die with it —
+  // an erased applicant keeping a working session for another TTL is the staleness
+  // the cache is not allowed to have.
+  identityCache.invalidate("applicant", existing.id);
   // An applicant's whole record and every file with it. Under a retention schedule
   // this is the erasure a college has to be able to evidence, so the row says what
   // went and how much of it — but still not what was in it.

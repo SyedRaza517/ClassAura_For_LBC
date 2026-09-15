@@ -13,6 +13,39 @@ const { runWithAcademicScope, withoutAcademicScope, scopeForStaff, CONFINED_BY_R
 const { sessionSecret } = require("./sessionSecret");
 const SECRET = sessionSecret();
 
+// The short-TTL identity cache under requireAuth's per-request account lookup. The
+// long WHY — why in-process is right here, what is and is not cached, exactly how
+// stale it is allowed to be and for whom — lives at the top of identityCache.js.
+// Every route that mutates a row's auth-relevant state calls
+// identityCache.invalidate(kind, id) at the write, which is what keeps a 30-second
+// cache from ever honouring a revoked session for those mutations.
+const { identityCache } = require("./identityCache");
+
+// Resolve the caller's row: cached if we have it, one (coalesced) database read if
+// not. `passes` is this request's own validity check — token version, active flag,
+// has-a-password — and it earns the cache its correctness backstop:
+//
+// A CACHED row that fails the check is never allowed to reject the request on its
+// own. The cached copy might simply be older than the change that made this token
+// valid — the classic case is change-password, where the caller's NEW token carries
+// the bumped version and a stale row would 401 the very session the route just
+// blessed. So: drop the entry, read fresh, and judge on the truth. The cost is one
+// database read on a path that was headed for rejection anyway — exactly what every
+// request cost before the cache — and it means a missed invalidation point can only
+// ever cause one redundant read, never a wrong acceptance of a fresh token's
+// rejection. (The reverse direction — a stale row wrongly ACCEPTING a revoked
+// token — is what the invalidation calls at every mutating route are for; a check
+// that passes gives this function no signal that anything changed.)
+//
+// The fresh row is cached whether or not it passes: it is the current truth, and
+// caching it means a replayed dead token costs a Map hit, not a read, until TTL.
+async function loadCallerRow(kind, id, loader, passes) {
+  const cached = identityCache.get(kind, id);
+  if (cached !== undefined && passes(cached)) return cached;
+  if (cached !== undefined) identityCache.invalidate(kind, id);
+  return identityCache.load(kind, id, loader);
+}
+
 // ASYNC, AND THAT IS THE POINT — both return Promises and every caller must await.
 //
 // These were bcrypt.hashSync / bcrypt.compareSync. bcryptjs is pure JavaScript, so a
@@ -143,9 +176,17 @@ async function requireAuth(req, res, next) {
       //
       // Deliberately narrow: the lookup alone, not the branch, so nothing downstream
       // inherits an institution-wide scope. The real scope is bound three lines below.
-      const student = await withoutAcademicScope(
-        "auth: resolving the student account, which is what produces the scope",
-        () => prisma.student.findUnique({ where: { id: payload.sub } }),
+      //
+      // Cached via loadCallerRow: the cache get/set are synchronous Map operations
+      // with no scope of their own, so only the actual Prisma read needs (and gets)
+      // the withoutAcademicScope wrapper — a cache hit touches no scoped model at all.
+      const student = await loadCallerRow(
+        "student", payload.sub,
+        () => withoutAcademicScope(
+          "auth: resolving the student account, which is what produces the scope",
+          () => prisma.student.findUnique({ where: { id: payload.sub } }),
+        ),
+        (s) => Boolean(s && s.passwordHash && s.active !== false && (payload.ver ?? 0) === (s.tokenVersion ?? 0)),
       );
       if (!student || !student.passwordHash || student.active === false) return res.status(401).json({ error: "Invalid token" });
       if ((payload.ver ?? 0) !== (student.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
@@ -164,7 +205,11 @@ async function requireAuth(req, res, next) {
       if (!APPLICANT_ROUTERS.includes(req.baseUrl)) {
         return res.status(403).json({ error: "Not available for applicant accounts" });
       }
-      const applicant = await prisma.admission.findUnique({ where: { id: payload.sub } });
+      const applicant = await loadCallerRow(
+        "applicant", payload.sub,
+        () => prisma.admission.findUnique({ where: { id: payload.sub } }),
+        (a) => Boolean(a && a.passwordHash && a.active !== false && (payload.ver ?? 0) === (a.tokenVersion ?? 0)),
+      );
       if (!applicant || !applicant.passwordHash || applicant.active === false) return res.status(401).json({ error: "Invalid token" });
       if ((payload.ver ?? 0) !== (applicant.tokenVersion ?? 0)) return res.status(401).json({ error: "Session expired — please sign in again" });
       req.user = { id: applicant.id, kind: "applicant", isApplicant: true, ...sApplicant(applicant) };
@@ -179,10 +224,18 @@ async function requireAuth(req, res, next) {
     // This read itself runs before any scope exists, which is why Staff is declared
     // UNSCOPED in academicScopeModels.js and must stay so through spec 1 -- a filtered
     // Staff query would need the scope this very query is being made to compute.
-    const staff = await prisma.staff.findUnique({
-      where: { id: payload.sub },
-      include: { academicDepartments: { select: { academicDepartmentId: true } } },
-    });
+    // Cached WITH the memberships include — the point of the cache is to store
+    // exactly what this lookup returned, so a hit hands scopeForStaff the same
+    // shape a fresh read would, membership rows and all. Membership changes go
+    // through PUT /api/academic-departments/staff/:staffId, which invalidates.
+    const staff = await loadCallerRow(
+      "staff", payload.sub,
+      () => prisma.staff.findUnique({
+        where: { id: payload.sub },
+        include: { academicDepartments: { select: { academicDepartmentId: true } } },
+      }),
+      (s) => Boolean(s && (payload.ver ?? 0) === (s.tokenVersion ?? 0)),
+    );
     if (!staff) return res.status(401).json({ error: "Invalid token" });
     // Tokens issued before the last password reset/change are dead. Tokens minted
     // before this field existed carry no `ver`, which reads as 0 and still matches

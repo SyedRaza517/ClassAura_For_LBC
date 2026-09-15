@@ -19,6 +19,10 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requirePage, hashPassword, blockedByRank } = require("../auth");
+// requireAuth caches the caller's row (see identityCache.js). An admin reset bumps
+// tokenVersion to end the target's sessions; dropping their cache entry here is what
+// makes that ending immediate rather than up-to-TTL late.
+const { identityCache } = require("../identityCache");
 const { notifyStaff } = require("../notify");
 const audit = require("../audit");
 
@@ -97,6 +101,10 @@ router.put("/:kind/:id", async (req, res) => {
       // mailbox could set their own password on it.
       prisma.passwordReset.updateMany({ where: { staffId: target.id, usedAt: null }, data: { usedAt: new Date() } }),
     ]);
+    // "All their sessions ended" (the audit line below) must be true on the very
+    // next request, not a TTL later — the reason for a reset may be that somebody
+    // else holds the account right now.
+    identityCache.invalidate("staff", target.id);
     notifyStaff(target.id, {
       type: "warning",
       message: `Your password was reset by ${req.user?.name || "an administrator"}. If this wasn't expected, tell the college office straight away.`,
@@ -119,6 +127,9 @@ router.put("/:kind/:id", async (req, res) => {
     where: { id: target.id },
     data: { passwordHash, tokenVersion: { increment: 1 }, active: true },
   });
+  // Old sessions died with the bump AND the account may have just been re-activated;
+  // both must reach requireAuth immediately, so the cached row goes.
+  identityCache.invalidate("student", target.id);
   audit.record(req, {
     action: "student.password.reset.byAdmin", entity: "Student", entityId: target.id,
     summary: `Password for student ${target.firstName} ${target.lastName} set by an administrator — all their sessions ended and the account re-activated`,

@@ -5,6 +5,12 @@ const prisma = require("../db");
 const { withoutAcademicScope } = require("../academicScope");
 const { sStaff, sStudent, sApplicant } = require("../serializers");
 const { verifyPassword, hashPassword, signToken, signStudentToken, signApplicantToken, requireAuth, SECRET } = require("../auth");
+// requireAuth serves the caller's row from a short-TTL in-process cache
+// (identityCache.js explains the whole design). Every write in this file that
+// changes a row's auth-relevant state — password, tokenVersion, totp, activation,
+// deletion — must drop that row's cache entry the moment it commits, or a revoked
+// session would stay honoured for up to the TTL. One process, so this is complete.
+const { identityCache } = require("../identityCache");
 // A fixed hash to compare against on the login miss path, so a non-existent account
 // costs the same bcrypt time as a real one (see the /login handler). Computed once.
 //
@@ -382,6 +388,10 @@ router.post("/totp/setup", async (req, res) => {
     // stuck, so every concurrent caller shows the same QR.
     await prisma.staff.updateMany({ where: { id: staff.id, totpSecret: null }, data: { totpSecret: totp.generateSecret() } });
     secret = (await prisma.staff.findUnique({ where: { id: staff.id } })).totpSecret;
+    // The cached copy no longer matches the row (its totpSecret is stale). No check
+    // in requireAuth reads the secret — every code verification re-reads the row —
+    // so this is about keeping the cache honest, not about a live vulnerability.
+    identityCache.invalidate("staff", staff.id);
   }
   // The issuer is the line the person reads in their authenticator app for the rest of
   // their employment, so it has to name the college they are enrolling against. A college
@@ -424,6 +434,9 @@ router.post("/totp/enable", async (req, res) => {
   // account", not "enrolment is outstanding". Clearing it here would let an
   // app-signup account drop its second factor again via DELETE /totp.
   const updated = await prisma.staff.update({ where: { id: staff.id }, data: { totpEnabled: true } });
+  // totpEnabled feeds /me through the serialized cached row — a stale false would
+  // tell the app 2FA is off for up to the TTL right after the user turned it on.
+  identityCache.invalidate("staff", staff.id);
   audit.record(req, {
     actor: audit.asActor(updated, "staff"),
     action: "auth.totp.enabled", entity: "Staff", entityId: updated.id,
@@ -467,6 +480,7 @@ router.delete("/totp", requireAuth, async (req, res) => {
   // must not hard-block an account from removing an authenticator it can't use.
   if (TOTP_ENFORCED && staff.mustSetupTotp) return res.status(400).json({ error: "Two-factor authentication is required for this account" });
   const updated = await prisma.staff.update({ where: { id: staff.id }, data: { totpEnabled: false, totpSecret: null } });
+  identityCache.invalidate("staff", staff.id);
   // A privileged action even though it only affects the caller's own account: it
   // lowers the bar for getting into that account, and if it was not the account
   // holder who did it, this row is how anyone finds out.
@@ -491,6 +505,9 @@ router.put("/change-password", requireAuth, async (req, res) => {
     if (!student || !student.passwordHash || !(await verifyPassword(currentPassword, student.passwordHash))) return res.status(400).json({ error: "Current password is incorrect" });
     if (await verifyPassword(newPassword, student.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
     const updated = await prisma.student.update({ where: { id: student.id }, data: { passwordHash: await hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    // The bump revoked every other device's token — the cached row must go NOW, or
+    // those tokens would keep passing requireAuth's version check for up to the TTL.
+    identityCache.invalidate("student", student.id);
     audit.record(req, {
       action: "auth.password.changed", entity: "Student", entityId: updated.id,
       summary: `Student ${updated.firstName} ${updated.lastName} (${updated.studentRef}) changed their own password`,
@@ -505,6 +522,9 @@ router.put("/change-password", requireAuth, async (req, res) => {
     if (!applicant || !applicant.passwordHash || !(await verifyPassword(currentPassword, applicant.passwordHash))) return res.status(400).json({ error: "Current password is incorrect" });
     if (await verifyPassword(newPassword, applicant.passwordHash)) return res.status(400).json({ error: "New password must be different from your current one" });
     const updated = await prisma.admission.update({ where: { id: applicant.id }, data: { passwordHash: await hashPassword(newPassword), tokenVersion: { increment: 1 } } });
+    // Same as the student branch above: the bump is the revocation, the invalidate
+    // is what makes it immediate rather than TTL-late.
+    identityCache.invalidate("applicant", applicant.id);
     audit.record(req, {
       action: "auth.password.changed", entity: "Admission", entityId: updated.id,
       summary: `Applicant ${updated.email} changed their own password`,
@@ -522,6 +542,12 @@ router.put("/change-password", requireAuth, async (req, res) => {
     // signed token below so their current session continues uninterrupted.
     data: { passwordHash: await hashPassword(newPassword), mustChangePassword: false, tokenVersion: { increment: 1 } },
   });
+  // Every OTHER device's token died with the bump; without this, the cached row
+  // would keep them alive for up to the TTL. The caller's own fresh token (signed
+  // below with the new version) is also served correctly either way — requireAuth
+  // re-reads when a cached row would reject — but immediacy for the revoked ones
+  // only comes from invalidating here.
+  identityCache.invalidate("staff", staff.id);
   // Any outstanding "forgot password" link is now meaningless — retire it.
   await prisma.passwordReset.updateMany({ where: { staffId: updated.id, usedAt: null }, data: { usedAt: new Date() } });
   audit.record(req, {
@@ -592,6 +618,10 @@ router.post("/invite/accept", async (req, res) => {
     // Retire any other outstanding invite for this person.
     prisma.passwordReset.updateMany({ where: { staffId: row.staffId, purpose: "invite", usedAt: null }, data: { usedAt: new Date() } }),
   ]);
+  // The account just changed password, activation state and token version — any
+  // cached copy (an admin may have probed the account minutes ago) predates all
+  // three. AFTER the transaction, so a rollback leaves nothing to invalidate over.
+  identityCache.invalidate("staff", row.staffId);
 
   // The moment a colleague's account becomes usable. Pairs with the staff.invited
   // row an administrator generated days earlier, so the gap between "an account was
@@ -631,6 +661,9 @@ router.delete("/account", requireAuth, async (req, res) => {
     if (String(confirm || "").trim().toUpperCase() !== "DELETE") return res.status(400).json({ error: 'Type DELETE to confirm' });
     if (!password || !student.passwordHash || !(await verifyPassword(password, student.passwordHash))) return res.status(400).json({ error: "Password is incorrect" });
     await prisma.student.update({ where: { id: student.id }, data: { passwordHash: null, tokenVersion: { increment: 1 } } });
+    // Their login is gone. requireAuth refuses a student row without a passwordHash,
+    // and this makes that refusal immediate instead of one TTL away.
+    identityCache.invalidate("student", student.id);
     audit.record(req, {
       action: "student.account.removed", entity: "Student", entityId: student.id,
       summary: `Student ${student.firstName} ${student.lastName} (${student.studentRef}) removed their own app sign-in — college records kept`,
@@ -692,6 +725,11 @@ router.delete("/account", requireAuth, async (req, res) => {
     prisma.signupRequest.deleteMany({ where: { email } }),
     prisma.staff.delete({ where: { id: staff.id } }),
   ]);
+  // The row is gone; the cache must not remember it. A deleted account whose cached
+  // row survived would keep authenticating until the TTL ran out — the one staleness
+  // this feature is absolutely not allowed to have. (A cache MISS on a deleted
+  // account already behaves exactly as before: the fresh read finds nothing, 401.)
+  identityCache.invalidate("staff", staff.id);
 
   clearLockoutsFor(email);
   clearCodeAttempts(staff.id);
@@ -882,6 +920,10 @@ router.post("/reset-password", async (req, res) => {
     // Burn any sibling link still outstanding.
     prisma.passwordReset.updateMany({ where: { staffId: staff.id, usedAt: null }, data: { usedAt: new Date() } }),
   ]);
+  // "Sign every existing session out" (the bump above) has to mean NOW. A reset is
+  // often prompted by a suspected compromise; a cached row honouring the attacker's
+  // token for another 30 seconds is precisely the window the reset was run to close.
+  identityCache.invalidate("staff", staff.id);
 
   // Being locked out is the normal reason someone reaches this flow, so a reset
   // that leaves the lockout in place looks to the user like it silently failed.

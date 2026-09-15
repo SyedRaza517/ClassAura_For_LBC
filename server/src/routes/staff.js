@@ -11,6 +11,11 @@ const { sendEmail } = require("../email");
 const { isInt32, MAX_ALLOWANCE_DAYS, isString, isNonEmptyString, isHomeSite, isRealDate, ADMIN_PAGES } = require("../validate");
 const { sendInvite, unguessablePassword } = require("../invite");
 const branding = require("../branding");
+// requireAuth caches the caller's row (see identityCache.js). Every write below that
+// changes what a staff account IS — its email, its role and page grants, its second
+// factor, its existence — must drop that row's cache entry when it commits, so the
+// change binds on the target's very next request instead of up to a TTL later.
+const { identityCache } = require("../identityCache");
 
 // allowance is a 32-bit Int column. An out-of-range value would be stored by SQLite
 // but unreadable by Prisma afterwards, which would break GET /staff — and therefore
@@ -183,6 +188,11 @@ router.put("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async (re
   if (emailChanging) data.tokenVersion = { increment: 1 };
   try {
     const staff = await prisma.staff.update({ where: { id: req.params.id }, data });
+    // Unconditionally, not only when the email changed: the edited fields (name,
+    // jobTitle, allowance…) also ride on req.user via the cached row, and the
+    // email-change case additionally bumped tokenVersion — the account-transfer
+    // sign-out that must not wait out a TTL.
+    identityCache.invalidate("staff", staff.id);
     if (emailChanging) {
       await prisma.passwordReset.updateMany({ where: { staffId: staff.id, usedAt: null }, data: { usedAt: new Date() } });
       notifyStaff(staff.id, {
@@ -289,6 +299,10 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
       return res.status(400).json({ error: "The Super Admin always has full access" });
     }
     const staff = await prisma.staff.update({ where: { id: target.id }, data: departmentsData });
+    // supportDepartments decides which referral queues this person reads, and it is
+    // enforced from req.user — i.e. from the cached row. Confidentiality changes
+    // don't get to be TTL-late in either direction.
+    identityCache.invalidate("staff", staff.id);
     audit.record(req, {
       action: "staff.access.changed", entity: "Staff", entityId: staff.id,
       // Named for what actually changed. Saying "access set to N pages" about an
@@ -320,6 +334,11 @@ router.put("/:id/access", requireAuth, requireSuperAdmin, async (req, res) => {
     data = { accountRole: "ADMIN", adminPages: full ? null : JSON.stringify(clean) };
   }
   const staff = await prisma.staff.update({ where: { id: req.params.id }, data: { ...data, ...departmentsData } });
+  // accountRole and adminPages ARE the authorization requireAuth hands to every
+  // guard (requireAdmin, requireAnyPage, hasPage all read req.user, which is built
+  // from the cached row). A revoked page that survived in cache would keep opening
+  // its section for up to the TTL; a granted one would refuse. Both end here.
+  identityCache.invalidate("staff", staff.id);
   // The single most consequential change one colleague can make to another: it
   // decides which admin pages they can reach, and therefore what data they can see.
   audit.record(req, {
@@ -371,6 +390,7 @@ router.delete("/:id/totp", requireAuth, requireAnyPage(["staff", "settings"]), a
     where: { id: staff.id },
     data: { totpEnabled: false, totpSecret: null },
   });
+  identityCache.invalidate("staff", staff.id);
 
   // Tell the account holder — a silent 2FA reset is exactly the kind of change
   // someone needs to notice if it wasn't them who asked for it.
@@ -420,6 +440,9 @@ router.delete("/:id", requireAuth, requireAnyPage(["staff", "settings"]), async 
       prisma.document.deleteMany({ where: { scope: "personal", assignedToId: existing.id } }),
       prisma.staff.delete({ where: { id: existing.id } }),
     ]);
+    // A deleted colleague's cached row must not keep authenticating them for the
+    // rest of the TTL — the delete is the revocation, this makes it immediate.
+    identityCache.invalidate("staff", existing.id);
     // The most destructive thing one colleague can do to another's record, and it
     // takes their check-ins, leave and timesheets with it. Written after the
     // transaction commits, so a row that rolled back leaves no row claiming it did not.

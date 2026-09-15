@@ -17,6 +17,12 @@ const { ADMISSION_DOC_TYPES, DOC_KEYS, docLabel, admissionFolderSegments } = req
 const { pick, str } = require("../admissionFields");
 const { hashPassword, verifyPassword, signApplicantToken, requireAuth, requireApplicant } = require("../auth");
 const { sApplicant } = require("../serializers");
+// requireAuth caches this applicant's Admission row (see identityCache.js). The two
+// self-edit routes below can change `email` — the login identity, and the value the
+// emailInUse checks compare against req.user.email — so both drop the cached entry
+// on write. The other writes here (SharePoint folder ids, offer acceptance) feed
+// neither requireAuth nor req.user and are read fresh by every view, so they don't.
+const { identityCache } = require("../identityCache");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|#%]+/g, " ").replace(/\s+/g, " ").trim();
@@ -231,6 +237,7 @@ router.put("/me", async (req, res) => {
   }
 
   await prisma.admission.update({ where: { id: req.user.id }, data });
+  identityCache.invalidate("applicant", req.user.id);
   const a = await loadMe(req.user.id);
   res.json(meView(a));
 });
@@ -254,6 +261,7 @@ router.post("/me/submit", async (req, res) => {
   const existing = await prisma.admission.findUnique({ where: { id: req.user.id } });
   data.applicationSubmittedAt = existing?.applicationSubmittedAt || new Date();
   await prisma.admission.update({ where: { id: req.user.id }, data });
+  identityCache.invalidate("applicant", req.user.id);
   const a = await loadMe(req.user.id);
   res.json(meView(a));
 });

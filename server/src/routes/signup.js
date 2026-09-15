@@ -15,6 +15,11 @@ const { isInt32, MAX_ALLOWANCE_DAYS, isHomeSite } = require("../validate");
 const { notifyExistingAccount } = require("../invite");
 const { localDate } = require("../clock");
 const audit = require("../audit");
+// requireAuth caches identity rows (see identityCache.js). Approving a sign-up that
+// claims an EXISTING student row rewrites that row's password and token version, so
+// its cache entry must go with the write. Freshly created accounts need nothing —
+// nothing can have cached a row that did not exist.
+const { identityCache } = require("../identityCache");
 
 const PALETTE = ["#1a3a8f", "#9e1b32", "#0d7a5f", "#b45309", "#6d28d9", "#0e7490", "#be123c"];
 const initialsOf = (name) => name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -414,6 +419,9 @@ router.put("/:id/decision", requireAuth, requirePage("signups"), async (req, res
             prisma.student.create({ data: { firstName: parts[0] || reqRow.name, lastName: parts.slice(1).join(" ") || "", studentRef: reqRow.collegeId || ("S" + Date.now()), email: reqRow.email, initials: initialsOf(reqRow.name), colour: colourFor(reqRow.email), active: true, passwordHash: reqRow.passwordHash } }),
             prisma.signupRequest.update({ where: { id: reqRow.id }, data: decided })]; })();
       const [savedStudent, updatedReq] = await prisma.$transaction(ops);
+      // Only the claim path mutates an existing row (new passwordHash, active,
+      // bumped tokenVersion — the "allSessionsEnded" the audit line promises).
+      if (student) identityCache.invalidate("student", student.id);
       audit.record(req, {
         action: "signup.approved", entity: "Student", entityId: savedStudent.id,
         summary: `Student sign-up from ${reqRow.name} (${reqRow.email}) approved by ${req.user.name} — ` + (student ? "existing record claimed" : "a new student record was created"),
