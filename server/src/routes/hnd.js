@@ -52,6 +52,14 @@ const audit = require("../audit");
 const { scopedStudentJoin, scopedUnitJoin } = require("../academicScopeSql");
 const academicDepartments = require("../academicDepartments");
 const { currentScope } = require("../academicScope");
+// The short-TTL cache for the college-wide attendance matrix (GET /attendance with
+// no scope). See that module's header for the full argument; the two lines that
+// matter here are: only the unscoped, college-wide form is ever cached, and the
+// middleware below drops it after ANY successful mutation through this router —
+// marks, sessions, enrolments, students, units alike — so a write is never followed
+// by a whole TTL of the figures it just changed.
+const matrixCache = require("../attendanceMatrixCache");
+router.use(matrixCache.invalidateOnWrite);
 
 /**
  * Turn ?academicDepartmentId= into a `where` fragment.
@@ -2989,6 +2997,25 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
 
 router.get("/attendance", requireAuth, async (req, res) => {
   const semesterId = str(req.query?.semesterId);
+
+  // THE CACHE SERVES EXACTLY ONE SHAPE: the whole college, all time, seen by a
+  // college-wide caller. That is the request every admin dashboard's store fires on
+  // load and again on every tab focus, and it always computes the same answer until
+  // something writes — so it is computed once per TTL and reused. Everything else
+  // bypasses: a semester/term scope changes every figure, and a department-scoped
+  // caller gets DIFFERENT ROWS from the same URL (the raw aggregates below append a
+  // per-caller predicate), so caching their answer under a shared key would hand one
+  // scope's figures to another. `=== true` on collegeWide, matching scopeForStaff's
+  // own rule: when in doubt, recompute — a wasted query is safe, a shared scoped
+  // answer is not. The cached body is returned as-is, untouched: a hit is
+  // byte-for-byte what the identical request computed moments earlier, so the
+  // null-vs-zero distinction in every figure survives by construction.
+  const cacheable = !semesterId && !str(req.query?.termId) && currentScope()?.collegeWide === true;
+  if (cacheable) {
+    const hit = matrixCache.get();
+    if (hit) return res.json(hit);
+  }
+
   const semesters = await prisma.semester.findMany({ orderBy: { start: "asc" } });
 
   // ?termId=<id> scopes to one term's dates; ?semesterId scopes to a semester (or
@@ -3107,7 +3134,7 @@ router.get("/attendance", requireAuth, async (req, res) => {
     unitTotals[mod.id] = { ...summariseCounts(mt.P, mt.L, mt.E, mt.A), sessionCount: scopedSess.get(mod.id) || 0 };
   }
 
-  res.json({
+  const body = {
     // `?? null`, not `|| 0` — a unit with neither enrolments nor a timetabled group has
     // no route to a student, and that is unmeasurable rather than empty.
     units: units.map((m) => ({ ...sUnit(m), studentCount: studentCounts.get(m.id) ?? null, sessionCount: allSess.get(m.id) || 0 })),
@@ -3115,7 +3142,11 @@ router.get("/attendance", requireAuth, async (req, res) => {
     unitTotals,
     overall: summariseCounts(gTot.P, gTot.L, gTot.E, gTot.A),
     scope: { semesterId: semesterId || "", sessionCount: scopedSessionTotal },
-  });
+  };
+  // Stored only for the shape checked at the top of this handler — never for a
+  // scoped caller or a scoped query, whose answers must not outlive their request.
+  if (cacheable) matrixCache.set(body);
+  res.json(body);
 });
 
 

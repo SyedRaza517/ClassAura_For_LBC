@@ -21,6 +21,12 @@ const { checkPresence } = require("../presence");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate, MAX_TEXT } = require("../validate");
+// The college-wide attendance matrix is cached for a short TTL (see the module
+// header). Every route here that CREATES an AttendanceMark drops that cache, so a
+// student's check-in shows up in the admin matrix on its next fetch rather than a
+// TTL late. Invalidate only where a mark was actually written: the already-marked
+// and raced-duplicate paths changed no figure, so they cost no recompute.
+const matrixCache = require("../attendanceMatrixCache");
 // A SECOND require() OF THE SAME MODULE, on purpose -- see the comment on
 // module.exports at the bottom of mitigations.js. index.js also requires that file
 // (to mount its router at /api/mitigations); Node caches the module, so this is the
@@ -563,6 +569,7 @@ router.post("/me/tap-check-in", async (req, res) => {
 
   await prisma.attendanceTag.update({ where: { id: tag.id }, data: { lastTapAt: new Date() } });
   await logTap(req, { ...base, sessionId: chosen.id, outcome: "marked", status });
+  matrixCache.invalidate(); // a new mark exists — the cached matrix no longer describes the data
 
   // Attendance feeds the progression score, and none of that is written by the
   // prediction feature itself — so anything that touches a mark has to say so. Cheap,
@@ -786,6 +793,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   }
 
   await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "qr", outcome: "marked", status });
+  matrixCache.invalidate(); // a new mark exists — the cached matrix no longer describes the data
 
   // Flag, never rescore: a check-in must not wait on arithmetic. Never throws into a
   // request that has already written the mark.
@@ -919,6 +927,7 @@ router.post("/me/declare-check-in", async (req, res) => {
   }
 
   await logTap(req, { studentId: req.user.id, sessionId: session.id, method: "declared", outcome: "marked", status });
+  matrixCache.invalidate(); // a new mark exists — the cached matrix no longer describes the data
 
   // Flag, never rescore: a check-in must not wait on arithmetic.
   try { await predictionRunner.markStale([req.user.id]); }

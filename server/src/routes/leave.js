@@ -53,11 +53,39 @@ const daysBetween = (a, b) => {
   return Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
 };
 
-// GET /api/leave  — admin: all; staff: own
+// GET /api/leave  — admin: all; staff: own — WINDOWED to the current and previous
+// leave year, plus anything still pending.
+//
+// This list was unbounded, and the client polls it every 20 seconds — the same
+// disease GET /api/checkins had, at the same cost: every leave request the college
+// has ever decided, re-downloaded three times a minute by every open dashboard.
+//
+// What the client provably computes from store.leave (StaffHub.jsx / store.js):
+//   • balances — usedDays/committedDays/remainingIn are per LEAVE YEAR (calendar
+//     year), and the years asked about are the current one and the years a booking
+//     being made touches. Rows from the year before last contribute 0 to all of them.
+//   • the calendar and Overview — approved leave spanning the viewed dates.
+//   • the Requests/Approvals screens — the pending queue, plus a decided-history
+//     list with all/approved/rejected tabs.
+// Only that history list is genuinely open-ended, so the window is generous rather
+// than tight: from 1 January of the PREVIOUS year (the leave year is the calendar
+// year — the allowance arithmetic below and in the client both say so), every
+// figure any screen computes is unchanged, ~two years of history stay browsable,
+// and older decided rows age out of the payload. They are not erased: the audit
+// trail keeps every decision, and the overlap/allowance checks in this file query
+// the table directly, never this list.
+//
+// PENDING rows ride along regardless of age. A request that has sat undecided past
+// the window would otherwise vanish from the very Approvals queue that must decide
+// it — invisible, undecidable, and silently blocking the dates it covers (the
+// overlap check would still see it). Windowing on `end` (not `start`) keeps every
+// future booking in view, however far ahead it is: end >= start > today > cutoff.
 router.get("/", requireAuth, async (req, res) => {
+  const cutoff = `${Number(today().slice(0, 4)) - 1}-01-01`;
+  const windowed = { OR: [{ end: { gte: cutoff } }, { status: "pending" }] };
   // Leave rows carry a free-text reason, so "see everyone" needs one of the leave
   // sections — not merely being an ADMIN for some unrelated page.
-  const where = hasPage(req.user, LEAVE_READ_PAGES) ? {} : { staffId: req.user.id };
+  const where = hasPage(req.user, LEAVE_READ_PAGES) ? windowed : { staffId: req.user.id, ...windowed };
   const rows = await prisma.leave.findMany({ where, orderBy: { requestedAt: "desc" } });
   res.json(rows.map(sLeave));
 });

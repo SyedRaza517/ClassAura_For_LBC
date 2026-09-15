@@ -15,10 +15,41 @@ const isTime = (v) => isString(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 const today = () => localDate();
 const nowTime = () => localTime();
 
-// GET /api/checkins?date=YYYY-MM-DD  — admin: everyone; staff: own only
+// How far back GET / reaches when the caller names no date: a year and a day.
+//
+// The list was unbounded, and the client polls it every 20 seconds — so an admin's
+// browser re-downloaded every check-in the college has EVER recorded, three times a
+// minute, forever. Nothing on screen needs that. What the dashboard provably renders
+// (StaffHub.jsx, via store.checkins) is: today and the last 7 days (Overview), the
+// current month (the Staff screen's hours column), a date the Check-In and Daily
+// Summaries pickers select, a staff member's own most recent 6 check-ins and 4
+// summaries, and the KPI screen's per-person punctuality tallies.
+//
+// The last three are technically open-ended — a picker can be pointed at any past
+// date, and the KPI/"Check-ins" counters tally whatever arrives — so this is a
+// GENEROUS cap rather than a tight one: a full leave-year of history stays visible
+// everywhere, those aggregates become "over the last year" (arguably the more honest
+// figure for a punctuality score), and the payload stops growing without bound. A
+// screen that needs older history should ask for its date (?date=), which is exact
+// and bypasses the window — not widen this.
+const LIST_WINDOW_DAYS = 366;
+const listWindowStart = () => {
+  // String date arithmetic in UTC, matching how every academic date in this codebase
+  // is compared: the window boundary is a YYYY-MM-DD string, derived from the
+  // organisation's own "today" (never the host clock — see clock.js).
+  const d = new Date(today() + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - LIST_WINDOW_DAYS);
+  return d.toISOString().slice(0, 10);
+};
+
+// GET /api/checkins?date=YYYY-MM-DD  — admin: everyone; staff: own only.
+// No ?date= means "recent history" (the window above), never "everything ever".
 router.get("/", requireAuth, async (req, res) => {
   const where = {};
-  if (req.query.date) where.date = String(req.query.date);
+  // An explicit date is exact and unwindowed: it names at most one row per member
+  // of staff, so it is already bounded, and it is the escape hatch for reviewing a
+  // day older than the window.
+  where.date = req.query.date ? String(req.query.date) : { gte: listWindowStart() };
   // Only an admin granted Check-In or Daily Summaries sees everyone; any other
   // admin is scoped to their own records like ordinary staff.
   // Pages that legitimately DISPLAY everyone's check-ins: the Check-In and Daily
