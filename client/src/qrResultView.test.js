@@ -20,10 +20,11 @@ import { fileURLToPath } from "node:url";
 
 const session = { unitCode: "OBM", unitName: "Organisational Behaviour Management" };
 
-test("a scan that marks you present says when", () => {
+test("a scan that marks you present reads as success and carries the time", () => {
   const v = qrScanResult({ ok: true, status: "P", checkedInAt: "09:02", session });
   assert.equal(v.tone, "present");
-  assert.equal(v.heading, "Checked in at 09:02");
+  assert.equal(v.heading, "Checked in successfully");
+  assert.match(v.detail, /09:02/);
   assert.equal(v.chip, null);
   assert.equal(v.good, true);
 });
@@ -35,10 +36,10 @@ test("a scan after the cut-off is marked late, and says so on the card", () => {
   assert.equal(v.good, true);
 });
 
-test("scanning again keeps the first time and does not claim a second check-in", () => {
+test("scanning again still reads as success and keeps the first time", () => {
   const v = qrScanResult({ ok: true, alreadyMarked: true, status: "P", checkedInAt: "09:02", session });
   assert.equal(v.tone, "present");
-  assert.equal(v.heading, "Already checked in");
+  assert.equal(v.heading, "Checked in successfully");
   assert.match(v.detail, /09:02/);
 });
 
