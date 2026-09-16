@@ -5771,7 +5771,13 @@ function AdminOverview({ store, setTab }) {
   // Extra read-only KPIs — all safe-guarded against empty data.
   const attendancePct = total > 0 ? Math.round((present / total) * 100) : 0;
   const avgIn = avgCheckInTime(inToday) || "—";
-  const approvedThisPeriod = store.leave.filter(l => l.status === "approved").length;
+  // Approved leave the store is holding. NOT "all time": /leave is windowed to roughly
+  // the last two years (its list query drops decided rows whose end date predates
+  // 1 Jan of last year — see routes/leave.js), so an old approved row is not counted
+  // here. The tile is labelled to match that window rather than claim a total it no
+  // longer has; the balance arithmetic that DOES need older rows queries the table
+  // server-side and is unaffected.
+  const approvedRecent = store.leave.filter(l => l.status === "approved").length;
   // Day-over-day change in how many were present, for the trend chip.
   const presentDelta = trend.length >= 2 ? present - trend[trend.length - 2].present : 0;
   return (
@@ -5787,7 +5793,7 @@ function AdminOverview({ store, setTab }) {
         <StatCard label="Attendance" value={attendancePct} sub="of staff present" Icon={TrendingUp} tone="#0d7a5f" delay={0} />
         <StatCard label="Avg check-in" value={avgIn} sub="across today" Icon={Clock3} tone={NAVY} delay={60} />
         <StatCard label="Documents" value={store.docs.length} sub="published & private" Icon={FileText} tone="#6d28d9" delay={120} animate />
-        <StatCard label="Approved leave" value={approvedThisPeriod} sub="total on record" Icon={CalendarCheck} tone="#0e7490" delay={180} animate />
+        <StatCard label="Approved leave" value={approvedRecent} sub="last 2 years" Icon={CalendarCheck} tone="#0e7490" delay={180} animate />
       </div>
       <div className="mt-5 grid gap-4 lg:grid-cols-3">
         <div className="hover-glow rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 lg:col-span-2 fade-up" style={{ animationDelay: "60ms" }}>
