@@ -6,7 +6,7 @@ const prisma = require("../db");
 const { sUnit, sStudent, sStudentQuery, sReferralForStudent, sReferralMessage, parseAdminPages } = require("../serializers");
 const { requireAuth, requireStudent, hasPage } = require("../auth");
 const { summarise } = require("../attendance");
-const { localDate, localTime } = require("../clock");
+const { localDate, localTime, localTimeSeconds } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
@@ -553,7 +553,7 @@ router.post("/me/tap-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
+      data: { sessionId: chosen.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_STAMP, checkedInAt: localTimeSeconds(), deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two taps raced past the existence check
@@ -583,10 +583,10 @@ router.post("/me/tap-check-in", async (req, res) => {
     entity: "AttendanceMark", entityId: mark.id,
     summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) checked themselves in at ${time} on the ${chosen.date} register for ${chosen.unitCode || "a unit"} — recorded ${status} via tag "${tag.label}"`,
     before: null,
-    after: { sessionId: chosen.id, status, checkedInAt: time, tag: tag.label },
+    after: { sessionId: chosen.id, status, checkedInAt: localTimeSeconds(), tag: tag.label },
   });
 
-  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(chosen) });
+  res.status(201).json({ ok: true, status, checkedInAt: localTimeSeconds(), session: sTapSession(chosen) });
 });
 
 /* ============================== QR check-in ============================== */
@@ -775,7 +775,7 @@ router.post("/me/qr-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_QR_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_QR_STAMP, checkedInAt: localTimeSeconds(), deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two scans raced past the existence
@@ -805,10 +805,10 @@ router.post("/me/qr-check-in", async (req, res) => {
     entity: "AttendanceMark", entityId: mark.id,
     summary: `Student ${req.user.name || "unknown"} (${req.user.studentRef || "no ref"}) checked themselves in at ${time} on the ${session.date} register for ${shaped.unitCode || "a unit"} — recorded ${status} via the code on screen`,
     before: null,
-    after: { sessionId: session.id, status, checkedInAt: time, method: "qr" },
+    after: { sessionId: session.id, status, checkedInAt: localTimeSeconds(), method: "qr" },
   });
 
-  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(shaped) });
+  res.status(201).json({ ok: true, status, checkedInAt: localTimeSeconds(), session: sTapSession(shaped) });
 });
 
 // POST /api/student/me/declare-check-in  { sessionId }
@@ -912,7 +912,7 @@ router.post("/me/declare-check-in", async (req, res) => {
   let mark;
   try {
     mark = await prisma.attendanceMark.create({
-      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_DECLARED_STAMP, checkedInAt: time, deviceId: deviceIdFrom(req) },
+      data: { sessionId: session.id, studentId: req.user.id, status, remark: "", takenBy: SELF_CHECKIN_DECLARED_STAMP, checkedInAt: localTimeSeconds(), deviceId: deviceIdFrom(req) },
     });
   } catch (e) {
     // P2002 on @@unique([sessionId, studentId]): two presses raced past the check above,
@@ -942,7 +942,7 @@ router.post("/me/declare-check-in", async (req, res) => {
     after: { status, checkedInAt: time },
   });
 
-  res.status(201).json({ ok: true, status, checkedInAt: time, session: sTapSession(shaped) });
+  res.status(201).json({ ok: true, status, checkedInAt: localTimeSeconds(), session: sTapSession(shaped) });
 });
 
 // GET /api/student/me — the signed-in student's own profile.
