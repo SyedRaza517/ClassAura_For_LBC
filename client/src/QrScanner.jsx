@@ -78,7 +78,18 @@ export default function QrScanner({ onScan, onClose }) {
 
   return createPortal(
     <div role="dialog" aria-modal="true" aria-label="Scan the check-in code" className="fixed inset-0 z-[95] flex flex-col bg-black text-white">
-      <div className="flex items-center justify-between gap-3 p-4">
+      {/* Pad for the notch / status bar. This overlay is full-screen (`inset-0`) and the
+          app draws UNDER the status bar (overlaysWebView:true), so a flat `p-4` put the
+          prompt and the close button beneath the clock/battery on notched iPhones. env()
+          adapts to a notch, a Dynamic Island, or a flat top — 0 on the web and older
+          devices, where this degrades to the same 1rem it used to be. Left/right insets
+          cover a landscape notch too. */}
+      <div className="flex items-center justify-between gap-3 pb-4"
+        style={{
+          paddingTop: "calc(env(safe-area-inset-top) + 1rem)",
+          paddingLeft: "calc(env(safe-area-inset-left) + 1rem)",
+          paddingRight: "calc(env(safe-area-inset-right) + 1rem)",
+        }}>
         <p className="text-sm font-bold">Point the camera at the code on screen</p>
         <button onClick={onClose} aria-label="Close the scanner" className="press shrink-0 rounded-xl bg-white/10 p-2.5"><X size={22} /></button>
       </div>
