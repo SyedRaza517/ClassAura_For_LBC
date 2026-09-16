@@ -140,7 +140,7 @@ export function MoreScreen({ user, logout, setScreen, tapContext }) {
       <Card className="!p-5 text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-xl font-bold text-white shadow-lg" style={{ background: user.colour || MAROON }}>{user.initials || "S"}</div>
         <p className="mt-2.5 text-base font-extrabold text-slate-800 dark:text-slate-100">{user.name}</p>
-        <p className="text-xs text-slate-400 dark:text-slate-500">{user.email}</p>
+        <p className="break-words text-xs text-slate-400 dark:text-slate-500">{user.email}</p>
         {user.studentRef && <span className="mt-2 inline-block rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">Student · {user.studentRef}</span>}
       </Card>
 
