@@ -961,6 +961,7 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                 <th scope="col" className="px-3 py-2.5">Course</th>
                 <th scope="col" className="px-3 py-2.5">School</th>
                 <th scope="col" className="px-3 py-2.5 text-right">Attendance</th>
+                <th scope="col" className="px-3 py-2.5">Checked in</th>
                 <th scope="col" className="px-3 py-2.5 text-right">Mark</th>
               </tr>
             </thead>
@@ -1051,6 +1052,12 @@ export function LiveSession({ sessionId, onBack, backLabel = "Today's classes", 
                         </span>
                       </div>
                     )}
+                  </td>
+                  {/* The arrival time as its own column — the same r.checkedInAt shown small
+                      under the name, promoted to a scannable column a register can be read
+                      down. An em dash, never blank, for a student who has not checked in. */}
+                  <td className="px-3 py-2.5 text-[12px] tabular-nums text-slate-600" title="When the student checked in">
+                    {r.checkedInAt || <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     {canMark && (
