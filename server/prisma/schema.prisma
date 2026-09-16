@@ -1340,7 +1340,7 @@ model AttendanceMark {
   // right when stored and stays right. STATUS.md records D8 — the 08:00 notifications
   // firing at 09:00 through BST because something read the host clock — which is the bug
   // a stored instant re-zoned at every render invites back.
-  checkedInAt String? // "HH:MM", London
+  checkedInAt String? // "HH:MM:SS" for self check-ins (scan/tap/declare), "HH:MM" for Teams marks and rows written before seconds were recorded; London
   // WHICH HANDSET this mark was made from, when the student made it themselves.
   //
   // NULL for every mark a member of staff set, and that is the common case rather than an

@@ -12,4 +12,10 @@ const localDate = () => new Date().toLocaleDateString("en-CA", { timeZone: ZONE 
 // Current time as HH:MM, 24-hour, in the configured zone.
 const localTime = () => new Date().toLocaleTimeString("en-GB", { timeZone: ZONE, hour: "2-digit", minute: "2-digit" });
 
-module.exports = { ZONE, localDate, localTime };
+// Current time as HH:MM:SS, 24-hour, in the configured zone. Used ONLY for the recorded
+// arrival time (AttendanceMark.checkedInAt), where the second a student actually scanned
+// is worth keeping — NOT for the HH:MM logic (statusFor, session windows), which compares
+// against HH:MM session times and must stay minute-precision.
+const localTimeSeconds = () => new Date().toLocaleTimeString("en-GB", { timeZone: ZONE, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+module.exports = { ZONE, localDate, localTime, localTimeSeconds };
