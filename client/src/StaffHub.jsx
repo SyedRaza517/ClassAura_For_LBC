@@ -5761,28 +5761,52 @@ function AdminHeader({ title, subtitle, action, Icon, tone = BLUE }) {
 }
 function AdminOverview({ store, setTab }) {
   const today = todayISO();
-  const inToday = store.checkins.filter(c => c.date === today && c.in);
-  const onLeave = store.leave.filter(l => l.status === "approved" && today >= l.start && today <= l.end);
-  const pending = store.leave.filter(l => l.status === "pending");
+  // The Department filter — the staff's OWN free-text department (the field the
+  // "Staff by department" pie has always grouped by), deliberately NOT the academic
+  // School the Executive Dashboard filters by. This screen is a staff/HR snapshot and
+  // its people include non-teaching departments (Facilities, HR, Admin) that belong to
+  // no School, so a School filter would hide them; the staff department covers everyone.
+  // "" = every department; "__none__" = staff with no department recorded.
+  const deptOptions = useMemo(() => [...new Set(store.staff.map(s => (s.dept || "").trim()))]
+    .filter(Boolean).sort((a, b) => a.localeCompare(b)), [store.staff]);
+  const hasNoDept = useMemo(() => store.staff.some(s => !(s.dept || "").trim()), [store.staff]);
+  const [dept, setDept] = useState("");
+  // One filter, the whole screen: every figure below derives from THIS set rather than
+  // store.staff, so selecting a department re-scopes the tiles, the trend, the pie, the
+  // live check-in list and the pending queue together. A view, not a boundary — the
+  // rows are already loaded; this only narrows what is shown.
+  const deptStaff = useMemo(() => dept === "" ? store.staff
+    : store.staff.filter(s => dept === "__none__" ? !(s.dept || "").trim() : (s.dept || "").trim() === dept), [store.staff, dept]);
+  const staffIds = useMemo(() => new Set(deptStaff.map(s => s.id)), [deptStaff]);
+  const inToday = store.checkins.filter(c => c.date === today && c.in && staffIds.has(c.staffId));
+  const onLeave = store.leave.filter(l => l.status === "approved" && today >= l.start && today <= l.end && staffIds.has(l.staffId));
+  const pending = store.leave.filter(l => l.status === "pending" && staffIds.has(l.staffId));
   const present = new Set(inToday.map(c => c.staffId)).size;
-  const total = store.staff.length;
-  const trend = useMemo(() => { const arr = []; for (let i = 6; i >= 0; i--) { const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); arr.push({ day: new Date(d + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short" }), present: new Set(store.checkins.filter(c => c.date === d && c.in).map(c => c.staffId)).size }); } return arr; }, [store.checkins]);
-  const deptData = useMemo(() => { const m = {}; store.staff.forEach(s => m[s.dept] = (m[s.dept] || 0) + 1); return Object.entries(m).map(([name, value]) => ({ name, value })); }, [store.staff]);
+  const total = deptStaff.length;
+  const trend = useMemo(() => { const arr = []; for (let i = 6; i >= 0; i--) { const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); arr.push({ day: new Date(d + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short" }), present: new Set(store.checkins.filter(c => c.date === d && c.in && staffIds.has(c.staffId)).map(c => c.staffId)).size }); } return arr; }, [store.checkins, staffIds]);
+  const deptData = useMemo(() => { const m = {}; deptStaff.forEach(s => { const k = (s.dept || "").trim() || "— None —"; m[k] = (m[k] || 0) + 1; }); return Object.entries(m).map(([name, value]) => ({ name, value })); }, [deptStaff]);
   // Extra read-only KPIs — all safe-guarded against empty data.
   const attendancePct = total > 0 ? Math.round((present / total) * 100) : 0;
   const avgIn = avgCheckInTime(inToday) || "—";
-  // Approved leave the store is holding. NOT "all time": /leave is windowed to roughly
-  // the last two years (its list query drops decided rows whose end date predates
-  // 1 Jan of last year — see routes/leave.js), so an old approved row is not counted
-  // here. The tile is labelled to match that window rather than claim a total it no
-  // longer has; the balance arithmetic that DOES need older rows queries the table
-  // server-side and is unaffected.
-  const approvedRecent = store.leave.filter(l => l.status === "approved").length;
+  // Approved leave the store is holding, scoped to the chosen department. NOT "all time":
+  // /leave is windowed to roughly the last two years (its list query drops decided rows
+  // whose end date predates 1 Jan of last year — see routes/leave.js), so an old approved
+  // row is not counted here. The tile is labelled to match that window rather than claim
+  // a total it no longer has; the balance arithmetic that DOES need older rows queries the
+  // table server-side and is unaffected.
+  const approvedRecent = store.leave.filter(l => l.status === "approved" && staffIds.has(l.staffId)).length;
   // Day-over-day change in how many were present, for the trend chip.
   const presentDelta = trend.length >= 2 ? present - trend[trend.length - 2].present : 0;
   return (
     <>
-      <DashboardHero name={store.currentUser?.name} subtitle={`${fmtDay(today)} · live across all departments`} />
+      <DashboardHero name={store.currentUser?.name} subtitle={`${fmtDay(today)} · ${dept === "" ? "live across all departments" : dept === "__none__" ? "staff with no department" : `live · ${dept}`}`} />
+      {deptOptions.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <FilterSelect label="Department" value={dept} onChange={setDept}
+            options={[{ v: "", l: "All departments" }, ...deptOptions.map(d => ({ v: d, l: d })), ...(hasNoDept ? [{ v: "__none__", l: "— No department —" }] : [])]} />
+          {dept !== "" && <span className="text-[11px] text-slate-500">{total} staff in this department</span>}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Present today" value={present} sub={`of ${total} staff`} Icon={CheckCircle2} tone="#059669" delay={0} animate trend={{ up: presentDelta >= 0, text: `${presentDelta >= 0 ? "+" : ""}${presentDelta} vs yesterday` }} />
         <StatCard label="On leave" value={onLeave.length} sub="approved absences" Icon={Plane} tone="#e11d48" delay={60} animate />
