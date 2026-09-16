@@ -24,7 +24,6 @@ function className(session) {
 export function qrScanResult(result) {
   const r = result || {};
   const status = r.status || "P";
-  const already = r.alreadyMarked === true;
   const name = className(r.session);
   const at = r.checkedInAt || null;
 
@@ -47,15 +46,20 @@ export function qrScanResult(result) {
     return { tone: "excused", good: false, heading: "You're marked excused for this class", chip: null, detail: name };
   }
 
+  // P and L are both a successful check-in from the student's side — they are on the
+  // register — so both read as success with the tick. We deliberately no longer split
+  // the heading on `already`: a repeat scan (the projector code rotates and the camera
+  // re-reads the same class) used to say "Already checked in", which students read as a
+  // REJECTION of a check-in that had in fact worked. Now every accepted P/L scan says
+  // "Checked in successfully"; the arrival time still travels in the detail, fresh or
+  // repeat, as the proof their scan landed.
   const late = status === "L";
   return {
     tone: late ? "late" : "present",
     good: true,
-    heading: already ? "Already checked in" : at ? `Checked in at ${at}` : "Checked in",
+    heading: "Checked in successfully",
     chip: late ? "Late" : null,
-    // On a repeat scan the ORIGINAL time is the point: it is the answer to "did my first
-    // scan work", which is the only reason anyone scans twice.
-    detail: already && at ? `${name} · ${at}` : name,
+    detail: at ? `${name} · ${at}` : name,
   };
 }
 
