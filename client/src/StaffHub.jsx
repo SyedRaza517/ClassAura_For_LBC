@@ -14139,7 +14139,22 @@ function AdminKPI({ store }) {
   const [sort, setSort] = useState("score");   // score | submission | cohort | punctuality | name
   useEffect(() => { refreshHnd(); }, [refreshHnd]);
 
-  const kpis = useMemo(() => computeStaffKpis(store), [store.staff, store.checkins, store.units, store.sessions, store.attendance, store.leave, store.adjustments]);
+  // The Department filter — the staff's own free-text department, the same filter the
+  // Overview uses and for the same reason: this is a staff-performance board whose rows
+  // are people, and its people include non-teaching departments that belong to no
+  // academic School. "" = every department; "__none__" = staff with none recorded.
+  const deptOptions = useMemo(() => [...new Set(store.staff.map(s => (s.dept || "").trim()))]
+    .filter(Boolean).sort((a, b) => a.localeCompare(b)), [store.staff]);
+  const hasNoDept = useMemo(() => store.staff.some(s => !(s.dept || "").trim()), [store.staff]);
+  const [dept, setDept] = useState("");
+
+  // KPIs are computed for the WHOLE staff once, then the view is narrowed to the chosen
+  // department — so the org-average tiles, the score chart and the table all re-scope
+  // together, and the composite score for a person never changes with the filter (it is
+  // their own performance, not a share of the group).
+  const allKpis = useMemo(() => computeStaffKpis(store), [store.staff, store.checkins, store.units, store.sessions, store.attendance, store.leave, store.adjustments]);
+  const kpis = useMemo(() => dept === "" ? allKpis
+    : allKpis.filter(k => dept === "__none__" ? !(k.s.dept || "").trim() : (k.s.dept || "").trim() === dept), [allKpis, dept]);
 
   const avg = (key) => { const v = kpis.map(k => k[key]).filter(x => x != null); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
   const tutors = kpis.filter(k => k.courses > 0);
@@ -14181,8 +14196,16 @@ function AdminKPI({ store }) {
         action={<ExportBtn onClick={exportKpis} label="Export KPIs" />}
       />
 
+      {deptOptions.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <FilterSelect label="Department" value={dept} onChange={setDept}
+            options={[{ v: "", l: "All departments" }, ...deptOptions.map(d => ({ v: d, l: d })), ...(hasNoDept ? [{ v: "__none__", l: "— No department —" }] : [])]} />
+          {dept !== "" && <span className="text-[11px] text-slate-500">{kpis.length} staff · averages below cover this department</span>}
+        </div>
+      )}
+
       <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Avg KPI score" value={fmtPct(orgScore)} sub="across all staff" Icon={Award} tone={pctTone(orgScore).colour} delay={0} animate />
+        <StatCard label="Avg KPI score" value={fmtPct(orgScore)} sub={dept === "" ? "across all staff" : "in this department"} Icon={Award} tone={pctTone(orgScore).colour} delay={0} animate />
         <StatCard label="Register submission" value={fmtPct(orgSubmission)} sub="registers taken on time" Icon={ClipboardList} tone={pctTone(orgSubmission).colour} delay={60} animate />
         <StatCard label="Student attendance" value={fmtPct(orgCohort)} sub="across taught classes" Icon={Percent} tone={pctTone(orgCohort).colour} delay={120} animate />
         <StatCard label="Staff punctuality" value={fmtPct(orgPunctuality)} sub={`on-time by ${ON_TIME_BY}`} Icon={Clock3} tone={pctTone(orgPunctuality).colour} delay={180} animate />
