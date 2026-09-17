@@ -453,8 +453,12 @@ try {
 
   const markRow = await db.attendanceMark.findFirst({ where: { sessionId: live.id, studentId: QA_ID } });
   if (markRow) made.marks.push(markRow.id);
-  check("checkedInAt records the minute, not a timestamp",
-    !!markRow && /^\d{2}:\d{2}$/.test(markRow.checkedInAt || ""), `checkedInAt=${markRow?.checkedInAt}`);
+  // A QR scan is a self check-in, so checkedInAt now records the SECOND (HH:MM:SS),
+  // not just the minute — see the checkedInAt schema comment and the "Record check-in
+  // arrival time to the SECOND" change. Still a wall-clock string in London time, not a
+  // re-zonable instant, which is the property the original assertion guarded.
+  check("checkedInAt records the second for a self check-in",
+    !!markRow && /^\d{2}:\d{2}:\d{2}$/.test(markRow.checkedInAt || ""), `checkedInAt=${markRow?.checkedInAt}`);
   check("the mark is stamped as a QR self check-in, not as a lecturer's",
     !!markRow && markRow.takenBy === "Self check-in (QR)", `takenBy=${markRow?.takenBy}`);
   const markedRow = await db.tagTap.findFirst({ where: { studentId: QA_ID, outcome: "marked" }, orderBy: { at: "desc" } });
