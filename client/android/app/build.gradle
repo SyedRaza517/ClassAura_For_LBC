@@ -110,8 +110,8 @@ android {
         // refresh. The build number climbs because it always climbs; the marketing
         // version climbs because this is the first time the app's capabilities changed
         // rather than its fixes.
-        versionCode 4
-        versionName "1.1.0"
+        versionCode 5
+        versionName "1.1.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

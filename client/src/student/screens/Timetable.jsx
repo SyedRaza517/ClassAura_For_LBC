@@ -135,6 +135,12 @@ function ModuleTimetable({ events, today }) {
                 {g.items.filter((e) => e.date < today).length} of {g.items.length} so far
               </p>
             </div>
+            {/* Scroll the table sideways WITHIN the card instead of clipping its last
+                column off the right edge. When a module's time, room AND lecturer all
+                differ between sessions every column is shown, and the two nowrap date/time
+                columns push the table wider than a phone; the card stays overflow-hidden
+                for its rounded corners, so this wrapper takes the horizontal scroll. */}
+            <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:bg-slate-900/50 dark:text-slate-500">
@@ -217,6 +223,7 @@ function ModuleTimetable({ events, today }) {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         );
       })}
