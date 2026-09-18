@@ -5879,12 +5879,26 @@ function AdminCheckin({ store }) {
   // form still held an id the server doesn't know.
   const [form, setForm] = useState({ staffId: "", in: "09:00", out: "", site: "" });
   const [query, setQuery] = useState("");
+  // The Department filter — the staff's own department, the same one Overview and KPIs
+  // use. It STRUCTURES what the free-text search below did loosely, and it does one thing
+  // the search never could: it re-scopes the present / total / % snapshot, which always
+  // counted the whole college even while the table was searched down to one department.
+  // "" = every department; "__none__" = staff with none recorded.
+  const deptOptions = useMemo(() => [...new Set(store.staff.map(s => (s.dept || "").trim()))]
+    .filter(Boolean).sort((a, b) => a.localeCompare(b)), [store.staff]);
+  const hasNoDept = useMemo(() => store.staff.some(s => !(s.dept || "").trim()), [store.staff]);
+  const [dept, setDept] = useState("");
+  const deptStaff = useMemo(() => dept === "" ? store.staff
+    : store.staff.filter(s => dept === "__none__" ? !(s.dept || "").trim() : (s.dept || "").trim() === dept), [store.staff, dept]);
+  const deptIds = useMemo(() => new Set(deptStaff.map(s => s.id)), [deptStaff]);
   const recs = store.checkins.filter(c => c.date === day);
-  // Only real clock-ins count as present — a summary-first row has an empty `in`.
-  const present = new Set(recs.filter(r => r.in).map(r => r.staffId));
+  // Only real clock-ins count as present — a summary-first row has an empty `in`. Scoped
+  // to the chosen department so the snapshot below tracks the filter.
+  const present = new Set(recs.filter(r => r.in && deptIds.has(r.staffId)).map(r => r.staffId));
   const ql = query.trim().toLowerCase();
-  const filteredStaff = store.staff.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.dept || "").toLowerCase().includes(ql));
-  const paged = usePaged(filteredStaff, 12, ql);
+  // Department first, then the free-text search WITHIN it (they compose).
+  const filteredStaff = deptStaff.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.dept || "").toLowerCase().includes(ql));
+  const paged = usePaged(filteredStaff, 12, `${ql}|${dept}`);
   const addCheckin = async () => {
     if (!form.staffId) return;
     await store.upsertCheckin({ staffId: form.staffId, date: day, in: form.in, out: form.out || null, site: form.site || null }); setModal(false);
@@ -5895,12 +5909,16 @@ function AdminCheckin({ store }) {
       <AdminHeader title="Check-In & Attendance" subtitle="Daily check-in / out log — add or correct records" Icon={Clock3} action={<PrimaryBtn onClick={() => setModal(true)}><Plus size={16} /> Add record</PrimaryBtn>} />
       {(() => {
         // Read-only attendance snapshot for the selected day.
-        const presentCount = present.size; const totalStaff = store.staff.length;
+        const presentCount = present.size; const totalStaff = deptStaff.length;
         const pct = totalStaff > 0 ? Math.round((presentCount / totalStaff) * 100) : 0;
-        const out = recs.filter(r => r.in && r.out).length;
+        const out = recs.filter(r => r.in && r.out && deptIds.has(r.staffId)).length;
         return (
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <input type="date" value={day} onChange={e => setDay(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none" />
+            {deptOptions.length > 0 && (
+              <FilterSelect label="Department" value={dept} onChange={setDept}
+                options={[{ v: "", l: "All departments" }, ...deptOptions.map(d => ({ v: d, l: d })), ...(hasNoDept ? [{ v: "__none__", l: "— No department —" }] : [])]} />
+            )}
             <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name or dept…" className="bg-transparent text-sm outline-none" /></div>
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200"><UserCheck size={13} /> {presentCount} present</span>
             <span className="flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200"><Users size={13} /> {totalStaff} staff</span>
