@@ -5966,19 +5966,33 @@ function AdminBalances({ store }) {
   const [adj, setAdj] = useState({ days: 1, note: "", date: "" });
   const [alw, setAlw] = useState(28);
   const [query, setQuery] = useState("");
+  // The Department filter — the staff's own department, the same one Overview, KPIs and
+  // Check-In use. It re-scopes the table, the header's org totals (which otherwise counted
+  // the whole college even while the search narrowed the list), the export and the
+  // adjustment history. "" = every department; "__none__" = staff with none recorded.
+  const deptOptions = useMemo(() => [...new Set(store.staff.map(s => (s.dept || "").trim()))]
+    .filter(Boolean).sort((a, b) => a.localeCompare(b)), [store.staff]);
+  const hasNoDept = useMemo(() => store.staff.some(s => !(s.dept || "").trim()), [store.staff]);
+  const [dept, setDept] = useState("");
+  const deptStaff = useMemo(() => dept === "" ? store.staff
+    : store.staff.filter(s => dept === "__none__" ? !(s.dept || "").trim() : (s.dept || "").trim() === dept), [store.staff, dept]);
+  const deptIds = useMemo(() => new Set(deptStaff.map(s => s.id)), [deptStaff]);
   const applyAdj = async () => { await store.adjustBalance(adjModal.id, Number(adj.days), adj.note, adj.date || undefined); setAdjModal(null); setAdj({ days: 1, note: "", date: "" }); };
   // Undo an adjustment filed in error, with a confirm.
   const removeAdj = async (a) => { if (!window.confirm(`Delete this ${a.days >= 0 ? "+" : ""}${a.days}d adjustment${a.note ? ` — "${a.note}"` : ""}? This cannot be undone.`)) return; await store.removeAdjustment(a.id); };
   const saveAlw = async () => { await store.setAllowance(editModal.id, Number(alw)); setEditModal(null); };
   const ql = query.trim().toLowerCase();
-  const filteredStaff = store.staff.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.dept || "").toLowerCase().includes(ql));
-  const paged = usePaged(filteredStaff, 12, ql);
+  // Department first, then the free-text search WITHIN it (they compose).
+  const filteredStaff = deptStaff.filter(s => !ql || s.name.toLowerCase().includes(ql) || (s.dept || "").toLowerCase().includes(ql));
+  const paged = usePaged(filteredStaff, 12, `${ql}|${dept}`);
   const exportBalances = () => {
     // The bank-holiday ENTITLEMENT (8), not how many have elapsed. The elapsed
     // count made the row fail to add up (Base - Used - Bank != Remaining) and
     // drifted upward all year, so two exports never agreed.
     const bank = store.bankHolidayTotal;
-    const rows = store.staff.map(s => { const base = s.allowance; const adjv = store.adjDays(s.id); const used = store.usedDays(s.id); const remaining = store.remaining(s.id); return { staff: s.name, dept: s.dept, base, adj: adjv, used, bank, remaining }; });
+    // Exports what is on screen — the chosen department, not always the whole college —
+    // so the CSV agrees with the header totals above it.
+    const rows = deptStaff.map(s => { const base = s.allowance; const adjv = store.adjDays(s.id); const used = store.usedDays(s.id); const remaining = store.remaining(s.id); return { staff: s.name, dept: s.dept, base, adj: adjv, used, bank, remaining }; });
     downloadCSV("holiday-balances.csv", [
       { key: "staff", label: "Staff" }, { key: "dept", label: "Dept" }, { key: "base", label: "Base allowance" }, { key: "adj", label: "Adjustments" }, { key: "used", label: "Leave used" }, { key: "bank", label: "Bank holidays" }, { key: "remaining", label: "Remaining" },
     ], rows);
@@ -5987,13 +6001,18 @@ function AdminBalances({ store }) {
   return (
     <>
       <AdminHeader title="Holiday Balances" subtitle="Set allowances and apply adjustments — staff see changes instantly" Icon={Check} action={(() => {
-        // Read-only org-wide totals over the BOOKABLE pot (bank holidays excluded).
-        const totalAllow = store.staff.reduce((a, s) => a + store.bookableAllowance(s.id), 0);
-        const totalConsumed = store.staff.reduce((a, s) => a + store.usedDays(s.id), 0);
+        // Read-only totals over the BOOKABLE pot (bank holidays excluded), scoped to the
+        // chosen department so the header agrees with the table beneath it.
+        const totalAllow = deptStaff.reduce((a, s) => a + store.bookableAllowance(s.id), 0);
+        const totalConsumed = deptStaff.reduce((a, s) => a + store.usedDays(s.id), 0);
         const pct = totalAllow > 0 ? Math.round((totalConsumed / totalAllow) * 100) : 0;
         return <div className="flex flex-wrap items-center gap-2"><span className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 ring-1 ring-blue-200"><Layers size={13} /> {totalConsumed}/{totalAllow}d used</span><span className="flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200"><Activity size={13} /> {pct}% org</span><ExportBtn onClick={exportBalances} /></div>;
       })()} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        {deptOptions.length > 0 && (
+          <FilterSelect label="Department" value={dept} onChange={setDept}
+            options={[{ v: "", l: "All departments" }, ...deptOptions.map(d => ({ v: d, l: d })), ...(hasNoDept ? [{ v: "__none__", l: "— No department —" }] : [])]} />
+        )}
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name or dept…" className="bg-transparent text-sm outline-none" /></div>
       </div>
       <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 fade-up [-webkit-overflow-scrolling:touch] md:overflow-hidden">
@@ -6017,7 +6036,7 @@ function AdminBalances({ store }) {
         </table>
       </div>
       <Pagination className="mt-4" page={paged.page} setPage={paged.setPage} totalPages={paged.totalPages} total={paged.total} />
-      {store.adjustments.length > 0 && <div className="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up"><p className="mb-3 text-sm font-bold text-slate-700">Adjustment history</p><div className="space-y-2">{store.adjustments.slice().reverse().map(a => { const s = store.staff.find(x => x.id === a.staffId); return <div key={a.id} className="flex items-center gap-3 text-sm"><span className="font-semibold" style={{ color: a.days >= 0 ? "#059669" : MAROON }}>{a.days >= 0 ? "+" : ""}{a.days}d</span><span className="text-slate-700">{s?.name}</span><span className="text-slate-500">— {a.note}</span><span className="ml-auto text-xs text-slate-500">{fmtDate(a.date)}</span><button onClick={() => removeAdj(a)} title="Delete adjustment" className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>; })}</div></div>}
+      {store.adjustments.some(a => deptIds.has(a.staffId)) && <div className="mt-5 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up"><p className="mb-3 text-sm font-bold text-slate-700">Adjustment history</p><div className="space-y-2">{store.adjustments.filter(a => deptIds.has(a.staffId)).slice().reverse().map(a => { const s = store.staff.find(x => x.id === a.staffId); return <div key={a.id} className="flex items-center gap-3 text-sm"><span className="font-semibold" style={{ color: a.days >= 0 ? "#059669" : MAROON }}>{a.days >= 0 ? "+" : ""}{a.days}d</span><span className="text-slate-700">{s?.name}</span><span className="text-slate-500">— {a.note}</span><span className="ml-auto text-xs text-slate-500">{fmtDate(a.date)}</span><button onClick={() => removeAdj(a)} title="Delete adjustment" className="rounded-lg p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-500"><Trash2 size={14} /></button></div>; })}</div></div>}
       <Modal open={!!adjModal} onClose={() => setAdjModal(null)} title={`Adjust days — ${adjModal?.name || ""}`}>
         <div className="space-y-3">
           <Field label="Days (use negative to deduct)"><div className="flex items-center gap-2"><button onClick={() => setAdj(a => ({ ...a, days: a.days - 1 }))} className="rounded-lg bg-slate-100 p-2 hover:bg-slate-200"><MinusCircle size={18} /></button><input type="number" value={adj.days} onChange={e => setAdj(a => ({ ...a, days: e.target.value }))} className={inputCls + " text-center"} /><button onClick={() => setAdj(a => ({ ...a, days: Number(a.days) + 1 }))} className="rounded-lg bg-slate-100 p-2 hover:bg-slate-200"><PlusCircle size={18} /></button></div></Field>
