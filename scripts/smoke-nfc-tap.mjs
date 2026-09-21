@@ -1220,6 +1220,20 @@ try {
     check("...and nothing was written for it",
       (await db.checkIn.count({ where: { staffId: pId, date: staffDate } })) === 0);
 
+    // GET /checkins/tap-settings has to say whether a position is needed, because it is
+    // the only route an ordinary member of staff can reach to ask — /student/me/tap-context
+    // is inside the student router and 403s for a lecturer. Only the GEOFENCE should turn
+    // this on: the network check asks nothing of the phone, so a college running it alone
+    // must never see needsLocation true, or the client will prompt for a permission with no
+    // honest answer to "why does this app want that".
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffGeofenceCheck: true } });
+    const ctx = await call("/checkins/tap-settings", { token: adminToken });
+    check("staff are told when a position is needed", ctx.data?.needsLocation === true, JSON.stringify(ctx.data));
+
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffGeofenceCheck: false } });
+    const ctxOff = await call("/checkins/tap-settings", { token: adminToken });
+    check("and told when it is not, so no permission is prompted for nothing", ctxOff.data?.needsLocation === false, JSON.stringify(ctxOff.data));
+
     // Both off restores today's behaviour exactly.
     await call("/tags/settings", {
       method: "PUT", token: adminToken, body: { staffNetworkCheck: false, staffGeofenceCheck: false },

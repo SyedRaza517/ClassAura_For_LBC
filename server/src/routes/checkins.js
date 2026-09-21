@@ -361,7 +361,17 @@ router.post("/check-in", requireAuth, async (req, res) => {
 // window and who last changed them stay on the admin route.
 router.get("/tap-settings", requireAuth, async (_req, res) => {
   const s = await tapConfig.get();
-  res.json({ enabled: s.enabled, staffTapEnabled: s.staffTapEnabled, armSeconds: s.armSeconds });
+  // needsLocation IS ON THIS ROUTE because it is the only one an ordinary member of staff
+  // can reach. The student app resolves the same question from /student/me/tap-context,
+  // which is inside the student router's allowlist and 403s for a lecturer — so a staff
+  // client asking there got `false`, sent no position, and was refused `position_missing`
+  // on every single onsite clock-in. The feature would have appeared completely broken.
+  //
+  // Only the GEOFENCE needs it. The network check is observed from the far end of the
+  // connection and asks nothing of the phone, so a college running that alone must never
+  // trigger a location prompt — a permission request with no honest answer to "why does
+  // this app want that" is the one thing this flag exists to avoid.
+  res.json({ enabled: s.enabled, staffTapEnabled: s.staffTapEnabled, armSeconds: s.armSeconds, needsLocation: s.staffGeofenceCheck === true });
 });
 
 // In-process and module-level, correct for ONE Node process; a clustered deployment needs
