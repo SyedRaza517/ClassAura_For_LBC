@@ -1259,6 +1259,86 @@ try {
   }
 
   /* ====================================================================== */
+  console.log("\n--- two presses at once, and neither of them is an error ---");
+  /* ====================================================================== */
+  //
+  // A DOUBLE-PRESS ON THE CLOCK-IN BUTTON RETURNED HTTP 500, and a stress test found it on
+  // its first run. `POST /check-in` ended in a `prisma.checkIn.upsert` carrying an EMPTY
+  // `update: {}`, above a comment claiming that shape closed the race. It does not: Prisma
+  // only emits `INSERT ... ON CONFLICT` when the update branch has something in it, so with
+  // an empty one it degrades to a bare SELECT followed by a bare INSERT. Two simultaneous
+  // presses both selected nothing, both inserted, and the loser escaped as an unhandled
+  // P2002.
+  //
+  // The DATA was never at risk — @@unique([staffId, date]) held and exactly one row was
+  // ever written. What was wrong was the answer the losing request got, on the one screen
+  // a member of staff touches every morning, on the most ordinary mistake there is.
+  //
+  // FIRED WITH Promise.all, NEVER SEQUENTIALLY, and that is the whole assertion. A
+  // sequential pair cannot reach the window: the first press has committed before the
+  // second one reads, so the second takes the already-clocked-in path and answers 200
+  // whether or not the race is handled. Written that way this test would stay green with
+  // the fix reverted, which is the same as not having written it.
+  //
+  // A FOURTH STAFF ACCOUNT, chosen because it is the one seeded member of staff with NO
+  // check-in of their own on any date — so "exactly one row exists" means exactly one row,
+  // rather than one plus whatever the seed left, and nothing has to be put back afterwards.
+  // `site: "Online"` because it reaches the same write by the shorter road: the sticker
+  // requirement is still switched on at this point in the file and would answer 409 to an
+  // Onsite press long before the upsert, and the race being tested is below both.
+  {
+    const rLogin = await login("s.marin@edtech.co.uk", SEED_PASSWORD);
+    const rToken = rLogin.data?.token;
+    const rId = rLogin.data?.user?.id;
+    check("a fourth staff member signed in for the concurrency check", !!rToken && !!rId, `HTTP ${rLogin.status}`);
+
+    const press = () => call("/checkins/check-in", { method: "POST", token: rToken, body: { site: "Online" } });
+
+    // FIVE ROUNDS, NOT ONE, and the repetition is not belt-and-braces — it is what makes
+    // this test mean something. The window is real but load-dependent: measured against the
+    // unfixed route on this machine, a loop of paired presses reproduced the 500 on six
+    // rounds out of six, while a single isolated pair reproduced it zero times out of one.
+    // Whether the two requests genuinely overlap depends on whether the client gives them
+    // separate sockets and on what else the box is doing, so one pair is a coin toss and a
+    // coin toss that lands green is indistinguishable from coverage.
+    //
+    // Each round clears the day first, because a row left standing sends the second press
+    // down the already-clocked-in path, which answers 200 without ever reaching the write.
+    const rounds = [];
+    for (let round = 0; round < 5; round++) {
+      await db.checkIn.deleteMany({ where: { staffId: rId, date: staffDate } });
+      const [pressA, pressB] = await Promise.all([press(), press()]);
+      const rows = await db.checkIn.findMany({ where: { staffId: rId, date: staffDate } });
+      for (const row of rows) if (!made.checkIns.includes(row.id)) made.checkIns.push(row.id);
+      rounds.push({ a: pressA, b: pressB, rows });
+    }
+    const codes = rounds.map((r) => `${r.a.status}+${r.b.status}`).join(" ");
+
+    // NEITHER PRESS MAY BE A 5xx, in any round. Asserted as "no server error" rather than
+    // as an exact pair of codes, because which of the two wins is genuinely undecidable —
+    // the point is that LOSING the race is not an error, not that a particular request lost.
+    check("TWO SIMULTANEOUS CLOCK-IN PRESSES AND NEITHER IS EVER A SERVER ERROR",
+      rounds.every((r) => r.a.status < 500 && r.b.status < 500), codes);
+    // One created the row, one was told it already stood. Sorted, so the assertion does not
+    // depend on which promise settled first.
+    check("...one created the clock-in and the other was told it already stood, every time",
+      rounds.every((r) => [r.a.status, r.b.status].sort().join("+") === "200+201"), codes);
+    check("...and exactly one row exists each time, with a real arrival time",
+      rounds.every((r) => r.rows.length === 1 && /^\d{2}:\d{2}$/.test(r.rows[0]?.timeIn || "")),
+      rounds.map((r) => `${r.rows.length}@${r.rows[0]?.timeIn}`).join(" "));
+    // The loser is handed the row that WON, not an empty body and not its own imagination.
+    // A 200 carrying nothing would leave the screen unable to say what it had been told.
+    check("...and the press that lost the race is handed the record that won",
+      rounds.every((r) => {
+        const loser = r.a.status === 200 ? r.a : r.b;
+        return loser.data?.id === r.rows[0]?.id && loser.data?.in === r.rows[0]?.timeIn;
+      }),
+      JSON.stringify(rounds.map((r) => (r.a.status === 200 ? r.a : r.b).data?.id === r.rows[0]?.id)));
+
+    await db.checkIn.deleteMany({ where: { staffId: rId, date: staffDate } });
+  }
+
+  /* ====================================================================== */
   console.log("\n--- the check-in screen before a tap ---");
   /* ====================================================================== */
 

@@ -338,14 +338,52 @@ router.post("/check-in", requireAuth, async (req, res) => {
     const filled = await prisma.checkIn.update({ where: { id: existing.id }, data: { timeIn: nowTime(), ...(site ? { site } : {}) } });
     return res.json(sCheckin(filled));
   }
-  // upsert (not create) closes the race where two concurrent check-ins both pass
-  // the existence check and the second create() violates @@unique([staffId,date]).
-  const rec = await prisma.checkIn.upsert({
-    where: { staffId_date: { staffId: req.user.id, date } },
-    update: {},
-    create: { staffId: req.user.id, date, timeIn: nowTime(), site: site || null },
-  });
-  res.status(201).json(sCheckin(rec));
+  // A CREATE IN A TRY, AND THE DATABASE SETTLES THE RACE. What stood here was an
+  // `upsert` carrying this claim:
+  //
+  //     "upsert (not create) closes the race where two concurrent check-ins both pass
+  //      the existence check and the second create() violates @@unique([staffId,date])."
+  //
+  // IT DID NOT CLOSE IT, and a comment asserting a race is shut sitting on code where it
+  // is open is worse than no comment at all — it stops the next reader looking. Prisma
+  // only compiles `upsert` down to a single `INSERT ... ON CONFLICT` when the `update`
+  // branch has something in it. With `update: {}` it degrades to find-then-create, which
+  // is visible in the query log as a bare SELECT followed by an INSERT carrying no
+  // ON CONFLICT clause at all — so two simultaneous presses both select nothing, both
+  // insert, and the loser comes back as an unhandled P2002. That is HTTP 500 on the
+  // clock-in button, and a stress test firing two presses with Promise.all found it on its
+  // first run. (Its siblings PUT / and PUT /summary both pass a non-empty `update` and do
+  // emit ON CONFLICT, which is why the defect is here and only here.)
+  //
+  // THE DATA WAS NEVER AT RISK — @@unique([staffId, date]) held and exactly one row was
+  // written. What was wrong was the answer the losing request got, and that is what this
+  // fixes. The race is BENIGN: the request that won wrote precisely what this one would
+  // have, so there is nothing to reconcile and nothing to retry.
+  //
+  // Letting the database decide rather than widening the read-then-write window is the
+  // house pattern — the tap route below settles the same race the same way, by putting the
+  // condition in the statement instead of in an `if`.
+  try {
+    const rec = await prisma.checkIn.create({ data: { staffId: req.user.id, date, timeIn: nowTime(), site: site || null } });
+    return res.status(201).json(sCheckin(rec));
+  } catch (e) {
+    // Anything that is not the unique constraint is a real failure and still belongs in
+    // the error handler; only the collision we designed for is absorbed here.
+    if (e?.code !== "P2002") throw e;
+    const won = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+    // Gone again between the conflict and this read — somebody deleted the row in that
+    // instant. There is no honest record to hand back, so the original error surfaces
+    // rather than this inventing one.
+    if (!won) throw e;
+    // 200, NOT 201, and the distinction is deliberate rather than incidental: this request
+    // created nothing, and 201 would claim it did. But the PERSON is clocked in, which is
+    // the one fact they pressed the button to establish — so an error here would be the
+    // screen lying to them about the only thing they asked. 200-with-the-record is exactly
+    // what the already-clocked-in short circuit further up returns, so a double-press and
+    // a stale tab are indistinguishable to the client. They should be: they are the same
+    // thing half a second apart.
+    return res.status(200).json(sCheckin(won));
+  }
 });
 
 // GET /api/checkins/tap-settings — may I offer the tap button, and for how long?
