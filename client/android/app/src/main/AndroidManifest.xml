@@ -69,6 +69,28 @@
          devices without a sensor — the feature simply reports itself unavailable. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- WHERE THE PHONE IS, for the check-in geofence (student and staff alike).
+         navigator.geolocation inside the Capacitor WebView is refused by the OS without
+         this, silently: no error, no prompt, just a null position — which the server
+         correctly reads as "we cannot tell" and refuses. The geofence has shipped since
+         10 Sep 2026 in exactly that state on Android, invisible only because it defaults
+         off and no college had switched it on.
+
+         FINE, NOT COARSE, and this is the load-bearing half. With coarse alone, Android
+         12 and later offer the user an "Approximate" toggle that returns roughly 1-3 km
+         of accuracy — which presence.js refuses as `accuracy_too_poor`, correctly, since
+         an error circle that large contains the campus from most of the city. The feature
+         would ask for a permission, be granted it, and still refuse everybody: the worst
+         of the three possible outcomes, because it looks configured.
+
+         No <uses-feature> line accompanies it, DELIBERATELY. Declaring the NFC permission
+         makes Google Play INFER a hardware requirement that defaults to REQUIRED, which
+         is why the NFC block next door carries an explicit android:required="false".
+         Location has no such inference, and adding a feature line would start excluding
+         handsets from the store listing for a capability the app degrades gracefully
+         without — with the geofence off, no position is ever requested. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <!-- Reading the attendance stickers. Not a runtime permission: Android grants NFC
          at install time, so there is no prompt to handle. -->
     <uses-permission android:name="android.permission.NFC" />
