@@ -38,6 +38,7 @@ import { nfcStatus, scanOnce, cancelScan } from "./nfc";
 import AdminNfcTags from "./AdminNfcTags";
 import AdminLiveAttendance, { LiveSession } from "./AdminLiveAttendance";
 import { liveAction } from "./checkInAction";
+import { checkInButton, staffPlaceRefusal } from "./staffCheckInView";
 import AssessmentTracker from "./AssessmentTracker";
 import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import AdmissionTracker from "./AdmissionTracker";
@@ -1227,16 +1228,34 @@ const HOME_SITES = ["HND", "FE", "SL"];
 // home hero still update exactly as the button path does.
 function TapOnsiteSheet({ onClose, onDone }) {
   const [status, setStatus] = useState(null);   // from nfcStatus(), null while asking
-  const [phase, setPhase] = useState("scanning"); // scanning | done | error
+  const [phase, setPhase] = useState("scanning"); // scanning | checking | done | error
   const [rec, setRec] = useState(null);
   const [error, setError] = useState("");
+  // A presence refusal the server named, in words — null for every other failure. Kept
+  // apart from `error` because the two are different kinds of thing: `error` is whatever
+  // went wrong, and this is something the person can act on.
+  const [refusal, setRefusal] = useState(null);
   const alive = useRef(true);
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; cancelScan(); }; }, []);
   useEffect(() => { nfcStatus().then((s) => { if (alive.current) setStatus(s); }); }, []);
 
+  // THE LOCATION REQUEST STARTS NOW, in parallel with arming the reader — not after the
+  // sticker is read.
+  //
+  // A cold fix indoors can take the full 15-second timeout plus the 2-second backstop
+  // (wherePhoneIs.js). Asking for it AFTER the tap leaves somebody holding a phone flat
+  // against a wall watching a spinner, at the exact moment they are most likely to
+  // conclude the feature does not work — and a feature people believe is broken gets
+  // switched off whether or not it is.
+  //
+  // Starting it here costs nothing when the geofence is off: staffPositionIfNeeded()
+  // resolves to {} without ever touching the geolocation API, so no permission is
+  // prompted for a value the server will not look at.
+  useEffect(() => { api.warmStaffPosition(); }, []);
+
   const scan = useCallback(async () => {
-    setPhase("scanning"); setError("");
+    setPhase("scanning"); setError(""); setRefusal(null);
     // Keep listening until a sticker is read, the sheet closes, or something real
     // breaks. A timeout is "nobody has tapped yet", not an error — same reading as
     // CheckInCard's silent re-arm, minus the arming window this flow doesn't have.
@@ -1245,6 +1264,12 @@ function TapOnsiteSheet({ onClose, onDone }) {
       try {
         const code = await scanOnce({ alertMessage: "Hold your phone near the sticker" });
         if (!alive.current) return;
+        // The sticker is read; what is left is the server deciding whether this person is
+        // where the sticker says they are. That call can WAIT on a location fix, so the
+        // screen stops saying "listening for a tap" — a spinner under the old wording
+        // reads as a reader that failed to notice the phone, and the natural response is
+        // to tap again, which cancels nothing and only adds another wait.
+        setPhase("checking");
         const r = await api.tapCheckIn(code);
         if (!alive.current) return;
         setRec(r); setPhase("done");
@@ -1255,6 +1280,16 @@ function TapOnsiteSheet({ onClose, onDone }) {
         if (!alive.current) return;
         if (e?.timedOut) continue;      // nobody tapped yet — keep waiting
         if (e?.cancelled) { onClose(); return; } // the user dismissed Apple's sheet
+        // A REFUSAL IS NOT A FAILURE OF THE APP. The server answers 403/409 with a
+        // machine-readable `reason`, and staffPlaceRefusal turns that into a heading and
+        // something to do about it. The raw message is a sentence written for a developer
+        // ("Presence check failed") and tells somebody standing in a corridor nothing.
+        //
+        // e.body?.reason, never e.reason: request() in api.js puts the parsed response on
+        // err.body and nothing else. Every other caller in this codebase reads err.body,
+        // and a second route to the same value is the drift this codebase legislates
+        // against — so the reason is unwrapped here rather than copied onto the error.
+        setRefusal(e?.body?.reason ? staffPlaceRefusal(e.body.reason) : null);
         setError(e?.message || "Could not read the sticker."); setPhase("error");
         return;
       }
@@ -1280,7 +1315,11 @@ function TapOnsiteSheet({ onClose, onDone }) {
         {phase === "done" ? (
           <div className="py-4 text-center pop">
             <span className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 ring-4 ring-emerald-100"><CheckCircle2 size={30} className="text-emerald-600" /></span>
-            <p className="text-lg font-extrabold text-slate-800">{rec?.alreadyCheckedIn ? "Already clocked in" : "You're clocked in"}</p>
+            {/* "Checked in successfully", not "You're clocked in": the student check-in
+                card was moved to exactly this wording for every accepted scan (41e064e),
+                and two names for the same event in one app is how a support call starts
+                with somebody describing a screen nobody recognises. */}
+            <p className="text-lg font-extrabold text-slate-800">{rec?.alreadyCheckedIn ? "Already clocked in" : "Checked in successfully"}</p>
             <p className="mt-1 text-sm text-slate-500">Onsite at <strong>{rec?.in}</strong>. Have a great day.</p>
           </div>
         ) : status && !status.ok ? (
@@ -1298,9 +1337,15 @@ function TapOnsiteSheet({ onClose, onDone }) {
         ) : phase === "error" ? (
           <div className="py-4 text-center">
             <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50"><AlertCircle size={24} className="text-rose-500" /></span>
-            <p className="text-[15px] font-extrabold text-slate-800">That didn't work</p>
-            <p className="mx-auto mt-1 max-w-[250px] text-[12.5px] leading-relaxed text-slate-500">{error}</p>
+            <p className="text-[15px] font-extrabold text-slate-800">{refusal ? refusal.heading : "That didn't work"}</p>
+            <p className="mx-auto mt-1 max-w-[250px] text-[12.5px] leading-relaxed text-slate-500">{refusal ? refusal.advice : error}</p>
             <button onClick={scan} className="press mx-auto mt-3 rounded-xl px-4 py-2.5 text-[13px] font-bold text-white" style={{ background: NAVY }}>Try again</button>
+          </div>
+        ) : phase === "checking" ? (
+          <div className="py-4 text-center">
+            <span className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full ring-4 ring-blue-100" style={{ background: alpha(NAVY, 10) }}><Loader2 size={30} className="animate-spin" style={{ color: NAVY }} /></span>
+            <p className="text-lg font-extrabold text-slate-800">Checking you're at the college…</p>
+            <p className="mt-1 text-sm text-slate-500">This can take a few seconds indoors.</p>
           </div>
         ) : (
           <div className="py-4 text-center">
@@ -1348,6 +1393,49 @@ function CheckInScreen({ store, me }) {
   // record remote work would make the honest answer unrecordable.
   useEffect(() => { const i = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(i); }, []);
   const checkOut = () => store.checkOut(rec.id);
+
+  // Which tab is chosen — null until somebody chooses, which is what keeps the button
+  // dead. See checkInButton() in staffCheckInView.js for why that is the point.
+  const [site, setSite] = useState(null);
+  // A presence refusal, already turned into words. Held here rather than shown as a toast
+  // because a toast disappears while somebody is still reading it, and this is the one
+  // message on the screen that tells them what to do next.
+  const [placeError, setPlaceError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const btn = checkInButton({ site, tapRequired, busy });
+
+  // The button does three different things depending on where the person said they are,
+  // and the third one is not a submit at all: where a sticker is required it REOPENS the
+  // popup. Dismissing that popup previously left a selected tab and a button that did
+  // nothing, with nothing on screen to say why.
+  const onCheckIn = async () => {
+    if (!btn.enabled) return;
+    if (site === "Onsite" && tapRequired) { setTapOpen(true); return; }
+    setBusy(true); setPlaceError(null);
+    try {
+      // api.checkIn, not store.checkIn: the store's run() wrapper turns every failure
+      // into a generic error toast and this screen needs the refusal in hand to say
+      // something useful about it. store.refresh() afterwards does the resync the
+      // wrapper would have done, so the hero, the list and the check-out button all
+      // update exactly as they did before.
+      await api.checkIn(site);
+      await store.refresh();
+    } catch (e) {
+      // A presence refusal is not a failure of the app and must not be shown as one —
+      // it is a thing the person can act on, and the words come from the pure map.
+      //
+      // e.body?.reason, NEVER e.reason: request() in api.js sets err.status, err.staleServer
+      // and err.body (the parsed response) — it does not lift `reason` out. Adding a second
+      // field there would give this codebase two routes to one value, which is the drift it
+      // keeps legislating against, so the unwrapping happens here instead.
+      const reason = e?.body?.reason;
+      if (reason) setPlaceError(staffPlaceRefusal(reason));
+      else setPlaceError({ heading: "That didn't work", advice: e?.message || "Try again in a moment." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Screen>
       <Card className="text-center">
@@ -1373,58 +1461,73 @@ function CheckInScreen({ store, me }) {
             </div>
           );
         })()}
-        {/* ONE TAP, EITHER WAY — the user's ruling for this screen, 14 Sep 2026: "on
-            campus should be taken by NFC and online should be straight." The old flow
-            was choose-a-site THEN press a confirm button, which made the commonest
-            action on this screen a two-step form. Now:
+        {/* TWO TABS, THEN A BUTTON — the ruling of 21 Sep 2026.
 
-            * Sticker required (staffTapEnabled): the TAP CARD is the onsite action —
-              hold the phone to the sticker, done — and Online is one plain button
-              underneath. There is no Onsite button at all, because the server would
-              refuse it (tap_required, routes/checkins.js) and a control that only
-              ever 409s is worse than no control.
-            * No sticker requirement: two direct buttons, each of which clocks in on
-              the tap. Choosing and confirming were never two decisions. */}
+            THIS COMMENT USED TO SAY THE OPPOSITE, and that matters more than the markup
+            below it. It was headed "ONE TAP, EITHER WAY" and recorded the ruling of
+            14 Sep 2026 — "on campus should be taken by NFC and online should be
+            straight" — under which choosing a site WAS the clock-in: where a sticker was
+            required the screen showed a "Tap onsite" button and a plain Online button
+            beneath it and no Onsite button at all (the server would only have answered
+            tap_required); where one was not, two buttons each clocked the person in on
+            the press. The reasoning given was that choose-then-confirm made the
+            commonest action on this screen a two-step form, and that choosing and
+            confirming were never two decisions.
+
+            On 21 Sep the two steps were asked for back, in these words: "there will be
+            two tabs on site and online, once user will choose online you need make the
+            check in button blue as before it should be grey."
+
+            Both were product decisions by the same person a week apart. Written down so
+            that the next reader does not find the earlier reasoning, conclude the tabs
+            were an accident, and tidy them away.
+
+            The button is DEAD until a tab is chosen. That is the point of the layout: a
+            clock-in should be a decision somebody made, not whichever button their thumb
+            found. Its state comes from checkInButton(), which is pure and tested —
+            StaffHub.jsx is too large for anything here to be reasoned about in place.
+
+            Where a sticker IS required, choosing On site opens the popup straight away
+            (the tap is the clock-in, and making somebody press a second button to reach
+            it is the step 14 Sep was right to object to), and the button behind it reads
+            "Tap the sticker" so that dismissing the popup leaves a way back in rather
+            than a selected tab and a control that does nothing. */}
         {!checkedIn && (
           <div className="mt-5 text-left">
-            {tapRequired ? (
-              <>
-                {/* THE FLOW, in the user's own words (14 Sep 2026): "they need to
-                    select a button called tap onsite, they will click, then one pop
-                    will open saying please tap on NFC — once tapped it will mark
-                    them checked in automatically." So the button opens the sheet,
-                    the sheet arms the reader, and the STICKER READ ITSELF submits —
-                    no armed second button here, unlike the student register card,
-                    because pressing "Tap onsite" already was the deliberate act the
-                    arming window exists to capture. */}
-                <button onClick={() => setTapOpen(true)}
-                  className="press flex w-full flex-col items-center gap-1.5 rounded-2xl py-4 text-white shadow-md" style={{ background: NAVY }}>
-                  <Nfc size={22} /><span className="text-[15px] font-extrabold">Tap onsite</span><span className="text-[10px] text-white/70">Clock in at the sticker</span>
-                </button>
-                <div className="my-4 flex items-center gap-3" aria-hidden="true">
-                  <span className="h-px flex-1 bg-slate-200" /><span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">or</span><span className="h-px flex-1 bg-slate-200" />
-                </div>
-                <button onClick={() => store.checkIn("Online")}
-                  className="press flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[14px] font-extrabold ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
-                  <Wifi size={17} /> Working remotely — clock in online
-                </button>
-                {tapOpen && <TapOnsiteSheet onClose={() => setTapOpen(false)} onDone={() => store.refresh()} />}
-              </>
-            ) : (
-              <>
-                <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Where are you working today?</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => store.checkIn("Onsite")}
-                    className="press flex flex-col items-center gap-1.5 rounded-2xl py-4 text-white shadow-md" style={{ background: NAVY }}>
-                    <Building2 size={20} /><span className="text-sm font-extrabold">On campus</span><span className="text-[10px] text-white/70">One tap — you're in</span>
+            <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Where are you working today?</p>
+            <div className="grid grid-cols-2 gap-2" role="tablist">
+              {[
+                { key: "Onsite", label: "On site", sub: "In the building", I: Building2 },
+                { key: "Online", label: "Online", sub: "Working remotely", I: Wifi },
+              ].map(({ key, label, sub, I }) => {
+                const on = site === key;
+                return (
+                  <button key={key} role="tab" aria-selected={on}
+                    onClick={() => { setSite(key); setPlaceError(null); if (key === "Onsite" && tapRequired) setTapOpen(true); }}
+                    className={`press flex flex-col items-center gap-1.5 rounded-2xl py-4 ring-1 transition ${on ? "text-white shadow-md ring-transparent" : "bg-white text-slate-700 ring-slate-200 hover:shadow-md"}`}
+                    style={on ? { background: NAVY } : undefined}>
+                    <I size={20} />
+                    <span className="text-sm font-extrabold">{label}</span>
+                    <span className={`text-[10px] ${on ? "text-white/70" : "text-slate-500"}`}>{sub}</span>
                   </button>
-                  <button onClick={() => store.checkIn("Online")}
-                    className="press flex flex-col items-center gap-1.5 rounded-2xl bg-white py-4 ring-1 ring-slate-200 transition hover:shadow-md" style={{ color: NAVY }}>
-                    <Wifi size={20} /><span className="text-sm font-extrabold">Online</span><span className="text-[10px] text-slate-500">Working remotely</span>
-                  </button>
-                </div>
-              </>
+                );
+              })}
+            </div>
+
+            {placeError && (
+              <div className="mt-3 rounded-xl bg-rose-50 p-3 text-center ring-1 ring-rose-100">
+                <p className="text-[13px] font-bold text-rose-700">{placeError.heading}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-rose-600">{placeError.advice}</p>
+              </div>
             )}
+
+            <button onClick={onCheckIn} disabled={!btn.enabled}
+              className="press mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-[15px] font-extrabold text-white transition disabled:cursor-not-allowed"
+              style={{ background: btn.enabled ? NAVY : "#cbd5e1" }}>
+              {btn.label}
+            </button>
+
+            {tapOpen && <TapOnsiteSheet onClose={() => setTapOpen(false)} onDone={() => store.refresh()} />}
           </div>
         )}
         <div className="mt-5">
