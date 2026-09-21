@@ -18,6 +18,7 @@ const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP } = require("../attendanceTap");
 const { checkPresence } = require("../presence");
+const { campusesFor } = require("../campuses");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate, MAX_TEXT } = require("../validate");
@@ -183,41 +184,6 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
     reason: first.reason,
   });
   return true;
-}
-
-/**
- * The campuses a check-in for this class could legitimately be at.
- *
- * A class held in a room is at that room's campus, and that is the tightest answer
- * available. When there is no room, or the room predates campuses, EVERY located campus is
- * returned instead — because "which campus" is frequently unknowable and refusing all of
- * those would make the geofence unusable at exactly the colleges that want it. What it
- * still refuses is a phone at none of them, which is what the college asked for.
- *
- * Only called when the geofence is switched on: this is two queries on the check-in path,
- * and a college that has not opted in should not pay for them.
- */
-async function campusesFor(sessionId) {
-  if (sessionId) {
-    // Reached from the id rather than a loaded row, because the check runs BEFORE each
-    // route resolves its session — and it has to. A student off the college network must
-    // be told that, not handed "tag not recognised" or "wrong code" from a check they were
-    // never going to get past. One query, and only when the geofence is switched on.
-    const room = await prisma.hndSession.findUnique({
-      where: { id: sessionId },
-      select: { room: { select: { campusRef: { select: { latitude: true, longitude: true } } } } },
-    }).then((s) => s?.room).catch(() => null);
-    // Only when it actually has coordinates. A room on an unlocated campus falls through
-    // to the college-wide list rather than refusing — the class is somewhere, and the
-    // college's other campuses are a better guess than none. If NOTHING is located, the
-    // list comes back empty and presence.js refuses under `campus_not_located`, which is
-    // the loud failure a misconfiguration deserves.
-    if (room?.campusRef?.latitude != null && room?.campusRef?.longitude != null) return [room.campusRef];
-  }
-  return prisma.campus.findMany({
-    where: { active: true, latitude: { not: null }, longitude: { not: null } },
-    select: { latitude: true, longitude: true },
-  });
 }
 
 // The student's half of a refusal, in words they can act on.
