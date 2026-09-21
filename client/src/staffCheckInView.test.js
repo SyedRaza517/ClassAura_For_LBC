@@ -42,6 +42,18 @@ test("a clock-in in flight cannot be pressed twice", () => {
   assert.equal(b.enabled, false);
 });
 
+test("busy beats the sticker branch, so nothing on the screen is live twice", () => {
+  // Added with the fix for two submissions running at once: the tabs are disabled while
+  // `busy`, and this pins the other half of that guard — an in-flight clock-in makes the
+  // button dead even in the state where it would otherwise REOPEN THE POPUP. Were the
+  // order of the two checks ever swapped, an Onsite-with-sticker press during a running
+  // Online submission would arm a second, independent one, and the loser's refusal would
+  // land under a choice the person had already moved away from.
+  const b = checkInButton({ site: "Onsite", tapRequired: true, busy: true });
+  assert.equal(b.enabled, false);
+  assert.equal(b.label, "Checking you in…");
+});
+
 test("every refusal a member of staff can be given offers them Online", () => {
   // The difference from the student vocabulary, and the reason the two cannot be shared:
   // a member of staff always has an honest alternative and a student does not.

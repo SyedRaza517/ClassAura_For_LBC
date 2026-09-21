@@ -1237,6 +1237,27 @@ function TapOnsiteSheet({ onClose, onDone }) {
   const [refusal, setRefusal] = useState(null);
   const alive = useRef(true);
 
+  // THE CALLBACKS ARE HELD IN A REF, AND THIS IS NOT TIDINESS — it is the only thing
+  // stopping the scan restarting once a second.
+  //
+  // CheckInScreen, our only caller, ticks a clock every second so the card can show the
+  // time. Every tick re-renders it, and it passes us `onClose` and `onDone` as inline
+  // arrows, so both arrive with a NEW IDENTITY each second. With those in scan()'s
+  // useCallback deps, scan() was rebuilt every second; the effect below depends on scan,
+  // so it re-ran every second; and scan()'s first line is setPhase("scanning"). The
+  // visible result was the "Checking you're at the college…" phase flickering back to
+  // "Please tap the NFC sticker" once a second while api.tapCheckIn was still in flight —
+  // a window that is up to seventeen seconds wide when a cold indoor location fix is
+  // being waited on (wherePhoneIs.js: a 15s timeout plus a 2s backstop).
+  //
+  // Fixed HERE rather than by wrapping the props in useCallback at the call site,
+  // deliberately: the call site is one line of JSX in a fourteen-thousand-line file, and
+  // the next person to add an inline arrow prop there would silently bring the flicker
+  // back with nothing on screen to explain it. A sheet that cannot be destabilised by its
+  // parent is the version that stays fixed.
+  const handlers = useRef({ onClose, onDone });
+  useEffect(() => { handlers.current = { onClose, onDone }; });
+
   useEffect(() => { alive.current = true; return () => { alive.current = false; cancelScan(); }; }, []);
   useEffect(() => { nfcStatus().then((s) => { if (alive.current) setStatus(s); }); }, []);
 
@@ -1273,13 +1294,13 @@ function TapOnsiteSheet({ onClose, onDone }) {
         const r = await api.tapCheckIn(code);
         if (!alive.current) return;
         setRec(r); setPhase("done");
-        onDone?.();
-        setTimeout(() => { if (alive.current) onClose(); }, 1600);
+        handlers.current.onDone?.();
+        setTimeout(() => { if (alive.current) handlers.current.onClose(); }, 1600);
         return;
       } catch (e) {
         if (!alive.current) return;
         if (e?.timedOut) continue;      // nobody tapped yet — keep waiting
-        if (e?.cancelled) { onClose(); return; } // the user dismissed Apple's sheet
+        if (e?.cancelled) { handlers.current.onClose(); return; } // the user dismissed Apple's sheet
         // A REFUSAL IS NOT A FAILURE OF THE APP. The server answers 403/409 with a
         // machine-readable `reason`, and staffPlaceRefusal turns that into a heading and
         // something to do about it. The raw message is a sentence written for a developer
@@ -1294,7 +1315,11 @@ function TapOnsiteSheet({ onClose, onDone }) {
         return;
       }
     }
-  }, [onClose, onDone]);
+    // NO DEPENDENCIES ON PURPOSE. Everything this closure reads from outside is either a
+    // setState (stable by contract) or handlers.current (a ref, deliberately not a dep).
+    // See the comment on `handlers` above: a scan whose identity moves is a scan that
+    // restarts, and this one can be running for seventeen seconds.
+  }, []);
 
   // Android reads silently, so the sheet starts listening the moment it opens.
   // iPhone cannot — Apple's scan sheet needs a gesture — so the "Tap onsite" press
@@ -1420,6 +1445,13 @@ function CheckInScreen({ store, me }) {
       // update exactly as they did before.
       await api.checkIn(site);
       await store.refresh();
+      // The same words run() raises for every other action (store.js), because losing
+      // them was a regression: staff have had this confirmation since the button existed,
+      // and a clock-in that succeeds in silence is the one people repeat because they are
+      // not sure it took. The card flipping to "● Checked In" is not a substitute — it
+      // was there before too, alongside the toast, and a change that is only visible in a
+      // corner of the screen you were not looking at is not a confirmation.
+      store.notify?.("Checked in — have a great day!", "success");
     } catch (e) {
       // A presence refusal is not a failure of the app and must not be shown as one —
       // it is a thing the person can act on, and the words come from the pure map.
@@ -1482,6 +1514,9 @@ function CheckInScreen({ store, me }) {
             that the next reader does not find the earlier reasoning, conclude the tabs
             were an accident, and tidy them away.
 
+            "Tabs" throughout this comment is the user's word and the visual design; the
+            ARIA underneath is a RADIO GROUP, for the reason set out where it is declared.
+
             The button is DEAD until a tab is chosen. That is the point of the layout: a
             clock-in should be a decision somebody made, not whichever button their thumb
             found. Its state comes from checkInButton(), which is pure and tested —
@@ -1494,17 +1529,34 @@ function CheckInScreen({ store, me }) {
             than a selected tab and a control that does nothing. */}
         {!checkedIn && (
           <div className="mt-5 text-left">
-            <p className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Where are you working today?</p>
-            <div className="grid grid-cols-2 gap-2" role="tablist">
+            <p id="staff-checkin-where" className="mb-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">Where are you working today?</p>
+            {/* A RADIO GROUP, NOT A TABLIST — ruling R16, 21 Sep 2026, correcting the ARIA
+                this screen was first written with. It shipped as role="tablist" /
+                role="tab" because tabs are what it looks like, and because the Playwright
+                walkthrough was written against those roles. Both were wrong: a tablist
+                promises TABPANELS THAT SWAP, and there are none here — nothing below
+                changes when the choice changes, and a screen-reader user told "tab" goes
+                looking for a panel that does not exist. Two mutually exclusive choices
+                followed by a separate submit is exactly what a radio group is for.
+                Not deferred as a purity point: this is sold to UK colleges, where WCAG
+                2.2 AA is a procurement requirement rather than a preference.
+
+                DISABLED WHILE A CLOCK-IN IS IN FLIGHT, matching the button below it.
+                Without that, pressing Check in on Online and then choosing On site where
+                a sticker is required opened the popup and started a SECOND, independent
+                submission while the first was still running — and when the first one came
+                back refused, its banner appeared underneath a choice the person had
+                already moved away from, blaming the wrong answer. */}
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby="staff-checkin-where">
               {[
                 { key: "Onsite", label: "On site", sub: "In the building", I: Building2 },
                 { key: "Online", label: "Online", sub: "Working remotely", I: Wifi },
               ].map(({ key, label, sub, I }) => {
                 const on = site === key;
                 return (
-                  <button key={key} role="tab" aria-selected={on}
-                    onClick={() => { setSite(key); setPlaceError(null); if (key === "Onsite" && tapRequired) setTapOpen(true); }}
-                    className={`press flex flex-col items-center gap-1.5 rounded-2xl py-4 ring-1 transition ${on ? "text-white shadow-md ring-transparent" : "bg-white text-slate-700 ring-slate-200 hover:shadow-md"}`}
+                  <button key={key} role="radio" aria-checked={on} disabled={busy}
+                    onClick={() => { if (busy) return; setSite(key); setPlaceError(null); if (key === "Onsite" && tapRequired) setTapOpen(true); }}
+                    className={`press flex flex-col items-center gap-1.5 rounded-2xl py-4 ring-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${on ? "text-white shadow-md ring-transparent" : "bg-white text-slate-700 ring-slate-200 hover:shadow-md"}`}
                     style={on ? { background: NAVY } : undefined}>
                     <I size={20} />
                     <span className="text-sm font-extrabold">{label}</span>
