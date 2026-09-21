@@ -113,11 +113,17 @@ starts. Locally this won't reproduce; note it rather than chase it.
 | A | Screen loads, nothing chosen | Button is **grey and disabled** |
 | B | Choose **Online** | Button turns **blue**, enabled |
 | C | Press it | Clocked in; card shows "● Checked In", time, "Online" |
-| D | Choose **On site**, sticker required | Popup opens **immediately** — "Please tap the NFC sticker" |
+| D | Choose **On site**, sticker required | Popup opens **immediately** — "Please tap the NFC sticker" — **packaged app only, see note below** |
 | E | Dismiss the popup | Button reads **"Tap the sticker"** and reopens it — never an inert selected tab |
 | F | Choose **On site**, no sticker required | Button turns blue; pressing it clocks in |
 | G | Any refusal | Banner with a heading **and** advice, and every network/campus refusal ends "…or choose Online if you're working remotely" |
 | H | On a desktop browser, On site + sticker required | Popup says "Use the app to tap in" |
+
+**Step D is reachable only in the packaged Android/iOS app.** `client/src/nfc.js` answers
+`{ ok: false, reason: "web" }` whenever `Capacitor.isNativePlatform()` is false, which is
+every case a browser can reach — so a browser can never render D's "Please tap the NFC
+sticker" wording, only H's. `_walk-staff-checkin.mjs` (§3.4) covers H; D stays unproven
+until a physical handset runs the app (§9).
 
 ### 3.3 Clock out
 

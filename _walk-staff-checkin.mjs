@@ -48,7 +48,7 @@
 // removed — client/src/App.jsx says so in a comment at the spot it used to sit — so
 // picking the right tile up front is not optional stage-setting, it is the only way in.
 //
-// WHAT THIS SCRIPT CANNOT SET FOR YOU — THE THREE SWITCHES
+// WHAT THIS SCRIPT CANNOT SET FOR YOU — THE THREE SWITCHES, AND ONE MORE THING
 // The Daily Check-In screen's behaviour depends on three college-level settings
 // (`staffTapEnabled`, `staffNetworkCheck`, `staffGeofenceCheck`, all under Check-in
 // settings → Staff clock-in, same `/api/tags/settings` row the NFC feature already uses —
@@ -59,20 +59,37 @@
 //     -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
 //     -d '{"staffTapEnabled":false,"staffNetworkCheck":true,"staffGeofenceCheck":false,"allowedNetworks":["203.0.113.0/24"]}'
 //
-// before running the section that needs them. Section by section:
+// The Geofence row below needs a fourth thing outside those three switches: an ACTIVE
+// CAMPUS WITH SAVED COORDINATES. This script doesn't set that either — locate one by hand
+// under Timetabling → Campuses, or:
+//
+//   curl -X PUT localhost:4000/api/timetabling/campuses/<id> \
+//     -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+//     -d '{"latitude":51.5007,"longitude":-0.1246}'
+//
+// (the same coordinates scripts/smoke-nfc-tap.mjs pins for the identical assertion at the
+// HTTP layer — see sectionGeofence() below for why reusing them matters). Set whichever
+// combination the section you're running needs, then run it. Section by section:
 //   A            — any config; only requires the staff account not to be checked in today.
 //   B / C        — Online is never checked (see test plan §1), so any config works.
 //   D / E        — staffTapEnabled=true. staffNetworkCheck/staffGeofenceCheck don't matter.
 //   F            — staffTapEnabled=false, staffNetworkCheck=false, staffGeofenceCheck=false
 //                  (today's pre-feature behaviour — the button just clocks you in).
-//   G            — staffTapEnabled=false, staffNetworkCheck=true. This script deliberately
-//                  drives the NETWORK refusal rather than the geofence one: off-network
-//                  needs nothing from the browser, while off-campus needs a granted
+//   G            — staffTapEnabled=false, staffNetworkCheck=true, staffGeofenceCheck=false.
+//                  Drives the NETWORK refusal specifically — off-network needs nothing
+//                  from the browser to reproduce. See "Geofence" below for the campus one.
+//   Geofence     — staffTapEnabled=false, staffGeofenceCheck=true, staffNetworkCheck=false
+//                  (so the network check can't produce a different refusal first), plus
+//                  the campus coordinates above. THIS COMMENT USED TO SAY the geofence
+//                  refusal was "left as a follow-up rather than guessed at here", with the
+//                  off-network refusal driven instead because off_campus "needs a granted
 //                  geolocation permission and a spoofed position (`context.setGeolocation`)
-//                  to avoid tripping `position_missing` instead — a real refusal, but the
-//                  WRONG one, since position_missing's copy does not end by offering
-//                  Online (see test plan §5). Geofence is structurally the same banner and
-//                  is left as a follow-up rather than guessed at here.
+//                  to avoid tripping `position_missing` instead". That gap is closed now:
+//                  `main()` grants the `geolocation` permission and starts the position far
+//                  from campus when the browser context is created, so no permission prompt
+//                  ever has to be clicked, and `sectionGeofence()` moves that spoofed
+//                  position with `context.setGeolocation()` between a point far from the
+//                  campus (expect `off_campus`) and the campus itself (expect acceptance).
 //   H            — same config as D/E. Not a separate action — see the note in
 //                  `walkOnsite()` about why this script cannot produce D's exact copy.
 //
@@ -109,6 +126,24 @@ const STAFF_PASSWORD = process.env.STAFF_PASSWORD || "test-seed-password-2026";
 // Headed by default — this is a WALKTHROUGH, meant to be watched, not a headless smoke
 // suite. `HEADLESS=1 node _walk-staff-checkin.mjs` switches it off for CI-style runs.
 const HEADLESS = process.env.HEADLESS === "1";
+
+// The two positions sectionGeofence() spoofs via context.setGeolocation — never a real
+// GPS fix (see the note on what this script cannot test, in walkOnsite()), but Playwright
+// removing the flakiness of a real one rather than the script working around it by
+// skipping the check entirely, which is what this file used to do — see the "Geofence"
+// entry in the switches comment above for that history.
+//
+// AT_CAMPUS is the exact pair scripts/smoke-nfc-tap.mjs pins onto a real campus row for
+// the identical assertion at the HTTP layer (Aldwych, London). Reused deliberately rather
+// than picked afresh: this script and that suite then assert against the SAME ground
+// truth, instead of two positions that happen to both be "somewhere in London" and could
+// silently drift apart from each other over time. FAR_FROM_CAMPUS is the "another city"
+// figure the smoke suite and the test plan's §4 curl example both already use — Piccadilly
+// Gardens, Manchester, over 250km from AT_CAMPUS and nowhere near any radius a college
+// could plausibly configure (presence.js clamps the radius between a 50m floor and a
+// 5000m ceiling).
+const FAR_FROM_CAMPUS = { latitude: 53.4808, longitude: -2.2426, accuracy: 20 };
+const AT_CAMPUS = { latitude: 51.5007, longitude: -0.1246, accuracy: 15 };
 
 const SHOT_DIR = path.join(__dirname, "_walk-staff-checkin-screenshots");
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -235,7 +270,15 @@ async function signIn(page) {
   }
   console.log("✓ signed in and reached the Staff App home");
   await dailyCheckInTile.click();
-  await visible(page.getByRole("tablist"), 8000); // let the screen finish mounting
+  // role=radiogroup, NOT role=tablist — ruling R16, 21 Sep 2026, corrected on the screen
+  // itself in client/src/StaffHub.jsx (search "A RADIO GROUP, NOT A TABLIST" there for the
+  // full reasoning). The screen shipped as a tablist because tabs are what it looks like
+  // and because THIS SCRIPT was originally written against those roles, before the screen
+  // existed — a tablist promises tabpanels that swap, and there are none here, so a
+  // screen-reader user told "tab" was being sent looking for a panel that does not exist.
+  // Every role=tab / aria-selected selector below was corrected to role=radio /
+  // aria-checked to match.
+  await visible(page.getByRole("radiogroup"), 8000); // let the screen finish mounting
   console.log("✓ opened the Daily Check-In screen");
 }
 
@@ -270,14 +313,15 @@ async function sectionOnline(page) {
     return;
   }
 
-  const onlineTab = page.getByRole("tab", { name: /online/i });
+  // role=radio, not role=tab — see the comment on the radiogroup wait in signIn().
+  const onlineTab = page.getByRole("radio", { name: /online/i });
   if (!(await visible(onlineTab))) {
-    await check(page, "an 'Online' tab is present", false, "role=tab name=/online/i not found");
+    await check(page, "an 'Online' radio option is present", false, "role=radio name=/online/i not found");
     return;
   }
   await onlineTab.click();
-  await check(page, "Online is now the selected tab",
-    (await onlineTab.getAttribute("aria-selected")) === "true");
+  await check(page, "Online is now the checked option",
+    (await onlineTab.getAttribute("aria-checked")) === "true");
 
   const btn = await currentCheckInButton(page);
   await check(page, "B: choosing Online enables the Check in button",
@@ -307,9 +351,10 @@ async function walkOnsite(page) {
     return;
   }
 
-  const onsiteTab = page.getByRole("tab", { name: /on site/i });
+  // role=radio, not role=tab — see the comment on the radiogroup wait in signIn().
+  const onsiteTab = page.getByRole("radio", { name: /on site/i });
   if (!(await visible(onsiteTab))) {
-    await check(page, "an 'On site' tab is present", false, "role=tab name=/on site/i not found");
+    await check(page, "an 'On site' radio option is present", false, "role=radio name=/on site/i not found");
     return;
   }
   await onsiteTab.click();
@@ -322,17 +367,29 @@ async function walkOnsite(page) {
   const dialogOpened = await visible(dialog, 3000);
 
   if (dialogOpened) {
-    // D + H, collapsed into one branch. The plan's D row describes the popup saying
-    // "tap the NFC sticker" and its H row describes the SAME popup, in a desktop browser,
-    // saying to use the app instead — because a browser cannot read a sticker. This
-    // script only ever drives a desktop Edge browser (see the launch call in main()), so
-    // it can only ever observe H's wording: `Capacitor.isNativePlatform()` (or whatever
-    // the real screen uses to tell native from web) is false here on purpose, the same
-    // way it would be for a real person on a laptop. Producing D's literal "tap the
-    // sticker" copy would need the Capacitor-wrapped app on a real handset — which
-    // test plan §9 already lists as unproven, for the same underlying reason a physical
-    // NFC tap is unproven there. That gap is inherited here rather than papered over with
-    // a wording this script cannot actually make happen.
+    // D + H, collapsed into one branch — DELIBERATELY, and this is a hard boundary of what
+    // a browser can prove, not a shortcut taken for convenience. Nobody should "fix" this
+    // script later by trying to assert D's listening state directly; the fix below is why
+    // that attempt cannot succeed and would only prove the app "broken" for a reason that
+    // has nothing to do with the app.
+    //
+    // The plan's D row describes the popup saying "Please tap the NFC sticker" and its H
+    // row describes the SAME popup, in a desktop browser, saying to use the app instead —
+    // because a browser cannot read a sticker. Confirmed against client/src/nfc.js: `const
+    // NATIVE = Capacitor?.isNativePlatform?.() === true;` and `nfcStatus()` returns `{ ok:
+    // false, reason: "web" }` whenever `!NATIVE` — which is unconditionally true in any
+    // browser, including this one, because `Capacitor.isNativePlatform()` only ever answers
+    // true inside the Capacitor-wrapped native shell. There is no browser flag, user agent
+    // spoof or Playwright option that changes that answer, because it isn't asking "does
+    // this look like a phone" — it is asking whether the Capacitor native runtime bridge is
+    // present at all, and in a browser it never is.
+    //
+    // This script only ever drives a desktop Edge browser (see the launch call in main()),
+    // so it can only ever observe H's wording, never D's. Producing D's literal "tap the
+    // sticker" copy needs the Capacitor-wrapped app running on a real handset — which test
+    // plan §9 already lists as unproven, for the same underlying reason a physical NFC tap
+    // is unproven there. That gap is inherited here rather than papered over with a wording
+    // this script cannot actually make happen.
     console.log("--- D+H: On site opened the sticker dialog immediately ---");
     await check(page, "D: the dialog opens immediately on choosing On site (no extra click needed)",
       dialogOpened);
@@ -340,10 +397,17 @@ async function walkOnsite(page) {
       await visible(dialog.getByText(/app/i), 2000));
 
     // E: dismiss it, then prove the button now reads the "reopen" state rather than
-    // becoming a normal enabled button. There is no name given for a close control in the
-    // plan, so this tries the common accessible patterns rather than guessing a testid
-    // that doesn't exist yet.
-    const closeBtn = dialog.getByRole("button", { name: /close|dismiss|got it|ok/i });
+    // becoming a normal enabled button. The close control used to be a guess across the
+    // common accessible patterns (close/dismiss/got it/ok) because the screen didn't exist
+    // yet when this script was first written — see the file header. It is now the real,
+    // verified one: client/src/StaffHub.jsx's TapOnsiteSheet renders
+    // `<button onClick={onClose} aria-label="Close">` (there are actually two such buttons
+    // in the file — one on the sheet itself, one on the generic Modal component — but only
+    // TapOnsiteSheet's is inside THIS dialog, which is why the locator is scoped to
+    // `dialog` rather than the page). The Escape fallback stays even so: it costs nothing,
+    // and it means a future markup change that drops the aria-label leaves this section
+    // reporting something useful rather than throwing.
+    const closeBtn = dialog.getByRole("button", { name: /close/i });
     if (await visible(closeBtn, 1500)) await closeBtn.click();
     else await page.keyboard.press("Escape"); // dialogs conventionally answer Escape too
     await check(page, "E: the dialog closes", !(await visible(dialog, 2000)));
@@ -391,6 +455,94 @@ async function walkOnsite(page) {
 }
 
 // ---------------------------------------------------------------------------------------
+// Geofence — the coverage gap this file used to name and skip
+// ---------------------------------------------------------------------------------------
+
+/**
+ * G above proves a refusal banner in general, driven off the network check because that
+ * one needs nothing from the browser. This is the geofence's OWN banner, specifically: the
+ * `off_campus` heading and advice, asserted by their own words rather than folded into G's
+ * generic pattern — and, unlike every other section in this file, a config combination
+ * this script CAN fully drive end to end, because context.setGeolocation removes the
+ * flakiness a real GPS fix would have instead of making this script work around it.
+ *
+ * Needs staffTapEnabled=false, staffGeofenceCheck=true, staffNetworkCheck=false, and an
+ * active campus with coordinates saved — see the "Geofence" entry in the switches comment
+ * at the top of this file for how to set all four by hand; this function sets none of
+ * them. Get any one wrong and this section SKIPs rather than false-passing or false-
+ * failing, the same convention as every other branch in this file.
+ */
+async function sectionGeofence(page) {
+  console.log("\n--- Geofence: refused far from campus, accepted at it ---");
+  if (await alreadyCheckedInToday(page)) {
+    skip("the geofence refusal and acceptance",
+      "today's check-in already exists for this account. See the file header.");
+    return;
+  }
+
+  // role=radio, not role=tab — see the comment on the radiogroup wait in signIn().
+  const onsiteTab = page.getByRole("radio", { name: /on site/i });
+  if (!(await visible(onsiteTab))) {
+    await check(page, "an 'On site' radio option is present", false, "role=radio name=/on site/i not found");
+    return;
+  }
+  await onsiteTab.click();
+
+  // If a sticker is required, choosing On site opens the tap popup instead of leaving the
+  // plain button this section needs — see walkOnsite()'s D/E branch. That is a config
+  // mismatch, not a failure of this section, so it SKIPs rather than reporting red.
+  const dialog = page.getByRole("dialog", { name: "Tap onsite" });
+  if (await visible(dialog, 1500)) {
+    skip("the geofence refusal and acceptance",
+      "choosing On site opened the sticker popup instead of enabling the plain button — " +
+      "staffTapEnabled is on for this run. Set it to false (staffGeofenceCheck stays true) " +
+      "and re-run. The popup wrote nothing, so state is still fresh either way.");
+    return;
+  }
+
+  // We are already spoofed far from the campus — main() grants the geolocation permission
+  // and starts the position there when the page is created, specifically so this first
+  // press needs no setGeolocation call of its own and nothing here has to wait on a
+  // permission prompt appearing.
+  const btn = await currentCheckInButton(page);
+  await btn.click();
+
+  // "not at a campus" rather than the full sentence with its apostrophe: matches the same
+  // substring-without-punctuation convention G uses just above, so a curly vs. straight
+  // apostrophe in the rendered HTML can never make this assertion fail over nothing.
+  const offCampusHeading = page.getByText(/not at a campus/i);
+  const refused = await visible(offCampusHeading, 6000);
+  if (!refused) {
+    // Branches rather than failing outright: with staffGeofenceCheck off for this run the
+    // press either clocks straight in (F's path) or is refused for a DIFFERENT reason
+    // (off-network, if that switch is the one live instead) — neither is a bug in the
+    // screen, only a config that doesn't match what this section needs.
+    const anyRefusal = await visible(page.getByText(/not on the college network|network check|off.?campus/i), 1500);
+    skip("a position far from the campus produces the off_campus refusal banner",
+      anyRefusal
+        ? "a refusal appeared but not the off_campus one — staffNetworkCheck is probably " +
+          "the switch that's live instead of staffGeofenceCheck for this run."
+        : "no refusal appeared at all — staffGeofenceCheck is probably off for this run, " +
+          "or no active campus has saved coordinates yet (that reads as campus_not_located, " +
+          "not off_campus, and is worth checking for separately).");
+    return;
+  }
+  await check(page, "a position far from the campus produces the off_campus refusal banner (heading)",
+    refused);
+  await check(page, "...and its advice offers Online as the way out",
+    await visible(page.getByText(/choose online/i), 2000));
+
+  // Move the spoofed position onto the campus and press again. Nothing was written by the
+  // refusal above — checkPresence() in server/src/presence.js runs BEFORE the row is
+  // touched — so the screen is still in the same fresh, not-checked-in state, same tab
+  // still selected, same button still there.
+  await page.context().setGeolocation(AT_CAMPUS);
+  await btn.click();
+  await check(page, "a position at the campus, with good accuracy, is accepted",
+    await visible(page.getByText(/checked in/i), 8000));
+}
+
+// ---------------------------------------------------------------------------------------
 
 async function main() {
   console.log(`Staff check-in walkthrough — ${CLIENT_URL}, staff=${STAFF_EMAIL}, headless=${HEADLESS}`);
@@ -398,7 +550,19 @@ async function main() {
   // 1440x900 — the same desktop size scripts/screenshots.mjs uses, and large enough that
   // this is unambiguously the "desktop browser" H is asking about rather than a viewport
   // narrow enough to trip a handset breakpoint and change which shell renders.
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  //
+  // permissions/geolocation granted HERE, once, for the whole run — not only inside
+  // sectionGeofence() — so that no section ever hits a live "grant location?" browser
+  // prompt this headless-capable script has no way to click. It costs nothing for every
+  // OTHER section: client/src/api.js's staffPositionIfNeeded() never touches the
+  // geolocation API at all unless the college's geofence switch is on, so A, B/C and
+  // D/E/F/G never read this value — only sectionGeofence() does, and it moves the spoofed
+  // position onto the campus itself with context.setGeolocation() when it needs to.
+  const page = await browser.newPage({
+    viewport: { width: 1440, height: 900 },
+    permissions: ["geolocation"],
+    geolocation: FAR_FROM_CAMPUS,
+  });
 
   try {
     await signIn(page); // throws and stops the run on failure — see the file header
@@ -410,11 +574,17 @@ async function main() {
     if (fresh) await walkOnsite(page);
     else skip("On site branch (D/E/F/G/H)", "screen was not in a fresh state at Section A");
 
-    // Re-open the screen: walkOnsite may have navigated inside a dialog, and F may have
-    // just changed the card's state. A fresh navigation is more honest than trusting
-    // in-page state left over from whichever onsite branch ran.
+    // Re-open the screen before the geofence section for the same reason as before Online
+    // below: walkOnsite may have navigated inside a dialog or changed the card's state, and
+    // a fresh navigation is more honest than trusting whatever it left behind.
     await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("tablist").or(page.getByText(/checked in/i)), 8000);
+    await visible(page.getByRole("radiogroup").or(page.getByText(/checked in/i)), 8000);
+    await sectionGeofence(page);
+
+    // Re-open the screen: the geofence section (or walkOnsite, if geofence SKIPped
+    // straight through) may have written a check-in or left a dialog on screen.
+    await page.reload({ waitUntil: "networkidle" });
+    await visible(page.getByRole("radiogroup").or(page.getByText(/checked in/i)), 8000);
     await sectionOnline(page);
   } catch (e) {
     fail += 1;
