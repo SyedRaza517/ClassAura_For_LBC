@@ -165,6 +165,41 @@ const DEFAULTS = Object.freeze({
   // than as a bad setting — so it gets blamed on the feature. Same reasoning as
   // MIN_QR_ROTATE_SECONDS above.
   geofenceRadiusM: 250,
+
+  /* ------------------------------------------------------------------ *
+   * THE SAME TWO QUESTIONS, ASKED OF STAFF
+   *
+   * SEPARATE FIELDS, NOT THE PAIR ABOVE WIDENED, and this is the whole decision.
+   *
+   * `networkCheck` and `geofenceCheck` are described to an administrator on the settings
+   * screen as applying to the three STUDENT methods — the copy says so in as many words:
+   * "It does not affect a lecturer taking the register." Teaching them to govern staff as
+   * well would mean that every college which ticked one for students begins refusing
+   * staff clock-ins on the next deploy, for a decision nobody took and nothing on screen
+   * announces. That is the exact failure this file legislates against everywhere else.
+   *
+   * BUT THEY SHARE `allowedNetworks` AND `geofenceRadiusM`, because those describe the
+   * COLLEGE, not the audience: one network, one set of campuses. Two lists that had to be
+   * kept in sync would drift, and the drift would present as "check-in stopped working
+   * for staff only" — which nobody connects to a settings screen edited a month earlier.
+   *
+   * Both OFF, like every other switch here that writes to a record the college is asked
+   * to evidence.
+   * ------------------------------------------------------------------ */
+
+  // Whether a member of staff clocking in ONSITE must be on the college network.
+  //
+  // Never applied to Online. Somebody working from home is BY DEFINITION off the college
+  // network, so checking it would refuse every honest remote clock-in and leave the
+  // truthful answer unrecordable — the same reasoning that makes `staffTapEnabled` gate
+  // on `site` rather than on the route.
+  staffNetworkCheck: false,
+  // Whether a member of staff clocking in ONSITE must be at a campus.
+  //
+  // A CAMPUS BOUNDARY, NEVER A ROOM ONE — see geofenceCheck above, which says why at
+  // length. For staff the honest claim is smaller still: this says somebody was at the
+  // college, not that they were at their desk.
+  staffGeofenceCheck: false,
 });
 
 const SETTING_FIELDS = Object.freeze(Object.keys(DEFAULTS));
@@ -259,6 +294,12 @@ function merge(stored, base = DEFAULTS) {
   if (stored.networkCheck === true || stored.networkCheck === false) out.networkCheck = stored.networkCheck;
   if (stored.geofenceCheck === true || stored.geofenceCheck === false) out.geofenceCheck = stored.geofenceCheck;
 
+  // Compared identically, exactly like the student pair above. A college's staff being
+  // locked out of clocking in is not a failure that announces itself — it presents as
+  // "the app is broken" at 08:45 on a Monday — so no coerced value is read as consent.
+  if (stored.staffNetworkCheck === true || stored.staffNetworkCheck === false) out.staffNetworkCheck = stored.staffNetworkCheck;
+  if (stored.staffGeofenceCheck === true || stored.staffGeofenceCheck === false) out.staffGeofenceCheck = stored.staffGeofenceCheck;
+
   // THE ONLY ARRAY IN THIS SETTINGS OBJECT, so it is the only field where "unusable" is
   // not all-or-nothing, and the choice made here needs saying.
   //
@@ -315,7 +356,33 @@ function merge(stored, base = DEFAULTS) {
   return out;
 }
 
+/**
+ * Would this settings object refuse every member of staff? A message if so, else null.
+ *
+ * PURE, and applied to the MERGED result rather than to the patch, because a PATCH that
+ * sends only `{ staffNetworkCheck: true }` is exactly the dangerous one: the ranges it
+ * would be judged against are the ones already stored, which the patch never mentions.
+ *
+ * ONLY THE NETWORK CHECK HAS ONE. The geofence reaches the same dead end — switched on
+ * with no campus located — but the fix for that lives on a different screen (a campus's
+ * coordinates), so refusing the save would leave an administrator unable to express the
+ * intent at all. That one is caught at the point of use and shouted about in the log
+ * instead, which is what the student path already does.
+ *
+ * Why refuse rather than warn: `allowedNetworks: []` with the check ON refuses everybody
+ * by name, and presence.js is right to do that — "no ranges" must never read as "any
+ * range". But it means an administrator can tick a box, see a successful save, and lock
+ * out a whole college while the screen reports the network is enforced. The save is the
+ * last moment anybody is looking.
+ */
+function staffNetworkGuard(settings) {
+  if (!settings || settings.staffNetworkCheck !== true) return null;
+  const list = settings.allowedNetworks;
+  if (Array.isArray(list) && list.length > 0) return null;
+  return "Add at least one college IP range before requiring staff to clock in from the college network — with none saved, every clock-in would be refused.";
+}
+
 module.exports = {
   DEFAULTS, SETTING_FIELDS, MAX_MINS, MAX_ARM_SECONDS, MAX_NETWORKS,
-  MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, merge,
+  MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, merge, staffNetworkGuard,
 };
