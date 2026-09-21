@@ -6,6 +6,8 @@ const { requireAuth, requirePage, hasPage } = require("../auth");
 const { isString, isRealDate, MAX_TEXT, isSite } = require("../validate");
 const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
+const { checkPresence } = require("../presence");
+const { campusesFor } = require("../campuses");
 
 // HH:MM, 24-hour. Times are stored as plain strings and rendered verbatim.
 const isTime = (v) => isString(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -131,12 +133,137 @@ router.get("/on-site", requireAuth, async (req, res) => {
   });
 });
 
-// POST /api/checkins/check-in  — self, for today. Optional `site` (HND | FE | Online)
-// records where this clock-in happened.
+// A member of staff's half of a presence refusal, in words they can act on.
+//
+// ITS OWN MAP, not the student one from routes/student.js, and the difference is the last
+// clause of every line: a member of staff always has an honest alternative — Online —
+// and a student does not. Telling somebody what to do instead is the difference between
+// a refusal they can resolve standing there and one that sends them to a manager.
+//
+// The two CONFIGURATION failures deliberately read identically to the ordinary ones. A
+// member of staff cannot tell the difference and there is nothing for them to do about
+// it; the distinct `reason` beside it is for the log and the settings screen.
+const STAFF_PLACE_REFUSALS = {
+  off_network: "You're not on the college network. Choose Online if you're working remotely.",
+  network_not_configured: "You're not on the college network. Choose Online if you're working remotely.",
+  off_campus: "You're not at a campus. Choose Online if you're working remotely.",
+  campus_not_located: "You're not at a campus. Choose Online if you're working remotely.",
+  position_missing: "Turn on location so we can check you're at the college, then try again.",
+  accuracy_unknown: "We couldn't get an accurate location. Try again near a window, or choose Online.",
+  accuracy_too_poor: "We couldn't get an accurate location. Try again near a window, or choose Online.",
+  default: "We couldn't check you're at the college. Choose Online if you're working remotely.",
+};
+
+/**
+ * Is this staff clock-in allowed to happen where it is happening? Answers `true` when it
+ * has ALREADY refused the request.
+ *
+ * ONLY EVER CALLED FOR ONSITE. Online is never checked under any setting: somebody
+ * working from home is by definition off the college network and away from every campus,
+ * so a rule that caught them would leave the truthful answer unrecordable. That is why
+ * the caller gates on `site`, not on the route.
+ *
+ * TRANSLATES the staff switches into the shape presence.js expects rather than teaching
+ * presence.js about staff. The engine asks "is this device in the building" and has no
+ * business knowing who is holding it — and keeping it that way is what lets it stay pure,
+ * database-free and tested without either audience.
+ *
+ * THE TRANSLATION IS THE PART THAT FAILS SILENTLY, so it is worth saying what goes wrong
+ * if it is skipped: checkPresence reads `networkCheck` and `geofenceCheck`, and the staff
+ * switches are `staffNetworkCheck` and `staffGeofenceCheck`. Hand it `settings` unchanged
+ * and it sees both as undefined, runs no checks at all, and returns ok for every member of
+ * staff — while the settings screen reports the rule as enforced. Nothing throws and
+ * nothing is logged. smoke-nfc-tap.mjs pins it with a refusal that only happens if the
+ * translated object arrived.
+ *
+ * `campusesFor(null)` — every located campus — because a clock-in is for a DAY, not a
+ * class. There is no room to narrow to, and "is this person at the college" is the honest
+ * question anyway.
+ *
+ * WHERE THE ADDRESS COMES FROM: `req.ip`, resolved by Express under `trust proxy: 1` (set
+ * in index.js), which trusts exactly one hop — Render's. A phone can put anything it likes
+ * in X-Forwarded-For, and with one real proxy in front its header is pushed left and the
+ * address Render observed is the one used. `trust proxy: true` would take the leftmost
+ * entry, which IS the phone's own claim, and the whole check would become a value the
+ * member of staff chooses. routes/student.js says the same thing at length.
+ *
+ * @param {string} method  "nfc" when a sticker was involved, "button" when not. NEVER
+ *   null: the schema defines a null `method` as "row written before the column existed",
+ *   so a fresh refusal writing null would read back as pre-feature history.
+ */
+async function refusedForStaffPlace(req, res, settings, method) {
+  // Neither switch on is the state every college is in until it opts in, and it costs
+  // nothing: no campus query, no work at all. This early return is also what makes the
+  // promise "with both off, behaviour is exactly what it was yesterday" structural rather
+  // than something the checks below happen to agree with.
+  if (settings.staffNetworkCheck !== true && settings.staffGeofenceCheck !== true) return false;
+
+  const verdict = checkPresence({
+    ip: req.ip,
+    // The phone's READING, never its opinion of whether that is close enough. A client
+    // that sent "I am in range" would be sending a value anybody can send.
+    position: req.body?.position,
+    campuses: settings.staffGeofenceCheck === true ? await campusesFor(null) : [],
+    settings: {
+      networkCheck: settings.staffNetworkCheck,
+      geofenceCheck: settings.staffGeofenceCheck,
+      allowedNetworks: settings.allowedNetworks,
+      geofenceRadiusM: settings.geofenceRadiusM,
+    },
+  });
+  if (verdict.ok) return false;
+
+  // EVERY failure is logged, not only the one reported. A college switching this on for
+  // the first time wants to see that its IP list is wrong AND its coordinates are, rather
+  // than discovering the second a week after fixing the first.
+  //
+  // `site: "Onsite"` on every row, because this function is only ever reached for an
+  // onsite claim — a tap is one by construction and POST /check-in gates on the site it
+  // was sent. A refusal with no site would be unreadable next to the accepted taps.
+  for (const f of verdict.failures) {
+    try {
+      await prisma.tagTap.create({
+        data: { staffId: req.user.id, method, outcome: f.reason, site: "Onsite", ip: req.ip ? String(req.ip).slice(0, 60) : null },
+      });
+    } catch (e) { console.error("[tap] could not log a staff presence refusal:", e.message); }
+  }
+
+  const first = verdict.failures[0];
+  // A misconfiguration is the operator's problem and it is INVISIBLE from the outside:
+  // every member of staff is refused while the settings screen says the rule is enforced.
+  // So it is said out loud where somebody reading the service's output will meet it.
+  if (first.reason === "network_not_configured") {
+    console.error("[presence] the staff network check is ON but no usable IP range is saved — every staff clock-in is being refused");
+  }
+  if (first.reason === "campus_not_located") {
+    console.error("[presence] the staff geofence is ON but no active campus has coordinates — every staff clock-in is being refused");
+  }
+
+  // 403, not 409. Nothing is wrong with the clock-in itself; what is wrong is WHERE it
+  // is being made, and the app shows a different thing for "not here" than for "not now".
+  res.status(403).json({
+    error: STAFF_PLACE_REFUSALS[first.reason] || STAFF_PLACE_REFUSALS.default,
+    reason: first.reason,
+  });
+  return true;
+}
+
+// POST /api/checkins/check-in  — self, for today. `site` (Onsite | Online) records where
+// this clock-in happened, and is REQUIRED — see the note on the validation line below.
 router.post("/check-in", requireAuth, async (req, res) => {
   const date = today();
   const site = req.body?.site;
-  if (!isSite(site)) return res.status(400).json({ error: "site must be Onsite or Online" });
+  // A SITE IS REQUIRED HERE, even though `isSite` permits null — and that gap was a real
+  // hole, not a theoretical one. `isSite` is `(v) => v == null || SITES.includes(v)`, so
+  // an empty body passed validation, `site === "Onsite"` was false, the tap requirement
+  // never fired, and a row was written with no site at all. This route's own comment
+  // holds it to a higher standard: "anything that can be worked around by knowing the URL
+  // is a convention, and a timesheet is not a good place for one."
+  //
+  // The ADMINISTRATOR's PUT / is untouched and still accepts null — filling in a missed
+  // clock-in for somebody else is exactly what that route is for, and an administrator
+  // often does not know where the person was.
+  if (!isString(site) || !isSite(site)) return res.status(400).json({ error: "site must be Onsite or Online" });
 
   // Where a college requires a sticker for onsite work, this route may not record one.
   //
@@ -162,6 +289,12 @@ router.post("/check-in", requireAuth, async (req, res) => {
       reason: "tap_required",
     });
   }
+
+  // ONSITE ONLY. See refusedForStaffPlace: Online is never checked under any setting.
+  // "button" rather than "nfc" — no sticker was involved in this route, and a log an
+  // administrator reads to answer "why couldn't I clock in" must not describe a button
+  // press as a tap.
+  if (site === "Onsite" && await refusedForStaffPlace(req, res, tap, "button")) return;
 
   const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
   if (existing) {
@@ -257,6 +390,61 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
     return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
   }
 
+  const date = today();
+
+  // ALREADY CLOCKED IN WINS OVER PRESENCE, and this ordering is deliberate rather than
+  // accidental — it differs from the student path, where every capture method writes.
+  //
+  // A second tap on the way past the door writes NOTHING: the arrival time is already
+  // recorded and re-tapping must never move it. There is therefore nothing to protect,
+  // and answering "you're not at a campus" to a no-op teaches somebody the feature is
+  // flaky — on the one screen they use every single morning.
+  const existingToday = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+  if (existingToday && existingToday.timeIn) {
+    // THE TAG IS RESOLVED HERE, on this path alone, and for the LOG rather than for the
+    // answer — which is the one thing this reordering could quietly have cost.
+    //
+    // Returning before the lookup would be a query cheaper and would write
+    // `already_checked_in` with a null tagId. That column is the half of TagTap that
+    // answers "I tapped and it didn't work", because the sticker somebody touched is
+    // recorded nowhere else; STATUS.md calls it the valuable half. One extra read, on a
+    // path that runs at most once per person per day, buys it back.
+    const reTapTag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
+    if (reTapTag) {
+      try {
+        await prisma.tagTap.create({
+          data: {
+            tagId: reTapTag.id, staffId: req.user.id, method: "nfc",
+            outcome: "already_checked_in", site: "Onsite",
+            ip: req.ip ? String(req.ip).slice(0, 60) : null,
+          },
+        });
+      } catch (e) { console.error("[tap] could not log an already-checked-in staff tap:", e.message); }
+      return res.json({ ok: true, alreadyCheckedIn: true, ...sCheckin(existingToday) });
+    }
+    // A code that matches NO live sticker falls through instead of answering "already
+    // clocked in", so that an unrecognised tag is still reported as one. With both
+    // presence switches off that lands on exactly the 404 this route has always given —
+    // which is the promise that switching nothing on changes nothing. With one on, the
+    // presence refusal comes first, matching the rule the student routes already follow:
+    // somebody off the college network is told THAT rather than handed "tag not
+    // recognised" from a check they were never going to get past.
+  }
+
+  // AFTER the rate limit and BEFORE the tag lookup.
+  //
+  // After the rate limit, because probing these checks must be throttled exactly like
+  // probing tag codes is — otherwise the cheapest thing on this route is the one with no
+  // budget attached to it.
+  //
+  // Before the tag lookup, matching routes/student.js and for its stated reason: somebody
+  // off the college network should be told THAT, not handed "tag not recognised" from a
+  // check they were never going to get past.
+  //
+  // Always, with no `site` test, because a tap IS an onsite claim by construction — this
+  // route does not accept a site and never has.
+  if (await refusedForStaffPlace(req, res, settings, "nfc")) return;
+
   // Tenant-scoped by db.js, so another college's tag is simply not found.
   const tag = await prisma.attendanceTag.findFirst({ where: { code: code.trim(), active: true } });
   if (!tag) {
@@ -266,8 +454,6 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
     catch (e) { console.error("[tap] could not log an unknown-tag staff tap:", e.message); }
     return res.status(404).json({ error: "That tag isn't recognised." });
   }
-
-  const date = today();
 
   // Never throws into the request: the clock-in is the record, this is the account of it.
   const logTap = async (outcome, extra = {}) => {
@@ -280,20 +466,19 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
     }
   };
 
-  const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
-
-  // A real clock-in already stands. Re-tapping must not rewrite the arrival time — the
-  // same rule POST /check-in follows, and for the same reason: a second tap on the way
-  // past the door would otherwise falsify how long somebody was on site.
-  if (existing && existing.timeIn) {
-    await logTap("already_checked_in", { site: "Onsite" });
-    return res.json({ ok: true, alreadyCheckedIn: true, ...sCheckin(existing) });
-  }
-
+  // The row this route read BEFORE the presence check, reused rather than read again.
+  // A real clock-in already standing was dealt with up there — this is the sentinel case
+  // and the no-row case, which are the two that still write.
+  //
+  // ONE READ, deliberately. Two reads of the same row a few lines apart is how a guard and
+  // the write it guards come to disagree about what they are looking at, and the race this
+  // route already legislates for below (two concurrent taps) is exactly the window in
+  // which they would.
+  //
   // timeIn "" is the sentinel PUT /summary writes for "wrote a summary, never checked
   // in". Fill in the real clock time rather than leaving the day blank.
   // updateMany with `timeIn: ""` in the WHERE, not a bare upsert. Two concurrent taps can
-  // both pass the `existing.timeIn` guard above; a bare upsert then has the second one
+  // both pass the `existingToday.timeIn` guard above; a bare upsert then has the second one
   // rewrite the arrival time, which is exactly what that guard exists to prevent. Making
   // the condition part of the statement means the database settles it: the first write
   // fills the sentinel, the second matches nothing.
@@ -302,7 +487,7 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
     data: { timeIn: nowTime(), site: "Onsite", tagId: tag.id },
   });
   let rec;
-  if (filled.count === 0 && !existing) {
+  if (filled.count === 0 && !existingToday) {
     try {
       rec = await prisma.checkIn.create({ data: { staffId: req.user.id, date, timeIn: nowTime(), site: "Onsite", tagId: tag.id } });
     } catch (e) {

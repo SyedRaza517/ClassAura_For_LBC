@@ -150,11 +150,37 @@ const shift = (hhmm, mins) => {
 const made = { tags: [], sessions: [], units: [], enrolments: [], marks: [], taps: [], checkIns: [], terms: [], cohorts: [], courses: [] };
 // Seeded sessions parked out of the way for the duration — see the setup block below.
 let parkedSessionIds = [];
+// The campus the staff-presence block pins coordinates onto, and the staff member whose
+// refusal rows it leaves behind. Both are module-level for the same reason parkedSessionIds
+// is: they are state this run puts into a SHARED seeded database, and the finally block has
+// to be able to undo them even when the block that created them threw half way through.
+let locatedCampusId = null;
+let presenceStaffId = null;
 let configExisted = false, priorConfig = null;
+
+/** Put a campus back to having no coordinates. Safe to call twice; never throws. */
+async function unpinLocatedCampus() {
+  if (!locatedCampusId) return;
+  const id = locatedCampusId;
+  locatedCampusId = null;
+  // All four together. Coordinates with a stale locatedAt/locatedBy beside them would read
+  // as a campus somebody pinned and then half-unpinned, which is not a state the product
+  // can reach and not one anybody should have to explain.
+  await db.campus.update({ where: { id }, data: { latitude: null, longitude: null, locatedAt: null, locatedBy: null } })
+    .catch(() => {});
+}
 
 async function cleanup() {
   try {
-    // Un-park the seeded sessions FIRST: they are the only thing here that belongs to
+    // The staff-presence fixture, first and unconditionally. A campus left with coordinates
+    // on it is the one piece of state this suite can leave behind that changes what the NEXT
+    // suite's geofence assertions MEAN rather than merely adding a row to the database.
+    await unpinLocatedCampus();
+    if (presenceStaffId) {
+      await db.tagTap.deleteMany({ where: { staffId: presenceStaffId } }).catch(() => {});
+      await db.checkIn.deleteMany({ where: { staffId: presenceStaffId, date: todayLocal() } }).catch(() => {});
+    }
+    // Un-park the seeded sessions: they are the only thing here that belongs to
     // another suite, and leaving them dated 1970 would quietly empty today's register
     // for everything that runs after this.
     if (parkedSessionIds.length) {
@@ -894,6 +920,223 @@ try {
   check("a tap ignores any site the caller sends — the tap proves Onsite",
     staffTapNoSite.status === 201 && ciSite?.site === "Onsite",
     `HTTP ${staffTapNoSite.status} site=${ciSite?.site}`);
+
+  /* ====================================================================== */
+  console.log("\n--- THE PHONE HAS TO BE IN THE BUILDING — staff clock-in ---");
+  /* ====================================================================== */
+  //
+  // Weighted entirely towards refusals. The single most important assertion in this block
+  // is that ONLINE IS NEVER REFUSED: a member of staff working from home is by definition
+  // off the college network and away from every campus, so a rule that caught them would
+  // make the honest answer the unrecordable one.
+  {
+    // A SECOND STAFF ACCOUNT, and the reason is the rate limiter rather than tidiness —
+    // the same reasoning the student blocks below spell out at length. POST /tap-check-in
+    // allows TEN taps a minute per staff member; the admin has already spent three of them
+    // in the block above and spends three more later in this file, and this block alone
+    // makes eight. A 429 would satisfy every "is it refused" assertion here for entirely
+    // the wrong reason while making every acceptance beside it vacuous.
+    const pLogin = await login("j.whitfield@edtech.co.uk", SEED_PASSWORD);
+    const pToken = pLogin.data?.token;
+    const pId = pLogin.data?.user?.id;
+    check("a second staff member signed in, with an untouched tap budget",
+      !!pToken && !!pId, `HTTP ${pLogin.status}`);
+    presenceStaffId = pId;
+
+    // Clear TODAY's clock-in between attempts: a row that already has a timeIn short-
+    // circuits to "already clocked in" BEFORE presence is consulted, which would make
+    // every assertion below pass vacuously.
+    //
+    // Scoped to the DATE and not to the staff member alone, which the obvious version
+    // would be: the seed gives this one a check-in YESTERDAY, with a written summary, and
+    // a suite that quietly deleted it would take a day of somebody's history with it on
+    // every run.
+    const clearDay = () => db.checkIn.deleteMany({ where: { staffId: pId, date: staffDate } });
+
+    // The same address the student network block further down uses for "at home", and
+    // deliberately so: that block asserts EVERY off_network row in the log came from it,
+    // so a staff refusal recorded from a different address would turn it red. The rows
+    // this block leaves are cleaned up as well, but the two addresses agreeing means a
+    // failed clean-up cannot break somebody else's assertion.
+    const STAFF_AT_HOME = "198.51.100.9";
+    const STAFF_ON_NET = "203.0.113.9";
+
+    // --- the college network ---
+    await call("/tags/settings", {
+      method: "PUT", token: adminToken,
+      body: { staffTapEnabled: true, staffNetworkCheck: true, allowedNetworks: ["203.0.113.0/24"] },
+    });
+
+    await clearDay();
+    const offNet = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { tagCode },
+    });
+    check("a staff tap from off the college network is refused",
+      offNet.status === 403 && offNet.data?.reason === "off_network",
+      `HTTP ${offNet.status} ${offNet.data?.reason}`);
+    check("and nothing was written",
+      (await db.checkIn.count({ where: { staffId: pId, date: staffDate } })) === 0);
+
+    // THE TRANSLATION IS THE PART THAT FAILS SILENTLY, so it gets its own row to read.
+    // presence.js asks for `networkCheck` and `geofenceCheck`; the staff switches are
+    // called `staffNetworkCheck` and `staffGeofenceCheck`. Handed the settings object raw
+    // it would see both as undefined, run no checks at all and return ok for everybody —
+    // while the settings screen says the rule is enforced. The refusal above is what
+    // catches that; this is what proves the refusal was RECORDED rather than merely
+    // returned, with the capture method an administrator triages by.
+    const offNetLog = await db.tagTap.findFirst({
+      where: { staffId: pId, outcome: "off_network" }, orderBy: { at: "desc" },
+    });
+    check("...and the refusal is logged as an nfc tap, from the address it came from",
+      offNetLog?.method === "nfc" && offNetLog?.ip === STAFF_AT_HOME && offNetLog?.site === "Onsite",
+      JSON.stringify(offNetLog && { method: offNetLog.method, ip: offNetLog.ip, site: offNetLog.site }));
+
+    await clearDay();
+    const onNet = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken, from: STAFF_ON_NET, body: { tagCode },
+    });
+    // 201 rather than the brief's 200: the row is CREATED here, not found. The written row
+    // is asserted alongside the status on purpose — a route that answered 200 and wrote
+    // nothing would satisfy a bare status test while breaking the feature entirely.
+    check("a staff tap from the college network is accepted",
+      onNet.status === 201 && (await db.checkIn.count({ where: { staffId: pId, date: staffDate } })) === 1,
+      `HTTP ${onNet.status} ${onNet.data?.reason || ""}`);
+
+    // THE ONE THAT MATTERS MOST.
+    await clearDay();
+    const onlineOffNet = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Online" },
+    });
+    check("Online is never refused by the network check",
+      onlineOffNet.status === 201 || onlineOffNet.status === 200,
+      `HTTP ${onlineOffNet.status} ${onlineOffNet.data?.reason || ""}`);
+
+    // An empty list while the check is ON must refuse everybody — but the save route now
+    // refuses to reach that state at all, which is the assertion.
+    const emptied = await call("/tags/settings", {
+      method: "PUT", token: adminToken, body: { staffNetworkCheck: true, allowedNetworks: [] },
+    });
+    check("requiring the college network with no ranges is refused at the API",
+      emptied.status === 400 && emptied.data?.reason === "networks_required",
+      `HTTP ${emptied.status} ${emptied.data?.reason}`);
+
+    // --- the geofence ---
+    await call("/tags/settings", {
+      method: "PUT", token: adminToken,
+      body: { staffNetworkCheck: false, staffGeofenceCheck: true, geofenceRadiusM: 250 },
+    });
+
+    const pCampus = await db.campus.findFirst({ where: { active: true }, select: { id: true, name: true } });
+    check("the college has a campus to locate for the staff geofence", !!pCampus, JSON.stringify(pCampus));
+    await db.campus.update({
+      where: { id: pCampus.id },
+      data: { latitude: 51.5007, longitude: -0.1246, locatedAt: new Date(), locatedBy: "smoke" },
+    });
+    // Remembered so cleanup() can unpin it even if this block throws half way through.
+    // A located campus that outlives the block is not a tidiness problem: the student
+    // geofence block further down asserts that a college with NOTHING located refuses
+    // rather than waving everybody through, and a campus left pinned here would make that
+    // assertion quietly test the opposite of what it says.
+    locatedCampusId = pCampus.id;
+
+    await clearDay();
+    const noPos = await call("/checkins/tap-check-in", { method: "POST", token: pToken, body: { tagCode } });
+    check("a staff tap with no position is refused, not waved through",
+      noPos.status === 403 && noPos.data?.reason === "position_missing",
+      `HTTP ${noPos.status} ${noPos.data?.reason}`);
+
+    await clearDay();
+    const farAway = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken,
+      body: { tagCode, position: { latitude: 53.4808, longitude: -2.2426, accuracy: 20 } },
+    });
+    check("a staff tap from another city is refused",
+      farAway.status === 403 && farAway.data?.reason === "off_campus",
+      `HTTP ${farAway.status} ${farAway.data?.reason}`);
+
+    await clearDay();
+    const vagueFix = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken,
+      body: { tagCode, position: { latitude: 51.5007, longitude: -0.1246, accuracy: 4000 } },
+    });
+    check("a position too vague to mean anything is refused even though it contains the campus",
+      vagueFix.status === 403 && vagueFix.data?.reason === "accuracy_too_poor",
+      `HTTP ${vagueFix.status} ${vagueFix.data?.reason}`);
+
+    await clearDay();
+    const atCampus = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken,
+      body: { tagCode, position: { latitude: 51.5007, longitude: -0.1246, accuracy: 15 } },
+    });
+    check("a staff tap at the campus is accepted",
+      atCampus.status === 201, `HTTP ${atCampus.status} ${atCampus.data?.reason || ""}`);
+
+    // Already clocked in WINS over presence — deliberately, and differently from students.
+    // A re-tap writes nothing, so there is nothing to protect, and refusing a no-op teaches
+    // people the feature is flaky.
+    const reTap = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken,
+      body: { tagCode, position: { latitude: 53.4808, longitude: -2.2426, accuracy: 20 } },
+    });
+    check("an already-clocked-in re-tap from off campus says so rather than refusing",
+      reTap.status === 200 && reTap.data?.alreadyCheckedIn === true,
+      `HTTP ${reTap.status} ${reTap.data?.reason || ""}`);
+    // AND THE STICKER IS STILL ON THE LOG ROW. Moving the already-clocked-in short circuit
+    // ahead of the presence check is what makes this route answer a no-op honestly, and the
+    // obvious way to do it — return before the tag is resolved — silently costs the tagId
+    // on the one outcome an administrator is most often asked about ("I tapped and it
+    // didn't work"). This is the assertion that refuses to let that happen quietly.
+    const reTapLog = await db.tagTap.findFirst({
+      where: { staffId: pId, outcome: "already_checked_in" }, orderBy: { at: "desc" },
+    });
+    check("...and the log row still names the sticker that was touched",
+      reTapLog?.tagId === created.data?.id && reTapLog?.method === "nfc",
+      JSON.stringify(reTapLog && { tagId: reTapLog.tagId, method: reTapLog.method }));
+
+    // CHECK-OUT IS NOT GATED, and this asserts a DELIBERATE non-change so that nobody
+    // "completes" the feature later by adding one. Requiring proof of presence to clock OUT
+    // strands anyone who has already left the building, with no way to fix it from the app.
+    //
+    // Asserted HERE, while a clock-in still stands, rather than after the no-site case
+    // below where the brief placed it: that one clears the day first, so by then there is
+    // no row left to clock out of and the fixture would be reading a null.
+    const outRow = await db.checkIn.findFirst({ where: { staffId: pId, date: staffDate } });
+    const outFromAnywhere = await call(`/checkins/${outRow?.id}/check-out`, {
+      method: "POST", token: pToken, from: STAFF_AT_HOME,
+    });
+    check("clocking out from off campus is never refused",
+      outFromAnywhere.status === 200, `HTTP ${outFromAnywhere.status}`);
+
+    // THE HOLE THAT EXISTED BEFORE THIS WORK: no site at all skipped every gate.
+    await clearDay();
+    const noSite = await call("/checkins/check-in", { method: "POST", token: pToken, body: {} });
+    check("a self check-in with no site is refused", noSite.status === 400, `HTTP ${noSite.status}`);
+    check("...and nothing was written for it",
+      (await db.checkIn.count({ where: { staffId: pId, date: staffDate } })) === 0);
+
+    // Both off restores today's behaviour exactly.
+    await call("/tags/settings", {
+      method: "PUT", token: adminToken, body: { staffNetworkCheck: false, staffGeofenceCheck: false },
+    });
+    await clearDay();
+    const plain = await call("/checkins/tap-check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { tagCode },
+    });
+    check("with both checks off, a staff tap from anywhere is accepted as before",
+      plain.status === 201, `HTTP ${plain.status} ${plain.data?.reason || ""}`);
+
+    // PUT THE FIXTURE BACK, here as well as in cleanup(), because the rest of THIS RUN
+    // reads both halves of it: the campus has to be unlocated again before the student
+    // geofence block, and the refusal rows have to be gone before the student network
+    // block counts them. The API wrote those rows, so `made.taps` has no id for them and
+    // only a query finds them again.
+    await unpinLocatedCampus();
+    await db.tagTap.deleteMany({ where: { staffId: pId } }).catch(() => {});
+    await clearDay();
+    // Cleared LAST, so cleanup() still has the handle if any of the three lines above
+    // throws. Nulling it first would hand the safety net an empty hand.
+    presenceStaffId = null;
+  }
 
   /* ====================================================================== */
   console.log("\n--- the check-in screen before a tap ---");
