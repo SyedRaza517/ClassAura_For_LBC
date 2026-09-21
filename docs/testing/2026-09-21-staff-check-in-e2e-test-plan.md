@@ -298,6 +298,32 @@ a unique constraint and a conditional update — rather than a check somebody co
 A test that passes because the two requests didn't actually overlap proves nothing, so
 fire them with `Promise.all`, not in sequence.
 
+### 7.1 Running the automated stress script
+
+All eight rows above (S1–S8) are automated in `scripts/stress-staff-checkin.mjs`, which
+fires its races with `Promise.all` and asserts the database state afterwards, not just
+the HTTP status — see the file's own header for why that distinction matters for S3–S5
+specifically.
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" \
+API_URL="http://localhost:4000/api" node scripts/stress-staff-checkin.mjs
+```
+
+**Unlike `npm test`, this script does not boot an API of its own.** Start one first
+(section 2.2 above — `PORT=4000 node server/src/index.js` against the same
+`DATABASE_URL`), then point `API_URL` at it. It also expects the database to already be
+seeded — run any suite once first (e.g. `npm test -- smoke-nfc-tap`) if `edtech_dev` is
+fresh, so that `admin@edtech.co.uk` exists to sign in as.
+
+**It must not run at the same time as a smoke suite, or a second copy of itself.** It
+never binds a port, so that isn't the hazard here — the hazard is the same shared state
+`npm test`'s own suites share: it flips the college-wide tap/geofence/network settings
+through the real `PUT /tags/settings` and briefly pins real coordinates onto a real
+campus (S8), reverting both in its `cleanup()`. A concurrent run, or a concurrent smoke
+suite reading either of those, would see a setting or a coordinate that belongs to
+whichever run's fixtures happen to be live at that instant, not to its own.
+
 ---
 
 ## 8. Running the automated suites
