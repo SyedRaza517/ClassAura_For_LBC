@@ -1011,6 +1011,82 @@ try {
       onlineOffNet.status === 201 || onlineOffNet.status === 200,
       `HTTP ${onlineOffNet.status} ${onlineOffNet.data?.reason || ""}`);
 
+    // --- THE BUTTON ROUTE, which nothing above this line can reach ---
+    //
+    // POST /check-in answers every Onsite press with 409 `tap_required` while a college
+    // requires stickers, and that refusal sits ABOVE the presence gate. So with
+    // `staffTapEnabled` left on — as it is for the whole of the rest of this block — the
+    // gate on that route is unreachable, no test ever writes a `method: "button"` row, and
+    // deleting the gate outright would leave this suite green.
+    //
+    // Stickers therefore go OFF for the length of this section, which is not a contrivance:
+    // it is the state every college that has not bought any stickers is in, and the one
+    // where the button IS the clock-in.
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: false } });
+
+    await clearDay();
+    const buttonOffNet = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Onsite" },
+    });
+    check("an Onsite clock-in BY BUTTON from off the college network is refused",
+      buttonOffNet.status === 403 && buttonOffNet.data?.reason === "off_network",
+      `HTTP ${buttonOffNet.status} ${buttonOffNet.data?.reason}`);
+    check("...and nothing was written for it",
+      (await db.checkIn.count({ where: { staffId: pId, date: staffDate } })) === 0);
+    // "button", never "nfc", and the method is asserted rather than assumed. An
+    // administrator reading this log to answer "why couldn't I clock in" must not be shown
+    // a button press described as a tap — they would go looking for a dead sticker that
+    // nobody ever touched.
+    const buttonLog = await db.tagTap.findFirst({
+      where: { staffId: pId, outcome: "off_network", method: "button" }, orderBy: { at: "desc" },
+    });
+    check("...and the refusal is logged as a BUTTON press, from the address it came from",
+      buttonLog?.method === "button" && buttonLog?.ip === STAFF_AT_HOME && buttonLog?.site === "Onsite",
+      JSON.stringify(buttonLog && { method: buttonLog.method, ip: buttonLog.ip, site: buttonLog.site }));
+
+    const buttonOnNet = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_ON_NET, body: { site: "Onsite" },
+    });
+    check("...while the same press from the college network clocks them in",
+      buttonOnNet.status === 201, `HTTP ${buttonOnNet.status} ${buttonOnNet.data?.reason || ""}`);
+
+    // ALREADY CLOCKED IN WINS OVER PRESENCE ON THIS ROUTE TOO. "Already clocked in wins" is
+    // a rule about a staff CLOCK-IN, not about one of the two ways of making one: a stale
+    // tab left open since the morning re-sends this request from whatever network the
+    // laptop is on now, and it writes NOTHING either way. Refusing a no-op teaches somebody
+    // the feature is flaky on the one screen they use every morning.
+    const beforeRePress = await db.checkIn.findFirst({ where: { staffId: pId, date: staffDate } });
+    const buttonRePress = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Onsite" },
+    });
+    const afterRePress = await db.checkIn.findFirst({ where: { staffId: pId, date: staffDate } });
+    check("an already-clocked-in re-press from off the network is idempotent, not refused",
+      buttonRePress.status === 200 && !!afterRePress?.timeIn && afterRePress?.timeIn === beforeRePress?.timeIn,
+      `HTTP ${buttonRePress.status} ${buttonRePress.data?.reason || ""} ${beforeRePress?.timeIn} -> ${afterRePress?.timeIn}`);
+
+    // ...BUT THE SUMMARY-FIRST FILL IS STILL GATED, because that branch WRITES. `timeIn: ""`
+    // is what PUT /summary leaves for a day somebody wrote up and never clocked into;
+    // filling it in is the moment the college's record starts saying this person was on
+    // site, so it has to pass the same check a fresh clock-in does. The short circuit above
+    // sits one line too high if this ever goes green.
+    await clearDay();
+    const summaryFirst = await db.checkIn.create({
+      data: { staffId: pId, date: staffDate, timeIn: "", summary: `presence fixture ${RUN}` },
+    });
+    made.checkIns.push(summaryFirst.id);
+    const fillOffNet = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Onsite" },
+    });
+    const stillBlank = await db.checkIn.findFirst({ where: { staffId: pId, date: staffDate } });
+    check("filling in a summary-first day from off the network is STILL refused — that branch writes",
+      fillOffNet.status === 403 && fillOffNet.data?.reason === "off_network" && stillBlank?.timeIn === "",
+      `HTTP ${fillOffNet.status} ${fillOffNet.data?.reason} timeIn=${JSON.stringify(stillBlank?.timeIn)}`);
+
+    // Stickers back on for the rest of the block, which is what every assertion after this
+    // point assumes.
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffTapEnabled: true } });
+    await clearDay();
+
     // An empty list while the check is ON must refuse everybody — but the save route now
     // refuses to reach that state at all, which is the assertion.
     const emptied = await call("/tags/settings", {
@@ -1038,6 +1114,36 @@ try {
     // rather than waving everybody through, and a campus left pinned here would make that
     // assertion quietly test the opposite of what it says.
     locatedCampusId = pCampus.id;
+
+    // ONLINE UNDER EVERY COMBINATION OF THE TWO SWITCHES, and this is the most important
+    // thing the block asserts rather than a completeness exercise. The exemption is a single
+    // `site === "Onsite" &&` clause on each route today; a refactor that split it, or that
+    // hoisted the gate above the site test, would be caught by exactly one of these three
+    // assertions and by nothing else at all. Network-on/geofence-off is asserted further up;
+    // these are the other two.
+    //
+    // NO POSITION IS SENT, deliberately. Somebody working from home has no reason to grant
+    // location permission to a timesheet, so `position_missing` is precisely the refusal the
+    // geofence would produce for the honest answer — which is the failure this exempts.
+    await clearDay();
+    const onlineGeofenceOnly = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Online" },
+    });
+    check("Online is never refused by the GEOFENCE either, with no position sent at all",
+      onlineGeofenceOnly.status === 201 || onlineGeofenceOnly.status === 200,
+      `HTTP ${onlineGeofenceOnly.status} ${onlineGeofenceOnly.data?.reason || ""}`);
+
+    // BOTH ON AT ONCE: off the network AND with no position. Every check the product has,
+    // switched on together, against the one answer that must never be refusable.
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffNetworkCheck: true } });
+    await clearDay();
+    const onlineBothOn = await call("/checkins/check-in", {
+      method: "POST", token: pToken, from: STAFF_AT_HOME, body: { site: "Online" },
+    });
+    check("...nor with BOTH checks on at once, off the network and with no position",
+      onlineBothOn.status === 201 || onlineBothOn.status === 200,
+      `HTTP ${onlineBothOn.status} ${onlineBothOn.data?.reason || ""}`);
+    await call("/tags/settings", { method: "PUT", token: adminToken, body: { staffNetworkCheck: false } });
 
     await clearDay();
     const noPos = await call("/checkins/tap-check-in", { method: "POST", token: pToken, body: { tagCode } });

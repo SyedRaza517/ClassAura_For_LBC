@@ -232,10 +232,22 @@ async function refusedForStaffPlace(req, res, settings, method) {
   // A misconfiguration is the operator's problem and it is INVISIBLE from the outside:
   // every member of staff is refused while the settings screen says the rule is enforced.
   // So it is said out loud where somebody reading the service's output will meet it.
-  if (first.reason === "network_not_configured") {
+  //
+  // KEYED ON THE WHOLE LIST, NOT ON `first`, and the loop above is the reason. That loop
+  // writes EVERY failure to the log precisely so a college switching both checks on for
+  // the first time sees that its IP list is wrong AND its coordinates are, rather than
+  // discovering the second a week after fixing the first. Asking `first.reason` here
+  // contradicted that a few lines later: presence.js pushes the network failure before the
+  // geofence one, so with both switched on and both misconfigured the geofence alarm never
+  // fired at all — the one an operator is least likely to work out unaided, since it is
+  // fixed on a different screen from the one that turned the check on.
+  //
+  // `first` stays as it is for the RESPONSE body: a member of staff gets one refusal to
+  // act on, not a list, and the ordering is what decides which one they are told about.
+  if (verdict.failures.some((f) => f.reason === "network_not_configured")) {
     console.error("[presence] the staff network check is ON but no usable IP range is saved — every staff clock-in is being refused");
   }
-  if (first.reason === "campus_not_located") {
+  if (verdict.failures.some((f) => f.reason === "campus_not_located")) {
     console.error("[presence] the staff geofence is ON but no active campus has coordinates — every staff clock-in is being refused");
   }
 
@@ -290,17 +302,38 @@ router.post("/check-in", requireAuth, async (req, res) => {
     });
   }
 
+  const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
+
+  // ALREADY CLOCKED IN WINS OVER PRESENCE, exactly as it does on the tap route, and the
+  // symmetry is the point: "already clocked in wins" is a rule about a staff CLOCK-IN, not
+  // about one of the two ways of making one. A stale tab left open since the morning, a
+  // double-press, an app that retries — each of those re-sends this request, and each of
+  // them WRITES NOTHING, because the arrival time already stands and re-pressing must never
+  // move it. There is therefore nothing for a presence check to protect, and answering
+  // "you're not on the college network" to a no-op teaches somebody the feature is flaky on
+  // the one screen they use every morning.
+  //
+  // MOVED ABOVE THE PRESENCE GATE, where it used to sit below it. Below it, the same person
+  // tethering to their phone at two in the afternoon was refused for re-pressing a button
+  // that would have changed nothing.
+  if (existing && existing.timeIn) return res.json(sCheckin(existing));
+
   // ONSITE ONLY. See refusedForStaffPlace: Online is never checked under any setting.
   // "button" rather than "nfc" — no sticker was involved in this route, and a log an
   // administrator reads to answer "why couldn't I clock in" must not describe a button
   // press as a tap.
+  //
+  // BELOW the short circuit above and ABOVE the fill below, and the division is exactly
+  // "does this branch write". The summary-first row (`timeIn: ""`, written by PUT /summary
+  // for a day somebody wrote up but never clocked into) is filled in with a real arrival
+  // time by the next few lines — that is a write, it is the moment the college's record
+  // starts saying this person was on site, and it has to pass the same check a fresh
+  // clock-in does. Hoisting this any higher would exempt it.
   if (site === "Onsite" && await refusedForStaffPlace(req, res, tap, "button")) return;
 
-  const existing = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
   if (existing) {
     // A row created by a summary-first save has timeIn === "" — fill in the
     // real clock-in time now instead of leaving attendance blank for the day.
-    if (existing.timeIn) return res.json(sCheckin(existing));
     // Record the site alongside the real clock-in time (don't wipe an existing one).
     const filled = await prisma.checkIn.update({ where: { id: existing.id }, data: { timeIn: nowTime(), ...(site ? { site } : {}) } });
     return res.json(sCheckin(filled));

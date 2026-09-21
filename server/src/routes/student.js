@@ -164,7 +164,20 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
   // from the outside: every student is refused and the settings screen says the network is
   // enforced. So it is said out loud in the log where somebody reading the service's
   // output will meet it.
-  if (first.reason === "network_not_configured") {
+  //
+  // BOTH ALARMS ARE KEYED ON THE WHOLE LIST, NOT ON `first`, and the loop above is the
+  // reason. That loop writes EVERY failure to the log precisely so a college switching both
+  // checks on for the first time sees that its IP list is wrong AND its coordinates are,
+  // rather than discovering the second a week after fixing the first. Asking `first.reason`
+  // here contradicted that a few lines later: presence.js pushes the network failure before
+  // the geofence one, so with both switched on and both misconfigured the geofence alarm
+  // never fired — the one an operator is least likely to work out unaided, since it is
+  // fixed on a different screen from the one that turned the check on. The staff half of
+  // this rule (routes/checkins.js) says the same thing; fixing one and leaving its twin is
+  // exactly the drift presence.js exists to prevent.
+  //
+  // `first` stays as it is for the RESPONSE body: a student gets one refusal to act on.
+  if (verdict.failures.some((f) => f.reason === "network_not_configured")) {
     console.error("[presence] the college network check is ON but no usable IP range is saved — every check-in is being refused");
   }
   // THE SAME ALARM FOR THE GEOFENCE, which had none. The comment above states the
@@ -172,7 +185,7 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
   // where an operator will meet it — and then applied it to one of the two checks. The
   // geofence reaches the identical state by switching on with no campus pinned, or by
   // somebody clearing the coordinates of the only one that was.
-  if (first.reason === "campus_not_located") {
+  if (verdict.failures.some((f) => f.reason === "campus_not_located")) {
     console.error("[presence] the campus geofence is ON but no active campus has coordinates — every check-in is being refused");
   }
 
