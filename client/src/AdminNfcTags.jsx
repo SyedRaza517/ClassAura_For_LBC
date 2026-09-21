@@ -296,6 +296,45 @@ function TapSettings({ settings, onSaved }) {
             </span>
           </span>
         </label>
+
+        {/* THE SAME TWO QUESTIONS AS THE STUDENT SECTION ABOVE, ASKED OF STAFF — and
+            separate switches, not that pair widened. The student ones are described on
+            this very screen as not affecting staff, so teaching them to govern staff too
+            would start refusing clock-ins at any college that ticked one for students,
+            on a deploy nobody connected to the change.
+
+            They SHARE the IP ranges and the radius above, which is why those are not
+            repeated here: one college, one network, one set of campuses. Said out loud in
+            the copy, because two identical-looking checkboxes that read a list defined
+            somewhere else on the page is exactly the arrangement somebody misreads. */}
+        <label className="mt-2 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+          <input type="checkbox" checked={draft.staffNetworkCheck} disabled={saving}
+            onChange={(e) => save({ staffNetworkCheck: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="block text-[13px] font-semibold text-slate-800">Onsite clock-in must come from the college network — {draft.staffNetworkCheck ? "ON" : "OFF"}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Uses the same IP ranges as the student check above. <strong>Online is never affected</strong> —
+              somebody working from home cannot be on the college network, so checking it would make the
+              honest answer unrecordable. A member of staff in the building on mobile data <em>is</em> refused,
+              and their only route is Online, which records the wrong site: that is the cost of a rule with no
+              exceptions, and it is worth knowing before you switch it on.
+            </span>
+          </span>
+        </label>
+
+        <label className="mt-2 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+          <input type="checkbox" checked={draft.staffGeofenceCheck} disabled={saving}
+            onChange={(e) => save({ staffGeofenceCheck: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="block text-[13px] font-semibold text-slate-800">Onsite clock-in must happen at a campus — {draft.staffGeofenceCheck ? "ON" : "OFF"}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Uses the same campus coordinates and radius as the student check above. Proves somebody was
+              <strong> at the college</strong>, never which room or which desk. Staff clock in from the phone app —
+              a desktop browser cannot give a location accurate enough to mean anything, so it is not offered one.
+              Anyone who won't share their location is refused and told to choose Online.
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Its own panel rather than a fourth switch in the stack above, because it is not a
