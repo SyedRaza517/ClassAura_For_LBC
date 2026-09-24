@@ -380,10 +380,39 @@ async function clearTodayRow() {
  * Both bugs were real and both needed fixing: the row genuinely needed clearing (a
  * checked-in Daily Check-In screen has no radios either), and the navigation genuinely
  * needed restoring (home has no radios full stop, cleared row or not).
+ *
+ * A THIRD layer sat under those two, and run 3 is what found it: even with a cleared row
+ * and a re-click of the "Clock in" tab, this function still timed out — 30 real seconds,
+ * on `clockInTab.click()` — because at a DESKTOP viewport, reloading as an ADMIN account
+ * (client/src/App.jsx:509-518: `(isAdmin && !handset) ? "admin" : "app"`) lands on the
+ * Executive Dashboard console instead of the staff app, where no "Clock in" tab exists to
+ * click AT ALL. Fixed in main(), not here: the whole browser context now runs at a
+ * HANDSET viewport, so `handset` reads true and an admin reload routes back into the
+ * staff app like everyone else — see the long comment on `browser.newContext(...)` there
+ * for the full reasoning. What belongs HERE is the guard just below: if a future
+ * regression (a viewport change, a routing change, a different fixture account) ever
+ * reintroduces a reload that lands somewhere without a "Clock in" tab, this should fail
+ * in ~10 seconds with a message naming the cause, not in 30 with a bare Playwright
+ * timeout that sends the next person to write their own throwaway probe script to find
+ * out why — which is exactly what run 3 cost, and exactly what this guard is for.
  */
 async function goToCheckIn(page) {
   const clockInTab = clockInTabLocator(page);
-  await visible(clockInTab, 10000);
+  if (!(await visible(clockInTab, 10000))) {
+    const file = await shot(page, "not-on-staff-app");
+    throw new Error(
+      "goToCheckIn(): no 'Clock in' nav tab appeared within 10s — this page is not on " +
+      "the Staff App. The most likely cause, and the one that has actually happened: " +
+      "this browser is not running at a HANDSET viewport. client/src/App.jsx:509-518 " +
+      "routes a signed-in ADMIN straight to the Executive Dashboard console instead " +
+      "(`(isAdmin && !handset) ? \"admin\" : \"app\"`), which has no way back to the " +
+      "staff app — probed directly: none of its buttons match " +
+      "/staff app|my day|staff hub|back to staff|switch/i. main() must launch the " +
+      "browser context at a handset-sized viewport (viewport, isMobile, hasTouch) for " +
+      "exactly this reason; check that block hasn't reverted to a desktop size. " +
+      `Screenshot: ${file}`
+    );
+  }
   await clockInTab.click();
   await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
 }
@@ -600,26 +629,28 @@ async function walkOnsite(page) {
     // has nothing to do with the app.
     //
     // The plan's D row describes the popup saying "Please tap the NFC sticker" and its H
-    // row describes the SAME popup, in a desktop browser, saying to use the app instead —
-    // because a browser cannot read a sticker. Confirmed against client/src/nfc.js: `const
-    // NATIVE = Capacitor?.isNativePlatform?.() === true;` and `nfcStatus()` returns `{ ok:
-    // false, reason: "web" }` whenever `!NATIVE` — which is unconditionally true in any
-    // browser, including this one, because `Capacitor.isNativePlatform()` only ever answers
-    // true inside the Capacitor-wrapped native shell. There is no browser flag, user agent
-    // spoof or Playwright option that changes that answer, because it isn't asking "does
-    // this look like a phone" — it is asking whether the Capacitor native runtime bridge is
-    // present at all, and in a browser it never is.
+    // row describes the SAME popup, IN ANY BROWSER — including one sized and touch-enabled
+    // like a phone, which this script now is (see main()'s viewport comment) — saying to
+    // use the app instead, because a browser cannot read a sticker. Confirmed against
+    // client/src/nfc.js: `const NATIVE = Capacitor?.isNativePlatform?.() === true;` and
+    // `nfcStatus()` returns `{ ok: false, reason: "web" }` whenever `!NATIVE` — which is
+    // unconditionally true in any browser, including this one, because
+    // `Capacitor.isNativePlatform()` only ever answers true inside the Capacitor-wrapped
+    // native shell. There is no browser flag, viewport size, user agent spoof or
+    // Playwright option that changes that answer, because it isn't asking "does this look
+    // like a phone" — it is asking whether the Capacitor native runtime bridge is present
+    // at all, and in a browser it never is, handset-shaped or not.
     //
-    // This script only ever drives a desktop Edge browser (see the launch call in main()),
-    // so it can only ever observe H's wording, never D's. Producing D's literal "tap the
-    // sticker" copy needs the Capacitor-wrapped app running on a real handset — which test
-    // plan §9 already lists as unproven, for the same underlying reason a physical NFC tap
-    // is unproven there. That gap is inherited here rather than papered over with a wording
-    // this script cannot actually make happen.
+    // This script drives a real Edge browser (see the launch call in main()) — never the
+    // packaged native app — so it can only ever observe H's wording, never D's. Producing
+    // D's literal "tap the sticker" copy needs the Capacitor-wrapped app running on a real
+    // handset — which test plan §9 already lists as unproven, for the same underlying
+    // reason a physical NFC tap is unproven there. That gap is inherited here rather than
+    // papered over with a wording this script cannot actually make happen.
     console.log("--- D+H: On site opened the sticker dialog immediately ---");
     await check(page, "D: the dialog opens immediately on choosing On site (no extra click needed)",
       dialogOpened);
-    await check(page, "H: in a desktop browser, the dialog says to use the app rather than tap here",
+    await check(page, "H: in a browser — not the packaged app — the dialog says to use the app rather than tap here",
       await visible(dialog.getByText(/app/i), 2000));
 
     // E: dismiss it, then prove the button now reads the "reopen" state rather than
@@ -773,22 +804,52 @@ async function sectionGeofence(page) {
 async function main() {
   console.log(`Staff check-in walkthrough — ${CLIENT_URL}, staff=${STAFF_EMAIL}, headless=${HEADLESS}`);
   const browser = await chromium.launch({ channel: "msedge", headless: HEADLESS });
-  // 1440x900 — the same desktop size scripts/screenshots.mjs uses, and large enough that
-  // this is unambiguously the "desktop browser" H is asking about rather than a viewport
-  // narrow enough to trip a handset breakpoint and change which shell renders.
+
+  // A HANDSET viewport, not a desktop one — THIS COMMENT USED TO SAY the opposite, and
+  // getting it wrong is what run 3 actually hit, two layers under the DB-clearing fix
+  // above: client/src/App.jsx:509-518 routes a signed-in ADMIN straight to the Executive
+  // Dashboard console at a desktop viewport — `(isAdmin && !handset) ? "admin" : "app"` —
+  // a completely different UI with no way back to the staff app (probed for one: none of
+  // its buttons match /staff app|my day|staff hub|back to staff|switch/i). The FIRST
+  // navigation after sign-in survives this — client/src/App.jsx's `entry === "app"` path
+  // from the Staff App landing tile overrides it, which is why signIn() above always
+  // worked — but every `page.reload()` in this file re-evaluates `initialView` from
+  // scratch with no `entry` to override it, so a desktop-viewport reload was routing the
+  // (admin) fixture account straight past the screen this whole file is about, and
+  // `goToCheckIn()` would then spend 30 real seconds hunting for a "Clock in" tab that
+  // could never appear (see the guard it now raises instead, below).
   //
-  // permissions/geolocation granted HERE, once, for the whole run — not only inside
-  // sectionGeofence() — so that no section ever hits a live "grant location?" browser
-  // prompt this headless-capable script has no way to click. It costs nothing for every
-  // OTHER section: client/src/api.js's staffPositionIfNeeded() never touches the
-  // geolocation API at all unless the college's geofence switch is on, so A, B/C and
-  // D/E/F/G never read this value — only sectionGeofence() does, and it moves the spoofed
-  // position onto the campus itself with context.setGeolocation() when it needs to.
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
+  // This is not a workaround for that bug — it is what the feature actually is. The spec
+  // says plainly: "Onsite is phone-only. Staff clock in from the Android or iOS app." A
+  // desktop-viewport walkthrough was testing a shape the feature was never built for; at
+  // a handset viewport `useIsHandset()` (client/src/PhoneShell.jsx) reads true from its
+  // `max-width: 640px` media query, `App.jsx` routes an admin reload back into the staff
+  // app exactly like everyone else, and the routing this script needs to prove is the
+  // one the product actually ships.
+  //
+  // D/H's own assertions below are UNAFFECTED by this change, and stay written the way
+  // they were: `nfcStatus()` (client/src/nfc.js) keys on `Capacitor.isNativePlatform()`,
+  // never on viewport size, so a handset-shaped browser still answers `reason: "web"` and
+  // still renders "Use the app to tap in" — a real handset viewport proves nothing new
+  // about the sticker's live listening state, and the hard boundary walkOnsite()
+  // describes for that (browser vs. packaged app) is untouched.
+  //
+  // permissions/geolocation on the SAME context as the viewport, not a second
+  // `browser.newPage()` call with its own options — one context, one set of grants, for
+  // the life of the run. Granted here rather than only inside sectionGeofence() so no
+  // section ever hits a live "grant location?" prompt this script has no way to click; it
+  // costs nothing for every OTHER section, since client/src/api.js's
+  // staffPositionIfNeeded() never touches the geolocation API unless the college's
+  // geofence switch is on.
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },   // iPhone 14-ish
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3,
     permissions: ["geolocation"],
     geolocation: FAR_FROM_CAMPUS,
   });
+  const page = await context.newPage();
 
   try {
     await signIn(page); // throws and stops the run on failure — see the file header
@@ -818,7 +879,19 @@ async function main() {
     await sectionOnline(page);
   } catch (e) {
     fail += 1;
+    // A screenshot HERE, not just at the specific throw sites that already take one of
+    // their own (the sign-in gate's three, goToCheckIn()'s new one). THIS COMMENT USED TO
+    // NOT EXIST, and the gap it fills is exactly what run 3 cost: a bare Playwright
+    // timeout (`locator.click: Timeout 30000ms exceeded`) has no shot() call anywhere
+    // upstream of it, so the FATAL line alone said nothing about what was actually on
+    // screen when it happened — finding out took a separate, throwaway probe script and
+    // two rounds of back-and-forth. One screenshot, unconditionally, on every path into
+    // this catch, answers "what did the page actually show" immediately instead. Never
+    // itself allowed to throw — shot() already swallows its own screenshot failure — so
+    // there is nothing here that could mask the real error being reported below it.
+    const file = await shot(page, "FATAL");
     console.error("\n✗ FATAL:", e.message);
+    console.error("   screenshot:", file);
   } finally {
     // HOWEVER the run ended — a clean pass, a caught FATAL above, or an exception this
     // try/catch didn't anticipate — leave nothing behind. Skipping this would clock the
