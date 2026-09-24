@@ -42,11 +42,22 @@
 // admin on the sidebar Admin Dashboard view, which is a different screen from the one
 // this plan describes; the staff tile opens client/src/MobileAuth.jsx and — because
 // `initialView = entry === "app" ? "app" : …` in client/src/App.jsx — lands directly on
-// the Staff App home, whose tiles include "Daily Check-In" by that exact name (confirmed
-// against scripts/screenshots.mjs's APP_SCREENS list, which enumerates it). A header
-// toggle that used to let you flip between the two views from either entry point was
-// removed — client/src/App.jsx says so in a comment at the spot it used to sit — so
-// picking the right tile up front is not optional stage-setting, it is the only way in.
+// the Staff App home. A header toggle that used to let you flip between the two views
+// from either entry point was removed — client/src/App.jsx says so in a comment at the
+// spot it used to sit — so picking the right tile up front is not optional stage-setting,
+// it is the only way in.
+//
+// THIS COMMENT USED TO SAY the Staff App home's "tiles include 'Daily Check-In' by that
+// exact name (confirmed against scripts/screenshots.mjs's APP_SCREENS list, which
+// enumerates it)". That was wrong, and reading client/src/StaffHub.jsx is what found it:
+// `APP_SCREENS` is a list of human-readable screen NAMES used for screenshot filenames —
+// it was never an accessible name any element on the page actually carries. The screen's
+// own header title IS "Daily Check-In" (`{ checkin: "Daily Check-In", … }[screen]` around
+// line 627), but neither control that NAVIGATES to it is named that: the "All tools" grid
+// tile and the bottom tab bar both use the shorter label **"Clock in"** (`{ key: "checkin",
+// label: "Clock in", … }`, appearing twice — the grid at ~line 833, the tab bar at ~line
+// 891 — and BOTH are on screen at once on the home screen, which is its own selector trap;
+// see the comment on `clockInTab` in signIn() below for how that one is resolved.
 //
 // WHAT THIS SCRIPT CANNOT SET FOR YOU — THE THREE SWITCHES, AND ONE MORE THING
 // The Daily Check-In screen's behaviour depends on three college-level settings
@@ -145,6 +156,27 @@ const HEADLESS = process.env.HEADLESS === "1";
 const FAR_FROM_CAMPUS = { latitude: 53.4808, longitude: -2.2426, accuracy: 20 };
 const AT_CAMPUS = { latitude: 51.5007, longitude: -0.1246, accuracy: 15 };
 
+// The status line every "did this actually clock in" assertion in this file reads, and
+// NOT plain `/checked in/i` — found the same way the sign-in selectors above were:
+// reading client/src/StaffHub.jsx rather than trusting a regex that had never run against
+// the real markup. CheckInScreen's status paragraph (~line 1479) is one of THREE literal
+// strings — `"✓ Checked Out"`, `"● Checked In"`, or, when nothing has happened yet,
+// `"Not Checked In"`. That third string contains the substring "Checked In" too, so a bare
+// `/checked in/i` matches the screen's DEFAULT, not-yet-checked-in state just as happily
+// as its success state — every assertion built on it would report a pass whether or not
+// the click actually worked, and `alreadyCheckedInToday()` would read as "already checked
+// in" from the very first page load, before anything happens. That is precisely the "a
+// test that passes while discriminating nothing" failure `testing.md` warns about, just
+// never triggered yet because the sign-in gate above always threw first.
+//
+// Anchored on the glyph instead: both real success strings begin with a bullet (●) or a
+// tick (✓) immediately followed by "Checked"; "Not Checked In" has neither. (A THIRD
+// string carries a tick too — "✓ Your day is complete…", shown alongside "✓ Checked Out"
+// once checked out — but it says "Your", not "Checked", right after the glyph, so
+// requiring "checked" immediately after excludes it as well without needing `.first()` to
+// paper over a double match.)
+const CHECKED_STATE_RE = /[●✓]\s*checked/i;
+
 const SHOT_DIR = path.join(__dirname, "_walk-staff-checkin-screenshots");
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -210,7 +242,7 @@ async function currentCheckInButton(page) {
 /** Whether today's card already shows a completed check-in — the state this script
  * cannot reset (see the file header). Checked before sections that need a fresh screen. */
 async function alreadyCheckedInToday(page) {
-  return visible(page.getByText(/checked in/i), 2000);
+  return visible(page.getByText(CHECKED_STATE_RE), 2000);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -236,9 +268,18 @@ async function signIn(page) {
   }
   await staffTile.click();
 
-  // MobileAuth.jsx labels its inputs via a `Labelled` wrapper, same association pattern
-  // as the standalone Login.jsx form — `getByLabel` needs that association to exist.
-  const email = page.getByLabel("Email");
+  // MobileAuth.jsx labels its inputs via a `Labelled` wrapper, so `getByLabel` resolves —
+  // but NOT plain `getByLabel("Email")`, which is where the first real run of this script
+  // actually failed: strict mode, "resolved to 2 elements" — the Email input, AND the
+  // "Remember my email and password" checkbox a few rows down, because Playwright's
+  // string matching is substring-and-case-insensitive by default and that checkbox's own
+  // label text contains the word "email". Confirmed by reading MobileAuth.jsx's SignIn
+  // form directly rather than guessing at a fix: `getByRole("textbox", …)` sidesteps it
+  // outright, because the checkbox's role is "checkbox", not "textbox" — no substring
+  // match inside `name` can bridge two different roles. `exact: true` is added on top for
+  // the same reason it's cheap everywhere: it costs nothing today and stops a FUTURE field
+  // (an "Email domain" input, say) from reopening the same class of bug silently.
+  const email = page.getByRole("textbox", { name: "Email", exact: true });
   if (!(await visible(email, 8000))) {
     await shot(page, "no-email-field-after-tile-click");
     throw new Error(
@@ -248,20 +289,47 @@ async function signIn(page) {
     );
   }
   await email.fill(STAFF_EMAIL);
-  await page.getByLabel("Password").fill(STAFF_PASSWORD);
+  // The SAME checkbox collides with a plain `getByLabel("Password")` too — its label text
+  // is "Remember my email and PASSWORD" — and this one can't switch to `getByRole
+  // ("textbox", …)` the way Email did: the field renders `type="password"` at this point
+  // (useReveal()'s default, in client/src/RevealButton.jsx, is `shown: false` and this
+  // script never presses the reveal toggle), and per the HTML accessibility mapping an
+  // `<input type="password">` carries NO corresponding ARIA role at all — Chromium does
+  // not expose it as `role="textbox"`, so `getByRole("textbox", …)` would silently match
+  // NOTHING here, which is a worse failure than the one it would fix. `exact: true` is the
+  // right tool instead: the checkbox's full label text is "Remember my email and
+  // password", not "Password", so an EXACT match excludes it while an unanchored
+  // substring match would not.
+  await page.getByLabel("Password", { exact: true }).fill(STAFF_PASSWORD);
   await page.getByRole("button", { name: /^sign in$/i }).click();
 
   // The gate itself: proof we actually reached the Staff App home, not just that the
   // click landed somewhere. A wrong password fails silently into an error banner on the
-  // SAME form — no exception, no navigation — so waiting for the home screen's own tile
-  // is what actually catches that, rather than waiting for the login form to disappear
-  // (which a stuck error state never does either way).
-  const dailyCheckInTile = page.getByRole("button", { name: /daily check-in/i });
-  if (!(await visible(dailyCheckInTile, 15000))) {
+  // SAME form — no exception, no navigation — so waiting for the home screen's own nav
+  // control is what actually catches that, rather than waiting for the login form to
+  // disappear (which a stuck error state never does either way).
+  //
+  // NOT "Daily Check-In" — see the correction in the file header above. The control that
+  // navigates to the check-in screen is labelled "Clock in", and it exists TWICE at once
+  // on the home screen: once in the "All tools" grid (client/src/StaffHub.jsx ~line 833)
+  // and once in the persistent bottom tab bar (~line 891, `StaffTabBar`) that PhoneShell
+  // renders as this screen's `footer` regardless of which screen is showing. Two buttons
+  // sharing one accessible name is exactly the strict-mode trap the Email fix above heads
+  // off — `exact: true` cannot save this one, because both names really are "Clock in",
+  // not merely overlapping substrings. Scoped to the `<nav>` landmark instead: the tab bar
+  // is a real `<nav>` element and the "All tools" grid tile is a plain `<div>`, so
+  // `getByRole("navigation")` picks out only the tab bar's copy. (The admin console has
+  // its own `<nav>`, at StaffHub.jsx ~line 3721 — irrelevant here, since this script only
+  // ever signs in through the Staff App tile, never Admin Dashboard, so that sidebar is
+  // never in the DOM to collide with.) The tab bar is also the more durable target of the
+  // two: it is a fixed 4-item array (`STAFF_TABS`), while the "All tools" grid is
+  // explicitly documented as reshuffling by role/gating.
+  const clockInTab = page.getByRole("navigation").getByRole("button", { name: "Clock in", exact: true });
+  if (!(await visible(clockInTab, 15000))) {
     await shot(page, "sign-in-did-not-reach-staff-home");
     throw new Error(
       "Sign-in gate: signed the form but never reached a Staff App home carrying a " +
-      "'Daily Check-In' tile within 15s. Likely causes: wrong credentials (check " +
+      "'Clock in' tab within 15s. Likely causes: wrong credentials (check " +
       "STAFF_EMAIL/STAFF_PASSWORD env vars against the seed — see docs/testing/…md §2.1), " +
       "the seed hasn't been run against this database, or a second factor (TOTP) is " +
       "configured on this account and this script doesn't handle it. Refusing to " +
@@ -269,7 +337,7 @@ async function signIn(page) {
     );
   }
   console.log("✓ signed in and reached the Staff App home");
-  await dailyCheckInTile.click();
+  await clockInTab.click();
   // role=radiogroup, NOT role=tablist — ruling R16, 21 Sep 2026, corrected on the screen
   // itself in client/src/StaffHub.jsx (search "A RADIO GROUP, NOT A TABLIST" there for the
   // full reasoning). The screen shipped as a tablist because tabs are what it looks like
@@ -332,7 +400,7 @@ async function sectionOnline(page) {
   // before this line runs; the card's own state is what a person re-opening the screen
   // a minute later would actually see, which is the thing worth proving.
   await check(page, "C: the card shows a checked-in state after pressing Check in",
-    await visible(page.getByText(/checked in/i), 8000));
+    await visible(page.getByText(CHECKED_STATE_RE), 8000));
   await check(page, "C: the card shows a time",
     await visible(page.getByText(/\d{1,2}:\d{2}/), 2000));
   await check(page, "C: the card says Online",
@@ -450,7 +518,7 @@ async function walkOnsite(page) {
     // all three off — the pre-feature button-just-clocks-you-in path.
     console.log("--- F: On site clocked in with no checks ---");
     await check(page, "F: pressing Check in (no sticker, no refusal) clocks in",
-      await visible(page.getByText(/checked in/i), 8000));
+      await visible(page.getByText(CHECKED_STATE_RE), 8000));
   }
 }
 
@@ -539,7 +607,7 @@ async function sectionGeofence(page) {
   await page.context().setGeolocation(AT_CAMPUS);
   await btn.click();
   await check(page, "a position at the campus, with good accuracy, is accepted",
-    await visible(page.getByText(/checked in/i), 8000));
+    await visible(page.getByText(CHECKED_STATE_RE), 8000));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -578,13 +646,13 @@ async function main() {
     // below: walkOnsite may have navigated inside a dialog or changed the card's state, and
     // a fresh navigation is more honest than trusting whatever it left behind.
     await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("radiogroup").or(page.getByText(/checked in/i)), 8000);
+    await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
     await sectionGeofence(page);
 
     // Re-open the screen: the geofence section (or walkOnsite, if geofence SKIPped
     // straight through) may have written a check-in or left a dialog on screen.
     await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("radiogroup").or(page.getByText(/checked in/i)), 8000);
+    await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
     await sectionOnline(page);
   } catch (e) {
     fail += 1;
