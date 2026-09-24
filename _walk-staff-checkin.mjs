@@ -111,21 +111,37 @@
 // untested path as a pass (see CLAUDE.md). A SKIP here means "this run's config didn't
 // exercise that branch," never "the assertion doesn't hold."
 //
-// STATE THIS SCRIPT CANNOT RESET
-// A successful check-in (Online or On-site) writes a real `CheckIn` row for today against
-// whatever staff account signed in. Nothing in this script — and nothing it is allowed to
-// touch, per its brief — clears that row, so a second run today against the same account
-// will find it already checked in and SKIP every assertion that needs a fresh state.
-// That is why the onsite branch runs BEFORE the Online branch below: the onsite branch
-// only writes a row when it lands on F (all three switches off); the D/E branch (tap
-// required) and the G branch (a refusal) write nothing, so running onsite first keeps the
-// Online branch's fresh-state assertions alive for the config combinations most people
-// will actually use this script to check. Use a staff account that has not clocked in
-// today, or re-run tomorrow, or clear today's row via the admin correction route the test
-// plan's §6.3 describes (`PUT /` — not called from here, since that route is one of the
-// files this task was told not to touch and it was still being written elsewhere).
+// STATE THIS SCRIPT USED TO BE UNABLE TO RESET — AND WHY IT NOW CAN
+// THIS COMMENT USED TO SAY that a successful check-in (Online or On-site) writes a real
+// `CheckIn` row for today, that nothing in this script clears it, and that a second run
+// against the same account would therefore find it already checked in and SKIP every
+// assertion needing a fresh state. That was true right up until the first real run against
+// a genuinely fresh account proved the actual cost of it: Section F clocks the account in,
+// and every section after F found `CheckInScreen` already rendered its checked-in state —
+// no radio group on the page at all — and failed on "role=radio ... not found" rather than
+// on anything the product did wrong. Skipping was the honest answer for a SECOND run today;
+// it was never the honest answer for the FIRST section to write a row on the SAME run.
+//
+// The gap is closed by reaching past the API into the same database the smoke suites
+// already use — see "Database access" below for `clearTodayRow()` and
+// `resetToFreshScreen()`, and for why an "un-clock-in" API route was deliberately not
+// invented to serve this instead. `main()` now calls `resetToFreshScreen()` before the
+// first section that needs a clean slate and after every section that might have written
+// a row, plus once more in a `finally`, so an aborted run cannot leave the account
+// clocked in and poison whatever runs against it next.
+//
+// The onsite-before-Online ORDERING kept below is no longer load-bearing the way it used
+// to be (each section now gets its own guaranteed-fresh start), but it is kept anyway: it
+// still matches the order a person reading the test plan's §3.2 table would work through
+// by hand, and reordering it would be change for its own sake.
+//
+// `alreadyCheckedInToday()` (below) still exists too, as a second, cheaper check each
+// section makes for itself before asserting — defence in depth against a DATABASE_URL
+// that turns out to point somewhere the delete didn't reach, not the primary mechanism
+// any more.
 import { chromium } from "playwright";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -222,6 +238,20 @@ async function visible(locator, timeout = 4000) {
 }
 
 /**
+ * The Staff App home's "Clock in" nav control, scoped to the bottom tab bar's `<nav>`
+ * landmark. Shared by signIn() (which clicks it once, from a fresh sign-in) and
+ * goToCheckIn() (which clicks it again after every page.reload(), for a reason explained
+ * on that function) so there is exactly one place this selector is written rather than two
+ * copies that can quietly drift apart — see access-control.md's ADMIN_PAGES for what that
+ * drift costs elsewhere in this codebase. See the long comment inside signIn() (kept
+ * there, where it's first used) for why this is scoped to `<nav>` rather than matched on
+ * name alone.
+ */
+function clockInTabLocator(page) {
+  return page.getByRole("navigation").getByRole("button", { name: "Clock in", exact: true });
+}
+
+/**
  * The primary call-to-action button. Given as exactly "Check in" in the plan, but
  * client/src/Landing.jsx shows this codebase sometimes folds icon text and captions into
  * a button's accessible name (its role tiles' names run "Staff App For college staff Sign
@@ -239,10 +269,138 @@ async function currentCheckInButton(page) {
   return (await visible(exact, 1500)) ? exact : loose;
 }
 
-/** Whether today's card already shows a completed check-in — the state this script
- * cannot reset (see the file header). Checked before sections that need a fresh screen. */
+/** Whether today's card already shows a completed check-in. Checked before sections that
+ * need a fresh screen — belt-and-braces alongside `resetToFreshScreen()` below, which is
+ * what actually GUARANTEES a fresh screen now; see the file header for the history. */
 async function alreadyCheckedInToday(page) {
   return visible(page.getByText(CHECKED_STATE_RE), 2000);
+}
+
+// ---------------------------------------------------------------------------------------
+// Database access — clearing today's CheckIn row between sections
+// ---------------------------------------------------------------------------------------
+//
+// The bridge is IDENTICAL to the one scripts/smoke-nfc-tap.mjs uses (read that file's own
+// header for the fuller version of this reasoning): `createRequire`, anchored at
+// server/package.json so Node resolves `require()` calls as if this code lived inside
+// server/, walked up to server/'s OWN node_modules for `@prisma/client` rather than this
+// script needing its own separate `npm install` at the repo root just to hold one package.
+//
+// DATABASE_URL IS REQUIRED, exactly as database-safety.md requires for every other command
+// in this repo that touches a database, and for the identical reason: never let a database
+// connection fall through to whatever server/.env happens to point at, which — per that
+// rule — has historically been a LIVE database. Passing it on the command line is the only
+// route in; there is no fallback here on purpose.
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "DATABASE_URL is required — this script now clears today's CheckIn row for the " +
+    "signed-in staff member between sections (see \"Database access\" above), the same " +
+    "way scripts/smoke-nfc-tap.mjs's clearDay() does. Point it at the local Postgres — " +
+    "see database-safety.md — and pass it on the command line, never let it fall through " +
+    "to server/.env:\n\n" +
+    '  DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" node _walk-staff-checkin.mjs\n'
+  );
+  process.exit(1);
+}
+
+const require = createRequire(pathToFileURL(path.join(__dirname, "server", "package.json")));
+// A BARE client, not the one the API writes through — this script only ever DELETES its
+// own fixture's row with it, never plants or reads application state the way
+// smoke-nfc-tap.mjs's bare client does, but the reasoning for using one is the same: this
+// is test infrastructure reaching directly into storage, not a second implementation of
+// the API.
+const { PrismaClient } = require(path.join(__dirname, "server", "node_modules", "@prisma", "client"));
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+
+// Dates are strings, `YYYY-MM-DD`, in APP_TIMEZONE — never the host clock — per
+// conventions.md, and copied verbatim from scripts/smoke-nfc-tap.mjs's own `todayLocal()`
+// rather than re-derived: a walkthrough run near midnight computing "today" one way while
+// the server computes it another is exactly the kind of one-off drift that rule exists to
+// prevent, and there is no reason this script's answer should risk disagreeing with the
+// smoke suite's.
+const todayLocal = () => new Date().toLocaleDateString("en-CA", { timeZone: process.env.APP_TIMEZONE || "Europe/London" });
+
+// Resolved once and cached: the signed-in STAFF_EMAIL never changes mid-run, and looking
+// it up again before every clear would be a database round trip this script has no reason
+// to pay for eight times over.
+let staffRowId = null;
+async function currentStaffId() {
+  if (staffRowId) return staffRowId;
+  // findUnique, not findFirst: Staff.email carries `@@unique([email])` in schema.prisma —
+  // single-tenant now, so unlike the tenant-scoped uniqueness single-tenant-history.md
+  // describes as removed, this one really does mean "at most one row can match".
+  const row = await db.staff.findUnique({ where: { email: STAFF_EMAIL }, select: { id: true } });
+  if (!row) {
+    throw new Error(
+      `clearTodayRow(): no Staff row for ${STAFF_EMAIL} against this DATABASE_URL — is ` +
+      "the seed loaded against the same database the app is running on? (see " +
+      "docs/testing/…md §2.1)"
+    );
+  }
+  staffRowId = row.id;
+  return staffRowId;
+}
+
+/**
+ * Deletes TODAY's CheckIn row for the signed-in staff member — nobody else's, and no
+ * other date. SCOPED ON PURPOSE to `{ staffId, date: todayLocal() }`, matching
+ * smoke-nfc-tap.mjs's own `clearDay()` exactly: the seeded fixtures carry historical
+ * check-ins for OTHER staff that other suites read, and a broader `deleteMany` — by date
+ * alone, or with no staffId filter at all — would silently destroy test data this script
+ * has no business touching. DB only; does not touch the open page. Safe to call when no
+ * row exists (deleteMany matching nothing is a no-op, not an error).
+ */
+async function clearTodayRow() {
+  const id = await currentStaffId();
+  await db.checkIn.deleteMany({ where: { staffId: id, date: todayLocal() } });
+}
+
+/**
+ * Gets from wherever the app currently is back to the Daily Check-In screen, and waits
+ * for it to mount. NEEDED AFTER EVERY page.reload() IN THIS FILE, and this is the second
+ * real bug the coordinator's second run surfaced (not just the one it was diagnosed as):
+ * `screen` in client/src/StaffHub.jsx is plain in-memory React state
+ * (`const [screen, setScreen] = useState("home")`, ~line 522) — never a URL, a query
+ * param or anything else a reload would restore. A reload does NOT return to whatever
+ * screen was open; it always remounts the Staff App on "home". The signed-in SESSION does
+ * survive — the auth token lives in storage (client/src/auth.jsx), not component state —
+ * so a reloaded page is still signed in, just on the wrong screen.
+ *
+ * This is what the coordinator's second run actually hit. Their summary read the failure
+ * as "F clocks the admin in, so the radios aren't rendered" — true as far as it goes, but
+ * the log itself says otherwise about WHERE: `sectionGeofence()` checks
+ * `alreadyCheckedInToday()` BEFORE it ever looks for a radio, and that check was already
+ * confirmed working (CHECKED_STATE_RE, fixed last pass) — if the page had genuinely
+ * reloaded back onto a checked-in Daily Check-In screen, that would have printed SKIP, not
+ * the "✗ ... role=radio ... not found" the log actually shows. A checked-in-but-still-
+ * checkin-screen and a HOME screen look identical to that one symptom (neither has a
+ * radio), which is exactly why this needed reading `useState("home")` in the real file
+ * rather than accepting the first explanation that fit the symptom.
+ *
+ * Both bugs were real and both needed fixing: the row genuinely needed clearing (a
+ * checked-in Daily Check-In screen has no radios either), and the navigation genuinely
+ * needed restoring (home has no radios full stop, cleared row or not).
+ */
+async function goToCheckIn(page) {
+  const clockInTab = clockInTabLocator(page);
+  await visible(clockInTab, 10000);
+  await clockInTab.click();
+  await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
+}
+
+/**
+ * `clearTodayRow()`, then a page reload, then back to the Daily Check-In screen — and
+ * neither half is optional. `CheckInScreen` reads today's check-in out of
+ * `store.checkins`, React state the page loaded once and keeps in memory, so deleting the
+ * row in the database is invisible to a page that already rendered from a stale read
+ * without a reload; and the reload itself lands on the Staff App HOME, not back on the
+ * check-in screen, for the reason `goToCheckIn()` above explains — so a reload with
+ * nothing after it is just as broken as no reload at all, in a different way.
+ */
+async function resetToFreshScreen(page) {
+  await clearTodayRow();
+  await page.reload({ waitUntil: "networkidle" });
+  await goToCheckIn(page);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -324,7 +482,7 @@ async function signIn(page) {
   // never in the DOM to collide with.) The tab bar is also the more durable target of the
   // two: it is a fixed 4-item array (`STAFF_TABS`), while the "All tools" grid is
   // explicitly documented as reshuffling by role/gating.
-  const clockInTab = page.getByRole("navigation").getByRole("button", { name: "Clock in", exact: true });
+  const clockInTab = clockInTabLocator(page);
   if (!(await visible(clockInTab, 15000))) {
     await shot(page, "sign-in-did-not-reach-staff-home");
     throw new Error(
@@ -635,29 +793,43 @@ async function main() {
   try {
     await signIn(page); // throws and stops the run on failure — see the file header
 
-    // Onsite before Online — deliberately. See "STATE THIS SCRIPT CANNOT RESET" above:
-    // running onsite first keeps Online's fresh-state assertions alive whenever onsite
-    // lands on D/E or G, both of which write nothing.
+    // GUARANTEED fresh before the first section that needs it — not "probably fresh
+    // because nothing has run yet". A previous manual run, a previous automated run that
+    // died mid-way, or simply this same account having clocked in earlier today for real
+    // reasons would otherwise reach Section A already checked in. See
+    // "STATE THIS SCRIPT USED TO BE UNABLE TO RESET" and resetToFreshScreen() above.
+    await resetToFreshScreen(page);
+
+    // Onsite before Online — kept for readability (it matches the test plan's own
+    // section order); no longer load-bearing for state the way the file header used to
+    // describe, since every section below now gets its own guaranteed-fresh start.
     const fresh = await sectionFreshLoad(page);
     if (fresh) await walkOnsite(page);
     else skip("On site branch (D/E/F/G/H)", "screen was not in a fresh state at Section A");
 
-    // Re-open the screen before the geofence section for the same reason as before Online
-    // below: walkOnsite may have navigated inside a dialog or changed the card's state, and
-    // a fresh navigation is more honest than trusting whatever it left behind.
-    await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
+    // walkOnsite's F branch may have just clocked the account in for real — clear it
+    // before the geofence section, which needs its OWN fresh start (and its acceptance
+    // case writes a row of its own before this run reaches Online).
+    await resetToFreshScreen(page);
     await sectionGeofence(page);
 
-    // Re-open the screen: the geofence section (or walkOnsite, if geofence SKIPped
-    // straight through) may have written a check-in or left a dialog on screen.
-    await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("radiogroup").or(page.getByText(CHECKED_STATE_RE)), 8000);
+    // sectionGeofence's acceptance case may have just clocked the account in too.
+    await resetToFreshScreen(page);
     await sectionOnline(page);
   } catch (e) {
     fail += 1;
     console.error("\n✗ FATAL:", e.message);
   } finally {
+    // HOWEVER the run ended — a clean pass, a caught FATAL above, or an exception this
+    // try/catch didn't anticipate — leave nothing behind. Skipping this would clock the
+    // account in for the rest of the day and poison every fresh-state assertion on the
+    // NEXT run, silently: alreadyCheckedInToday() would just start reading true and every
+    // guarded section would SKIP with no clue that this run, not the product, caused it.
+    // Caught rather than awaited-and-left-to-throw: a cleanup failure must not mask
+    // whatever this run already found, and there is nothing more useful to do with it
+    // than tell the person running the script.
+    await clearTodayRow().catch((cleanupErr) => console.error("cleanup: could not clear today's CheckIn row —", cleanupErr.message));
+    await db.$disconnect().catch(() => {});
     await browser.close();
   }
 
