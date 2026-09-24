@@ -95,12 +95,22 @@
 //                  refusal was "left as a follow-up rather than guessed at here", with the
 //                  off-network refusal driven instead because off_campus "needs a granted
 //                  geolocation permission and a spoofed position (`context.setGeolocation`)
-//                  to avoid tripping `position_missing` instead". That gap is closed now:
-//                  `main()` grants the `geolocation` permission and starts the position far
-//                  from campus when the browser context is created, so no permission prompt
-//                  ever has to be clicked, and `sectionGeofence()` moves that spoofed
-//                  position with `context.setGeolocation()` between a point far from the
-//                  campus (expect `off_campus`) and the campus itself (expect acceptance).
+//                  to avoid tripping `position_missing` instead". That gap is closed now,
+//                  in two steps rather than one: `main()`'s browser context grants the
+//                  `geolocation` permission and starts far from campus, so `sectionGeofence()`
+//                  can assert the `off_campus` refusal with no extra work. It USED TO also
+//                  say `sectionGeofence()` then moved that SAME spoofed position onto the
+//                  campus with `context.setGeolocation()` to assert acceptance — that was
+//                  tried, and confirmed against the real screen to be wrong:
+//                  client/src/wherePhoneIs.js accepts a position fix up to a minute old on
+//                  purpose (`maximumAge: 60_000`, and its own comment explains why that is
+//                  correct product behaviour, not a bug to route around), so the SAME
+//                  context's browser was handing back the cached far-from-campus fix
+//                  instead of the newly-set one, and the server correctly refused it AGAIN.
+//                  The acceptance case now runs in its own SECOND browser context, started
+//                  already-geolocated at the campus, with its own sign-in — see
+//                  `acceptAtCampusInFreshContext()`'s own (long) comment for the full
+//                  account, including why lowering `maximumAge` is the wrong fix.
 //   H            — same config as D/E. Not a separate action — see the note in
 //                  `walkOnsite()` about why this script cannot produce D's exact copy.
 //
@@ -154,11 +164,15 @@ const STAFF_PASSWORD = process.env.STAFF_PASSWORD || "test-seed-password-2026";
 // suite. `HEADLESS=1 node _walk-staff-checkin.mjs` switches it off for CI-style runs.
 const HEADLESS = process.env.HEADLESS === "1";
 
-// The two positions sectionGeofence() spoofs via context.setGeolocation — never a real
-// GPS fix (see the note on what this script cannot test, in walkOnsite()), but Playwright
-// removing the flakiness of a real one rather than the script working around it by
-// skipping the check entirely, which is what this file used to do — see the "Geofence"
-// entry in the switches comment above for that history.
+// The two positions the geofence section spoofs — never a real GPS fix (see the note on
+// what this script cannot test, in walkOnsite()), but Playwright removing the flakiness
+// of a real one rather than the script working around it by skipping the check entirely,
+// which is what this file used to do — see the "Geofence" entry in the switches comment
+// above for that history. FAR_FROM_CAMPUS is the ORIGINAL context's starting geolocation
+// (main()'s browser.newContext()); AT_CAMPUS is a SECOND, separate context's starting
+// geolocation (acceptAtCampusInFreshContext()) — not a mid-run context.setGeolocation()
+// move from one to the other on the same context, which is what this comment used to
+// describe and which turned out not to work; see that function's own comment for why.
 //
 // AT_CAMPUS is the exact pair scripts/smoke-nfc-tap.mjs pins onto a real campus row for
 // the identical assertion at the HTTP layer (Aldwych, London). Reused deliberately rather
@@ -728,8 +742,13 @@ async function walkOnsite(page) {
  * at the top of this file for how to set all four by hand; this function sets none of
  * them. Get any one wrong and this section SKIPs rather than false-passing or false-
  * failing, the same convention as every other branch in this file.
+ *
+ * Takes `browser`, not just `page`, ONLY so it can hand `browser` on to
+ * acceptAtCampusInFreshContext() below for the second half of the assertion — see that
+ * function's own (long) comment for why the acceptance case needs a browser, not a page,
+ * and cannot be proven by moving `page`'s own geolocation the way the refusal case is.
  */
-async function sectionGeofence(page) {
+async function sectionGeofence(browser, page) {
   console.log("\n--- Geofence: refused far from campus, accepted at it ---");
   if (await alreadyCheckedInToday(page)) {
     skip("the geofence refusal and acceptance",
@@ -789,14 +808,115 @@ async function sectionGeofence(page) {
   await check(page, "...and its advice offers Online as the way out",
     await visible(page.getByText(/choose online/i), 2000));
 
-  // Move the spoofed position onto the campus and press again. Nothing was written by the
-  // refusal above — checkPresence() in server/src/presence.js runs BEFORE the row is
-  // touched — so the screen is still in the same fresh, not-checked-in state, same tab
-  // still selected, same button still there.
-  await page.context().setGeolocation(AT_CAMPUS);
-  await btn.click();
-  await check(page, "a position at the campus, with good accuracy, is accepted",
-    await visible(page.getByText(CHECKED_STATE_RE), 8000));
+  // The acceptance half is NOT proven here, on `page`, by moving its geolocation with
+  // `context.setGeolocation(AT_CAMPUS)` and pressing again — that was tried, it produced a
+  // SECOND off_campus refusal even at the real campus coordinates, and it is not this
+  // script's bug. See acceptAtCampusInFreshContext()'s own comment for the full account;
+  // the short version is that client/src/wherePhoneIs.js accepts a position fix up to a
+  // minute old on purpose, so `page`'s browser hands back the cached FAR_FROM_CAMPUS fix
+  // from moments earlier instead of asking for a new one, and the server correctly
+  // refuses the (genuinely stale) position it was actually sent.
+  await acceptAtCampusInFreshContext(browser);
+}
+
+/**
+ * Asserts a position AT THE CAMPUS is accepted — in a FRESH browser context, never by
+ * moving `page`'s existing geolocation with `context.setGeolocation(AT_CAMPUS)` after the
+ * refusal case above has already run. THIS IS NOT AN ARBITRARY DESIGN CHOICE; reusing the
+ * same context was the first thing tried, and it does not work, for a reason underneath
+ * this script rather than in it. Read this whole comment before "simplifying" it back to
+ * one context — that was tried against the real screen and produced a wrong answer.
+ *
+ * `client/src/wherePhoneIs.js` sets `maximumAge: 60_000` on its geolocation request — a
+ * position fix is accepted for up to a MINUTE — and its own comment says exactly why:
+ * "Walking into the room, taking a phone out and pressing a button takes longer than
+ * that, and refusing a cached fix means a fresh satellite acquisition inside a concrete
+ * building — the exact conditions where it fails." That is correct product behaviour, not
+ * a bug: a real phone genuinely does not move 250km in under a minute, so accepting a fix
+ * that old is the right call for someone standing still. It is ALSO exactly what defeats
+ * `context.setGeolocation(AT_CAMPUS)` on the SAME context the refusal case just ran in —
+ * confirmed against the real screen, not assumed: the browser's Geolocation API is free
+ * to, and does, hand back the cached FAR_FROM_CAMPUS fix from seconds earlier rather than
+ * acquiring a new one, because `maximumAge` told it that was an acceptable answer. The
+ * server then correctly refuses AGAIN — `off_campus` — not because the product is broken,
+ * but because the position it actually received genuinely was the stale one. `TagTap`
+ * rows confirmed this directly: three `off_campus` refusals in a row, seconds apart, for
+ * what should have been a refusal followed by an acceptance.
+ *
+ * DO NOT "FIX" THIS BY LOWERING `maximumAge` IN wherePhoneIs.js. That value is
+ * load-bearing for exactly the reason its own comment gives: a shorter one forces a fresh
+ * satellite acquisition indoors — the slow, unreliable case the comment exists to avoid —
+ * and would make the geofence unusable at the colleges most likely to want it. Degrading
+ * the product to make a test go green is a worse outcome than the test needing a
+ * different shape, and this is that different shape: a FRESH browser context starts with
+ * NO cached fix at all, so there is nothing for the browser to reuse — it is the test
+ * infrastructure that changes here, never the 60-second figure.
+ *
+ * (Reversing the order — assert acceptance first, in the ORIGINAL context started at
+ * AT_CAMPUS, then move to FAR_FROM_CAMPUS for the refusal — does not dodge this either:
+ * the exact same staleness then defeats the REFUSAL assertion instead, handing back the
+ * cached AT_CAMPUS fix when FAR_FROM_CAMPUS is set. Whichever position is asserted SECOND
+ * in one context is the one staleness can poison. A second context is the fix that
+ * removes the cache, rather than moving which assertion it breaks.)
+ *
+ * Reuses signIn() and resetToFreshScreen() exactly as written elsewhere in this file — a
+ * second, independent sign-in, and a second guaranteed-fresh screen — on a context that
+ * starts geolocated AT the campus from creation rather than moved there mid-run, so there
+ * is no earlier fix for anything to have cached. Closes the context afterwards either way
+ * (try/finally): a failed assertion in here must not leak a browser context for the rest
+ * of the run. Reaching this function at all means the refusal case above already
+ * confirmed the live config is the one this section needs (no sticker dialog, no other
+ * refusal reason), so the sticker-dialog branch below is a second, cheap confirmation of
+ * the SAME config on the SECOND sign-in — not a second, independent config check.
+ */
+async function acceptAtCampusInFreshContext(browser) {
+  const atCampusContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },   // handset — see main()'s own comment on why
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3,
+    permissions: ["geolocation"],
+    geolocation: AT_CAMPUS,
+  });
+  try {
+    const atCampusPage = await atCampusContext.newPage();
+    await signIn(atCampusPage); // throws and stops the WHOLE run on failure — see the file header
+    await resetToFreshScreen(atCampusPage);
+
+    if (await alreadyCheckedInToday(atCampusPage)) {
+      skip("a position at the campus, with good accuracy, is accepted",
+        "today's check-in already existed even after resetToFreshScreen() — see the file " +
+        "header on the state this script clears between sections.");
+      return;
+    }
+
+    // role=radio, not role=tab — see the comment on the radiogroup wait in signIn().
+    const onsiteTab = atCampusPage.getByRole("radio", { name: /on site/i });
+    if (!(await visible(onsiteTab))) {
+      await check(atCampusPage, "an 'On site' radio option is present (fresh context)", false,
+        "role=radio name=/on site/i not found");
+      return;
+    }
+    await onsiteTab.click();
+
+    // Same config mismatch this section's refusal case already guards against — see
+    // sectionGeofence() above. Reached here only as a second confirmation on the second
+    // sign-in, not a first-time check.
+    const dialog = atCampusPage.getByRole("dialog", { name: "Tap onsite" });
+    if (await visible(dialog, 1500)) {
+      skip("a position at the campus, with good accuracy, is accepted",
+        "choosing On site opened the sticker popup in the fresh context too — " +
+        "staffTapEnabled is on for this run. Set it to false and re-run.");
+      return;
+    }
+
+    const btn = await currentCheckInButton(atCampusPage);
+    await btn.click();
+    await check(atCampusPage, "a position at the campus, with good accuracy, is accepted",
+      await visible(atCampusPage.getByText(CHECKED_STATE_RE), 8000));
+  } finally {
+    await atCampusContext.close();
+  }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -872,7 +992,7 @@ async function main() {
     // before the geofence section, which needs its OWN fresh start (and its acceptance
     // case writes a row of its own before this run reaches Online).
     await resetToFreshScreen(page);
-    await sectionGeofence(page);
+    await sectionGeofence(browser, page);
 
     // sectionGeofence's acceptance case may have just clocked the account in too.
     await resetToFreshScreen(page);
