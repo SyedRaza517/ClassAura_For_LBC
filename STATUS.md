@@ -575,9 +575,9 @@ this today**, and nothing about it is reachable until an administrator turns it 
 | **The tag register** | `AttendanceTag`, `routes/tags.js` (6 endpoints, `attendance-tags` page grant) | Register a sticker, rename it, retire it, read its taps. The code is returned **exactly once**, to the administrator who creates it, because that is the moment somebody writes it onto the tag — there is deliberately no endpoint that reads one back, and `code` is absent from the serialiser, which is an allowlist. Two rollouts are supported on purpose: generate a secret and write it on with a phone app, or tap a **blank** sticker and register its factory UID, which needs no NFC writing tool at all |
 | ~~**The one cross-tenant read**~~ | ~~`crossTenantTagExists()` in `routes/tags.js`~~ | **Gone 30 Aug 2026.** `AttendanceTag.code` was unique across every college in one shared database, so registering a sticker another institution already held needed a probe that answered "yes, spoken for" and nothing else — never which college, never what they call it. One database per college deletes the case rather than rephrasing it: a code either is in this table or is not |
 | **The window** | `src/attendanceTap.js` — pure, no database, no clock | The lecture's own hours *are* the window; there is nothing for a lecturer to open and nothing to forget to switch off. Taps are accepted from `startTime − earlyGraceMins` to `endTime`, **both ends inclusive**; `P` until `startTime + lateAfterMins`, `L` after. Two classes genuinely running at once return `ambiguous` and the student picks — and the status is then recomputed for the chosen session, because inheriting the first candidate's verdict would mark a punctual student late. The term lock is honoured, matching the 423 on `PUT /sessions/:id/register`, so a tap is not a back door around a closed term |
-| **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. Seven settings — `enabled`, `qrEnabled` (TRUE since 4 Sep 2026, its own switch — see §3.9.1), `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `qrRotateSeconds` (30, floor 10 so a phone can scan in time), `staffTapEnabled` (true) — the minute fields capped at 120 and the second fields at 600/300, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
+| **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. **Fourteen settings now, not seven** — `SETTING_FIELDS` in `attendanceTapSettings.js` is the count to trust, since this row has gone stale on the number before: `enabled`, `qrEnabled` (TRUE since 4 Sep 2026, its own switch — see §3.9.1), `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `qrRotateSeconds` (20, down from 30 on 11 Sep 2026, floor 10 so a phone can scan in time), `declareEnabled` (false, and deliberately never following `qrEnabled`'s default — see the long comment on it in code for why), `staffTapEnabled` (FALSE since 13 Sep 2026, decoupled from `enabled` — see its own comment), and — new with staff presence, §3.14 — `networkCheck`, `allowedNetworks`, `geofenceCheck`, `geofenceRadiusM`, `staffNetworkCheck`, `staffGeofenceCheck`, every one of the last six off or empty by default. The minute fields are capped at 120 and the second fields at 600/300, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
 | **The student's tap** | `GET /api/student/me/tap-context`, `POST /api/student/me/tap-check-in` | Inside the student router allowlist and keyed on `req.user.id`; no id parameter exists. Candidates are built from `Enrolment`, so a tap cannot attach a student to a unit they were never on. Rate limited 10 per minute per student — in-process, like the other six limiters (§6). Writing a mark flags the student's progression score stale but deliberately does **not** rescore: a check-in must not wait on arithmetic |
-| **The staff tap** | `POST /api/checkins/tap-check-in` | `site` is not accepted and not asked for. Somebody who touched a sticker in the building cannot be working online — the tap is what proves they are here — so recording anything but `Onsite` would store a claim the tap itself disproves. This is the first time a staff clock-in has meant "was in the building" rather than "said so"; `POST /check-in`, which records one from anywhere, still exists and still takes a site |
+| **The staff tap** | `POST /api/checkins/tap-check-in` | `site` is not accepted and not asked for — a tap always records `Onsite`, because recording anything else would store a claim the tap itself contradicts. What a staff clock-in does and does not prove is §3.14's territory now, not this row's — see "What this can and cannot prove" there rather than trust a summary of it repeated twice; `POST /check-in`, which records a clock-in from anywhere, still exists and still takes a site |
 | **The lecturer's live view** | `GET /api/hnd/my-sessions/today`, `GET /api/hnd/sessions/:id/live`, `POST /api/hnd/sessions/:id/mark-remaining-absent` | Who is in, who is late, who has not appeared, and the minute each of them tapped. Today's classes are found through `Unit.tutorStaffId` and never through the free-text `tutor` field — a name typed into a box is not an identity. "Accepting taps" is derived at read time, not stored, because it changes every minute |
 | **The tap log** | `TagTap`, `GET /api/tags/:id/log` | Every tap, accepted or refused. The refusals are the valuable half: "I tapped and it didn't work" is answerable here and nowhere else, and so is a pattern — one address checking in six students inside a minute — which is invisible in `AttendanceMark`. Names are resolved for the screen; **no email addresses**, so a tag log cannot become a way to harvest the roster |
 | **The apps** | `client/src/nfc.js`, `CheckInCard.jsx`, `AdminNfcTags.jsx`, `AdminLiveAttendance.jsx` | One check-in card serves both apps — the student marks a register, staff clock in, and what differs is one API call and the words on the result. The button is dead until a sticker is read and dead again 60 seconds later, and the code is dropped on failure too: a refused tap is not a credential to retry with |
@@ -934,6 +934,94 @@ cut, recorded here rather than silently dropped, because the college may reasona
 for it as a follow-up and the honest map this file is meant to be should say what was
 asked for and not shipped, not just what was shipped.
 
+### 3.14 Staff presence check-in (21 Sep 2026)
+
+Staff clock-in gained the same question the student side has asked since 10 Sep: is the
+phone actually in the building? A member of staff clocking in now picks **On site** or
+**Online** from two tabs, with the Check In button dead until one is chosen. Online is one
+button and is never checked, under any setting — somebody working from home is by
+definition off the college network and away from every campus, so a rule that caught them
+would make the honest answer unrecordable. On site can be required to prove itself by up
+to three independent switches, **all defaulting off**: `staffTapEnabled` (tap an NFC
+sticker — this existed before this work; see §3.9's staff row), and two new ones,
+`staffNetworkCheck` (the request must arrive from a college IP range) and
+`staffGeofenceCheck` (the phone must report a position near a campus). This closes a gap
+the design doc for this work opens by naming directly: the presence engine (`presence.js`,
+§3.8.2 and the 10 Sep design it names) and the settings screen for it already existed and
+were already applied to students — `checkPresence` was simply never called from a staff
+route. It is now, from both `POST /api/checkins/check-in` (when `site === "Onsite"`) and
+`POST /api/checkins/tap-check-in` (always, because a tap is an onsite claim by
+construction).
+
+| Piece | Where | What it does |
+|---|---|---|
+| **The two new switches** | `AttendanceTapConfig` (`staffNetworkCheck`, `staffGeofenceCheck`), `attendanceTapSettings.js` | Separate from the student `networkCheck`/`geofenceCheck` pair, deliberately — the settings screen labels those as not affecting staff, so widening them would start refusing staff clock-ins at any college that had ticked one for students, on a deploy nobody connected to the change. They **share** `allowedNetworks` and `geofenceRadiusM` with the student pair: one college, one network, one set of campuses, and two lists that had to be kept in sync would drift silently |
+| **The translation layer** | `refusedForStaffPlace()` in `routes/checkins.js` | Translates the staff switches into the shape `presence.js` expects rather than teaching the engine about staff — the engine stays pure, database-free and shared. Every failing reason is logged to `TagTap`, not only the one returned, so a college switching both checks on for the first time sees that its IP list is wrong *and* its coordinates are, in one pass, rather than discovering the second a week after fixing the first |
+| **`campusesFor` lifted out of `routes/student.js`** | shared module | Staff pass no session, so they need the "every located campus" branch. Copying it was rejected on this codebase's own evidence (§3.8.2's cohort work): six independently-grown answers to "who is on this register" disagreed and were fixed six separate times |
+| **A site is now required on a self clock-in** | `POST /api/checkins/check-in` | `isSite` permits `null` (`v == null || SITES.includes(v)`) because the administrator's `PUT /checkins` legitimately fills in a missed clock-in with no known site — but the self route had reused the same check, so an empty body passed validation, the tap requirement never fired, and a row was written with `site: null`. Answers 400 now. `PUT /checkins` is untouched |
+| **Already-clocked-in wins over presence** | both routes | A second tap or press on the way past the door writes nothing, so there is nothing for a presence check to protect — answering "you're off campus" to a no-op would teach staff the feature is flaky on the one screen they use every morning. This deliberately differs from the student path, where every capture method writes |
+| **Check-out stays ungated** | `POST /api/checkins/:id/check-out` | Requiring proof of presence to clock *out* would strand anyone who has already left the building, with no recoverable path from the app. Accepted cost: hours-on-site is provable at one end, not both |
+| **The Android location permission** | `client/android` manifest | `ACCESS_FINE_LOCATION`, newly added. **Its absence was not a staff-only bug** — `wherePhoneIs()` calls `navigator.geolocation` inside the Capacitor WebView, which Android refuses without the permission, so the **student geofence could never have worked on Android before this**, and nobody had noticed because it ships off and no college had switched it on. Fine, not coarse: coarse alone lets Android 12+ offer an "approximate" toggle accurate to 1–3 km, which `presence.js` correctly refuses as `accuracy_too_poor` — the feature would appear to work, ask for a permission, receive it, and still refuse everybody |
+| **The client's own resolver** | `GET /api/checkins/tap-settings`, `staffPositionIfNeeded()` in `client/src/api.js` | The client used to ask the student-only `GET /student/me/tap-context` whether a position was needed; a staff caller got 403, the catch answered `false`, and every onsite clock-in with the geofence on would have been refused `position_missing` — the feature would have appeared completely broken. `tap-settings` (already `requireAuth`-only, already read by the staff screen) answers `needsLocation` instead. Its cache lives under its own `localStorage` key, cleared on sign-out by `forgetNeedsLocation()` — staff and students share handsets, so a cached `"0"` written by a student session must never silently stop a colleague's phone from ever sending a position |
+| **The screen** | `StaffHub.jsx`, `TapOnsiteSheet` | Reverses the 14 Sep "ONE TAP, EITHER WAY" collapse back to two tabs, on an explicit later instruction — recorded in the design doc precisely so a future reader does not find the 14 Sep comment, conclude the tabs were an accident, and tidy them away. The location request starts the moment the popup opens, in parallel with arming the NFC reader, because a cold indoor GPS fix can take the full 15-second timeout plus a 2-second backstop, and asking for it only after the sticker is read would leave someone holding a phone against a wall watching a spinner |
+
+**What this can and cannot prove**, unchanged from the 10 Sep design and worth restating
+because a college will be asked this at a funding audit: the network check proves the
+request reached the server from an address the college says is theirs — it does not prove
+which room, and a VPN defeats it. The geofence proves the device reported a position
+within a radius of a campus; indoor GPS is 10–50 metres and worse through concrete, so it
+can never prove which room. The sticker proves somebody was at that wall once, with this
+account signed in — the code is static, so a member of staff who notes it down can tap
+from home. **None of the three is proof.** Together they are a good deal more than a
+login on a phone, which is all that stood behind a staff clock-in before this work.
+
+**What is still unproven, in full, so nobody reads more into the run below than is
+there:**
+
+- **No physical NFC tap has ever been performed**, on any handset, against any sticker.
+  §3.9 said this about the student/staff tap route when it was built on 28 Aug and it is
+  still true: this work changed who the checks apply to, not whether the radio half has
+  ever been exercised.
+- **No real GPS fix has ever been taken.** Every geofence assertion in the suite supplies
+  a position directly in the request body. A cold indoor fix, a permission prompt, a
+  refused permission — none of it has executed once.
+- **No real college network.** Every network assertion spoofs `X-Forwarded-For`, which
+  only works in the suite because there is no proxy in front of it. In production,
+  Render's proxy is the trusted hop (`trust proxy: 1`), and the header a phone sends is
+  overwritten by what Render observed — see the long comment above
+  `refusedForStaffPlace` in `routes/checkins.js`.
+- **The Android location permission is declared and has never run on a device.**
+  `cap sync` copies web assets and config into the native project; it does not invoke
+  Gradle, so the merged `AndroidManifest.xml` — the file Android actually reads the
+  permission from — only regenerates on a real build, and no build has been produced on
+  this machine (no Java, no `ANDROID_HOME`, matching §3.9's existing note).
+- **The browser walkthrough cannot ever exercise the NFC popup's listening state.**
+  `client/src/nfc.js` returns `{ ok: false, reason: "web" }` whenever
+  `Capacitor.isNativePlatform()` is false — which is every case a browser can reach — so
+  On site with a sticker required renders "Use the app to tap in" in Edge/Chrome/Playwright
+  and never the live "Please tap the NFC sticker" popup. `_walk-staff-checkin.mjs`
+  (`docs/testing/2026-09-21-staff-check-in-e2e-test-plan.md` §3.2, step D) proves the
+  desktop fallback wording; the tap popup itself is provable only in the packaged app on a
+  real handset.
+
+**Verification status.** Re-measured 24 Sep 2026, one suite at a time, against a local
+PostgreSQL 16 (`edtech_dev` on `localhost:5432`) — this is a run, not a code read:
+
+| | |
+|---|---|
+| Whole platform suite (`npm test`) | **41 passed, 0 failed, 1 skipped** (the skip is `smoke-signup-2fa`, D2 — a switched-off feature, not a failure) |
+| `smoke-nfc-tap.mjs` | **228 checks, all passed** — up from 97 at the 3 Sep measurement (§5); the growth is this work's own staff-presence refusal assertions (off-network, off-campus, no-position, poor-accuracy, misconfiguration, the Online exemption under every combination of the two new switches) |
+| `smoke-qr-checkin.mjs` | **168 checks, all passed** — re-run alongside `smoke-nfc-tap.mjs` specifically to prove the geofence fixture the new suite exercises did not leak into the sibling suite |
+| Server unit tests | **1,750 passed, 0 failed** (`node --test "src/**/*.test.js"` from `server/`) |
+| Client pure-module tests | **125 passed, 0 failed** (`node --test "src/**/*.test.js"` from `client/`) |
+| Client build | `npm run --workspace client build` — succeeds |
+| Native config | `npm run --workspace client build` then `npx cap sync android`, re-run for this work because the Task 5 sync predates every client change on this branch — the two-tab screen, the checkboxes and the `api.js` resolver did not exist in the web assets `client/android` was carrying until this pass |
+
+Read `docs/testing/2026-09-21-staff-check-in-e2e-test-plan.md` for the full journey,
+including the eight-combination configuration matrix, every refusal's exact wording, the
+ordering rules, and the stress/concurrency script — its own baseline table is kept in step
+with the figures above.
+
 ### 3.7 Business rules that are actually enforced
 
 - Leave allowance is checked **server-side at approval**, inside a per-staff lock, with
@@ -1256,11 +1344,22 @@ production before assuming it deployed.
 | ~~D17~~ | — | **FIXED 30 Aug, same day it was filed.** `server/create-admin.js` imported `runInTenant` and `crossTenant` from `src/db`, which exports neither, so the documented way to create or recover the first administrator threw on require. It no longer resolves an institution at all — there is one — and `Staff.email` is a plain unique again. Not covered by any suite, so this is code-read and `node --check`, not a demonstrated run |
 | ~~D18~~ | — | **RESOLVED 30 Aug by deletion.** `src/usage.js` had no caller once the platform dashboard went. It was deleted rather than kept against a Settings screen that does not exist; the tenant-aware original is in git history at the commit before the removal, and the de-tenanted rewrite in that commit's parent working tree was not kept |
 | D19 | low | **`sharepoint.forgetCached()` has no caller.** The old `forgetTenant(tenantId)` was called when a college saved its SharePoint credentials; the de-tenanted replacement is not called by anything. The three id caches have no TTL, so an administrator who corrects a wrong site address waits for a restart. Its own doc comment says as much — it is not dead code, it is uncalled code |
+| D20 | low | **Two more `upsert` + empty `update: {}` sites carry the same shape that caused the P2002 → HTTP 500 defect fixed on the staff presence branch** (see the long comment above `POST /check-in`'s create-catch in `routes/checkins.js`, and the assertion in `scripts/smoke-nfc-tap.mjs` under "two presses at once"). `routes/hnd.js:1136` (`replaceUnitEnrolments`) and `routes/hnd.js:1382` (`replaceStudentEnrolments`) both `prisma.enrolment.upsert({ ..., update: {} })` inside a loop. Prisma only compiles `upsert` to a single `INSERT ... ON CONFLICT` when the `update` branch is non-empty; with `update: {}` it degrades to a bare `SELECT` followed by a bare `INSERT`, so two concurrent requests that both try to enrol the same student on the same unit can both miss each other's row and the loser surfaces as an unhandled P2002 — a 500 on a bulk-enrolment save rather than the harmless idempotent write the code reads as. **Deliberately not fixed here** — diagnosed while reviewing the staff presence branch, out of that branch's scope, and recorded so the diagnosis is not lost before somebody next touches either route |
 | ~~T8b~~ | — | ~~`seed-admissions.js` on a bare client; five tools fail closed~~ — **dissolved 30 Aug**, see §2 |
 | ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026**; its `DEFAULT_TENANT_SLUG` / `TENANT_BASE_DOMAIN` entries now name variables nothing in `server/src` reads |
 | 6 | low | `GET /student-reviews/roster` is open to any authenticated staff member with no page gate — a documented widening (a `pat`-only admin cannot call `/hnd/students`), and still the broadest read surface in that area |
 | 7 | low | `admissionDocs.js` says its document-type list is duplicated in `client/src/StaffHub.jsx` and must be kept in sync by hand |
 | 5 | — | "Personal template" documents (`scope:"personal"` with no assignee) are invisible to everyone. Still needs a product decision |
+
+**Five minors found reviewing the staff presence work (§3.14), deliberately left as recorded rather than fixed on the spot** — each is small enough that fixing it in the same pass as the documentation task would have been an undisclosed behaviour change, which this file's own conventions treat as worse than a known gap:
+
+| # | Severity | Item |
+|---|---|---|
+| SP1 | low | **A tap-route presence refusal logs `TagTap.tagId` as `null`.** The design intends this — presence is checked before the tag is looked up, matching the student route's own reasoning ("somebody off the college network should be told THAT, not handed 'tag not recognised'") — but `TagTap`'s own schema comment calls a resolved `tagId` "the valuable half" of the log, and the tap route goes to the trouble of resolving it anyway on the already-clocked-in path for exactly that reason. A presence refusal from `refusedForStaffPlace` does not receive the same treatment, silently, and nobody has decided whether that inconsistency is acceptable or worth the extra query |
+| SP2 | low | **A duplicate `AttendanceTag` lookup on the rare already-clocked-in-plus-unknown-code path** in `POST /tap-check-in`: the row is read once to resolve `tagId` for the log (SP1's fix would need it anyway), and if the code does not match a live tag the route falls through to the ordinary tag-lookup below, reading the same table again. Harmless — this path runs at most once per person per day — and left rather than restructured mid-documentation-pass |
+| SP3 | low | **The staff geofence settings copy omits the student panel's honesty caveat.** `AdminNfcTags.jsx`'s student geofence checkbox says outright: "it can't prove the reading was honest, because the position is sent by the phone." The staff geofence checkbox, added in the same feature, does not repeat it — an administrator reading only the staff card would not be told the same limitation applies there too |
+| SP4 | low | **A narrow first-render race in `StaffHub.jsx`'s check-in screen — previously misdescribed here, corrected 24 Sep 2026.** Before `api.staffTapSettings()` resolves, `tapRequired` reads `false`, so choosing **On site** in that window does *not* relabel the button to "Tap the sticker" and the first press is *not* a no-op, as an earlier edition of this row claimed. `checkInButton()` (`client/src/staffCheckInView.js`) returns `{ label: "Check in", enabled: true }` exactly as it would with no sticker required, the press sends `POST /check-in` with `site: "Onsite"`, and it is the **server**, not the client, that catches the case: `tap_required` comes back 409 and the client renders the correct refusal banner from `staffPlaceRefusal("tap_required")`, indistinguishable on screen from any other refusal. That is the server backstopping a client-side race window the client cannot yet know it is in — the correct architecture, not a defect — and the window closes the moment the settings fetch resolves, which is ordinarily well inside the time it takes a person to read the screen |
+| SP5 | low | **`forgetNeedsLocation()` does not clear an in-flight lookup promise.** If a `staffContextInFlight` request is still in the air when sign-out fires, that promise resolves after `forgetNeedsLocation()` has already reset the cached value, and its `.then()` writes the old session's answer back in. Harmless in practice — `needsLocation` is an institution-wide fact (does this college require a position), not a per-user one, so the value the stale promise writes back is correct regardless of who is signed in — but it is a real race in the code, not merely a theoretical one, and is recorded here rather than patched silently |
 
 ### Longer-standing gaps
 

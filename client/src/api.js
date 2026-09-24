@@ -212,6 +212,83 @@ async function positionIfNeeded() {
   return position ? { position } : {};
 }
 
+// THE STAFF ANSWER, AND ITS OWN KEY. Deliberately not shared with the student flag above.
+//
+// A handset is not a person. A lecturer who is also studying, a shared demo phone, a
+// parent and child on one device — in every case a cached "0" written by a student
+// session would mean a member of staff silently never sends a position and is refused
+// for ever, with nothing on any screen to explain why. Two questions, two answers, two
+// keys.
+//
+// Cleared on sign-out (see forgetNeedsLocation below, called from logout() in auth.jsx)
+// for the same reason: the next person to sign in on this handset is not necessarily the
+// last one.
+const STAFF_NEEDS_LOCATION_KEY = "edtech.staffNeedsLocation";
+let staffNeedsLocation = (() => {
+  try {
+    const v = localStorage.getItem(STAFF_NEEDS_LOCATION_KEY);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch (_) {
+    return null;
+  }
+})();
+let staffContextInFlight = null;
+
+export function forgetNeedsLocation() {
+  staffNeedsLocation = null;
+  needsLocation = null;
+  try {
+    localStorage.removeItem(STAFF_NEEDS_LOCATION_KEY);
+    localStorage.removeItem(NEEDS_LOCATION_KEY);
+  } catch (_) { /* nothing to clear */ }
+}
+
+/**
+ * `{ position }` to spread into a staff clock-in body, or `{}`.
+ *
+ * A FAILED LOOKUP ANSWERS FALSE, exactly as the student one does: if the settings route
+ * cannot be reached the clock-in is about to fail for a larger reason, and prompting for
+ * location because we could not find out whether it was needed is the permission request
+ * with no honest explanation that this flag exists to avoid.
+ */
+async function staffPositionIfNeeded() {
+  if (staffNeedsLocation === null) {
+    if (!staffContextInFlight) {
+      staffContextInFlight = request("/checkins/tap-settings")
+        .then((s) => {
+          staffNeedsLocation = s?.needsLocation === true;
+          try { localStorage.setItem(STAFF_NEEDS_LOCATION_KEY, staffNeedsLocation ? "1" : "0"); } catch (_) { /* nothing to keep */ }
+          return staffNeedsLocation;
+        })
+        .catch(() => false)
+        .finally(() => { staffContextInFlight = null; });
+    }
+    await staffContextInFlight;
+  }
+  if (!staffNeedsLocation) return {};
+  const position = await wherePhoneIs();
+  return position ? { position } : {};
+}
+
+/**
+ * Start the location lookup without waiting for it. Returns nothing useful on purpose.
+ *
+ * `wherePhoneIs()` accepts a fix up to a minute old (`maximumAge`), so a lookup started
+ * when a popup opens is still valid by the time somebody has held their phone to a
+ * sticker — and the second call resolves from the cached fix rather than acquiring a new
+ * one. That is the whole trick: a cold indoor fix can take the full 15-second timeout
+ * plus the 2-second backstop, and paying it BEFORE the tap is the difference between a
+ * popup that feels instant and one that hangs at the worst possible moment.
+ *
+ * Silent when the geofence is off: staffPositionIfNeeded() returns {} without touching
+ * the geolocation API, so nothing is prompted for a value the server will not look at.
+ */
+export function warmStaffPosition() {
+  // Errors are swallowed because there is nothing to do with one — the real call makes
+  // the same request again and the server decides what a missing position means.
+  staffPositionIfNeeded().catch(() => {});
+}
+
 export const api = {
   // auth
   login: (email, password) => request("/auth/login", { method: "POST", body: { email, password } }),
@@ -678,10 +755,21 @@ export const api = {
   }),
   // check-ins
   listCheckins: (date) => request(`/checkins${date ? `?date=${date}` : ""}`),
-  checkIn: (site) => request("/checkins/check-in", { method: "POST", body: site ? { site } : {} }),
+  // ONSITE ONLY. Asking the phone where it is in order to record "working from home" is
+  // a permission prompt for a value the server will never look at.
+  checkIn: async (site) => request("/checkins/check-in", {
+    method: "POST",
+    body: { site, ...(site === "Onsite" ? await staffPositionIfNeeded() : {}) },
+  }),
   // Clocking in by touching a sticker. No site is sent: the tap proves Onsite, and the
   // server refuses to record anything else for this route.
-  tapCheckIn: (tagCode) => request("/checkins/tap-check-in", { method: "POST", body: { tagCode } }),
+  tapCheckIn: async (tagCode) => request("/checkins/tap-check-in", {
+    method: "POST",
+    body: { tagCode, ...(await staffPositionIfNeeded()) },
+  }),
+  // Starts the location lookup as soon as the check-in popup opens, so the fix is ready
+  // by the time somebody has held their phone to a sticker. See warmStaffPosition above.
+  warmStaffPosition,
   // Reachable by ANY signed-in staff member, unlike api.tapSettings() below, whose whole
   // router needs the NFC Tags admin page. The check-in screen asks this one.
   staffTapSettings: () => request("/checkins/tap-settings"),

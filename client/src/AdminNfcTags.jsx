@@ -282,6 +282,14 @@ function TapSettings({ settings, onSaved }) {
           different decision from everything above it. */}
       <div className="mt-4 border-t border-slate-200 pt-4">
         <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500">Staff clock-in</p>
+        {/* This description used to say a tap "proves they are in the building and cannot
+            be done from home" — that is false, and the codebase said so already: the
+            sticker's code is static, so a member of staff who notes it down can tap from
+            elsewhere. The comment above POST /tap-check-in in server/src/routes/checkins.js
+            records that an earlier, equally confident version of ITS OWN wording was
+            corrected for the same reason, and STATUS.md section 3.9 keeps the same correction.
+            An administrator deciding whether to switch this on reads this sentence, and may
+            repeat it at a funding audit — so it gets the same care, not less. */}
         <label className="flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
           <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
@@ -290,9 +298,53 @@ function TapSettings({ settings, onSaved }) {
               Lets <strong>staff</strong> clock in for work by tapping an NFC sticker in the building.
               On the Daily Check-In screen the button stays greyed until they choose <strong>Onsite</strong> or
               <strong> Online</strong>: choosing Onsite asks them to tap a sticker — a tap always records
-              <em> Onsite</em>, because it proves they are in the building and cannot be done from home —
-              while choosing Online clocks them in straight away, no sticker. Independent of student NFC
-              above; leave it off and staff clock in with a plain button as before.
+              <em> Onsite</em>, because it takes being at the sticker signed in as them, well above a plain
+              button — though the code is static, so the network and geofence checks below narrow the gap
+              further — while choosing Online clocks them in straight away, no sticker. Independent of
+              student NFC above; leave it off and staff clock in with a plain button as before.
+            </span>
+          </span>
+        </label>
+
+        {/* THE SAME TWO QUESTIONS AS THE STUDENT SECTION ABOVE, ASKED OF STAFF — and
+            separate switches, not that pair widened. The student ones are described on
+            this very screen as not affecting staff, so teaching them to govern staff too
+            would start refusing clock-ins at any college that ticked one for students,
+            on a deploy nobody connected to the change.
+
+            They SHARE the IP ranges and the radius above, which is why those are not
+            repeated here: one college, one network, one set of campuses. Said out loud in
+            the copy, because two identical-looking checkboxes that read a list defined
+            somewhere else on the page is exactly the arrangement somebody misreads. */}
+        <label className="mt-2 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+          <input type="checkbox" checked={draft.staffNetworkCheck} disabled={saving}
+            onChange={(e) => save({ staffNetworkCheck: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="block text-[13px] font-semibold text-slate-800">Onsite clock-in must come from the college network — {draft.staffNetworkCheck ? "ON" : "OFF"}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Uses the same IP ranges as the student check above. <strong>Online is never affected</strong> —
+              somebody working from home cannot be on the college network, so checking it would make the
+              honest answer unrecordable. A member of staff in the building on mobile data <em>is</em> refused,
+              and their only route is Online, which records the wrong site: that is the cost of a rule with no
+              exceptions, and it is worth knowing before you switch it on.
+            </span>
+          </span>
+        </label>
+
+        <label className="mt-2 flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
+          <input type="checkbox" checked={draft.staffGeofenceCheck} disabled={saving}
+            onChange={(e) => save({ staffGeofenceCheck: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="block text-[13px] font-semibold text-slate-800">Onsite clock-in must happen at a campus — {draft.staffGeofenceCheck ? "ON" : "OFF"}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Uses the same campus coordinates and radius as the student check above. Records that a phone
+              <strong> reported</strong> being at the college — never which room or which desk, and it
+              can't prove the reading was honest, because the position is sent by the phone. Read the
+              student panel's own caveat above: the mechanism is identical, so the same mock-location app
+              that defeats it there defeats it here too. Staff clock in from the phone app — a desktop
+              browser cannot give a location accurate enough to mean anything, so it is not offered one.
+              Somebody who won't share their location is told to turn it on, not offered Online instead —
+              the honest advice there is to fix the phone, not to switch method.
             </span>
           </span>
         </label>

@@ -267,7 +267,7 @@ affected user is notified. Returns 400 if the account has no 2FA set up, 404 if 
 | Method | Path | Access | Body |
 |--------|------|--------|------|
 | GET    | `/checkins?date=YYYY-MM-DD` | auth (staff: own; admin: all) | — |
-| POST   | `/checkins/check-in` | auth | — (self, today) |
+| POST   | `/checkins/check-in` | auth | `{ site }` — self, today; `site` (`Onsite` \| `Online`) is **required** |
 | POST   | `/checkins/tap-check-in` | auth | `{ tagCode }` — clock in by touching an NFC sticker; always `Onsite` |
 | POST   | `/checkins/:id/check-out` | auth (owner/admin) | — |
 | PUT    | `/checkins` | admin | `{ staffId, date, in, out? }` |
@@ -275,6 +275,52 @@ affected user is notified. Returns 400 if the account has no 2FA set up, 404 if 
 
 `POST /checkins/tap-check-in` is documented in full under **NFC tap check-in** below,
 including why it refuses to record any site but `Onsite`.
+
+**`site` on `POST /checkins/check-in` is required as of 21 Sep 2026 and answers 400**
+`site must be Onsite or Online` when it is missing or not one of the two values. This
+closed a real hole, not a theoretical one: `isSite` permits `null` (`v == null || ...`)
+because the administrator's `PUT /checkins` legitimately fills in a missed clock-in with
+no known site, but the self route reused the same check, so an empty body passed
+validation, `site === "Onsite"` was false, the sticker requirement below never fired, and
+a row was written with `site: null` — a self clock-in nobody could later tell was Onsite
+or Online. `PUT /checkins` keeps accepting `null` unchanged.
+
+**When `site` is `"Onsite"`, the request is also gated on where the phone is** — proof
+the phone is in the building, not merely that the account is signed in. Two independent
+college switches control this, both defaulting **off** and both configured on the NFC
+Tags admin screen: `staffNetworkCheck` (the request must arrive from an address in
+`allowedNetworks`) and `staffGeofenceCheck` (the reported position must be within
+`geofenceRadiusM` of a located campus — the same engine and the same settings the student
+geofence uses). **Online is never checked, under any setting** — someone working from
+home is by definition off the college network and away from every campus, so a rule that
+caught them would leave the truthful answer unrecordable. With both switches off,
+behaviour is byte-for-byte what it was before this section existed.
+
+A presence refusal is **403** with `{ error, reason }`:
+
+| `reason` | Meaning |
+| --- | --- |
+| `off_network` | The request did not arrive from an address in `allowedNetworks`. |
+| `network_not_configured` | `staffNetworkCheck` is on but `allowedNetworks` is empty — a college misconfiguration, not a staff member's fault; logged server-side with `console.error` because it silently refuses every clock-in. |
+| `off_campus` | The reported position is outside `geofenceRadiusM` of every campus. |
+| `campus_not_located` | `staffGeofenceCheck` is on but no active campus has coordinates — the same kind of misconfiguration, logged the same way. |
+| `position_missing` | No position was sent — the phone never obtained one, or the caller never asked (see `GET /checkins/tap-settings`'s `needsLocation` below). |
+| `accuracy_unknown` \| `accuracy_too_poor` | A position arrived with no usable accuracy figure, or one too coarse to trust. |
+
+Every failing reason is logged to `TagTap` (not only the one returned — a college
+switching both checks on for the first time can see that its IP list is wrong *and* its
+coordinates are, in one pass), with `method: "button"` from this route (`"nfc"` from the
+tap route below) and `site: "Onsite"`. **An already-clocked-in re-press is never gated**:
+it writes nothing, so there is nothing for a presence check to protect, and refusing a
+no-op would teach staff the feature is flaky on the screen they use every morning.
+
+`GET /checkins/tap-settings` (`requireAuth`, any signed-in staff member) answers
+`{ enabled, staffTapEnabled, armSeconds, needsLocation }` — the staff screen's own
+resolver for whether a position must be sent, because the student equivalent
+(`GET /student/me/tap-context`) is inside the student router's allowlist and 403s for
+staff. `needsLocation` is `true` only when `staffGeofenceCheck` is on: the network check
+is observed from the far end of the connection and asks nothing of the phone, so a
+college running that check alone must never trigger a location permission prompt.
 
 ## Leave
 | Method | Path | Access | Body |
@@ -615,11 +661,36 @@ run tap check-in for students only.
 
 **`site` is not accepted and not asked for — the record always says `Onsite`, and any
 `site` in the body is deliberately ignored.** Someone who touched a sticker in the
-building cannot be working online: the tap is what proves they are here, so recording
-anything else would store a claim the tap itself disproves. Working online remains
-available through `POST /checkins/check-in`, which does take a site. This is also the
-first time a staff clock-in has meant "was in the building" rather than "said so" — the
-button records a clock-in from anywhere, bed included.
+building cannot be working online: recording anything else would store a claim the tap
+itself contradicts. Working online remains available through `POST /checkins/check-in`,
+which does take a site.
+
+**What this does and does not prove.** It proves somebody was at that sticker once, with
+this account signed in. It does not prove they are there now: the code on a sticker is
+static and any phone with a generic NFC app can read it, so a member of staff who notes it
+down can clock in Onsite from home, and the `tagId` on the row would read as corroboration
+it is not. An earlier edition of this file claimed this was "the first time a staff
+clock-in has meant 'was in the building' rather than 'said so'" — that overstated it, and
+a claim like that in a timesheet record a college may be asked to produce at a funding
+audit is worth more care than a claim about a feature. See "What this can and cannot
+prove" in `STATUS.md` §3.14 for the fuller statement, which covers the network and
+geofence checks too.
+
+**Presence is checked before the tag is looked up** — matching the student route, and for
+the same reason: somebody off the college network should be told that, not handed
+`That tag isn't recognised` from a check they were never going to get past. Order on this
+route: feature switch, tag code present, rate limit, **already-clocked-in** (which still
+resolves the tag, purely for the log), **presence**, tag lookup, write. Already-clocked-in
+sits ahead of presence deliberately — a second tap on the way past the door writes
+nothing, so there is nothing for a presence check to protect, and answering "you're off
+campus" to a no-op teaches somebody the feature is flaky — and the rate limit stays ahead
+of both so that probing the checks is throttled like everything else. See the refusal
+table under **Check-ins** above for the `reason` codes; a refusal from this route logs
+`method: "nfc"` rather than `"button"`.
+Unlike `POST /check-in`, a refusal here is logged with `tagId: null` even though the
+route later resolves the code — the same "row from before a tag was identified" case the
+schema documents for an unknown or rate-limited tap, extended to a presence refusal that
+happens first by design.
 
 A successful tap answers **201** with `{ ok: true, ...CheckIn }`, the row carrying
 `site: "Onsite"` and `tagId`. Re-tapping the same day answers **200** with

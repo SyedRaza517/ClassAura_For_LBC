@@ -10,6 +10,7 @@ const assert = require("node:assert/strict");
 
 const {
   DEFAULTS, SETTING_FIELDS, merge, MIN_QR_ROTATE_SECONDS, MAX_QR_ROTATE_SECONDS, MAX_NETWORKS,
+  staffNetworkGuard,
 } = require("./attendanceTapSettings");
 const { MAX_RADIUS_METRES } = require("./presence");
 const { GRACE_SECONDS } = require("./attendanceQr");
@@ -261,4 +262,68 @@ test("every new field is in the allowlist that leaves the building", () => {
   for (const key of ["networkCheck", "allowedNetworks", "geofenceCheck", "geofenceRadiusM"]) {
     assert.ok(SETTING_FIELDS.includes(key), `${key} is missing from SETTING_FIELDS`);
   }
+});
+
+/* ----- the same two questions, asked of staff ----- */
+
+test("staff presence checks ship OFF, so a deploy changes no college's clock-in", () => {
+  // The same rule every capture-affecting switch here follows. Shipping either ON would
+  // start refusing clock-ins at every college on the next deploy, for a decision nobody
+  // took — and the person refused would be standing at a door at 08:45.
+  const s = merge(null);
+  assert.equal(s.staffNetworkCheck, false);
+  assert.equal(s.staffGeofenceCheck, false);
+});
+
+test("the staff switches are separate from the student ones", () => {
+  // NOT the same field widened. The student pair is labelled on the settings screen as
+  // student-only ("It does not affect a lecturer taking the register"), so reusing it
+  // would make any college that ticked it for students start refusing staff on the next
+  // deploy — a change nobody made and nothing on screen announces.
+  const s = merge({ networkCheck: true, geofenceCheck: true });
+  assert.equal(s.networkCheck, true);
+  assert.equal(s.geofenceCheck, true);
+  assert.equal(s.staffNetworkCheck, false);
+  assert.equal(s.staffGeofenceCheck, false);
+});
+
+test("a non-boolean does not switch a staff check on", () => {
+  // "false" and 0 are both mistakes somewhere in a chain of JSON; so is "true".
+  const s = merge({ staffNetworkCheck: "true", staffGeofenceCheck: 1 });
+  assert.equal(s.staffNetworkCheck, false);
+  assert.equal(s.staffGeofenceCheck, false);
+});
+
+test("both staff switches are in the allowlist", () => {
+  assert.ok(SETTING_FIELDS.includes("staffNetworkCheck"));
+  assert.ok(SETTING_FIELDS.includes("staffGeofenceCheck"));
+});
+
+test("requiring the college network with no ranges saved is refused, not saved", () => {
+  // EMPTY WHILE ON MEANS REFUSE EVERYBODY (presence.js). Left to save, an administrator
+  // ticks the box, sees no error, and every member of staff is locked out while the
+  // screen reports the network is enforced. A rule that silently stops applying is worse
+  // than one that was never switched on, so this is refused at the API rather than
+  // warned about on screen.
+  const refusal = staffNetworkGuard({ staffNetworkCheck: true, allowedNetworks: [] });
+  assert.ok(refusal, "expected a refusal message");
+  assert.match(refusal, /IP range/i);
+});
+
+test("the guard permits every safe shape", () => {
+  // On with ranges; off with none; off with some. Only the first combination is fatal,
+  // and a guard that refused any of these would block an administrator from switching
+  // the check back OFF after they had cleared the list — which is the exact sequence
+  // somebody digging themselves out of a misconfiguration would perform.
+  assert.equal(staffNetworkGuard({ staffNetworkCheck: true, allowedNetworks: ["203.0.113.0/24"] }), null);
+  assert.equal(staffNetworkGuard({ staffNetworkCheck: false, allowedNetworks: [] }), null);
+  assert.equal(staffNetworkGuard({ staffNetworkCheck: false, allowedNetworks: ["203.0.113.0/24"] }), null);
+});
+
+test("the geofence has no equivalent guard, deliberately", () => {
+  // A campus with no coordinates is a row somebody must go and fix on a DIFFERENT screen,
+  // so refusing the save would leave an administrator unable to express the intent at
+  // all. presence.js refuses under `campus_not_located` and routes/checkins.js raises the
+  // alarm in the log — the same treatment the student path already gets.
+  assert.equal(staffNetworkGuard({ staffGeofenceCheck: true, allowedNetworks: [] }), null);
 });
