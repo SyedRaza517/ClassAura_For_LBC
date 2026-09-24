@@ -282,6 +282,14 @@ function TapSettings({ settings, onSaved }) {
           different decision from everything above it. */}
       <div className="mt-4 border-t border-slate-200 pt-4">
         <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500">Staff clock-in</p>
+        {/* This description used to say a tap "proves they are in the building and cannot
+            be done from home" — that is false, and the codebase said so already: the
+            sticker's code is static, so a member of staff who notes it down can tap from
+            elsewhere. The comment above POST /tap-check-in in server/src/routes/checkins.js
+            records that an earlier, equally confident version of ITS OWN wording was
+            corrected for the same reason, and STATUS.md section 3.9 keeps the same correction.
+            An administrator deciding whether to switch this on reads this sentence, and may
+            repeat it at a funding audit — so it gets the same care, not less. */}
         <label className="flex items-start gap-3 rounded-xl bg-slate-50 p-3.5">
           <input type="checkbox" checked={draft.staffTapEnabled} disabled={saving} onChange={(e) => save({ staffTapEnabled: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
@@ -290,9 +298,10 @@ function TapSettings({ settings, onSaved }) {
               Lets <strong>staff</strong> clock in for work by tapping an NFC sticker in the building.
               On the Daily Check-In screen the button stays greyed until they choose <strong>Onsite</strong> or
               <strong> Online</strong>: choosing Onsite asks them to tap a sticker — a tap always records
-              <em> Onsite</em>, because it proves they are in the building and cannot be done from home —
-              while choosing Online clocks them in straight away, no sticker. Independent of student NFC
-              above; leave it off and staff clock in with a plain button as before.
+              <em> Onsite</em>, because it takes being at the sticker signed in as them, well above a plain
+              button — though the code is static, so the network and geofence checks below narrow the gap
+              further — while choosing Online clocks them in straight away, no sticker. Independent of
+              student NFC above; leave it off and staff clock in with a plain button as before.
             </span>
           </span>
         </label>
