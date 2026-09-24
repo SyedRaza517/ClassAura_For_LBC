@@ -353,13 +353,17 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/edtech_dev" npm test
 > `node --test src/` walks into `src/index.js`, binds a port, starts the schedulers and
 > **never terminates**. Always use the glob.
 
-**Current baselines** (a different number means something moved — find out what):
+**Current baselines** (a different number means something moved — find out what).
+Re-measured 24 Sep 2026, one suite/run at a time against local `edtech_dev` — see
+`STATUS.md` §3.14 for the same figures with their own commentary:
 
 | Suite | Checks |
 | --- | --- |
-| `smoke-nfc-tap` | **221** |
+| `smoke-nfc-tap` | **228** |
 | `smoke-qr-checkin` | **168** |
 | Server unit tests | **1750** |
+| Client pure-module tests | **125** |
+| Whole platform suite (`npm test`) | **41 passed, 0 failed, 1 skipped** |
 
 ### 8.1 The test that tests the tests
 
