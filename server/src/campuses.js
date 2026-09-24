@@ -12,7 +12,17 @@
 // a student's check-in is for a class, which may have a room, which is on a campus. A
 // staff clock-in is for a day, not a class, so it passes null and gets every located
 // campus — which is the honest question anyway ("is this person at the college").
-const { prisma } = require("./db");
+// PLAIN require, matching every other caller of db.js (`const prisma = require("./db")`)
+// rather than destructuring `{ prisma }` out of it. `db.js` exports the client itself
+// (`module.exports = prisma`) and ALSO sets `.prisma` on that same export as a second,
+// self-referential handle (`module.exports.prisma = prisma`) — which is why `{ prisma }`
+// destructures cleanly against the real module and reads as an equally valid style. It is
+// the only file in the codebase written that way, though, and it cost something concrete:
+// two test files stub db.js through `require.cache` with a bare fake object that carries
+// no `.prisma` property, which is how every other module using db.js gets stubbed —
+// `const { prisma } = require("./db")` against that stub destructures `undefined` instead.
+// Written the majority way, this module can be stubbed the same way its neighbours can.
+const prisma = require("./db");
 
 /**
  * The campuses a check-in could legitimately be at.

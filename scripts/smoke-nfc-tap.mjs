@@ -156,6 +156,11 @@ let parkedSessionIds = [];
 // to be able to undo them even when the block that created them threw half way through.
 let locatedCampusId = null;
 let presenceStaffId = null;
+// The staff member the presence-path rate-limit test (below) signs in as, tracked
+// separately from presenceStaffId: it needs its OWN untouched budget on the new
+// `staffPlaceAllowed` limiter, so it cannot reuse an account the block above has already
+// spent part of that same 60-second window on. See the comment where it is set.
+let rateLimitStaffId = null;
 let configExisted = false, priorConfig = null;
 
 /** Put a campus back to having no coordinates. Safe to call twice; never throws. */
@@ -179,6 +184,10 @@ async function cleanup() {
     if (presenceStaffId) {
       await db.tagTap.deleteMany({ where: { staffId: presenceStaffId } }).catch(() => {});
       await db.checkIn.deleteMany({ where: { staffId: presenceStaffId, date: todayLocal() } }).catch(() => {});
+    }
+    if (rateLimitStaffId) {
+      await db.tagTap.deleteMany({ where: { staffId: rateLimitStaffId } }).catch(() => {});
+      await db.checkIn.deleteMany({ where: { staffId: rateLimitStaffId, date: todayLocal() } }).catch(() => {});
     }
     // Un-park the seeded sessions: they are the only thing here that belongs to
     // another suite, and leaving them dated 1970 would quietly empty today's register
@@ -1256,6 +1265,90 @@ try {
     // Cleared LAST, so cleanup() still has the handle if any of the three lines above
     // throws. Nulling it first would hand the safety net an empty hand.
     presenceStaffId = null;
+  }
+
+  /* ====================================================================== */
+  console.log("\n--- POST /check-in's presence path has its own rate limit ---");
+  /* ====================================================================== */
+  //
+  // MUST-FIX FROM THE WHOLE-BRANCH FINAL REVIEW (item 5): POST /tap-check-in has carried
+  // staffTapAllowed() (10/min/staff) since it was built, and the route's own comment says
+  // why — "the rate limit stays ahead of presence so that probing the checks is throttled
+  // like everything else." POST /check-in's presence gate answers a caller-supplied
+  // `position` with no limiter of its own, and every refusal still writes a TagTap row, so
+  // an authenticated staff account could probe the campus boundary and flood the tap log as
+  // fast as the API would answer. `staffPlaceAllowed()` in routes/checkins.js closes that.
+  //
+  // A DEDICATED FIFTH STAFF ACCOUNT, for the same reason the second and fourth ones above
+  // exist — the limiter is a shared, per-staff, module-level budget, and the second account
+  // (pId) has already spent three slots of its own 10/min window earlier in this block
+  // (buttonOffNet, buttonOnNet, fillOffNet all reach the presence gate with a site of
+  // Onsite). Reusing it here would make the exact attempt count this test expects 429 at
+  // depend on what ran before it in the file — exactly the fragility the comment above the
+  // second account already warns against for the tap-side limiter, and equally true of this
+  // new one.
+  {
+    const qLogin = await login("a.rahman@edtech.co.uk", SEED_PASSWORD);
+    const qToken = qLogin.data?.token;
+    const qId = qLogin.data?.user?.id;
+    check("a fifth staff member signed in, with an untouched presence-rate budget",
+      !!qToken && !!qId, `HTTP ${qLogin.status}`);
+    rateLimitStaffId = qId;
+
+    // staffTapEnabled OFF, so every Onsite press reaches the button branch and its presence
+    // gate directly rather than being turned away earlier by `tap_required`.
+    await call("/tags/settings", {
+      method: "PUT", token: adminToken,
+      body: { staffTapEnabled: false, staffNetworkCheck: true, allowedNetworks: ["203.0.113.0/24"] },
+    });
+    await db.checkIn.deleteMany({ where: { staffId: qId, date: staffDate } });
+
+    // TEN REFUSALS, matching STAFF_PLACE_MAX in routes/checkins.js. Each one is
+    // off-network, so none of them writes a CheckIn row — which also means the
+    // already-clocked-in short circuit never fires to make the count ambiguous.
+    const OFF_NET = "198.51.100.9";
+    let lastStatus = null, lastReason = null;
+    for (let i = 0; i < 10; i++) {
+      const r = await call("/checkins/check-in", {
+        method: "POST", token: qToken, from: OFF_NET, body: { site: "Onsite" },
+      });
+      lastStatus = r.status; lastReason = r.data?.reason;
+    }
+    check("ten off-network presence checks in a row are all ordinary refusals, not yet rate-limited",
+      lastStatus === 403 && lastReason === "off_network",
+      `HTTP ${lastStatus} ${lastReason}`);
+
+    // THE ASSERTION ITEM 5 EXISTS FOR. Proved by deletion: comment out the
+    // `staffPlaceAllowed` gate in routes/checkins.js and re-run this suite — this is the
+    // check that goes red (429 expected, 403 off_network received instead), and it is the
+    // only one in this block that does.
+    const eleventh = await call("/checkins/check-in", {
+      method: "POST", token: qToken, from: OFF_NET, body: { site: "Onsite" },
+    });
+    check("the presence path on POST /check-in is rate-limited after ten attempts in a minute",
+      eleventh.status === 429, `HTTP ${eleventh.status} ${eleventh.data?.reason || ""}`);
+    check("...and none of the eleven attempts wrote a CheckIn row",
+      (await db.checkIn.count({ where: { staffId: qId, date: staffDate } })) === 0);
+
+    // ONLINE MUST NEVER BE TOUCHED BY THIS LIMITER. Online never reaches
+    // refusedForStaffPlace, or the new gate in front of it, at all — so the budget the loop
+    // above just exhausted must have no effect on it. A failure here would mean the limiter
+    // had been hoisted above the `site === "Onsite"` test, which is exactly the regression
+    // the "Online is never refused" assertions earlier in this file exist to catch from the
+    // other direction.
+    const onlineStillWorks = await call("/checkins/check-in", {
+      method: "POST", token: qToken, from: OFF_NET, body: { site: "Online" },
+    });
+    check("...and Online still clocks in normally, even with the presence budget fully spent",
+      onlineStillWorks.status === 201 || onlineStillWorks.status === 200,
+      `HTTP ${onlineStillWorks.status} ${onlineStillWorks.data?.reason || ""}`);
+
+    await call("/tags/settings", {
+      method: "PUT", token: adminToken, body: { staffNetworkCheck: false, staffTapEnabled: true },
+    });
+    await db.tagTap.deleteMany({ where: { staffId: qId } }).catch(() => {});
+    await db.checkIn.deleteMany({ where: { staffId: qId, date: staffDate } }).catch(() => {});
+    rateLimitStaffId = null;
   }
 
   /* ====================================================================== */

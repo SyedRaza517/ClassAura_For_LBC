@@ -1555,7 +1555,44 @@ function CheckInScreen({ store, me }) {
                 const on = site === key;
                 return (
                   <button key={key} role="radio" aria-checked={on} disabled={busy}
-                    onClick={() => { if (busy) return; setSite(key); setPlaceError(null); if (key === "Onsite" && tapRequired) setTapOpen(true); }}
+                    onClick={() => {
+                      if (busy) return;
+                      setSite(key);
+                      setPlaceError(null);
+                      if (key === "Onsite") {
+                        // WARM THE LOCATION FIX HERE, NOT ONLY INSIDE TapOnsiteSheet's OWN
+                        // mount effect — and this is a join between two components that
+                        // nobody owns, so it is worth saying why out loud rather than
+                        // trusting the next reader to work it out and leave it alone.
+                        //
+                        // TapOnsiteSheet only mounts when `tapRequired` is true (see
+                        // `setTapOpen(true)` two lines below, gated the same way). A college
+                        // running `staffGeofenceCheck` WITHOUT stickers — staffTapEnabled
+                        // off — is the configuration named explicitly in the design doc as
+                        // the one most colleges will be in on day one, and for that college
+                        // choosing On site never opens the sheet at all: the button turns
+                        // blue and the press itself is the clock-in. Without this call, that
+                        // press pays the FULL cold-fix wait inline, behind "Checking you
+                        // in…" — up to the 15-second timeout plus the 2-second backstop
+                        // (wherePhoneIs.js) — which is exactly the experience
+                        // `warmStaffPosition()` exists to prevent, and the spec's own
+                        // reasoning for warming early applies verbatim here: a feature that
+                        // appears to hang is how it gets reported as broken and switched off.
+                        //
+                        // HARMLESS ON THE STICKER PATH: `wherePhoneIs()` accepts a fix up to
+                        // 60 seconds old, so TapOnsiteSheet's own warm-up a moment later
+                        // resolves from this call's cached fix rather than acquiring a
+                        // second one — this is not a duplicate cost, it is the same trick
+                        // paid for slightly earlier.
+                        //
+                        // Silent when the geofence is off, same as every other call site:
+                        // staffPositionIfNeeded() resolves to {} without touching the
+                        // geolocation API, so nothing is prompted for a value the server
+                        // will not look at.
+                        api.warmStaffPosition();
+                      }
+                      if (key === "Onsite" && tapRequired) setTapOpen(true);
+                    }}
                     className={`press flex flex-col items-center gap-1.5 rounded-2xl py-4 ring-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${on ? "text-white shadow-md ring-transparent" : "bg-white text-slate-700 ring-slate-200 hover:shadow-md"}`}
                     style={on ? { background: NAVY } : undefined}>
                     <I size={20} />

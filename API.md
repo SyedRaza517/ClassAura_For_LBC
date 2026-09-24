@@ -661,19 +661,32 @@ run tap check-in for students only.
 
 **`site` is not accepted and not asked for — the record always says `Onsite`, and any
 `site` in the body is deliberately ignored.** Someone who touched a sticker in the
-building cannot be working online: the tap is what proves they are here, so recording
-anything else would store a claim the tap itself disproves. Working online remains
-available through `POST /checkins/check-in`, which does take a site. This is also the
-first time a staff clock-in has meant "was in the building" rather than "said so" — the
-button records a clock-in from anywhere, bed included.
+building cannot be working online: recording anything else would store a claim the tap
+itself contradicts. Working online remains available through `POST /checkins/check-in`,
+which does take a site.
+
+**What this does and does not prove.** It proves somebody was at that sticker once, with
+this account signed in. It does not prove they are there now: the code on a sticker is
+static and any phone with a generic NFC app can read it, so a member of staff who notes it
+down can clock in Onsite from home, and the `tagId` on the row would read as corroboration
+it is not. An earlier edition of this file claimed this was "the first time a staff
+clock-in has meant 'was in the building' rather than 'said so'" — that overstated it, and
+a claim like that in a timesheet record a college may be asked to produce at a funding
+audit is worth more care than a claim about a feature. See "What this can and cannot
+prove" in `STATUS.md` §3.14 for the fuller statement, which covers the network and
+geofence checks too.
 
 **Presence is checked before the tag is looked up** — matching the student route, and for
 the same reason: somebody off the college network should be told that, not handed
 `That tag isn't recognised` from a check they were never going to get past. Order on this
-route: feature switch, tag code present, rate limit, presence, tag lookup, already-clocked
--in, write — the rate limit stays ahead of presence so that probing the checks is
-throttled like everything else. See the refusal table under **Check-ins** above for the
-`reason` codes; a refusal from this route logs `method: "nfc"` rather than `"button"`.
+route: feature switch, tag code present, rate limit, **already-clocked-in** (which still
+resolves the tag, purely for the log), **presence**, tag lookup, write. Already-clocked-in
+sits ahead of presence deliberately — a second tap on the way past the door writes
+nothing, so there is nothing for a presence check to protect, and answering "you're off
+campus" to a no-op teaches somebody the feature is flaky — and the rate limit stays ahead
+of both so that probing the checks is throttled like everything else. See the refusal
+table under **Check-ins** above for the `reason` codes; a refusal from this route logs
+`method: "nfc"` rather than `"button"`.
 Unlike `POST /check-in`, a refusal here is logged with `tagId: null` even though the
 route later resolves the code — the same "row from before a tag was identified" case the
 schema documents for an unknown or rate-limited tap, extended to a presence refusal that

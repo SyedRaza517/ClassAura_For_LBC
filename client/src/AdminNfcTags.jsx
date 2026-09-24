@@ -337,10 +337,14 @@ function TapSettings({ settings, onSaved }) {
           <span>
             <span className="block text-[13px] font-semibold text-slate-800">Onsite clock-in must happen at a campus — {draft.staffGeofenceCheck ? "ON" : "OFF"}</span>
             <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
-              Uses the same campus coordinates and radius as the student check above. Proves somebody was
-              <strong> at the college</strong>, never which room or which desk. Staff clock in from the phone app —
-              a desktop browser cannot give a location accurate enough to mean anything, so it is not offered one.
-              Anyone who won't share their location is refused and told to choose Online.
+              Uses the same campus coordinates and radius as the student check above. Records that a phone
+              <strong> reported</strong> being at the college — never which room or which desk, and it
+              can't prove the reading was honest, because the position is sent by the phone. Read the
+              student panel's own caveat above: the mechanism is identical, so the same mock-location app
+              that defeats it there defeats it here too. Staff clock in from the phone app — a desktop
+              browser cannot give a location accurate enough to mean anything, so it is not offered one.
+              Somebody who won't share their location is told to turn it on, not offered Online instead —
+              the honest advice there is to fix the phone, not to switch method.
             </span>
           </span>
         </label>

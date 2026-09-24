@@ -1450,7 +1450,11 @@ model TagTap {
   // presence checks, and they split into two kinds that send a reader somewhere different:
   //
   //   off_network | off_campus | position_missing | accuracy_unknown | accuracy_too_poor
-  //       — the student is not where the college requires, or their phone cannot say.
+  //       — the caller is not where the college requires, or their phone cannot say. Until
+  //         21 Sep 2026 "the caller" always meant a student; staff presence (§3.14,
+  //         STATUS.md) added `refusedForStaffPlace` in routes/checkins.js, which writes
+  //         these same five reasons for a staff Onsite clock-in, so this half of the
+  //         column is now read by both audiences.
   //   network_not_configured | campus_not_located
   //       — the COLLEGE's own settings are refusing everybody. These two are also written
   //         to the service log with console.error, because a misconfiguration that refuses
@@ -1462,7 +1466,10 @@ model TagTap {
   //                     either way the standing mark won
   outcome   String
   status    String? // "P" | "L" when a mark was actually written
-  site      String? // "Onsite" for a staff tap — the tap itself proves that
+  site      String? // "Onsite" on every staff row, written by a tap AND (since 21 Sep
+  // 2026, staff presence) by a plain On site button refusal with method: "button" — a row
+  // where nothing was tapped at all. Neither method proves the claim by itself; see "What
+  // this can and cannot prove" in the staff presence design doc and STATUS.md §3.14.
   at        DateTime       @default(now())
   ip        String?
   // An id the student's app made up once and keeps (localStorage), sent as a header on

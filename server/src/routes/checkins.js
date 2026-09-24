@@ -329,6 +329,23 @@ router.post("/check-in", requireAuth, async (req, res) => {
   // time by the next few lines — that is a write, it is the moment the college's record
   // starts saying this person was on site, and it has to pass the same check a fresh
   // clock-in does. Hoisting this any higher would exempt it.
+  //
+  // RATE LIMITED, and ONLY WHEN A PRESENCE CHECK IS ACTUALLY ABOUT TO RUN — see
+  // staffPlaceAllowed above for why this exists at all. Testing `tap.staffNetworkCheck` /
+  // `tap.staffGeofenceCheck` here, rather than limiting every Onsite press unconditionally,
+  // is what keeps the two promises this branch must not break: an all-off college's plain
+  // button stays byte-for-byte unthrottled — that is the deploy-safety promise, and
+  // refusedForStaffPlace's own early return already makes the check free for that college,
+  // so spending a budget slot on it here would be a behaviour change with nothing behind
+  // it — and Online never reaches this line at all, so it can never be rate-limited by it.
+  if (site === "Onsite" && (tap.staffNetworkCheck === true || tap.staffGeofenceCheck === true) && !staffPlaceAllowed(req.user.id)) {
+    try {
+      await prisma.tagTap.create({
+        data: { staffId: req.user.id, method: "button", outcome: "rate_limited", site: "Onsite", ip: req.ip ? String(req.ip).slice(0, 60) : null },
+      });
+    } catch (e) { console.error("[tap] could not log a rate-limited staff presence check:", e.message); }
+    return res.status(429).json({ error: "Too many attempts — wait a moment and try again." });
+  }
   if (site === "Onsite" && await refusedForStaffPlace(req, res, tap, "button")) return;
 
   if (existing) {
@@ -425,6 +442,34 @@ function staffTapAllowed(staffId) {
   if (recent.length >= STAFF_TAP_MAX) { staffTapHits.set(staffId, recent); return false; }
   recent.push(now);
   staffTapHits.set(staffId, recent);
+  return true;
+}
+
+// In-process and module-level, correct for ONE Node process; a clustered deployment needs
+// Redis — same caveat as staffTapAllowed above and every other limiter in this file.
+//
+// WHY THIS EXISTS: POST /tap-check-in has carried staffTapAllowed() since it was built,
+// and the comment on it says why: "the rate limit stays ahead of presence so that probing
+// the checks is throttled like everything else." POST /check-in's own presence gate
+// (refusedForStaffPlace, called a few lines below when site === "Onsite") had no such
+// budget in front of it — an authenticated account could send an arbitrary `position` in
+// the body as fast as the API would answer, and every refusal still writes a TagTap row,
+// so the same loop that probes the campus boundary also floods the tap log as a side
+// effect of the very check meant to guard it.
+//
+// A SEPARATE MAP FROM staffTapHits, deliberately, rather than one shared budget between
+// the two routes. Sharing one counter would mean exhausting the sticker-guessing budget on
+// the tap route also silently throttled an honest Onsite button press on this one (and vice
+// versa) — two different things being probed, sharing a wall neither reader can see.
+const staffPlaceHits = new Map(); // staffId -> number[] of timestamps
+const STAFF_PLACE_WINDOW_MS = 60_000;
+const STAFF_PLACE_MAX = 10;
+function staffPlaceAllowed(staffId) {
+  const now = Date.now();
+  const recent = (staffPlaceHits.get(staffId) || []).filter((t) => now - t < STAFF_PLACE_WINDOW_MS);
+  if (recent.length >= STAFF_PLACE_MAX) { staffPlaceHits.set(staffId, recent); return false; }
+  recent.push(now);
+  staffPlaceHits.set(staffId, recent);
   return true;
 }
 
@@ -575,6 +620,13 @@ router.post("/tap-check-in", requireAuth, async (req, res) => {
       // P2002 on @@unique([staffId, date]) — somebody else's request created the row
       // between our read and this write. Their clock-in stands; report it as theirs
       // rather than as a 500.
+      //
+      // NARROWED TO P2002, matching POST /check-in's sibling catch above. This used to
+      // absorb ANY error here — a validation failure, a dropped connection, whatever —
+      // and answer it as "already checked in", which is a true statement about the wrong
+      // problem and hides a real failure behind a 200. Anything that is not the collision
+      // this block exists to settle belongs in the ordinary error handler.
+      if (e?.code !== "P2002") throw e;
       const now = await prisma.checkIn.findUnique({ where: { staffId_date: { staffId: req.user.id, date } } });
       if (!now) throw e;
       await logTap("already_checked_in", { site: "Onsite" });

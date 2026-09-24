@@ -189,8 +189,11 @@ marked students absent, where the wrong answer wrote wrong data.
 **`routes/checkins.js`** gains the gate on both routes: `POST /check-in` when
 `site === "Onsite"`, and `POST /tap-check-in` always, because a tap is an onsite claim by
 construction. Order on the tap route: feature switch, tag code present, rate limit,
-**presence**, tag lookup, already-clocked-in, write. The rate limit stays ahead of presence
-so that probing the checks is throttled like everything else.
+**already-clocked-in** (which still resolves the tag, purely so the log can carry it),
+**presence**, tag lookup, write. Already-clocked-in sits ahead of presence on purpose — see
+"Except that already clocked in wins over presence" below, which this line has to agree
+with rather than restate a different order — and the rate limit stays ahead of both so that
+probing the checks is throttled like everything else.
 
 **Every refusal is logged to `TagTap`** with `staffId` and the failing reason, as the
 existing staff refusals already are — and `method: "button"`, a new token, for a refusal on
