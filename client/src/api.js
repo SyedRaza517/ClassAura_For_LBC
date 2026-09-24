@@ -220,8 +220,9 @@ async function positionIfNeeded() {
 // for ever, with nothing on any screen to explain why. Two questions, two answers, two
 // keys.
 //
-// Cleared on sign-out (see clearSession below) for the same reason: the next person to
-// sign in on this handset is not necessarily the last one.
+// Cleared on sign-out (see forgetNeedsLocation below, called from logout() in auth.jsx)
+// for the same reason: the next person to sign in on this handset is not necessarily the
+// last one.
 const STAFF_NEEDS_LOCATION_KEY = "edtech.staffNeedsLocation";
 let staffNeedsLocation = (() => {
   try {

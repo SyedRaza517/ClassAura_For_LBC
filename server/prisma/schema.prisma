@@ -1423,12 +1423,20 @@ model TagTap {
   studentId String?
   staffId   String?
   sessionId String? // the register a student tap landed on
-  // "nfc" | "qr". NULLABLE, and never backfilled: a row written before this column
-  // existed is not evidence that it was NFC, it is evidence that we were not recording
-  // the method — writing "nfc" onto it would invent a fact. An administrator answering
-  // "I scanned and it did not work" needs to know which capture path refused, because
-  // the two fail differently: a dead sticker and an expired code look identical in a
-  // log that does not say.
+  // "nfc" | "qr" | "declared" | "teams" | "button". NULLABLE, and never backfilled: a row
+  // written before this column existed is not evidence that it was NFC, it is evidence
+  // that we were not recording the method — writing "nfc" onto it would invent a fact. An
+  // administrator answering "I scanned and it did not work" needs to know which capture
+  // path refused, because the two fail differently: a dead sticker and an expired code
+  // look identical in a log that does not say.
+  //
+  // "declared" (self check-in with no evidence beyond the account being signed in) and
+  // "teams" (written by the meeting-attendance sync, never by a person tapping anything)
+  // both predate this comment's last edit and are added here for the same reason the rest
+  // of this list exists: a value the routes write but this comment does not name is one
+  // nobody knows to look for. "button" is new with staff presence (21 Sep 2026) — a
+  // refusal logged for the plain On site button, where no sticker was involved at all;
+  // see refusedForStaffPlace in routes/checkins.js.
   method    String?
   // What happened, in one word. Kept as a list here because this column is the vocabulary
   // an administrator reads the tap log through, and a value that exists in the routes but
