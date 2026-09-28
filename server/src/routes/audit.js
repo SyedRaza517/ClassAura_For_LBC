@@ -10,7 +10,7 @@
 // operator did TO them, which they are entitled to see.
 const express = require("express");
 const prisma = require("../db");
-const { requireAuth, requireAnyPage } = require("../auth");
+const { requireAuth, requireAnyPage, requireCollegeWide } = require("../auth");
 
 const router = express.Router();
 
@@ -19,6 +19,18 @@ const router = express.Router();
 // is an administrative capability, so it is gated on the pages that already carry
 // administrative authority rather than being open to any signed-in user.
 const AUDIT_PAGES = ["settings", "access", "staff"];
+
+// AND A COLLEGE-WIDE ACCOUNT. AuditLog belongs to no department, and it cannot be given
+// one after the fact: its summaries and before/after snapshots are free text naming
+// students from every department ("Mark for Jane Doe changed from 40 to 60"). The
+// departmental guard filters rows, so it had nothing to hold on to, and an admin narrowed
+// to Business who kept the "staff" page read Law's history in full.
+//
+// Filtering by entityId back to a student's department was the rejected alternative: a
+// row about a Staff account or a setting has no department, and a summary can mention a
+// student the entityId does not point at. A narrowed trail that quietly omitted rows
+// would also stop being evidence of anything.
+const auditGate = [requireAuth, requireAnyPage(AUDIT_PAGES), requireCollegeWide("The audit trail")];
 
 const MAX_PAGE = 200;
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -30,7 +42,7 @@ const str = (v) => (typeof v === "string" ? v.trim() : "");
 //   ?actorId=     everything one person did
 //   ?from= &to=   ISO dates
 //   ?take= &cursor=
-router.get("/", requireAuth, requireAnyPage(AUDIT_PAGES), async (req, res) => {
+router.get("/", ...auditGate, async (req, res) => {
   const where = {};
   const action = str(req.query.action);
   const entity = str(req.query.entity);
@@ -72,7 +84,7 @@ router.get("/", requireAuth, requireAnyPage(AUDIT_PAGES), async (req, res) => {
 
 // GET /api/audit/actions — the distinct verbs present, for building a filter without
 // hardcoding a list in the client that would drift from what is actually recorded.
-router.get("/actions", requireAuth, requireAnyPage(AUDIT_PAGES), async (_req, res) => {
+router.get("/actions", ...auditGate, async (_req, res) => {
   const rows = await prisma.auditLog.groupBy({ by: ["action"], _count: { _all: true }, orderBy: { action: "asc" } });
   res.json(rows.map((r) => ({ action: r.action, count: r._count._all })));
 });

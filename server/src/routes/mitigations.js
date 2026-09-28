@@ -432,6 +432,15 @@ router.post("/:id/adjustments", async (req, res) => {
 });
 
 router.delete("/:id/adjustments/:adjustmentId", async (req, res) => {
+  // THE CLAIM IS READ ON ITS OWN FIRST, because that read is the one the departmental
+  // guard can see. AssessmentAdjustment is UNSCOPED and the guard does not rewrite nested
+  // includes, so the lookup below returned another department's claim in `circumstance`
+  // and the path check passed -- a narrowed admin holding both ids could delete an
+  // extension granted to a student they cannot see. MitigatingCircumstance is scoped
+  // through its student, so a claim outside the caller's departments is simply not found.
+  const claim = await prisma.mitigatingCircumstance.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!claim) return res.status(404).json({ error: "Not found." });
+
   const row = await prisma.assessmentAdjustment.findUnique({
     where: { id: req.params.adjustmentId },
     include: { circumstance: { select: { id: true, studentId: true } }, assessment: { select: { title: true } } },

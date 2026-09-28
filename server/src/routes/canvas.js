@@ -8,7 +8,7 @@
 // find — chiefly whether this account's submissions carry real hand-in dates, the
 // property that decides whether an importer is worth building at all.
 const router = require("express").Router();
-const { requireAuth, requireAnyPage } = require("../auth");
+const { requireAuth, requireAnyPage, requireCollegeWide } = require("../auth");
 const canvas = require("../vle/canvas");
 const canvasPreview = require("../canvasPreview");
 const cfg = require("../integrationConfig");
@@ -36,7 +36,9 @@ router.get("/status", async (_req, res) => {
 });
 
 // What would an import find? Reads only.
-router.get("/preview", async (_req, res, next) => {
+// College-wide only, like the Moodle preview: it reads rosters out of the whole VLE,
+// which no departmental filter in this database can narrow.
+router.get("/preview", requireCollegeWide("A Canvas preview"), async (_req, res, next) => {
   try {
     const out = await canvasPreview.preview();
     // 200 even when ok:false. A token that cannot see courses is a FINDING to display,

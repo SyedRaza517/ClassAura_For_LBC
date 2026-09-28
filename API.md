@@ -830,8 +830,8 @@ on the generic `/integrations/teams` routes, alongside branding and document tem
 |--------|------|------|---------|
 | GET | `/teams-attendance/settings` | — | `{ settings: { enabled, minAttendancePct }, configured, running }` |
 | PUT | `/teams-attendance/settings` | any of `{ enabled, minAttendancePct }` | `{ settings }` |
-| POST | `/teams-attendance/sync` | — | `{ ok: true, summary, issues }` |
-| GET | `/teams-attendance/runs` | — | `{ runs: [ {...row, summary, issues} ] }` (most recent 20) |
+| POST | `/teams-attendance/sync` | — | `{ ok: true, summary, issues }` — **college-wide accounts only**, see *Whole-college actions* |
+| GET | `/teams-attendance/runs` | — | `{ runs: [ {...row, summary, issues, issuesWithheld} ] }` (most recent 20; `issues` is `[]` and `issuesWithheld` true for a departmental account) |
 
 `configured` is whether Graph credentials and at least one organizer account are saved
 (`teamsGraph.isConfigured()`) — a college can have `enabled: true` stored from before it
@@ -932,9 +932,9 @@ accounts, creator account) stay behind `requirePage("settings")` on the generic
 |--------|------|------|---------|
 | GET | `/teams-automation/settings` | — | `{ settings: { autoCreateMeetings, provisionTeams }, configured, meetingsRunning, provisioningRunning }` |
 | PUT | `/teams-automation/settings` | any of `{ autoCreateMeetings, provisionTeams }` | `{ settings }` |
-| POST | `/teams-automation/run-meetings` | — | `{ ok: true, summary, issues }` |
-| POST | `/teams-automation/run-provisioning` | — | `{ ok: true, summary, issues }` |
-| GET | `/teams-automation/runs` | — | `{ runs: [ {...row, job, summary, issues} ] }` (most recent 20, **both jobs together**) |
+| POST | `/teams-automation/run-meetings` | — | `{ ok: true, summary, issues }` — **college-wide accounts only** |
+| POST | `/teams-automation/run-provisioning` | — | `{ ok: true, summary, issues }` — **college-wide accounts only** |
+| GET | `/teams-automation/runs` | — | `{ runs: [ {...row, job, summary, issues, issuesWithheld} ] }` (most recent 20, **both jobs together**; `issues` withheld from a departmental account) |
 
 `configured` is `teamsGraph.isConfigured()`, the same check Teams auto-attendance uses —
 one Teams app registration, one "is it connected at all" answer for both features.
@@ -1473,6 +1473,52 @@ the merged config plus `allDocTypes`, `courses` (with `feeAmountPence`) and `int
 none is marked optional: "all ten" reads artificially low, since an immigration share
 code does not apply to a UK national. An empty stored list falls back to all ten — a bad
 save writing `[]` would otherwise make every applicant documents-complete.
+
+## Whole-college actions (college-wide accounts only)
+
+A member of staff can be scoped to particular academic departments (`Staff.collegeWide`
+false plus `StaffAcademicDepartment` rows), and a Prisma client extension then filters
+every read of student- and course-linked data to those departments. Two things that
+filtering cannot reach, and this is how each is handled.
+
+**A job is not a query.** The endpoints below start work that spans the whole institution
+by its nature — one monthly letter run, one sweep of one VLE, one pass over every class in
+the college — and they declare themselves institution-wide so that a scheduler with no
+caller can run them at 02:00. Behind a button, that meant a departmental admin pressing
+"Run" wrote to every student in the college. They now require a college-wide caller and
+answer **403 with `code: "COLLEGE_WIDE_REQUIRED"`**, which is what lets a client tell this
+refusal apart from a missing page grant.
+
+| Method | Path | Also needs |
+|--------|------|-----------|
+| POST | `/attendance-emails/run` | `attendance-emails` |
+| GET | `/moodle/preview` | any of `settings`, `assessments`, `registers`, `students` |
+| POST | `/moodle/sync` | `registers` or `students` |
+| GET | `/canvas/preview` | any of `settings`, `assessments`, `registers`, `students` |
+| POST | `/teams-attendance/sync` | `attendance-settings` |
+| POST | `/teams-automation/run-meetings` | `attendance-settings` |
+| POST | `/teams-automation/run-provisioning` | `attendance-settings` |
+| GET | `/audit`, `/audit/actions` | any of `settings`, `access`, `staff` |
+| PUT | `/academic-departments` | `settings` |
+| PUT, DELETE | `/timetabling/departments/:id` | `scheduling` |
+
+`POST /attendance-emails/send-one` is deliberately NOT here: it reads one student through
+the departmental filter, so it can only ever reach one of the caller's own.
+
+`POST /timetabling/departments` (creating a school) is not here either. A school with
+nobody in it and no courses attached grants nothing to anybody, and the timetabler holding
+next term's structure is the person who knows it exists. Renaming, retiring and deleting
+one are the acts that change what other departments see.
+
+**Free text cannot be filtered.** The audit trail's summaries and before/after snapshots,
+and every sync run's issue list, name students from every department as prose rather than
+as rows — so there is nothing for the guard to hold on to. The audit trail is therefore
+college-wide only in full (filtering it back to a department was rejected: a row about a
+Staff account or a setting has no department, a summary can name a student the `entityId`
+does not point at, and a trail that quietly omitted rows would stop being evidence). Run
+histories stay readable by anyone with the page, but a departmental account gets
+`issues: []` **and `issuesWithheld: true`**, so a screen cannot render the absence as "no
+issues found".
 
 ## Data shapes (client-facing)
 ```

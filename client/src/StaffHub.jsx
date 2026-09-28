@@ -31,6 +31,7 @@ import { CHECK_IN_METHODS, MACHINE_METHODS, selfCheckInMethod } from "./checkInM
 import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
 import ConfirmDialog from "./ConfirmDialog";
+import { useAuth } from "./auth";
 // CheckInCard (the student register's tap-arms-a-button card) is no longer imported
 // here: the staff clock-in popup reads the sticker and submits in one motion — see
 // TapOnsiteSheet. The card itself lives on for the student app.
@@ -475,7 +476,15 @@ function ExportBtn({ onClick, label = "Export", className = "" }) {
 // "scheduling" — and a filter fed from either silently vanished for any admin holding
 // a different page, with nothing on screen saying why. Quiet failure to an empty list:
 // the dropdown simply does not render, and the screen keeps working.
+//
+// NARROWED TO THE CALLER'S OWN SCHOOLS for an account scoped to some. The server already
+// returns nothing from the others, so offering "Law" to a Business-only tutor was a
+// filter that could only ever produce an empty list -- which reads as "Law has no
+// students", a false statement. Left whole when the memberships are unknown (a session
+// restored from the login response, which does not carry them): the server is the
+// boundary, and an over-long dropdown is the harmless way to be wrong.
 function useSchoolOptions() {
+  const { user } = useAuth() || {};
   const [schools, setSchools] = useState([]);
   useEffect(() => {
     let live = true;
@@ -484,7 +493,12 @@ function useSchoolOptions() {
       .catch(() => { if (live) setSchools([]); });
     return () => { live = false; };
   }, []);
-  return schools;
+  const ownIds = !user || isCollegeWide(user) || !Array.isArray(user.academicDepartmentIds) ? null : user.academicDepartmentIds.join(",");
+  return useMemo(() => {
+    if (ownIds === null) return schools;
+    const own = new Set(ownIds ? ownIds.split(",") : []);
+    return schools.filter(d => own.has(d.id));
+  }, [schools, ownIds]);
 }
 // "" = every school, "none" = rows nobody has assigned yet, an id = that school.
 //
@@ -499,6 +513,10 @@ const matchesSchool = (filter, academicDepartmentId) =>
 // able to find the rows still attached to a school the college has stopped running
 // (AdminTimetablePlanner's events list carries the long form of that distinction).
 function SchoolFilter({ schools, value, onChange, className }) {
+  // "Not assigned" only for a college-wide account: unassigned rows are visible to
+  // nobody else, so for anyone narrower the option could only ever show an empty list.
+  const { user } = useAuth() || {};
+  const showUnassigned = !user || isCollegeWide(user);
   if (!schools.length) return null;
   return (
     <select
@@ -511,8 +529,30 @@ function SchoolFilter({ schools, value, onChange, className }) {
     >
       <option value="">All schools</option>
       {schools.map(d => <option key={d.id} value={d.id}>{d.name}{d.active === false ? " (retired)" : ""}</option>)}
-      <option value="none">— Not assigned —</option>
+      {showUnassigned && <option value="none">— Not assigned —</option>}
     </select>
+  );
+}
+
+// WHICH DEPARTMENTS THIS ACCOUNT IS LOOKING AT, said out loud under the name.
+//
+// A narrowed account's lists are silently shorter than a colleague's, and nothing on
+// any screen said why -- two people comparing a register saw different students and
+// reasonably concluded one of them had a bug. Rendered only once the college runs
+// departments at all (a college with none has nothing to say here). It is the server's
+// collegeWide flag and membership list, read back.
+function DepartmentScopeLine({ user }) {
+  const schools = useSchoolOptions();
+  if (!user || !schools.length) return null;
+  let text;
+  if (isCollegeWide(user)) text = "All departments";
+  else if (!Array.isArray(user.academicDepartmentIds)) return null;
+  else if (!user.academicDepartmentIds.length) text = "No departments assigned";
+  else text = schools.map(d => d.name).join(", ") || "No departments assigned";
+  return (
+    <p className="mt-1 text-[10px] leading-snug text-slate-500" title="The academic departments this account can see">
+      Viewing: <span className="font-semibold text-slate-600">{text}</span>
+    </p>
   );
 }
 
@@ -2991,6 +3031,13 @@ const canAccessPage = (user, key) => {
   return pages == null || (Array.isArray(pages) && pages.includes(key));
 };
 
+// Does this account see every academic department? Mirrors requireCollegeWide on the
+// server, which refuses the whole-college jobs (a Moodle sync, the monthly letter run,
+// the audit trail) to anyone narrower. `=== true` for the server's reason: an account
+// that silently sees everything is the dangerous failure, one that loses a button is not.
+// A CONVENIENCE, NOT THE BOUNDARY -- it hides controls that would only 403.
+const isCollegeWide = (user) => user?.collegeWide === true;
+
 /* ============================ Dashboard shared bits ============================ */
 const fmtMonth = (ym) => { const [y, m] = String(ym || "").split("-"); if (!y || !m) return ym; return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "numeric" }); };
 // Colour for a percentage, taken from the same rating bands used everywhere else
@@ -3796,7 +3843,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
             );
           })}
         </nav>
-        <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-600">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}</div>
+        <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-600">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}<DepartmentScopeLine user={me} /></div>
       </aside>
       <main className="min-w-0 flex-1 overflow-x-hidden bg-slate-100 p-5 md:p-7">
         {!sidebarOpen && (
@@ -13966,7 +14013,7 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
  * students from the staff who teach them, with nothing on screen saying why. The editor
  * therefore offers retire, and offers removal only for a row this session added.
  */
-function AcademicDepartmentSettings() {
+function AcademicDepartmentSettings({ canEdit = true }) {
   const [rows, setRows] = useState(null);
   const [summary, setSummary] = useState(null);
   const [dirty, setDirty] = useState(false);
@@ -14074,12 +14121,18 @@ function AcademicDepartmentSettings() {
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }}
-          placeholder="e.g. Health &amp; Social Care" className={inputCls + " !w-auto min-w-[220px] flex-1"} />
-        <button onClick={add} className="rounded-xl px-3 py-2 text-xs font-semibold text-white" style={{ background: NAVY }}>Add department</button>
-        <PrimaryBtn onClick={save} disabled={!dirty || busy}>{busy ? "Saving…" : "Save departments"}</PrimaryBtn>
-      </div>
+      {/* The list is the whole college's, so only a college-wide account may change it
+          (requireCollegeWide on PUT /academic-departments). Anyone narrower still sees it. */}
+      {canEdit ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }}
+            placeholder="e.g. Health &amp; Social Care" className={inputCls + " !w-auto min-w-[220px] flex-1"} />
+          <button onClick={add} className="rounded-xl px-3 py-2 text-xs font-semibold text-white" style={{ background: NAVY }}>Add department</button>
+          <PrimaryBtn onClick={save} disabled={!dirty || busy}>{busy ? "Saving…" : "Save departments"}</PrimaryBtn>
+        </div>
+      ) : (
+        <p className="mt-3 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500">Changing this list needs college-wide access, because it affects every department.</p>
+      )}
 
       {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
       {ok && <p className="mt-2 text-xs text-emerald-600">{ok}</p>}
@@ -15004,6 +15057,8 @@ const moodleTotal = (s) => MOODLE_COUNTS.reduce((n, [k]) => n + (Number(s?.[k]) 
 function MoodleCard({ store }) {
   // Only registers/students admins may actually run a sync (server SYNC_PAGES).
   const canSync = canAccessPage(store.currentUser, "registers") || canAccessPage(store.currentUser, "students");
+  // Preview and sync both walk the whole VLE, so both need college-wide access.
+  const wide = isCollegeWide(store.currentUser);
   const [status, setStatus] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState("");        // "" | "preview" | "sync"
@@ -15118,7 +15173,8 @@ function MoodleCard({ store }) {
               : "Never run."}
           </p>
 
-          <div className="mb-3 flex flex-wrap gap-2">
+          {!wide && <p className="mb-3 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500">A Moodle sync covers every department, so previewing or running one needs college-wide access.</p>}
+          {wide && <div className="mb-3 flex flex-wrap gap-2">
             <button onClick={runPreview} disabled={!!busy || status.running}
               className="press inline-flex items-center gap-1.5 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-200 disabled:opacity-50">
               {busy === "preview" ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Preview
@@ -15132,8 +15188,8 @@ function MoodleCard({ store }) {
                 {busy === "sync" || status.running ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Sync now
               </PrimaryBtn>
             )}
-          </div>
-          {!canSync && <p className="mb-3 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500">You can preview changes here. Running a sync needs the Registers or Students permission.</p>}
+          </div>}
+          {wide && !canSync && <p className="mb-3 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] font-semibold text-slate-500">You can preview changes here. Running a sync needs the Registers or Students permission.</p>}
 
           {preview && <p className="mb-2 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-700">Preview only — nothing has been saved.</p>}
 
@@ -15149,6 +15205,9 @@ function MoodleCard({ store }) {
             : <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">Nothing to change — Staff Hub already matches Moodle.</p>
           )}
 
+          {/* The server withholds a run's issue list from narrowed accounts -- it names
+              students from every department -- and says so, so "no issues" is not implied. */}
+          {result?.issuesWithheld && <p className="mb-2 text-[11px] text-slate-500">This run&apos;s issue list names students across the college, so it is shown only to college-wide accounts.</p>}
           {issues.length > 0 && (
             <div className="mt-2">
               <button onClick={() => setShowIssues(v => !v)} className="press flex w-full items-center justify-between rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800 ring-1 ring-amber-200">
@@ -15626,7 +15685,9 @@ function AdminAttendanceEmails({ store }) {
         Icon={Mail}
         action={<div className="flex items-center gap-2">
           <button onClick={() => setShowConfig(v => !v)} className="press flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"><Settings size={14} /> Settings</button>
-          <PrimaryBtn onClick={() => setConfirmRun(true)} disabled={!term || running}>{running ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <><Send size={16} /> {data?.custom ? "Send for this range now" : "Send this month now"}</>}</PrimaryBtn>
+          {/* The run writes to every student in the college, so it needs college-wide
+              access (requireCollegeWide on POST /attendance-emails/run). */}
+          <PrimaryBtn onClick={() => setConfirmRun(true)} disabled={!term || running || !isCollegeWide(store.currentUser)} title={isCollegeWide(store.currentUser) ? undefined : "The monthly run covers every department, so it needs college-wide access"}>{running ? <><Loader2 size={16} className="animate-spin" /> Sending…</> : <><Send size={16} /> {data?.custom ? "Send for this range now" : "Send this month now"}</>}</PrimaryBtn>
         </div>} />
 
       {err && <div className="mb-4 flex items-start gap-2 rounded-xl bg-rose-50 px-3.5 py-3 text-sm font-semibold text-rose-700 ring-1 ring-rose-200"><AlertCircle size={16} className="mt-px shrink-0" />{err}</div>}
@@ -17250,10 +17311,17 @@ function AdminSettings({ store }) {
           administrator holding only "settings" cannot even READ the list, and the card
           would render an authorisation error where an editor should be. Hidden instead:
           a screen that shows a control nobody can use teaches people to ignore errors. */}
+      {/* ACADEMIC departments, on this screen's own "settings" grant. They sat inside the
+          referrals block below until 28 Sep 2026, so an administrator holding "settings"
+          but not "referrals" could not see the department editor or the Moodle mapping at
+          all -- the referrals reasoning is about SUPPORT departments and never applied. */}
+      <div className="mb-4">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Academic departments</p>
+        <AcademicDepartmentSettings canEdit={isCollegeWide(store.currentUser)} />
+      </div>
       {canAccessPage(store.currentUser, "referrals") && (
         <div className="mb-4">
           <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Student support</p>
-          <AcademicDepartmentSettings />
           <SupportDepartmentSettings />
         </div>
       )}

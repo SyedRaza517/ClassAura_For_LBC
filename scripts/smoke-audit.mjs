@@ -53,6 +53,7 @@ async function waitFor(predicate, tries = 20) {
 // not re-run between them: a promotion left behind here is a permission this suite
 // silently granted to every suite that sorts after it.
 let promotedAdmin = null;   // { id } — the seeded admin, if we made them a Super Admin
+let widenedAdmin = null;   // { id } — the seeded admin, if we lifted their department scope
 let accessTargetBefore = null; // { id, accountRole, adminPages } — the colleague we re-scoped
 
 try {
@@ -63,6 +64,17 @@ try {
   if (seeded && !seeded.isSuperAdmin) {
     await db.staff.update({ where: { id: seeded.id }, data: { isSuperAdmin: true } });
     promotedAdmin = { id: seeded.id };
+  }
+  // AND COLLEGE-WIDE, for the same reason and with the same restore. GET /audit is
+  // college-wide only since 28 Sep 2026 — the trail's summaries name students from every
+  // department as free text, so there is nothing to filter and a narrowed admin was
+  // reading the whole college's history. Under SMOKE_SCOPED_DEPARTMENT=1 every seeded
+  // account is narrowed, this one included, so without this the suite tests the refusal
+  // instead of the trail. Set BEFORE the login below, so requireAuth's identity cache
+  // never holds the narrowed row.
+  if (seeded && seeded.collegeWide === false) {
+    await db.staff.update({ where: { id: seeded.id }, data: { collegeWide: true } });
+    widenedAdmin = { id: seeded.id };
   }
 
   const admin = (await call("/auth/login", { method: "POST", body: { email: "admin@edtech.co.uk", password: SEED_PW } })).data;
@@ -168,6 +180,7 @@ try {
       });
     }
     if (promotedAdmin) await db.staff.update({ where: { id: promotedAdmin.id }, data: { isSuperAdmin: false } });
+    if (widenedAdmin) await db.staff.update({ where: { id: widenedAdmin.id }, data: { collegeWide: false } });
   } catch (e) {
     console.error("cleanup problem:", e?.message || e);
   }

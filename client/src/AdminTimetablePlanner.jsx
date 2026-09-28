@@ -18,6 +18,7 @@ import { NAVY, alpha } from "./branding";
 import TimetableCalendar from "./TimetableCalendar";
 import TimetableSettingsModal from "./TimetableSettingsModal";
 import ConfirmDialog from "./ConfirmDialog";
+import { useAuth } from "./auth";
 import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates, mondayOf } from "./timetableView";
 import { ukBankHolidaysRange } from "./bankHolidays";
 import useDismissOnOutside from "./useDismissOnOutside";
@@ -411,7 +412,18 @@ function CampusesTab() {
 // been handed next term's structure is the person who knows it exists. Disabled Rename
 // and Delete buttons were the rejected alternative — a control that is always greyed
 // out teaches people the screen is broken rather than that the action is elsewhere.
+//
+// THE PARAGRAPHS ABOVE DESCRIBE A DESIGN THAT DID NOT SHIP. The tab does offer Rename,
+// Restore and Delete, on the "scheduling" grant, and until 28 Sep 2026 any planner could
+// use them -- including one narrowed to a single school, whose "is this school in use?"
+// count could not see the others' courses and so deleted schools still full of students.
+// The server now refuses rename, retire and delete to anyone without college-wide access
+// (requireCollegeWide in routes/timetabling.js) and counts across every department. The
+// buttons are shown only to those accounts, so a narrowed planner keeps the half the
+// comment argued for: adding a school.
 function SchoolsTab() {
+  const { user } = useAuth() || {};
+  const canManage = user?.collegeWide === true;
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(true);
   const [err, setErr] = useState("");
@@ -501,7 +513,7 @@ function SchoolsTab() {
                   </td>
                   <td className="px-3 py-2 text-slate-500">{d.active === false ? "Retired" : "In use"}</td>
                   <td className="px-3 py-2 text-right">
-                    {editId !== d.id && (
+                    {canManage && editId !== d.id && (
                       <>
                         {d.active === false ? (
                           <button onClick={() => setActive(d, true)}

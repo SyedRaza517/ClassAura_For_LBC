@@ -12,7 +12,7 @@
 // FEATURE; membership decides the rows.
 const router = require("express").Router();
 const prisma = require("../db");
-const { requireAuth, requirePage } = require("../auth");
+const { requireAuth, requirePage, requireCollegeWide } = require("../auth");
 const { sAcademicDepartment } = require("../serializers");
 const departments = require("../academicDepartments");
 const { withoutAcademicScope } = require("../academicScope");
@@ -121,8 +121,12 @@ router.get("/summary", requireAuth, requirePage("settings"), async (_req, res) =
  * from every member of staff who teaches them, with nothing on screen saying why.
  * Retiring keeps every row attached and merely stops offering the department as a
  * destination.
+ *
+ * COLLEGE-WIDE CALLERS ONLY. This replaces the whole list -- every other department's
+ * name, colour and active flag included -- so an admin narrowed to one department could
+ * retire the rest. Same rule as the planner's rename/retire in timetabling.js.
  */
-router.put("/", requireAuth, requirePage("settings"), async (req, res) => {
+router.put("/", requireAuth, requirePage("settings"), requireCollegeWide("Editing the list of departments"), async (req, res) => {
   const submitted = req.body?.departments;
   const cleaned = departments.cleanList(submitted);
   if (!cleaned) return res.status(400).json({ error: "departments must be an array" });

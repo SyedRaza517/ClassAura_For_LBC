@@ -9,7 +9,8 @@
 // which still serves the older TimetableSlot screen and the student timetable.
 const router = require("express").Router();
 const prisma = require("../db");
-const { requireAuth, requirePage } = require("../auth");
+const { requireAuth, requirePage, requireCollegeWide } = require("../auth");
+const { withoutAcademicScope } = require("../academicScope");
 const { sRoom, sCampus, sCategory } = require("../timetabling/serialize");
 const { normaliseCampus } = require("../timetabling/campusMatch");
 const { seriesDates } = require("../timetabling/recurrence");
@@ -540,8 +541,13 @@ router.post("/departments", async (req, res) => {
  * Settings screen matches rows on, and what a college's own configuration refers to.
  * Renaming the DISPLAY name is cosmetic and safe; changing the key underneath it is a
  * different act with a different blast radius, and it stays on Settings.
+ *
+ * COLLEGE-WIDE CALLERS ONLY, as for DELETE below. A school's name and its retired flag
+ * are what every member of staff in every other school sees in their pickers, so
+ * renaming or retiring one is not a scheduling decision inside one department. Creating
+ * a school stays open to any planner: it touches nobody else's rows.
  */
-router.put("/departments/:id", async (req, res) => {
+router.put("/departments/:id", requireCollegeWide("Renaming or retiring a school"), async (req, res) => {
   const existing = await prisma.academicDepartment.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: "School not found" });
 
@@ -585,21 +591,31 @@ router.put("/departments/:id", async (req, res) => {
  * Retiring keeps every link intact and takes the school out of the pickers, which is what
  * "delete this school" actually means to the person asking. A hard delete is allowed only
  * when there is genuinely nothing to orphan — a school added by mistake a minute ago.
+ *
+ * THE COUNTS ARE TAKEN INSTITUTION-WIDE, and that is the fix for a real hole. Taken under
+ * the caller's scope, a planner narrowed to Business counted 0 courses and 0 students in
+ * Law -- the guard hid them -- and so hard-deleted a school still full of people, which
+ * is precisely the orphaning this route exists to refuse. Whether a school is "in use" is
+ * a fact about the college, not about who is asking. requireCollegeWide closes the door
+ * as well; the unscoped count is what keeps the answer honest if that gate ever moves.
  */
-router.delete("/departments/:id", async (req, res) => {
+router.delete("/departments/:id", requireCollegeWide("Deleting or retiring a school"), async (req, res) => {
   const id = req.params.id;
   const existing = await prisma.academicDepartment.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: "School not found" });
 
-  const [courses, students, cohorts, units, events, slots, staff] = await Promise.all([
-    prisma.course.count({ where: { academicDepartmentId: id } }),
-    prisma.student.count({ where: { academicDepartmentId: id } }),
-    prisma.cohort.count({ where: { academicDepartmentId: id } }),
-    prisma.unit.count({ where: { academicDepartmentId: id } }),
-    prisma.timetableEvent.count({ where: { academicDepartmentId: id } }),
-    prisma.timetableSlot.count({ where: { academicDepartmentId: id } }),
-    prisma.staffAcademicDepartment.count({ where: { academicDepartmentId: id } }),
-  ]);
+  const [courses, students, cohorts, units, events, slots, staff] = await withoutAcademicScope(
+    "deciding whether a school is in use is a fact about every department, not the caller's",
+    () => Promise.all([
+      prisma.course.count({ where: { academicDepartmentId: id } }),
+      prisma.student.count({ where: { academicDepartmentId: id } }),
+      prisma.cohort.count({ where: { academicDepartmentId: id } }),
+      prisma.unit.count({ where: { academicDepartmentId: id } }),
+      prisma.timetableEvent.count({ where: { academicDepartmentId: id } }),
+      prisma.timetableSlot.count({ where: { academicDepartmentId: id } }),
+      prisma.staffAcademicDepartment.count({ where: { academicDepartmentId: id } }),
+    ]),
+  );
   const inUse = courses + students + cohorts + units + events + slots + staff;
 
   if (inUse > 0) {

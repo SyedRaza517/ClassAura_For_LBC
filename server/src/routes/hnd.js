@@ -132,7 +132,32 @@ async function departmentOfCourse(courseId) {
   return c?.academicDepartmentId ?? null;
 }
 
-async function resolveAcademicDepartment(raw, { defaultForCaller = false } = {}) {
+async function resolveAcademicDepartment(raw, opts = {}) {
+  const out = await resolveAcademicDepartmentRaw(raw, opts);
+  if (out.error) return out;
+  // A NARROWED CALLER MAY ONLY PLACE A COURSE IN ONE OF THEIR OWN DEPARTMENTS.
+  //
+  // The lookup below accepted any department that exists, so an admin scoped to Business
+  // could create a course in Law, or move one of theirs there, or un-assign it. None of
+  // that leaks data -- the row simply leaves their sight -- but it is a narrowed account
+  // deciding where another department's records live, and the course vanishing from the
+  // screen of the person who just saved it is its own bug. Null is refused for the same
+  // reason: unassigned means college-wide accounts only.
+  //
+  // 403, not 400: the request is well formed; this caller is not allowed to make it.
+  const scope = currentScope();
+  if (scope && scope.collegeWide !== true && !scope.academicDepartmentIds.includes(out.id)) {
+    return {
+      status: 403,
+      error: out.id == null
+        ? "Choose which of your departments this course belongs to. Only a college-wide account can leave a course unassigned."
+        : "You can only place a course in one of your own departments.",
+    };
+  }
+  return out;
+}
+
+async function resolveAcademicDepartmentRaw(raw, { defaultForCaller = false } = {}) {
   if (raw === undefined || raw === null || raw === "") {
     // A COURSE CREATED BY A SCOPED ADMIN DEFAULTS TO THEIR OWN DEPARTMENT.
     //
@@ -579,7 +604,7 @@ router.post("/courses", requireAuth, requireRegisters, async (req, res) => {
   // assign it to a department at all. Its students stayed unassigned and invisible to
   // their own tutors.
   const dept = await resolveAcademicDepartment(req.body?.academicDepartmentId, { defaultForCaller: true });
-  if (dept.error) return res.status(400).json({ error: dept.error });
+  if (dept.error) return res.status(dept.status || 400).json({ error: dept.error });
 
   const p = await prisma.course.create({
     data: { name, colour, academicDepartmentId: dept.id },
@@ -607,7 +632,7 @@ router.put("/courses/:id", requireAuth, requireRegisters, async (req, res) => {
   let deptChange = null;
   if (req.body?.academicDepartmentId !== undefined) {
     const dept = await resolveAcademicDepartment(req.body.academicDepartmentId);
-    if (dept.error) return res.status(400).json({ error: dept.error });
+    if (dept.error) return res.status(dept.status || 400).json({ error: dept.error });
     if (dept.id !== existing.academicDepartmentId) deptChange = dept.id;
     else deptChange = undefined; // no move needed
   }

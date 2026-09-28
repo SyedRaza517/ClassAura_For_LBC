@@ -19,6 +19,7 @@
 // which run with no database. This suite covers the parts those cannot: the HTTP
 // surface, the guards, and the round trip through Postgres.
 import { strict as assert } from "node:assert";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 const BASE = process.env.API_URL || "http://localhost:4010/api";
 const ADMIN = process.env.SEED_ADMIN_EMAIL || "admin@edtech.co.uk";
@@ -270,7 +271,13 @@ await check("an intervention snapshots the student's figures as they are now", a
  * side, against a surname in a summary.
  */
 async function assertAuditCarriesNoCaseload(when) {
-  const r = await call("/audit?entity=Intervention&take=50", { token });
+  // THE AUDIT TRAIL IS COLLEGE-WIDE ONLY since 28 Sep 2026, so this assertion needs a
+  // college-wide reader to keep running in the scoped pass, where every seeded account is
+  // narrowed. In the ordinary pass this IS the caller's own token and nothing is created.
+  // See lib/college-wide-reader.mjs for why the assertion is worth the helper.
+  const reader = await collegeWideReader({ call, token, label: "pred" });
+  const r = await call("/audit?entity=Intervention&take=50", { token: reader.token });
+  await reader.dispose();
   assert.equal(r.status, 200, `the audit trail should be readable by the seeded admin; got HTTP ${r.status}`);
 
   const rows = (r.body.entries || []).filter((e) => e.entityId === createdInterventionId);

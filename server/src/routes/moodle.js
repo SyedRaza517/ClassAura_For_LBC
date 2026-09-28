@@ -4,7 +4,8 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const audit = require("../audit");
-const { requireAuth, requireAnyPage } = require("../auth");
+const { requireAuth, requireAnyPage, requireCollegeWide } = require("../auth");
+const { callerIsCollegeWide } = require("../academicScope");
 const moodle = require("../moodle");
 const cfg = require("../integrationConfig");
 
@@ -17,7 +18,7 @@ const SYNC_PAGES = ["registers", "students"];
 router.use(requireAuth, requireAnyPage(READ_PAGES));
 
 const parse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
-const sRun = (r) => r && ({
+const sRun = (r, wide) => r && ({
   id: r.id,
   startedAt: r.startedAt,
   finishedAt: r.finishedAt,
@@ -25,7 +26,12 @@ const sRun = (r) => r && ({
   mode: r.mode,
   startedBy: r.startedBy,
   summary: parse(r.summary, {}),
-  issues: parse(r.issues, []),
+  // FREE TEXT NAMING STUDENTS FROM EVERY DEPARTMENT, because the run was college-wide.
+  // The guard filters rows, not strings, so a narrowed caller gets the counts and the
+  // outcome but not the list; issuesWithheld tells the screen to say so rather than
+  // showing "no issues".
+  issues: wide ? parse(r.issues, []) : [],
+  issuesWithheld: !wide,
   error: r.error || null,
 });
 
@@ -47,6 +53,7 @@ router.get("/status", async (req, res) => {
   // configuration than the one asking.
   await cfg.load("moodle");
   const resolved = cfg.peek("moodle");
+  const wide = callerIsCollegeWide();
   const savedHere = Boolean((await prisma.tenantIntegration.findFirst({ where: { provider: "moodle" } }))?.enabled);
   res.json({
     configured: moodle.isConfigured(),
@@ -57,13 +64,16 @@ router.get("/status", async (req, res) => {
     // Where that configuration came from, so "why is this not what I typed?" is
     // answerable from the screen rather than from the server's environment.
     source: savedHere ? "institution" : (resolved.url || resolved.token) ? "server" : "none",
-    last: sRun(history[0]) || null,
-    history: history.map(sRun),
+    last: sRun(history[0], wide) || null,
+    history: history.map((r) => sRun(r, wide)),
   });
 });
 
 // Dry run: report exactly what a sync would change, writing nothing.
-router.get("/preview", async (req, res) => {
+// COLLEGE-WIDE CALLERS ONLY, for the preview as much as the run. syncFromMoodle walks the
+// whole VLE with no department (it adopts courses by name before it can know one), and
+// its issues list names students from every course it touched.
+router.get("/preview", requireCollegeWide("A Moodle sync preview"), async (req, res) => {
   if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add your Moodle URL and web-services token under Settings → Connected systems." });
   if (moodle.isRunning()) return res.status(409).json({ error: "A sync is already running. Wait for it to finish." });
   try {
@@ -78,7 +88,7 @@ router.get("/preview", async (req, res) => {
 // than a proxy will hold a request open, so the run continues server-side and the
 // caller polls /status for the outcome — which is also recorded in MoodleSync, so
 // closing the browser doesn't lose the result.
-router.post("/sync", requireAnyPage(SYNC_PAGES), async (req, res) => {
+router.post("/sync", requireAnyPage(SYNC_PAGES), requireCollegeWide("A Moodle sync"), async (req, res) => {
   if (!moodle.isConfigured()) return res.status(400).json({ error: "Moodle isn't set up yet. Add your Moodle URL and web-services token under Settings → Connected systems." });
   if (moodle.isRunning()) return res.status(409).json({ error: "A sync is already running. Wait for it to finish." });
 

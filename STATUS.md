@@ -22,10 +22,17 @@ queries, reviews, mitigations, prediction, staff, attendance emails, assessments
 admissions, SLC and ISM. Backed by a run: the whole suite passed on the local
 `edtech_dev` (35 passed, 0 failed, 1 skipped, plus 1,622 unit tests), and the new
 assertions in `smoke-academic-departments.mjs` were proved able to fail by re-gating
-the endpoint they guard. Note that this file still has no section describing the
-academic-departments feature itself (it landed after the last full pass); the filter is
-a view, not a boundary — scoping is described in `.claude/rules/` and enforced
-server-side.*
+the endpoint they guard. The filter is a view, not a boundary — scoping is enforced
+server-side. This paragraph said "this file still has no section describing the
+academic-departments feature itself"; that was true until 28 Sep 2026 and §3.15 is now
+that section.*
+
+*28 Sep 2026: five gaps in the departmental boundary closed — whole-college jobs a
+narrowed admin could start, the audit trail and sync issue lists, deleting a school whose
+in-use count could not see other departments, filing a course into a department the caller
+is not in, and an extension on another department's claim. The Moodle sync now stamps the
+units and students it creates with their course's department. See §3.15, which also states
+what is still open: admissions/SLC/ISM are not scoped at all, and departments are flat.*
 
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
@@ -1021,6 +1028,74 @@ Read `docs/testing/2026-09-21-staff-check-in-e2e-test-plan.md` for the full jour
 including the eight-combination configuration matrix, every refusal's exact wording, the
 ordering rules, and the stress/concurrency script — its own baseline table is kept in step
 with the figures above.
+
+### 3.15 Academic departments — the boundary's remaining gaps closed (28 Sep 2026)
+
+**This is the first section in this file about the academic-departments feature itself.**
+The 12 Sep note at the top of this file flagged its own absence and is now answered here.
+What that note said about the *filter* remains exactly true — the school dropdown on ~20
+admin lists is a view, not a boundary — and what follows is about the boundary, which is
+older than the filter and enforced server-side by a Prisma client extension
+(`academicScopeGuard.js`), not by per-route checks.
+
+**Nothing is narrowed for any college by default.** `Staff.collegeWide` defaults to
+`true`, and sign-up approval deliberately leaves it alone, so the filtered branch of the
+guard runs only for an account a Super Admin has explicitly narrowed. That matters for
+reading everything below: these were holes in a door most colleges have not yet closed.
+
+Five gaps, each demonstrated and each proved able to fail by reintroducing it:
+
+| Gap | What a departmental admin could do | Now |
+| --- | --- | --- |
+| Whole-college jobs | Start the monthly attendance-letter run, a Moodle sync or preview, a Canvas preview, either Teams run — each declares itself institution-wide with `withoutAcademicScope`, so the guard was never asked. The letter run wrote to every student in the college. | `requireCollegeWide` (in `auth.js`) refuses them, with `code: "COLLEGE_WIDE_REQUIRED"` so the client can tell this apart from a missing page grant |
+| Free text naming students | Read the whole college's audit trail, and every sync run's issue list. Neither is filterable: they are strings, not rows | The audit trail is college-wide only; run issue lists are withheld with `issuesWithheld: true`, so a screen cannot read the absence as "no issues" |
+| Deleting a school | Hard-delete a school full of another department's students. The "is it in use?" counts ran under the caller's own scope, so every count for another department was 0 and `SetNull` then detached the lot | The counts run institution-wide, and rename/retire/delete are college-wide only. Creating a school stays open to any planner: a school with nobody in it grants nothing |
+| Filing a course | Create a course in another department, move one of theirs into it, or un-assign it entirely | `resolveAcademicDepartment` refuses a department the caller is not in, and refuses null — 403, because the request is well formed and the caller is not allowed to make it |
+| A nested include | Delete an extension on another department's mitigating-circumstances claim, holding both ids. `AssessmentAdjustment` is `UNSCOPED` and the guard does not rewrite nested `include`s | The claim is read on its own first, which is the read the guard can see |
+
+**The Moodle sync also created rows nobody could see.** A unit was created with its
+`courseId` but no `academicDepartmentId`, and a student with neither — so every unit,
+session, assessment and student a sync added to a course mapped to Business was visible
+only to college-wide accounts, while the sync reported them as created, which they were.
+Both now take the department of their course, on create; an existing student's is filled
+in but never overwritten, because rewriting it nightly would move people across an access
+boundary depending on the order Moodle listed their courses in.
+
+**Two client fixes, one of them a plain bug:** the department editor and the Moodle
+category mapping were rendered inside a `canAccessPage(…, "referrals")` block, so an
+administrator holding `settings` but not `referrals` could not see either — the referrals
+reasoning is about *support* departments and never applied to these. The sidebar now also
+says which departments the signed-in account can see ("Viewing: Computing, Business"), and
+the school filter offers only the caller's own schools.
+
+**What this does NOT do.** Specs 3–6 of
+`docs/superpowers/specs/2026-09-04-academic-departments-design.md` are still open, and the
+first of them is the largest remaining hole in the boundary: **admissions, SLC and ISM
+return every row to any staff member with the page**, with the department attached only as
+a display label. `Admission.course` is a plain string with no `Course` relation, so there
+is nothing to scope through until that is repaired. HR (spec 4) has no department axis,
+every configuration table is still a single college-wide row (spec 5), and the mobile work
+(spec 6) has not started. Departments remain **flat** — there is no Faculty → Department
+nesting of the kind Moodle and Canvas categories have — and there is no department-level
+role: an account is college-wide or a plain member, with no Head of Department.
+
+| Check | Result |
+| --- | --- |
+| New suite | `scripts/smoke-department-gaps.mjs` — **14 passed, 0 failed**. Weighted negative, and every refusal paired with the permission that makes it mean something (the same account succeeding inside its own department, or a college-wide account succeeding where it is refused) |
+| Proved able to fail | Each of the five gaps reintroduced in turn; the delete case is the clearest — with the scoped count restored it answered `{"retired":false,"inUse":0}` for a school holding 4 records |
+| Moodle stamping | `server/src/moodleDepartmentStamp.test.js` — 3 passed. A **text** test, and it says so: `syncFromMoodle` talks to a real Moodle and there is no fake, so this reads the source. A weak proxy, stated as one |
+| Full suite | **42 passed, 0 failed, 1 skipped** (`DATABASE_URL=…edtech_dev npm test`) |
+| Scoped suite | `SMOKE_SCOPED_DEPARTMENT=1` — **36 passed, 3 failed, 1 skipped**. The 3 failed before this work too (`smoke-student-notifications`, `smoke-teams-automation`, `smoke-timetable-registers`) and none of them fails on a department refusal; `smoke-teams-attendance` was a fourth and now passes |
+| Server unit tests | **1,753 passed, 0 failed** (1,750 before this work, plus the 3 above) |
+| Client pure-module tests | **125 passed, 0 failed** |
+| Client build | succeeds |
+
+Four suites read the audit trail as evidence and would have stopped doing so in the scoped
+pass, where `scope-all-staff.js` narrows every account including the Super Admin. Those
+assertions are Article 9 privacy properties — that the trail records a decision and never
+its reason, carries no intervention notes, says who and where and never why — so
+`scripts/lib/college-wide-reader.mjs` supplies a college-wide reader in that pass only,
+rather than the assertions being weakened or skipped.
 
 ### 3.7 Business rules that are actually enforced
 

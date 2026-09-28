@@ -50,9 +50,17 @@ const filter = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 // narrowed to (scripts/lib/fixture-department.mjs), so they run in both passes, and the QR
 // suite additionally asserts the boundary itself: a narrowed admin cannot mint a code for
 // another department's class and can for their own.
+//   smoke-department-gaps       Same construction, and one step further: its whole subject
+//                               is what a NARROWED admin is refused, so it creates its own
+//                               narrowed account and needs a college-wide one to build the
+//                               other department it is refused from. It also asserts the
+//                               college-wide half of each pair (the audit trail served, a
+//                               school retired rather than deleted), which no narrowed
+//                               caller can reach by design.
 const NOT_SCOPEABLE = new Set([
   "smoke-academic-departments.mjs",
   "smoke-academic-scope.mjs",
+  "smoke-department-gaps.mjs",
 ]);
 const scopedRun = process.env.SMOKE_SCOPED_DEPARTMENT === "1";
 
