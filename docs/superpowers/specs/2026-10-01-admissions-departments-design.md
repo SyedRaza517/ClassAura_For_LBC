@@ -47,7 +47,7 @@ each one closes off a design that would otherwise look reasonable to a later rea
 
 | # | Decision | Ruling |
 | --- | --- | --- |
-| D1 | Where does an application's department come from? | **From Moodle.** The college maps a Moodle category to a department once; everything downstream inherits it. Nobody types a department onto an application. |
+| D1 | Where does an application's department come from? | **The admissions course list, which stays completely separate from Moodle.** Each course offered to applicants is assigned a department once, on the admissions screen. Applications inherit it. Nothing about admissions reads or depends on Moodle. |
 | D2 | What happens to an application with no department? | **Visible to every staff member holding the page.** Null means "not sorted yet", not "secret". |
 | D3 | What does a departmental staff member see on the Admission Tracker? | **College-wide figures, with a department filter available**, and access to the tracker kept at admin level. |
 | D4 | What does the backfill do when it cannot match an application? | **Leaves it unassigned and reports it.** It never guesses. |
@@ -62,85 +62,79 @@ figures", say so: that is a one-line difference here and a materially different 
 
 ---
 
-## 3. The chain, and the one link that does not exist
+## 3. Admissions stays separate from Moodle
 
-D1 asks for the department to come from the Moodle category. Most of that chain is already
-built:
+An earlier draft of this document routed the department through Moodle: the college maps a
+Moodle category to a department already, so an admissions course would have pointed at its
+Moodle course and inherited the answer. **That is explicitly rejected. Admissions is to
+remain completely separate from Moodle**, which is the separation the schema already
+describes:
+
+> *"Deliberately SEPARATE from the Moodle-synced `Course` table: admissions decides what a
+> prospective student can apply for, independent of what's live in Moodle."*
+> — `schema.prisma`, on `AdmissionCourse`; `routes/admissionApply.js:12` repeats it
+
+So `AdmissionCourse` gains its **own** `academicDepartmentId`. No `courseId`, no join to
+`Course`, no dependence on the VLE category mapping, and nothing in the admissions feature
+that breaks if a college runs no VLE at all.
 
 ```
-Moodle category ──mapped once on Settings──▶ Course.academicDepartmentId
-      │                                            │
-      │ (new courses in a mapped category           │ (assignCourses moves
-      │  inherit it on sync)                        │  cohorts, units, students)
-      ▼                                            ▼
-  vleCategoryExternalId                    Cohort / Unit / Student
+AcademicDepartment ──chosen once per course──▶ AdmissionCourse ──▶ Admission
+  (the college's own list,                    (admissions'        (inherits at
+   nothing to do with Moodle)                  own screen)         write time)
 ```
 
-**An application is not on that chain at all, and that is deliberate.** `AdmissionCourse`
-— the list an applicant picks from — is a separate table from the Moodle-synced `Course`,
-and the schema says why: *"Deliberately SEPARATE from the Moodle-synced `Course` table:
-admissions decides what a prospective student can apply for, independent of what's live in
-Moodle."* `routes/admissionApply.js:12` repeats it.
+`AcademicDepartment` is the college's own list of teaching departments. Pointing an
+admissions course at one is not a link to Moodle — the VLE's only role anywhere is as one
+of several things that can *populate* `Course`, and `Course` is not on this chain.
 
-The consequence, verified rather than assumed:
+### 3.1 What this costs, stated plainly
 
-- `AdmissionCourse` has no `courseId`, no `moodleCourseId` and no `academicDepartmentId`.
-- There is no name-based join to fall back on. `Course.name` is unique; **`AdmissionCourse.name`
-  has no unique constraint at all** (confirmed against the schema and against the live
-  index list on `edtech_dev`), so a name is not even guaranteed to identify one row.
-- Joining the two tables on a trimmed, lower-cased name in `edtech_dev` yields **zero**
-  matches.
-- `Admission.course` is a **free-text string**, not a reference. Every writer goes through
-  one helper, `pick()` in `admissionFields.js`, which trims and caps the length and does
-  **no membership check** against `AdmissionCourse`. The dropdown is a client-side
-  convenience, and when the course list fails to load the public form falls back to three
+A department now has two independent assignments: the teaching side gets one from the VLE
+category mapping (or by hand on the course), and the admissions side gets one here.
+**Nothing enforces that they agree.** An application can be filed under Business for a
+course that Computing teaches, and no screen will show the disagreement.
+
+That drift was the argument for routing through Moodle, and it is the cost being accepted
+in exchange for admissions owning its own structure and working at a college with no VLE.
+Two things keep it from being invisible rather than merely tolerated:
+
+- the department is chosen **per course, not per application**, so the whole surface is one
+  short list an administrator can read in full on one screen, rather than a field on
+  thousands of rows; and
+- an unassigned admissions course is reported as a count on the admissions screen (§4.3),
+  so "nobody has said which department this course belongs to" is on the screen rather
+  than implicit in an empty list.
+
+What is deliberately **not** built: any comparison between the two assignments, or a
+warning when they differ. That would require reading the Moodle-derived department to
+check it, which is the dependency this decision removes. If the college later wants the
+two reconciled, that is its own piece of work and it should be asked for directly.
+
+### 3.2 Why the department is not derived from the course name at read time
+
+It would need no migration and no hand step: `Admission.course` holds a course name, and
+`AdmissionCourse` holds names too, so the department could be looked up on every read.
+Rejected on three counts, each verified rather than assumed:
+
+- **`AdmissionCourse.name` has no unique constraint** (confirmed in the schema and against
+  the live index list on `edtech_dev`), so the lookup can return two different answers.
+  `POST /admission-config/courses` does no duplicate check and a rename can collide freely.
+- **`Admission.course` is unvalidated free text.** Every writer goes through one helper,
+  `pick()` in `admissionFields.js`, which trims and caps the length and performs no
+  membership check. When the course list fails to load, the public form falls back to three
   hard-coded names (`admissionSections.js:43`), so an application can legitimately hold a
-  course string that is not in the list.
+  course string that is not in the list at all.
+- It would make **the access boundary depend on free text a member of staff can edit in a
+  form field**. A typo would hide an application from the department that owns it — the
+  fail-*closed* mirror of the "General bucket" fail-open the department migration already
+  refused.
 
-`edtech_dev` is almost entirely smoke-test fixture data, so the *proportions* above prove
-nothing about a real college. The *structural* facts — no FK, no unique name, no
-validation — are read from the schema and the code and hold everywhere.
-
-### 3.1 The link to add
-
-```
-Moodle category ──▶ Course ──[NEW]──▶ AdmissionCourse ──▶ Admission
-   (mapped today)   (exists)   one hand step,    (inherits at
-                               once per course    write time)
-```
-
-`AdmissionCourse` gains a nullable `courseId` pointing at the Moodle-synced `Course`. On
-the existing "Courses & intakes" screen, each course offered to applicants is pointed at
-its Moodle course once. The department is then never typed: it is read through that link
-from the category mapping, and if the college recategorises in Moodle it follows.
-
-**Why a link to `Course` rather than an `academicDepartmentId` directly on
-`AdmissionCourse`.** A department column would be quicker and is what the fee column
-already looks like. It was rejected because it makes the college answer the same question
-twice — once on the VLE mapping screen and once here — and D1 asks for exactly the
-opposite. Two answers to one question drift, and the drift is silent: an application would
-be filed under Business while the course it names is taught by Computing, and no screen
-would show the disagreement. Pointing at the course keeps one authority.
-
-**Why not match on the course name at read time.** It would need no migration and no hand
-step. It was rejected on three counts: the name is not unique, so the join can return two
-answers; the string is unvalidated, so a typo would hide an application from the department
-that owns it (the fail-*closed* mirror of the "General bucket" fail-open the department
-migration already refused); and the scope guard's filter would then depend on free text a
-member of staff can edit in a form field.
-
-### 3.2 A safety brake, inherited rather than invented
-
-`moodle.js:332-341` refuses to let a later sync rewrite a course's captured category, and
-says why at length: *"Somebody reorganising Moodle's categories at eleven at night would
-otherwise migrate whole cohorts across an access boundary overnight, with nobody watching
-and no record of it — a Law tutor waking up able to read Health & Social Care pastoral
-notes."* A changed category is to be surfaced as a proposed change for approval.
-
-Applications inherit the same brake. A category change does not silently move existing
-applications between departments; it is surfaced for approval on the mapping screen. New
-applications filed after an approved change follow the new department, which is what
-"automatic" should mean here.
+In `edtech_dev`, one of the two distinct course values on existing applications matches no
+`AdmissionCourse` at all, which is the shape of that failure already present in the data.
+That database is almost entirely smoke-test fixtures, so the *proportion* proves nothing
+about a real college; the structural facts above are read from the schema and hold
+everywhere.
 
 ---
 
@@ -222,7 +216,7 @@ with no department, on the admissions screen, phrased as a to-do rather than a w
 | `AdmissionDocument` | own nullable column, written from its admission | See below — `{ via: "admission" }` was the obvious choice and it is wrong |
 | `Ism` | own nullable column, written from its admission | `Ism.admission` is nullable and `Ism` has **no** relation to `Student` at all; reaching a department means two hops, and `{ via }` resolves exactly one. A two-hop kind does not exist and this is not the place to invent one |
 | `SlcApplication` | own nullable column, written from its admission or linked student | Same reasoning. `studentId` is nullable, permanently, and unwritten by any runtime code — §4.1 applies unchanged |
-| `AdmissionCourse` | stays `UNSCOPED` | The public application form reads it unauthenticated and must see every active course. Giving it a `courseId` does not make it a departmental record |
+| `AdmissionCourse` | stays `UNSCOPED` | The public application form reads it unauthenticated and must see every active course, whatever department it belongs to. Carrying a department does not make a row a departmental record — this is the table that *assigns* the boundary, so scoping it by the boundary would hide from a departmental officer the very list they work from |
 
 **Every model in this cluster carries its own column. `{ via: … }` is not used anywhere
 here, and the reason is D2.** `{ via }` emits `{ admission: { is: { academicDepartmentId: … } } }`,
@@ -248,9 +242,11 @@ consequences to handle explicitly rather than inherit:
 - **`AdmissionConfigManager`** — the "Courses & intakes" editor — has no college-wide
   guard, unlike the department editor and the support-department editor beside it. A
   departmental admissions officer can today delete or hide another department's course from
-  the public application form. With `courseId` on that table it also becomes the screen
-  that decides departments, so it needs `requireCollegeWide`, consistent with the 28 Sep
-  ruling on the department list itself.
+  the public application form. Under D1 it also becomes the screen that *decides* which
+  department an application belongs to, which makes it the admissions equivalent of the
+  department editor on Settings, so it needs `requireCollegeWide` — consistent with the
+  28 Sep ruling that a list affecting every department is edited only by someone who can see
+  every department. A departmental officer still reads the list; they do not change it.
 
 ---
 
@@ -360,8 +356,12 @@ nowhere near these figures.
 ## 10. The backfill (D4)
 
 A tool under `server/tools/`, dry-run by default like its siblings, following the chain in
-§3 for existing rows: `Admission.course` → `AdmissionCourse.name` → `courseId` → `Course`
-→ `academicDepartmentId`.
+§3 for existing rows: `Admission.course` → `AdmissionCourse.name` →
+`AdmissionCourse.academicDepartmentId`. No Moodle hop, per D1.
+
+Note what the backfill is for. The department is written at create time from here on, so
+this tool exists only to place rows that already existed — it is a one-off repair, not part
+of how the feature runs.
 
 Rules:
 
@@ -375,7 +375,7 @@ Rules:
   everyone, so nothing disappears while the course list is being linked up — the backfill
   is an improvement in precision, never a precondition for the screens working.
 - It reports counts by outcome: assigned, no course recorded, no such admissions course,
-  admissions course not linked to Moodle, Moodle course has no department, ambiguous.
+  admissions course has no department yet, ambiguous (name matched more than one course).
 - **It does not touch `linkedStudentId`.** That is `backfill-student-links.js`'s job and
   the two must not be confused.
 
@@ -421,9 +421,11 @@ permission that makes it mean something.
 - **No per-department configuration** (spec 5): admission questions, offer letters, email
   templates and branding stay one college-wide set.
 - **No applicant-facing department step.** The public form keeps asking for a course, not a
-  school. The department is derived from the course, which is what D1 asks for, and adding
-  a question the college then has to reconcile with the course would be worse than
-  deriving it.
+  school. The department comes from the course the applicant chose, and asking an applicant
+  to name a department as well would create a second answer the college then has to
+  reconcile against the first.
+- **No link between admissions and Moodle, in either direction** (§3), and no reconciliation
+  between the admissions department and the teaching one.
 - **No HR scoping** (spec 4).
 - **It does not repair `Admission.course` into a relation.** That was considered and
   rejected: the string feeds a SharePoint folder path that *moves live folders* when the
@@ -442,6 +444,7 @@ permission that makes it mean something.
 | The prediction engine silently loses funding data | §7, plus a test rather than a comment |
 | A departmental actual judged against a college-wide target | §8: withhold the variance rather than show a wrong one |
 | `AdmissionCourse.name` duplicates block the migration | §10.1: check and refuse clearly before migrating |
+| The admissions department and the teaching department disagree about the same course | Accepted under D1 (§3.1). One short list on one screen, with an unassigned count kept visible. No automatic reconciliation, because checking would reintroduce the Moodle dependency D1 removes |
 | Two environments drift | `database-safety.md`: staging and production are separate databases; the backfill runs twice and reports twice |
 
 ---
