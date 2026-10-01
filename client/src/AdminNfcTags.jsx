@@ -769,9 +769,14 @@ function TeamsAttendance() {
         </span>
       </label>
 
-      <label className="block max-w-xs">
+      {/* max-w-xs belongs on the INPUT ROW, not on the label. On the label it also
+          constrained the explanatory caption below, wrapping three lines of it into a
+          320px column while every sibling description in this card runs the full width
+          of it — found by the first browser pass over this screen (1 Oct 2026), which
+          is the only way a width that nothing asserts could have been caught. */}
+      <label className="block">
         <span className="text-[12px] font-semibold text-slate-700">Present needs at least</span>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex max-w-xs items-center gap-2">
           <input
             type="number" min="1" max="100" value={settings.minAttendancePct} disabled={saving}
             onChange={(e) => setState((s) => ({ ...s, settings: { ...s.settings, minAttendancePct: Number(e.target.value) } }))}

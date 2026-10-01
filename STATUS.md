@@ -828,7 +828,7 @@ proved versus what reading the code establishes:
 |---|---|
 | `teamsAttendance.test.js`, `teamsAttendanceSettings.test.js` | **Code-read as present and passing at commit time** — the matcher's date/time/title tiebreaks and ambiguity refusal, the interval-clip-and-merge arithmetic, and the threshold's exact rounding boundary, all pure and all database-free |
 | `scripts/smoke-teams-attendance.mjs` | Weighted, per the spec's own emphasis, toward the refusals: a sync while unconfigured (409) — the "already running" 409 is a real branch in the route but the suite does not exercise it, so it is not claimed here — a failed Graph call writing no marks (502, nothing written), a mark that already stands surviving a sync untouched, an unmatched participant appearing in `issues` and `participantsUnmatched` rather than as a guessed Absent, and — the fix-wave assertion that closes the gap this section used to describe wrongly — `POST /sync` answering 409 with `/switched off/i` once Teams is configured but before `enabled` is set true, proving OFF means nothing runs even when Graph credentials are already valid. Confirmed by the full test run this fix wave records (see the verification log) |
-| Client | **Builds** (`npm run --workspace client build`) — this task's own check. There is still no client test framework, so "builds" and "renders once the server answers" is the whole claim; the settings section has not been clicked in a browser |
+| Client | **Walked in a real browser 1 Oct 2026** — this row used to say only that it *builds*, and that the settings section "has not been clicked in a browser". It has now: a Playwright pass over Attendance → Settings as an admin renders the whole "Teams online classes" card correctly with no console errors — the not-connected banner, the switch reading `Teams auto-attendance is OFF`, the threshold at 50, "Sync now", and the recent-runs list. There is still no client test *framework*, so this is a looked-at-once claim, not a regression guard. It earned its keep immediately: `max-w-xs` sat on the threshold field's whole `<label>` rather than on its input row, wrapping three lines of explanation into a 320px column inside a 1050px card while every sibling description ran full width. Nothing asserts a width, so only looking could have found it; fixed the same day |
 | In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant, a real organizer account, or a real online class — every claim above is a code read or a unit test, never a live Graph call |
 
 **Deliberately not built**, matching the spec: live in-meeting presence (this reads a
@@ -846,6 +846,14 @@ one Teams meeting per timetabled online class; `provisionTeams` (Phase B,
 keeps owners/members current. A college can run either without the other — they are
 gated, scheduled and journalled separately, and share only a settings row
 (`TeamsAutomationConfig`) and a run log (`TeamsProvisionSync`, discriminated by `job`).
+
+**This section used to describe Phase A as one meeting per timetabled class, full stop,
+and that is now only half true.** Since 14 Sep 2026 a class that belongs to a *series*
+gets ONE recurring meeting for the whole series instead of one per week, created by a
+separate series pass that runs ahead of the per-event pass described below — see
+**§3.12.1**. Everything in this section still holds exactly as written for **one-off**
+events (`seriesId` null), which are what the per-event pass now handles, and for legacy
+series created before that date, which are deliberately never converted.
 
 | Piece | Where | What it does |
 |---|---|---|
@@ -868,14 +876,58 @@ what reading the code establishes:
 |---|---|
 | `teamsMeetings.test.js` | **Code-read as present and passing at commit time** — `meetingFingerprint`'s exact field set and its sorted-attendee-list normalisation, pure and database-free, the one piece of Phase A's decision logic that was worth extracting rather than leaving as wiring (the same split `teamsAttendance.js`'s pure functions have from `teamsSync.js`'s wiring) |
 | `teamsProvisioning.test.js` | **Code-read as present and passing at commit time** — `teamNameFor`'s "course — cohort" naming and both name-length truncations against Graph's own `displayName` limits (120 for a Team, 50 for a channel), pure and database-free |
-| `scripts/smoke-teams-automation.mjs` | **Green — 83 assertions, all passing.** Weighted toward refusals the same way §3.11's own suite is: both switches off answering 409 on a manual run (the ship-off proof), a meeting created then left alone on a second run (idempotence), a reschedule producing exactly one update and no duplicate create, a pasted link producing no create at all, an unpublish producing a cancel that clears both the event's and its registers' Teams fields, a provisioning run creating a Team/channels/owners/members with an unmatched student reported rather than silently dropped, a second provisioning run adding no duplicate Team or channel, and (added in the final review fix wave) a channel's own email actually landing in a new meeting's attendee list, not merely resolved and cached. The controller's full sweep of this branch — every unit test plus every smoke suite — ran 35 passed / 0 failed / 1 documented skip |
-| Client | **Builds** (`npm run --workspace client build`) — this task's own check, same claim and same limits as §3.11's: there is no client test framework, so "builds" is as far as this goes, and the settings card has not been clicked in a browser |
+| `scripts/smoke-teams-automation.mjs` | **Green — 114 assertions, all passing** (re-run 1 Oct 2026; this row said **83** when written, and the 31 added since are §3.12.1's series scenario). Weighted toward refusals the same way §3.11's own suite is: both switches off answering 409 on a manual run (the ship-off proof), a meeting created then left alone on a second run (idempotence), a reschedule producing exactly one update and no duplicate create, a pasted link producing no create at all, an unpublish producing a cancel that clears both the event's and its registers' Teams fields, a provisioning run creating a Team/channels/owners/members with an unmatched student reported rather than silently dropped, a second provisioning run adding no duplicate Team or channel, and (added in the final review fix wave) a channel's own email actually landing in a new meeting's attendee list, not merely resolved and cached. The controller's full sweep of this branch — every unit test plus every smoke suite — ran 35 passed / 0 failed / 1 documented skip |
+| Client | **Walked in a real browser 1 Oct 2026**, same pass as §3.11's — this row used to say the settings card "has not been clicked in a browser". The "Teams automation" card renders correctly: its own not-connected banner, both switches reading `Meeting creation is OFF` and `Team provisioning is OFF`, both "Run now" buttons, and the shared run-history list showing a `MEETINGS`-tagged row. No console errors. That pass also found and fixed a real width bug in the sibling card — see §3.11 |
 | In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant — every claim above is a code read or a unit test, never a live Graph call, exactly as §3.11 |
 
 **Deliberately not built**: removing anyone from a Team or a channel, renaming a Team or
 channel after creation, and any provisioning of a Team for a cohort that has no
 published timetable — all three are the additive-only boundary constraints.md sets, not
 gaps this feature intends to close later.
+
+### 3.12.1 Recurring series meetings — one meeting per class, not one per week (14 Sep 2026)
+
+Extends §3.12's Phase A. A weekly class is **one** recurring Teams meeting spanning the
+series' real first→last dates, not twelve separate meetings — and the single join link
+that follows from it is fanned onto every occurrence's event, its register and the
+student app. This is the shape a college actually recognises: students see one recurring
+entry in their calendar, the link never changes mid-term, and a teacher promoted to
+co-organizer is promoted once rather than weekly.
+
+The hard part is not creating the meeting. It is that **one meeting id now reports twelve
+weeks of attendance**, and a collector that flattened those into one list would credit a
+student present in week 1 to every week of the term. That is the risk the spec named
+highest, and the reason this is its own section rather than a line in §3.12.
+
+| Decision | Where | Why |
+| --- | --- | --- |
+| **The series owns the meeting, not an occurrence** | `TeamsSeriesMeeting`, keyed `@unique` on `seriesId` | A recurring meeting belongs to the whole series, so pinning it to an arbitrary "first" `TimetableEvent` would lose it the moment that week was unpublished or deleted. One-off events (`seriesId` null) keep the per-event columns on `TimetableEvent` and the per-event pass — `teamsMeetings.js` runs **two passes**, the series pass first, and a one-off is untouched by it |
+| **The range is computed from the WHOLE series, never the reconcile window** | `teamsMeetings.js` (`reconcileSeries`), a second query selecting `date` only across every published, wanted event | The reconcile window starts at yesterday, so computing `firstDate`/`weekdays` from the events *in* that window would walk them forward as past weeks age out — the fingerprint would change every week, and Microsoft would re-notify every attendee every week forever. This is the same class of bug the per-event fingerprint already fixed once (§3.12) reappearing by a different route, and it is why the range is queried separately rather than taken from the group already in hand |
+| **Per-occurrence attendance, matched on date** | `teamsGraph.js` (`attendanceByOccurrence`), `teamsAttendance.js` (`occurrenceForDate`, pure), `teamsSync.js` | Each occurrence's report keeps **its own date**, and a register reads only the occurrence whose date equals the session's date. A one-off meeting reports a single occurrence whose date equals that session's date, so the same lookup serves both paths without a branch. An occurrence that does not exist yet is a **note and no marks** — it stays eligible inside the 7-day retry window — never an Absent, because "the meeting had not happened yet" and "nobody came" are not the same fact |
+| **Reports are fetched once per run, per meeting id** | `teamsSync.js` (`occurrencesFor`, a `Map` keyed by meeting id) | Twelve registers sharing one recurring meeting would otherwise fetch the same report twelve times in a single run. The cache stores the **error** too, so a Graph failure is not retried twelve times either — each register notes it and stays eligible |
+| **The one link is fanned to blanks only** | `teamsMeetings.js`, `updateMany` filtered on `teamsJoinUrl: ""` / `null` | The never-overwrite rule §3.11 and §3.12 both follow, applied to the fan-out: an admin's pasted link, or a link already set, stands. The resolved `onlineMeeting` id is fanned the same way, so attendance collection reads it from the session rather than re-resolving it once per week |
+| **Co-organizers are written once, and again only on a real change** | `teamsMeetings.js`, gated on `coorganizersSetAt` plus a fingerprint difference | Promoting the teacher is the point of the model — they co-host every week without ever being the organizer whose calendar discovery reads. Rewriting that set on every hourly tick is the same re-notification problem in miniature. A failure to resolve or promote is a **note**, never a thrown run: the meeting and its link already stand, and losing those over a co-organizer write would be the worse outcome |
+| **Legacy series are left alone, deliberately** | `teamsMeetings.js`, `legacySeriesIds` computed once across **every** event, not just the window | The spec's rollout choice (a): a series already carrying per-event meetings is never converted, because converting means cancelling twelve meetings and re-notifying everyone on them. The set is computed across all events rather than the reconcile window for a reason worth stating — a legacy series' brand-new occurrence, rolling into the window after this deploy with no `teamsCalendarEventId` of its own yet, would otherwise be skipped by the per-event loop *and* by `reconcileSeries`, owned by neither and stranded with no meeting at all |
+| **Cancelling clears both copies, as §3.12** | `teamsMeetings.js` | A series that stops wanting meetings (unpublished across the board, or the checkbox cleared) has **its** recurring meeting cancelled — the clear is matched on the join URL this system wrote, so a pasted link is not cleared by it — and every occurrence's register put back to no join details, for the same reason §3.12 gives: leaving registers pointed at a meeting Microsoft has deleted has the attendance sync retry against it for its whole 7-day window |
+
+**Verification status.**
+
+| | |
+|---|---|
+| `teamsMeetings.test.js` (series fingerprint) | **Re-run 1 Oct 2026 — part of 36 Teams unit tests, 0 failed.** The series fingerprint's field set and its order-insensitivity: the same inputs in any order give the same fingerprint, while a changed lecturer, a changed end date or an added weekday each change it — the three inputs whose drift would cause the weekly re-notify this design exists to prevent |
+| `scripts/smoke-teams-automation.mjs` scenario 10 | **Re-run 1 Oct 2026 — 114 assertions, 0 failed.** One recurring meeting for a three-week series and **zero** per-occurrence `createClassMeeting` calls; all three occurrences carrying the same non-null join URL; co-organizers written exactly once, naming the resolved teacher; a second sync creating and updating nothing (the anti-churn gate); and a lecturer swap producing exactly one `updateRecurringClassMeeting`, no second create, and a rewritten co-organizer list naming the new lecturer |
+| `scripts/smoke-teams-attendance.mjs` | **Re-run 1 Oct 2026 — PASS.** The cross-contamination guard this section exists for: two registers a week apart share one recurring meeting id, alice attended week 1 only and bob week 2 only, and each register is marked from **its own** occurrence — alice is not Present in week 2, bob is not Present in week 1 |
+| Client | **No new client surface.** The series pass writes through the same `teamsJoinUrl` fields the timetable planner, staff timetable and student app already read (§3.12, §3.13). The settings cards that drive it were walked in a browser 1 Oct 2026 (§3.11, §3.12); the *series* behaviour itself has no screen of its own to look at |
+| In use by a college | **No.** As §3.11 and §3.12 — no real Microsoft 365 tenant, no real organizer account, no live Graph call. The whole phase is proved by the `TEAMS_GRAPH_FIXTURES`/`TEAMS_GRAPH_JOURNAL` seam and by unit tests |
+
+**Deliberately not built**, matching the spec's own non-goals: **single-week exceptions** —
+moving or cancelling one occurrence of a running series uses Graph recurrence exceptions,
+which this does not model, so a single moved occurrence may fall out of the recurring
+meeting until they ship, and v1's advice is to edit the whole series; **non-weekly
+patterns** — the entry form produces weekly-by-weekday series, and fortnightly or monthly
+ones are not modelled; and **private per-class channels**. A **conversion path for legacy
+per-event series** is likewise absent by choice, not by omission — see the rollout row
+above.
 
 ### 3.13 The student app refresh — a notification channel, self-service, one band ladder (12-13 Sep 2026)
 
