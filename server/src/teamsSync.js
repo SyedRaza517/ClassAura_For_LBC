@@ -8,6 +8,7 @@
 // writing the result — which is exactly what an integration test (or the smoke suite)
 // is for, rather than a unit test asserting the wiring is wired.
 const prisma = require("./db");
+const { withoutAcademicScope } = require("./academicScope");
 const graph = require("./teamsGraph");
 const { parseJoinUrl, matchMeeting, attendedMinutes, decideStatus, occurrenceForDate } = require("./teamsAttendance");
 const { TEAMS_AUTO_STAMP, termOpenOn } = require("./attendanceTap");
@@ -56,7 +57,32 @@ const daysAhead = (n) => {
   return d.toLocaleDateString("en-CA", { timeZone: require("./clock").ZONE });
 };
 
-async function runSync({ mode = "manual", startedBy = null } = {}) {
+/**
+ * The institution-wide declaration every background job in this codebase has to make.
+ *
+ * WHY THIS WRAPPER EXISTS, AND WHY ITS ABSENCE WAS INVISIBLE FOR DAYS. The academic-scope
+ * guard refuses a query against a scoped model (HndSession, AttendanceMark,
+ * TimetableEvent) unless something has bound a scope. An HTTP request binds one in
+ * requireAuth, so the "Sync now" button worked perfectly — it inherits the admin's
+ * college-wide scope. The SCHEDULED run has no request behind it, so it bound nothing and
+ * every hourly pass died with "issued with no academic scope bound", writing no marks and
+ * recording a FAILED run. Manual success and scheduled failure from the same engine is
+ * exactly the shape that hides a bug like this: the screen a human presses works.
+ *
+ * Declared here at the engine's entry rather than in scheduler.js so BOTH callers get it
+ * and cannot drift apart again, which is the same placement moodle.js, notifications.js,
+ * attendanceRunner.js and prediction/runner.js already use. Widening the scope for the
+ * manual path too is correct, not a side effect: the route already demands a college-wide
+ * caller (requireCollegeWide), so this job is institution-wide however it was started.
+ */
+async function runSync(opts = {}) {
+  return withoutAcademicScope(
+    "Teams attendance sync: reads every online class in the college and writes to their registers — an institution-wide job with no department to scope it to",
+    () => runSyncInner(opts),
+  );
+}
+
+async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
   if (running) throw new Error("A Teams attendance sync is already running.");
   running = true;
   const issues = [];
