@@ -31,6 +31,28 @@ import { createPortal } from "react-dom";
 // layering bug is a far wider blast radius than taking the overlays out of the
 // container they should never have been inside. A modal is not part of the view that
 // opened it, so a portal is the right thing on its own merits, not only as a remedy.
+//
+// `.fade-up` IS DESKTOP-ONLY — App.jsx applies it as `handset ? "min-h-0 flex-1" :
+// "fade-up"` — so the containing-block half of the story above is a desktop bug. The
+// portal is still right on a handset, because PhoneShell's own frame carries
+// `.scale-in`, which is another `animation: … both` with a transform keyframe and so
+// another containing block and stacking context. Worth stating rather than implying:
+// the responsive work in ConfirmDialog is an independent improvement, not a knock-on
+// of this one.
+//
+// A PORTALLED OVERLAY ALSO LEAVES PhoneShell's DECORATIVE DESKTOP FRAME, and that is
+// accepted rather than overlooked. On a desktop the staff and student apps render
+// inside a simulated 390x820 handset, and `.scale-in` was clipping overlays into it;
+// a portalled one now covers the browser window instead. student/screens/CheckIn.jsx
+// already portals out of PhoneShell deliberately and gives the same reasoning: a
+// confirmation is a statement about the whole screen, not decoration inside a picture
+// of a phone. Anyone who wants the old clipping back wants a different component, not
+// a change here.
+//
+// No `typeof document` guard, unlike StaffHub.jsx's own inline portal: this is a Vite
+// SPA wrapped by Capacitor, with no SSR and no prerender step, so there is no render
+// pass anywhere in this project where `document` is undefined. The guard there is
+// harmless habit; repeating it here would imply a case that does not exist.
 export default function ModalPortal({ children }) {
   return createPortal(children, document.body);
 }
