@@ -44,6 +44,15 @@ import AssessmentTracker from "./AssessmentTracker";
 import AssessmentTrackerSetup from "./AssessmentTrackerSetup";
 import AdmissionTracker from "./AdmissionTracker";
 import StaffTimetable from "./StaffTimetable";
+// The staff APP's timetable stopped being MyTimetable on 14 Sep 2026 (see the comment
+// above the PhoneShell return — it reads like the student app's timetable now), and
+// that change removed this import along with the two staff-app usages. It missed the
+// third: the admin console's Timetabling -> My Timetable page still renders
+// <MyTimetable />, which is correct and deliberate — the web timetable product was
+// always meant to survive where it belongs, in the console — so the page threw
+// "MyTimetable is not defined" the moment anyone opened it. The import is what was
+// wrong, not the usage, so the import is what comes back.
+import MyTimetable from "./MyTimetable";
 import AdminTimetablePlanner from "./AdminTimetablePlanner";
 import { useBackHandler } from "./backButton";
 import PhoneShell, { useIsHandset } from "./PhoneShell";
