@@ -2534,33 +2534,33 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
           it rather than be filed behind it. See ModalPortal.jsx. */}
       {ask?.kind === "repeat" && (
         <ModalPortal>
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
-          <div className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <p className="text-base font-extrabold text-slate-800">Repeat weekly</p>
-            <p className="mt-1 text-sm leading-relaxed text-slate-500">A copy of this class on the same weekday, every week, up to and including the date you choose.</p>
-            <input type="date" autoFocus className={`${inputCls} mt-3`} value={ask.until}
-              min={editing?.date || undefined}
-              onChange={(e) => setAsk({ ...ask, until: e.target.value })} />
-            <p className="mt-1 text-[11px] text-slate-500">UK bank holidays are skipped.</p>
-            <div className="mt-5 flex gap-2">
-              <button onClick={() => setAsk(null)} className="flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">Cancel</button>
-              <button disabled={!ask.until}
-                onClick={async () => {
-                  const { id, until } = ask;
-                  setAsk(null); setErr(""); setNote("");
-                  try {
-                    const r = await api.ttRepeatEvent(id, { until });
-                    // Per-date, because "week 4 clashes" is actionable and "there
-                    // were clashes" is not.
-                    setWarnings(r.warnings || []);
-                    setNote(`${r.created} weekly copies created.`);
-                    setEditing(null); refresh();
-                  } catch (e) { setErr(e?.message || "Could not repeat the event."); }
-                }}
-                className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: NAVY }}>Repeat</button>
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
+            <div className="max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <p className="text-base font-extrabold text-slate-800">Repeat weekly</p>
+              <p className="mt-1 text-sm leading-relaxed text-slate-500">A copy of this class on the same weekday, every week, up to and including the date you choose.</p>
+              <input type="date" autoFocus className={`${inputCls} mt-3`} value={ask.until}
+                min={editing?.date || undefined}
+                onChange={(e) => setAsk({ ...ask, until: e.target.value })} />
+              <p className="mt-1 text-[11px] text-slate-500">UK bank holidays are skipped.</p>
+              <div className="mt-5 flex gap-2">
+                <button onClick={() => setAsk(null)} className="flex-1 rounded-xl border-2 border-slate-200 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-50">Cancel</button>
+                <button disabled={!ask.until}
+                  onClick={async () => {
+                    const { id, until } = ask;
+                    setAsk(null); setErr(""); setNote("");
+                    try {
+                      const r = await api.ttRepeatEvent(id, { until });
+                      // Per-date, because "week 4 clashes" is actionable and "there
+                      // were clashes" is not.
+                      setWarnings(r.warnings || []);
+                      setNote(`${r.created} weekly copies created.`);
+                      setEditing(null); refresh();
+                    } catch (e) { setErr(e?.message || "Could not repeat the event."); }
+                  }}
+                  className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: NAVY }}>Repeat</button>
+              </div>
             </div>
           </div>
-        </div>
         </ModalPortal>
       )}
     </div>

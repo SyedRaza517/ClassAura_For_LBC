@@ -1261,52 +1261,53 @@ function TapLog({ tag, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // PORTALLED — see ModalPortal.jsx. This is the attendance-settings sheet, and it
-  // had the same containing-block problem as every other overlay in the console:
+  // PORTALLED — see ModalPortal.jsx. This is the tap log for ONE sticker — it
+  // lives on the Attendance Settings page but is not that page's own sheet. It had
+  // the same containing-block problem as every other overlay in the console:
   // bottom-sheet on a phone, centred card above sm, and neither lands where it
   // should when "the screen" means a view container taller than the window.
   return (
     <ModalPortal>
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={"Taps on " + tag.label}
-        className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800">{tag.label}</h3>
-            <p className="text-[12px] text-slate-500">Recent taps, including the ones that were refused</p>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="press rounded-lg p-2.5 text-slate-500 hover:bg-slate-50"><X size={17} /></button>
-        </header>
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
+        <div role="dialog" aria-modal="true" aria-label={"Taps on " + tag.label}
+          className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+          <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">{tag.label}</h3>
+              <p className="text-[12px] text-slate-500">Recent taps, including the ones that were refused</p>
+            </div>
+            <button onClick={onClose} aria-label="Close" className="press rounded-lg p-2.5 text-slate-500 hover:bg-slate-50"><X size={17} /></button>
+          </header>
 
-        <div className="max-h-[70vh] overflow-y-auto">
-          {err && <p className="p-5 text-sm text-rose-600">{err}</p>}
-          {!data && !err && <div className="flex justify-center p-10"><Loader2 className="animate-spin text-slate-300" size={24} /></div>}
-          {data && !data.taps.length && <p className="p-8 text-center text-sm text-slate-500">Nobody has tapped this sticker yet.</p>}
-          {data && data.taps.length > 0 && (
-            <ul className="divide-y divide-slate-100">
-              {data.taps.map((t) => {
-                const o = OUTCOMES[t.outcome] || { label: t.outcome, tone: "slate" };
-                return (
-                  <li key={t.id} className="flex flex-wrap items-center gap-2.5 px-5 py-3">
-                    <Clock3 size={13} className="shrink-0 text-slate-300" />
-                    <span className="w-[104px] shrink-0 text-[12px] tabular-nums text-slate-500">{fmtWhen(t.at)}</span>
-                    <span className="min-w-[6.5rem] flex-1 truncate text-[13px] font-medium text-slate-800">
-                      {/* A refused tap can have no name at all — nobody was identified.
-                          That is a real state and reads better than a blank. */}
-                      {t.who || <span className="italic text-slate-500">not identified</span>}
-                      {t.kind === "staff" && <span className="ml-1.5 text-[11px] font-semibold text-slate-500">staff</span>}
-                    </span>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${TONES[o.tone]}`}>
-                      {o.label}{t.status ? ` · ${t.status}` : ""}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <div className="max-h-[70vh] overflow-y-auto">
+            {err && <p className="p-5 text-sm text-rose-600">{err}</p>}
+            {!data && !err && <div className="flex justify-center p-10"><Loader2 className="animate-spin text-slate-300" size={24} /></div>}
+            {data && !data.taps.length && <p className="p-8 text-center text-sm text-slate-500">Nobody has tapped this sticker yet.</p>}
+            {data && data.taps.length > 0 && (
+              <ul className="divide-y divide-slate-100">
+                {data.taps.map((t) => {
+                  const o = OUTCOMES[t.outcome] || { label: t.outcome, tone: "slate" };
+                  return (
+                    <li key={t.id} className="flex flex-wrap items-center gap-2.5 px-5 py-3">
+                      <Clock3 size={13} className="shrink-0 text-slate-300" />
+                      <span className="w-[104px] shrink-0 text-[12px] tabular-nums text-slate-500">{fmtWhen(t.at)}</span>
+                      <span className="min-w-[6.5rem] flex-1 truncate text-[13px] font-medium text-slate-800">
+                        {/* A refused tap can have no name at all — nobody was identified.
+                            That is a real state and reads better than a blank. */}
+                        {t.who || <span className="italic text-slate-500">not identified</span>}
+                        {t.kind === "staff" && <span className="ml-1.5 text-[11px] font-semibold text-slate-500">staff</span>}
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${TONES[o.tone]}`}>
+                        {o.label}{t.status ? ` · ${t.status}` : ""}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
-    </div>
     </ModalPortal>
   );
 }

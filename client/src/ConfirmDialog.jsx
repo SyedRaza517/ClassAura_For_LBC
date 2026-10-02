@@ -25,14 +25,31 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = "Co
   if (!open) return null;
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={onCancel}>
+      {/* dvh AND the safe-area insets, copied from StaffHub's own Modal rather than
+          invented here — that one carries the scar: `vh` used to push its title off
+          the top of an iPhone SE. On mobile Safari `vh` resolves against the LARGEST
+          viewport, the one with the URL bar hidden, so `85vh` can be taller than what
+          the reader can actually see; `dvh` tracks the viewport as it is now. This
+          dialog reaches real handsets through PhoneShell in both the staff and student
+          apps, so it is the wrong place to use the weaker of two in-house patterns. */}
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+        style={{
+          background: "rgba(15,23,42,.45)",
+          backdropFilter: "blur(2px)",
+          height: "100dvh",
+          paddingTop: "max(env(safe-area-inset-top), 1rem)",
+          paddingBottom: "max(env(safe-area-inset-bottom), 1rem)",
+        }}
+        onClick={onCancel}
+      >
         {/* max-w-sm, not max-w-xs: these messages name the thing being deleted and say
             what survives it, which is two or three lines at 320px and reads as a wall.
             max-h/overflow-y so a long title on a short screen — a phone in landscape,
             a laptop with the browser half-height — scrolls the message rather than
             pushing the buttons out of reach, which is the same failure this whole
             change exists to fix. */}
-        <div className="bounce-in flex max-h-[85vh] w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="bounce-in flex max-h-[85dvh] w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <p className="text-base font-extrabold text-slate-800">{title}</p>
             {message && <p className="mt-1 text-sm leading-relaxed text-slate-500">{message}</p>}
