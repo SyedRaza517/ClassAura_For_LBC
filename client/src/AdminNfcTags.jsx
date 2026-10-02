@@ -22,6 +22,7 @@ import {
   CalendarClock, Users,
 } from "lucide-react";
 import { api } from "./api";
+import ModalPortal from "./ModalPortal";
 import { nfcStatus, scanOnce } from "./nfc";
 import { NAVY } from "./branding";
 import { wherePhoneIs } from "./wherePhoneIs";
@@ -1260,7 +1261,12 @@ function TapLog({ tag, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // PORTALLED — see ModalPortal.jsx. This is the attendance-settings sheet, and it
+  // had the same containing-block problem as every other overlay in the console:
+  // bottom-sheet on a phone, centred card above sm, and neither lands where it
+  // should when "the screen" means a view container taller than the window.
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={"Taps on " + tag.label}
         className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -1301,5 +1307,6 @@ function TapLog({ tag, onClose }) {
         </div>
       </div>
     </div>
+    </ModalPortal>
   );
 }

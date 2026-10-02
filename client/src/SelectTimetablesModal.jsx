@@ -13,6 +13,7 @@ import { X, Search, PlusCircle, MinusCircle, RotateCcw, BookOpen, DoorOpen, User
 import { api } from "./api";
 import { NAVY } from "./branding";
 import { TT } from "./timetableTheme";
+import ModalPortal from "./ModalPortal";
 
 const TYPES = [
   { key: "module",  label: "Module Offerings", I: BookOpen,       placeholder: "Name and code…" },
@@ -59,7 +60,11 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
   if (!open) return null;
   const meta = TYPES.find((t) => t.key === type);
 
+  // PORTALLED — see ModalPortal.jsx. This picker is opened FROM the timetable
+  // screen, so inline it inherited that view as its containing block and centred
+  // itself in a box taller than the window.
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between px-4 py-3" style={{ background: TT.green, color: TT.greenText }}>
@@ -138,5 +143,6 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
         </div>
       </div>
     </div>
+    </ModalPortal>
   );
 }

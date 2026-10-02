@@ -18,6 +18,7 @@ import { NAVY, alpha } from "./branding";
 import TimetableCalendar from "./TimetableCalendar";
 import TimetableSettingsModal from "./TimetableSettingsModal";
 import ConfirmDialog from "./ConfirmDialog";
+import ModalPortal from "./ModalPortal";
 import { useAuth } from "./auth";
 import { windowFor, shiftAnchor, RANGE_LABEL, seriesPreviewDates, mondayOf } from "./timetableView";
 import { ukBankHolidaysRange } from "./bankHolidays";
@@ -2528,9 +2529,13 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
           built to match rather than reaching for window.prompt, which returns a free
           string a reader can typo into "next tuesday" and which offers no date picker at
           all on a phone. */}
+      {/* PORTALLED, at the same height as ConfirmDialog, for exactly the reason stated
+          there: this one is also opened from inside the event modal, so it has to cover
+          it rather than be filed behind it. See ModalPortal.jsx. */}
       {ask?.kind === "repeat" && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
-          <div className="w-full max-w-xs rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <ModalPortal>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
+          <div className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <p className="text-base font-extrabold text-slate-800">Repeat weekly</p>
             <p className="mt-1 text-sm leading-relaxed text-slate-500">A copy of this class on the same weekday, every week, up to and including the date you choose.</p>
             <input type="date" autoFocus className={`${inputCls} mt-3`} value={ask.until}
@@ -2556,6 +2561,7 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

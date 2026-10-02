@@ -9,6 +9,7 @@
 import React, { useState } from "react";
 import { X, ArrowUp, ArrowDown, Plus } from "lucide-react";
 import { TT } from "./timetableTheme";
+import ModalPortal from "./ModalPortal";
 
 const DAYS = [[1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"], [7, "Sunday"]];
 const COLOUR_BY = [["category", "Event Category"], ["module", "Module Offering"], ["room", "Room"], ["group", "Group"], ["course", "Course Offering"]];
@@ -76,7 +77,11 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
     set("annotations", next);
   };
 
+  // PORTALLED — see ModalPortal.jsx. Inline, this sized itself to the console view
+  // rather than to the window, which put a 90vh panel somewhere other than the middle
+  // of the screen and could leave its Save button below the fold.
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
       <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between px-4 py-3" style={{ background: TT.green, color: TT.greenText }}>
@@ -209,5 +214,6 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
         </div>
       </div>
     </div>
+    </ModalPortal>
   );
 }
