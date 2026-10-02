@@ -712,6 +712,72 @@ try {
   const sessATapCount = await db.tagTap.count({ where: { sessionId: sessA.id, method: "teams" } });
   check("...and exactly three Teams log rows, not six", sessATapCount === 3, `${sessATapCount} row(s)`);
 
+  /* ====================================================================== */
+  console.log("\n--- the settings contract, over HTTP and through the database ---");
+  /* ====================================================================== */
+
+  // teamsAttendanceSettings.merge is unit-tested, but the contract that matters to a
+  // college is the one the route and the config table implement together: a PATCH falls
+  // back to WHAT THIS COLLEGE ALREADY HAD, not to the platform default. Proving that at
+  // the merge() level leaves the possibility that the route passes DEFAULTS as the base,
+  // which would answer 200 OK while quietly resetting a threshold somebody tuned.
+  const setTo75 = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 75 } });
+  check("an administrator can set the threshold to 75%",
+    setTo75.status === 200 && setTo75.data?.settings?.minAttendancePct === 75,
+    `HTTP ${setTo75.status} pct=${setTo75.data?.settings?.minAttendancePct}`);
+
+  const badPatch = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: "half" } });
+  check("THE PATCH CONTRACT: an unusable threshold leaves the college's own 75 standing",
+    badPatch.data?.settings?.minAttendancePct === 75,
+    `pct=${badPatch.data?.settings?.minAttendancePct} (50 would mean it reset to the platform default)`);
+  check("...and the switch beside it was not disturbed either",
+    badPatch.data?.settings?.enabled === true, `enabled=${badPatch.data?.settings?.enabled}`);
+
+  const storedAfterBad = await db.teamsAttendanceConfig.findFirst({});
+  const storedPct = (storedAfterBad?.settings ?? {}).minAttendancePct;
+  check("...and the DATABASE agrees — the bad value was never written",
+    storedPct === 75, `stored=${JSON.stringify(storedPct)}`);
+
+  // The clamp, through the route rather than the pure function. 0% is the dangerous end:
+  // a report row showing one second of a two-hour lecture clears "more than 0%", so an
+  // unclamped zero would mark every ghost row Present.
+  const zeroPct = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 0 } });
+  check("a threshold of 0% is clamped up to 1, never stored as 0",
+    zeroPct.data?.settings?.minAttendancePct === 1, `pct=${zeroPct.data?.settings?.minAttendancePct}`);
+  const overPct = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 250 } });
+  check("a threshold above 100% is clamped down to 100",
+    overPct.data?.settings?.minAttendancePct === 100, `pct=${overPct.data?.settings?.minAttendancePct}`);
+
+  const unknownKey = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { somethingNew: true, minAttendancePct: 60 } });
+  check("an unknown key is dropped by the allowlist rather than stored",
+    unknownKey.data?.settings?.somethingNew === undefined && unknownKey.data?.settings?.minAttendancePct === 60,
+    JSON.stringify(unknownKey.data?.settings));
+
+  /* ====================================================================== */
+  console.log("\n--- the switch closes again, not just opens ---");
+  /* ====================================================================== */
+
+  // The existing ship-switched-off proof near the top runs BEFORE the feature was ever
+  // enabled. This is the other direction: a college that turned Teams attendance on and
+  // then thought better of it. The same 409 must come back, from a process whose caches
+  // are already warm and whose credentials are still perfectly valid — which is exactly
+  // the state in which a stale cached `enabled: true` would go unnoticed.
+  const switchOff = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { enabled: false } });
+  check("the feature can be switched back off", switchOff.data?.settings?.enabled === false,
+    `enabled=${switchOff.data?.settings?.enabled}`);
+
+  const syncAfterOff = await call("/teams-attendance/sync", { method: "POST", token: runToken });
+  check("OFF MEANS NOTHING RUNS, even after it ran today: the sync is refused again",
+    syncAfterOff.status === 409, `HTTP ${syncAfterOff.status}`);
+  check("...and says it is switched off, not that it is unconfigured",
+    /switched off/i.test(syncAfterOff.data?.error || ""), syncAfterOff.data?.error);
+
+  const runsAfterOff = await db.teamsSync.count();
+  const syncAgain = await call("/teams-attendance/sync", { method: "POST", token: runToken });
+  check("...and a refused sync writes no run row at all",
+    syncAgain.status === 409 && (await db.teamsSync.count()) === runsAfterOff,
+    `HTTP ${syncAgain.status}, rows ${runsAfterOff} -> ${await db.teamsSync.count()}`);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;
 } catch (e) {
