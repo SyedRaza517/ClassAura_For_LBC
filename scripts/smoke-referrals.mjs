@@ -25,6 +25,7 @@ import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
@@ -691,11 +692,17 @@ await check("THE AUDIT TRAIL RECORDS WHO AND WHERE, NEVER WHY", async () => {
   // granted this page — the same route by which a mitigating-circumstances category
   // would have escaped. The summary may name the student and the department; the
   // referrer's reason, the case notes and the closing detail may not appear anywhere.
+  // THE AUDIT TRAIL IS COLLEGE-WIDE ONLY since 28 Sep 2026, so this assertion needs a
+  // college-wide reader to keep running in the scoped pass, where every seeded account is
+  // narrowed. In the ordinary pass this IS the caller's own token and nothing is created.
+  // See lib/college-wide-reader.mjs for why the assertion is worth the helper.
+  const reader = await collegeWideReader({ call, token: adminToken, label: "ref" });
   const rows = await eventually(async () => {
-    const log = await call("/audit?entity=Referral&take=100", { token: adminToken });
+    const log = await call("/audit?entity=Referral&take=100", { token: reader.token });
     const entries = log.body?.entries || [];
     return entries.length ? entries : null;
   });
+  await reader.dispose();
   assert.ok(rows, "no audit rows were written for any referral at all");
   const actions = new Set(rows.map((e) => e.action));
   for (const wanted of ["referral.raised", "referral.accepted", "referral.noted", "referral.closed"]) {

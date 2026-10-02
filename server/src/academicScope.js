@@ -170,7 +170,20 @@ function scopeForStaff(staff) {
   };
 }
 
+/**
+ * Does the current caller see every department?
+ *
+ * For the handful of responses that carry free text naming students -- sync run issues,
+ * mostly -- which the guard cannot filter because they are strings, not rows. Those are
+ * shown in full to a college-wide caller and withheld from anyone narrower. `=== true`
+ * for the reason scopeForStaff gives: seeing everything must never be the accident.
+ */
+function callerIsCollegeWide() {
+  return currentScope()?.collegeWide === true;
+}
+
 module.exports = {
+  callerIsCollegeWide,
   AcademicScopeError,
   runWithAcademicScope, withoutAcademicScope, currentScope,
   scopeForStaff, CONFINED_BY_ROUTER,

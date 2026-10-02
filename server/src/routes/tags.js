@@ -13,6 +13,7 @@ const { requireAuth, requirePage } = require("../auth");
 const { isString } = require("../validate");
 const tapConfig = require("../attendanceTapConfig");
 const { describeAddress, parseCidr, parseNetworks, ipInNetworks } = require("../presence");
+const { merge, staffNetworkGuard } = require("../attendanceTapSettings");
 
 router.use(requireAuth, requirePage("attendance-settings"));
 
@@ -50,6 +51,19 @@ router.put("/settings", async (req, res) => {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return res.status(400).json({ error: "Settings must be an object" });
 
   const before = await tapConfig.get();
+
+  // REFUSED BEFORE THE WRITE, not reported after it. `allowedNetworks: []` with the staff
+  // network check ON refuses every clock-in by name (presence.js), so letting this save
+  // means an administrator ticks a box, sees success, and discovers on Monday morning
+  // that nobody can clock in — while the screen still says the network is enforced.
+  //
+  // Judged on what the settings WOULD BECOME, because a patch of `{staffNetworkCheck:
+  // true}` alone is the dangerous shape: the list it will be judged against is the stored
+  // one, which the patch never mentions.
+  const preview = merge(patch, before);
+  const networkRefusal = staffNetworkGuard(preview);
+  if (networkRefusal) return res.status(400).json({ error: networkRefusal, reason: "networks_required" });
+
   const { settings } = await tapConfig.save(patch, req.user?.name || null);
 
   // Worth auditing on its own. Switching this on makes every register in the college

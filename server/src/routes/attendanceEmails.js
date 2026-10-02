@@ -9,7 +9,7 @@
 // attendanceEmailService.js; the config + monthly run in attendanceRunner.js. This
 // router is the admin surface, gated on "attendance-emails".
 const router = require("express").Router();
-const { requireAuth, requirePage } = require("../auth");
+const { requireAuth, requirePage, requireCollegeWide } = require("../auth");
 const service = require("../attendanceEmailService");
 const runner = require("../attendanceRunner");
 const bandConfig = require("../attendanceBandConfig");
@@ -97,7 +97,11 @@ router.put("/config", async (req, res) => {
 
 // POST /run — send this month's emails now. A manual press defaults to force (ignore the
 // once-a-month de-dupe); pass { force:false } to respect it.
-router.post("/run", async (req, res) => {
+// COLLEGE-WIDE CALLERS ONLY. runMonthly is institution-wide by declaration (see
+// attendanceRunner.js) and sends to every current student it finds, so without this an
+// admin narrowed to one department wrote to the whole college. /send-one below stays open
+// to them: it reads one student through the guard, so it can only reach their own.
+router.post("/run", requireCollegeWide("The monthly attendance-letter run"), async (req, res) => {
   const force = req.body?.force !== false;
   const from = validDate(req.body?.from), to = validDate(req.body?.to);
   const range = from && to ? { from, to } : {};

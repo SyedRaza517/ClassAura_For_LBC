@@ -267,7 +267,7 @@ affected user is notified. Returns 400 if the account has no 2FA set up, 404 if 
 | Method | Path | Access | Body |
 |--------|------|--------|------|
 | GET    | `/checkins?date=YYYY-MM-DD` | auth (staff: own; admin: all) | — |
-| POST   | `/checkins/check-in` | auth | — (self, today) |
+| POST   | `/checkins/check-in` | auth | `{ site }` — self, today; `site` (`Onsite` \| `Online`) is **required** |
 | POST   | `/checkins/tap-check-in` | auth | `{ tagCode }` — clock in by touching an NFC sticker; always `Onsite` |
 | POST   | `/checkins/:id/check-out` | auth (owner/admin) | — |
 | PUT    | `/checkins` | admin | `{ staffId, date, in, out? }` |
@@ -275,6 +275,52 @@ affected user is notified. Returns 400 if the account has no 2FA set up, 404 if 
 
 `POST /checkins/tap-check-in` is documented in full under **NFC tap check-in** below,
 including why it refuses to record any site but `Onsite`.
+
+**`site` on `POST /checkins/check-in` is required as of 21 Sep 2026 and answers 400**
+`site must be Onsite or Online` when it is missing or not one of the two values. This
+closed a real hole, not a theoretical one: `isSite` permits `null` (`v == null || ...`)
+because the administrator's `PUT /checkins` legitimately fills in a missed clock-in with
+no known site, but the self route reused the same check, so an empty body passed
+validation, `site === "Onsite"` was false, the sticker requirement below never fired, and
+a row was written with `site: null` — a self clock-in nobody could later tell was Onsite
+or Online. `PUT /checkins` keeps accepting `null` unchanged.
+
+**When `site` is `"Onsite"`, the request is also gated on where the phone is** — proof
+the phone is in the building, not merely that the account is signed in. Two independent
+college switches control this, both defaulting **off** and both configured on the NFC
+Tags admin screen: `staffNetworkCheck` (the request must arrive from an address in
+`allowedNetworks`) and `staffGeofenceCheck` (the reported position must be within
+`geofenceRadiusM` of a located campus — the same engine and the same settings the student
+geofence uses). **Online is never checked, under any setting** — someone working from
+home is by definition off the college network and away from every campus, so a rule that
+caught them would leave the truthful answer unrecordable. With both switches off,
+behaviour is byte-for-byte what it was before this section existed.
+
+A presence refusal is **403** with `{ error, reason }`:
+
+| `reason` | Meaning |
+| --- | --- |
+| `off_network` | The request did not arrive from an address in `allowedNetworks`. |
+| `network_not_configured` | `staffNetworkCheck` is on but `allowedNetworks` is empty — a college misconfiguration, not a staff member's fault; logged server-side with `console.error` because it silently refuses every clock-in. |
+| `off_campus` | The reported position is outside `geofenceRadiusM` of every campus. |
+| `campus_not_located` | `staffGeofenceCheck` is on but no active campus has coordinates — the same kind of misconfiguration, logged the same way. |
+| `position_missing` | No position was sent — the phone never obtained one, or the caller never asked (see `GET /checkins/tap-settings`'s `needsLocation` below). |
+| `accuracy_unknown` \| `accuracy_too_poor` | A position arrived with no usable accuracy figure, or one too coarse to trust. |
+
+Every failing reason is logged to `TagTap` (not only the one returned — a college
+switching both checks on for the first time can see that its IP list is wrong *and* its
+coordinates are, in one pass), with `method: "button"` from this route (`"nfc"` from the
+tap route below) and `site: "Onsite"`. **An already-clocked-in re-press is never gated**:
+it writes nothing, so there is nothing for a presence check to protect, and refusing a
+no-op would teach staff the feature is flaky on the screen they use every morning.
+
+`GET /checkins/tap-settings` (`requireAuth`, any signed-in staff member) answers
+`{ enabled, staffTapEnabled, armSeconds, needsLocation }` — the staff screen's own
+resolver for whether a position must be sent, because the student equivalent
+(`GET /student/me/tap-context`) is inside the student router's allowlist and 403s for
+staff. `needsLocation` is `true` only when `staffGeofenceCheck` is on: the network check
+is observed from the far end of the connection and asks nothing of the phone, so a
+college running that check alone must never trigger a location permission prompt.
 
 ## Leave
 | Method | Path | Access | Body |
@@ -615,11 +661,36 @@ run tap check-in for students only.
 
 **`site` is not accepted and not asked for — the record always says `Onsite`, and any
 `site` in the body is deliberately ignored.** Someone who touched a sticker in the
-building cannot be working online: the tap is what proves they are here, so recording
-anything else would store a claim the tap itself disproves. Working online remains
-available through `POST /checkins/check-in`, which does take a site. This is also the
-first time a staff clock-in has meant "was in the building" rather than "said so" — the
-button records a clock-in from anywhere, bed included.
+building cannot be working online: recording anything else would store a claim the tap
+itself contradicts. Working online remains available through `POST /checkins/check-in`,
+which does take a site.
+
+**What this does and does not prove.** It proves somebody was at that sticker once, with
+this account signed in. It does not prove they are there now: the code on a sticker is
+static and any phone with a generic NFC app can read it, so a member of staff who notes it
+down can clock in Onsite from home, and the `tagId` on the row would read as corroboration
+it is not. An earlier edition of this file claimed this was "the first time a staff
+clock-in has meant 'was in the building' rather than 'said so'" — that overstated it, and
+a claim like that in a timesheet record a college may be asked to produce at a funding
+audit is worth more care than a claim about a feature. See "What this can and cannot
+prove" in `STATUS.md` §3.14 for the fuller statement, which covers the network and
+geofence checks too.
+
+**Presence is checked before the tag is looked up** — matching the student route, and for
+the same reason: somebody off the college network should be told that, not handed
+`That tag isn't recognised` from a check they were never going to get past. Order on this
+route: feature switch, tag code present, rate limit, **already-clocked-in** (which still
+resolves the tag, purely for the log), **presence**, tag lookup, write. Already-clocked-in
+sits ahead of presence deliberately — a second tap on the way past the door writes
+nothing, so there is nothing for a presence check to protect, and answering "you're off
+campus" to a no-op teaches somebody the feature is flaky — and the rate limit stays ahead
+of both so that probing the checks is throttled like everything else. See the refusal
+table under **Check-ins** above for the `reason` codes; a refusal from this route logs
+`method: "nfc"` rather than `"button"`.
+Unlike `POST /check-in`, a refusal here is logged with `tagId: null` even though the
+route later resolves the code — the same "row from before a tag was identified" case the
+schema documents for an unknown or rate-limited tap, extended to a presence refusal that
+happens first by design.
 
 A successful tap answers **201** with `{ ok: true, ...CheckIn }`, the row carrying
 `site: "Onsite"` and `tagId`. Re-tapping the same day answers **200** with
@@ -759,8 +830,8 @@ on the generic `/integrations/teams` routes, alongside branding and document tem
 |--------|------|------|---------|
 | GET | `/teams-attendance/settings` | — | `{ settings: { enabled, minAttendancePct }, configured, running }` |
 | PUT | `/teams-attendance/settings` | any of `{ enabled, minAttendancePct }` | `{ settings }` |
-| POST | `/teams-attendance/sync` | — | `{ ok: true, summary, issues }` |
-| GET | `/teams-attendance/runs` | — | `{ runs: [ {...row, summary, issues} ] }` (most recent 20) |
+| POST | `/teams-attendance/sync` | — | `{ ok: true, summary, issues }` — **college-wide accounts only**, see *Whole-college actions* |
+| GET | `/teams-attendance/runs` | — | `{ runs: [ {...row, summary, issues, issuesWithheld} ] }` (most recent 20; `issues` is `[]` and `issuesWithheld` true for a departmental account) |
 
 `configured` is whether Graph credentials and at least one organizer account are saved
 (`teamsGraph.isConfigured()`) — a college can have `enabled: true` stored from before it
@@ -861,9 +932,9 @@ accounts, creator account) stay behind `requirePage("settings")` on the generic
 |--------|------|------|---------|
 | GET | `/teams-automation/settings` | — | `{ settings: { autoCreateMeetings, provisionTeams }, configured, meetingsRunning, provisioningRunning }` |
 | PUT | `/teams-automation/settings` | any of `{ autoCreateMeetings, provisionTeams }` | `{ settings }` |
-| POST | `/teams-automation/run-meetings` | — | `{ ok: true, summary, issues }` |
-| POST | `/teams-automation/run-provisioning` | — | `{ ok: true, summary, issues }` |
-| GET | `/teams-automation/runs` | — | `{ runs: [ {...row, job, summary, issues} ] }` (most recent 20, **both jobs together**) |
+| POST | `/teams-automation/run-meetings` | — | `{ ok: true, summary, issues }` — **college-wide accounts only** |
+| POST | `/teams-automation/run-provisioning` | — | `{ ok: true, summary, issues }` — **college-wide accounts only** |
+| GET | `/teams-automation/runs` | — | `{ runs: [ {...row, job, summary, issues, issuesWithheld} ] }` (most recent 20, **both jobs together**; `issues` withheld from a departmental account) |
 
 `configured` is `teamsGraph.isConfigured()`, the same check Teams auto-attendance uses —
 one Teams app registration, one "is it connected at all" answer for both features.
@@ -1402,6 +1473,52 @@ the merged config plus `allDocTypes`, `courses` (with `feeAmountPence`) and `int
 none is marked optional: "all ten" reads artificially low, since an immigration share
 code does not apply to a UK national. An empty stored list falls back to all ten — a bad
 save writing `[]` would otherwise make every applicant documents-complete.
+
+## Whole-college actions (college-wide accounts only)
+
+A member of staff can be scoped to particular academic departments (`Staff.collegeWide`
+false plus `StaffAcademicDepartment` rows), and a Prisma client extension then filters
+every read of student- and course-linked data to those departments. Two things that
+filtering cannot reach, and this is how each is handled.
+
+**A job is not a query.** The endpoints below start work that spans the whole institution
+by its nature — one monthly letter run, one sweep of one VLE, one pass over every class in
+the college — and they declare themselves institution-wide so that a scheduler with no
+caller can run them at 02:00. Behind a button, that meant a departmental admin pressing
+"Run" wrote to every student in the college. They now require a college-wide caller and
+answer **403 with `code: "COLLEGE_WIDE_REQUIRED"`**, which is what lets a client tell this
+refusal apart from a missing page grant.
+
+| Method | Path | Also needs |
+|--------|------|-----------|
+| POST | `/attendance-emails/run` | `attendance-emails` |
+| GET | `/moodle/preview` | any of `settings`, `assessments`, `registers`, `students` |
+| POST | `/moodle/sync` | `registers` or `students` |
+| GET | `/canvas/preview` | any of `settings`, `assessments`, `registers`, `students` |
+| POST | `/teams-attendance/sync` | `attendance-settings` |
+| POST | `/teams-automation/run-meetings` | `attendance-settings` |
+| POST | `/teams-automation/run-provisioning` | `attendance-settings` |
+| GET | `/audit`, `/audit/actions` | any of `settings`, `access`, `staff` |
+| PUT | `/academic-departments` | `settings` |
+| PUT, DELETE | `/timetabling/departments/:id` | `scheduling` |
+
+`POST /attendance-emails/send-one` is deliberately NOT here: it reads one student through
+the departmental filter, so it can only ever reach one of the caller's own.
+
+`POST /timetabling/departments` (creating a school) is not here either. A school with
+nobody in it and no courses attached grants nothing to anybody, and the timetabler holding
+next term's structure is the person who knows it exists. Renaming, retiring and deleting
+one are the acts that change what other departments see.
+
+**Free text cannot be filtered.** The audit trail's summaries and before/after snapshots,
+and every sync run's issue list, name students from every department as prose rather than
+as rows — so there is nothing for the guard to hold on to. The audit trail is therefore
+college-wide only in full (filtering it back to a department was rejected: a row about a
+Staff account or a setting has no department, a summary can name a student the `entityId`
+does not point at, and a trail that quietly omitted rows would stop being evidence). Run
+histories stay readable by anyone with the page, but a departmental account gets
+`issues: []` **and `issuesWithheld: true`**, so a screen cannot render the absence as "no
+issues found".
 
 ## Data shapes (client-facing)
 ```

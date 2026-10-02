@@ -379,6 +379,14 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
         unitNumber: parsed.number,
         name: parsed.name,
         courseId: dbCourse ? dbCourse.id : null,
+        // A UNIT'S DEPARTMENT IS ITS COURSE'S, written wherever courseId is. Units were
+        // created with none, so every unit, session and assessment a sync added was
+        // invisible to staff scoped to the very department the course was mapped to,
+        // until somebody happened to re-save the course. assignCourses() in
+        // academicDepartments.js keeps the same invariant for a course moved by hand; this
+        // is the sync's half of it. On update too, so a unit Moodle moves to another
+        // course follows that course across the boundary rather than keeping the old one.
+        academicDepartmentId: dbCourse ? (dbCourse.academicDepartmentId ?? null) : null,
         moodleSectionId: sec.id,
         moodleCourseId: course.id,
       };
@@ -463,6 +471,10 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
           // because the number is unique and another row may already hold it.
           const fix = {};
           if (st.moodleUserId !== u.id) fix.moodleUserId = u.id;
+          // Filled in, never overwritten -- see the create branch below.
+          if (st.academicDepartmentId == null && st.cohortId == null && dbCourse?.academicDepartmentId) {
+            fix.academicDepartmentId = dbCourse.academicDepartmentId;
+          }
           if (ref && st.studentRef !== ref && COLLEGE_NUMBER.test(ref)) fix.studentRef = ref;
           if (Object.keys(fix).length) {
             try { st = await prisma.student.update({ where: { id: st.id }, data: fix }); }
@@ -483,6 +495,18 @@ async function syncFromMoodleInner({ dryRun = false, onProgress = null } = {}) {
                 email: email || `moodle-${u.id}@placeholder.invalid`,
                 initials: initialsOf(first, last), colour: colourFor(email || String(u.id)),
                 active: true, moodleUserId: u.id,
+                // THE DEPARTMENT OF THE COURSE THEY WERE FIRST SEEN ON. The sync creates
+                // students with no cohort, and a student with no cohort and no department
+                // is visible only to college-wide accounts -- every departmental tutor
+                // of the course that just enrolled them saw an empty roster.
+                //
+                // Set on create and filled in on a later match only while it is still
+                // empty and there is still no cohort, never overwritten. A student on
+                // courses in two departments keeps the first; assigning a cohort (which
+                // writes this column) is the deliberate way to say otherwise. Rewriting it
+                // every night would move people across the boundary depending on the
+                // order Moodle happened to list courses in.
+                academicDepartmentId: dbCourse?.academicDepartmentId ?? null,
               },
             });
           } catch (e) {

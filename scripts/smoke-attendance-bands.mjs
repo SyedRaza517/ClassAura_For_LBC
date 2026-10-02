@@ -13,6 +13,7 @@
 // overlap makes their letter depend on the order of an array, and a ladder that stops
 // short of 0% or 100% loses the two students it is most important not to lose.
 import { strict as assert } from "node:assert";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 // API_URL is what scripts/test.mjs exports to a suite (it also accepts an
 // already-running API that way).
@@ -233,12 +234,21 @@ await check("a boundary percentage lands in the higher band, not in nothing", as
 
 /* ---------------------------------------------------- which bands actually send mail --- */
 
+// THE MONTHLY RUN IS A WHOLE-COLLEGE JOB and needs a college-wide caller since
+// 28 Sep 2026 (requireCollegeWide on POST /attendance-emails/run): it writes to every
+// current student it finds, whoever presses the button, so a narrowed admin pressing it
+// wrote to departments they cannot see. In the ordinary pass `runToken` IS the seeded
+// admin's own token; under SMOKE_SCOPED_DEPARTMENT=1 it is a throwaway college-wide
+// account, so these assertions keep testing the RUN rather than the new refusal.
+const runner = await collegeWideReader({ call, token, label: "bands" });
+const runToken = runner.token;
+
 await check("a band with its trigger off is not written to by the monthly run", async () => {
   const data = await getData();
   const quiet = data.body.bands.find((b) => !b.emailTrigger);
   assert.ok(quiet, "this fixture should have a non-emailing band");
   const inQuiet = data.body.students.filter((s) => s.bandKey === quiet.key && s.email);
-  const r = await call("/attendance-emails/run", { method: "POST", token, body: { force: true, ...RANGE } });
+  const r = await call("/attendance-emails/run", { method: "POST", token: runToken, body: { force: true, ...RANGE } });
   // Email is normally unconfigured under test, which is its own 400 ("email-off"). Both
   // outcomes are acceptable here; what must never happen is those students being SENT to.
   if (r.status === 200) {
@@ -254,7 +264,7 @@ await check("switching every trigger off is reported, not treated as a clean sen
   await putBands(OWN.map((b) => ({ ...b, emailTrigger: false })));
   // A run that is valid in every OTHER respect — a real reporting period, students with
   // marks in it — so the only thing stopping it is that no band asks for a letter.
-  const r = await call("/attendance-emails/run", { method: "POST", token, body: { force: true, ...RANGE } });
+  const r = await call("/attendance-emails/run", { method: "POST", token: runToken, body: { force: true, ...RANGE } });
   assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
   assert.ok(/none of your attendance bands/i.test(r.body.error || ""), r.body.error);
   return r.body.error.slice(0, 80) + "…";
@@ -308,6 +318,11 @@ await check("resetting restores the platform defaults", async () => {
   assert.ok(r.body.bands.every((b) => b.emailTrigger), "the defaults all email, as they did before bands were configurable");
   return "back to the six defaults";
 });
+
+// The throwaway college-wide account goes last, after every assertion that used its
+// token, and only exists in the scoped pass at all. A college-wide admin left behind is a
+// permission this suite would be granting to every suite that sorts after it.
+await runner.dispose();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

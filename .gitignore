@@ -46,3 +46,8 @@ student-link-proposals-*.csv
 _e2e-shots/
 _e2e-*.json
 _e2e-*.ndjson
+# Same idea, for the staff check-in walkthrough (_walk-staff-checkin.mjs). It only
+# writes here when an assertion fails or a run dies, so the folder is absent on a clean
+# run — which is exactly why it is easy to forget it exists until a failing run leaves
+# it in somebody else's git status.
+_walk-staff-checkin-screenshots/

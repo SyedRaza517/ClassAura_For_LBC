@@ -3,7 +3,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const prisma = require("./db");
 const { sStaff, sStudent, sApplicant } = require("./serializers");
-const { runWithAcademicScope, withoutAcademicScope, scopeForStaff, CONFINED_BY_ROUTER } = require("./academicScope");
+const { runWithAcademicScope, withoutAcademicScope, currentScope, scopeForStaff, CONFINED_BY_ROUTER } = require("./academicScope");
 
 // In production a real secret MUST be provided — never silently fall back to a
 // publicly-known string (that would let anyone forge an admin token). That rule now lives
@@ -302,6 +302,42 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
+/**
+ * Guard an action that is institution-wide BY ITS NATURE, whoever starts it.
+ *
+ * The departmental guard narrows what a query READS. It cannot narrow a JOB: the monthly
+ * attendance letters, a Moodle sync, a Teams run all declare themselves institution-wide
+ * with withoutAcademicScope(), correctly, because a scheduler starting them at 02:00 has
+ * no department. But the same function behind a button meant an admin narrowed to
+ * Business could press "Run" and write to every student in the college -- the guard was
+ * never asked, because the job had already told it not to be.
+ *
+ * Narrowing the job to the caller's departments was the rejected alternative. A monthly
+ * letter run that sends to Business only would still mark the month as done
+ * (lastRunPeriod) for everyone, and a Moodle sync cannot be partial: it walks one VLE and
+ * adopts courses by name before it knows their department. A job that is one thing
+ * should be started by someone who can see all of it.
+ *
+ * `what` names the action in the refusal, so the person reading it knows which button
+ * they cannot use and why, rather than meeting a bare 403. `code` lets the client tell
+ * this refusal apart from a missing page grant.
+ *
+ * Staff only. Students and applicants are bound CONFINED_BY_ROUTER, which is collegeWide
+ * true, so checking the scope alone would wave them through any router that forgot its
+ * own staff check.
+ */
+function requireCollegeWide(what) {
+  return (req, res, next) => {
+    if (req.user?.kind !== "staff" || currentScope()?.collegeWide !== true) {
+      return res.status(403).json({
+        error: `${what} covers the whole college, so it needs college-wide access. Your account is limited to particular departments -- ask a Super Admin if you need this.`,
+        code: "COLLEGE_WIDE_REQUIRED",
+      });
+    }
+    next();
+  };
+}
+
 // Guard an admin-only endpoint by admin-dashboard page(s). The Super Admin always
 // passes. A regular admin passes if their adminPages is null (never configured →
 // full access, so existing admins aren't locked out) or includes at least one of
@@ -400,4 +436,4 @@ function blockedByRank(actor, target) {
   return "You can't change an administrator whose access is broader than your own";
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requirePage, requireAnyPage, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET, EXPLICIT_ONLY};
+module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requireCollegeWide, requirePage, requireAnyPage, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET, EXPLICIT_ONLY};

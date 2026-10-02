@@ -22,10 +22,17 @@ queries, reviews, mitigations, prediction, staff, attendance emails, assessments
 admissions, SLC and ISM. Backed by a run: the whole suite passed on the local
 `edtech_dev` (35 passed, 0 failed, 1 skipped, plus 1,622 unit tests), and the new
 assertions in `smoke-academic-departments.mjs` were proved able to fail by re-gating
-the endpoint they guard. Note that this file still has no section describing the
-academic-departments feature itself (it landed after the last full pass); the filter is
-a view, not a boundary — scoping is described in `.claude/rules/` and enforced
-server-side.*
+the endpoint they guard. The filter is a view, not a boundary — scoping is enforced
+server-side. This paragraph said "this file still has no section describing the
+academic-departments feature itself"; that was true until 28 Sep 2026 and §3.15 is now
+that section.*
+
+*28 Sep 2026: five gaps in the departmental boundary closed — whole-college jobs a
+narrowed admin could start, the audit trail and sync issue lists, deleting a school whose
+in-use count could not see other departments, filing a course into a department the caller
+is not in, and an extension on another department's claim. The Moodle sync now stamps the
+units and students it creates with their course's department. See §3.15, which also states
+what is still open: admissions/SLC/ISM are not scoped at all, and departments are flat.*
 
 This is the "what actually exists" companion to `README.md` (setup) and `API.md`
 (endpoint reference). Read this first if you want to know where the project stands.
@@ -575,9 +582,9 @@ this today**, and nothing about it is reachable until an administrator turns it 
 | **The tag register** | `AttendanceTag`, `routes/tags.js` (6 endpoints, `attendance-tags` page grant) | Register a sticker, rename it, retire it, read its taps. The code is returned **exactly once**, to the administrator who creates it, because that is the moment somebody writes it onto the tag — there is deliberately no endpoint that reads one back, and `code` is absent from the serialiser, which is an allowlist. Two rollouts are supported on purpose: generate a secret and write it on with a phone app, or tap a **blank** sticker and register its factory UID, which needs no NFC writing tool at all |
 | ~~**The one cross-tenant read**~~ | ~~`crossTenantTagExists()` in `routes/tags.js`~~ | **Gone 30 Aug 2026.** `AttendanceTag.code` was unique across every college in one shared database, so registering a sticker another institution already held needed a probe that answered "yes, spoken for" and nothing else — never which college, never what they call it. One database per college deletes the case rather than rephrasing it: a code either is in this table or is not |
 | **The window** | `src/attendanceTap.js` — pure, no database, no clock | The lecture's own hours *are* the window; there is nothing for a lecturer to open and nothing to forget to switch off. Taps are accepted from `startTime − earlyGraceMins` to `endTime`, **both ends inclusive**; `P` until `startTime + lateAfterMins`, `L` after. Two classes genuinely running at once return `ambiguous` and the student picks — and the status is then recomputed for the chosen session, because inheriting the first candidate's verdict would mark a punctual student late. The term lock is honoured, matching the 423 on `PUT /sessions/:id/register`, so a tap is not a back door around a closed term |
-| **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. Seven settings — `enabled`, `qrEnabled` (TRUE since 4 Sep 2026, its own switch — see §3.9.1), `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `qrRotateSeconds` (30, floor 10 so a phone can scan in time), `staffTapEnabled` (true) — the minute fields capped at 120 and the second fields at 600/300, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
+| **Per-college settings** | `AttendanceTapConfig`, `attendanceTapSettings.js` (pure) + `attendanceTapConfig.js` (resolver) | The `attendanceBandConfig` shape again: defaults in code, one JSON column merged over them, no row until a college edits something, an allowlist on the way out, a 30 s cache invalidated on save. **Fourteen settings now, not seven** — `SETTING_FIELDS` in `attendanceTapSettings.js` is the count to trust, since this row has gone stale on the number before: `enabled`, `qrEnabled` (TRUE since 4 Sep 2026, its own switch — see §3.9.1), `lateAfterMins` (15), `earlyGraceMins` (0), `armSeconds` (60), `qrRotateSeconds` (20, down from 30 on 11 Sep 2026, floor 10 so a phone can scan in time), `declareEnabled` (false, and deliberately never following `qrEnabled`'s default — see the long comment on it in code for why), `staffTapEnabled` (FALSE since 13 Sep 2026, decoupled from `enabled` — see its own comment), and — new with staff presence, §3.14 — `networkCheck`, `allowedNetworks`, `geofenceCheck`, `geofenceRadiusM`, `staffNetworkCheck`, `staffGeofenceCheck`, every one of the last six off or empty by default. The minute fields are capped at 120 and the second fields at 600/300, because a typo of 600 in the grace field is not a setting, it is an outage in the attendance record. `PUT /tags/settings` is a **patch**, so switching the feature on does not silently reset a threshold somebody tuned last term, and the switch itself is audited on its own |
 | **The student's tap** | `GET /api/student/me/tap-context`, `POST /api/student/me/tap-check-in` | Inside the student router allowlist and keyed on `req.user.id`; no id parameter exists. Candidates are built from `Enrolment`, so a tap cannot attach a student to a unit they were never on. Rate limited 10 per minute per student — in-process, like the other six limiters (§6). Writing a mark flags the student's progression score stale but deliberately does **not** rescore: a check-in must not wait on arithmetic |
-| **The staff tap** | `POST /api/checkins/tap-check-in` | `site` is not accepted and not asked for. Somebody who touched a sticker in the building cannot be working online — the tap is what proves they are here — so recording anything but `Onsite` would store a claim the tap itself disproves. This is the first time a staff clock-in has meant "was in the building" rather than "said so"; `POST /check-in`, which records one from anywhere, still exists and still takes a site |
+| **The staff tap** | `POST /api/checkins/tap-check-in` | `site` is not accepted and not asked for — a tap always records `Onsite`, because recording anything else would store a claim the tap itself contradicts. What a staff clock-in does and does not prove is §3.14's territory now, not this row's — see "What this can and cannot prove" there rather than trust a summary of it repeated twice; `POST /check-in`, which records a clock-in from anywhere, still exists and still takes a site |
 | **The lecturer's live view** | `GET /api/hnd/my-sessions/today`, `GET /api/hnd/sessions/:id/live`, `POST /api/hnd/sessions/:id/mark-remaining-absent` | Who is in, who is late, who has not appeared, and the minute each of them tapped. Today's classes are found through `Unit.tutorStaffId` and never through the free-text `tutor` field — a name typed into a box is not an identity. "Accepting taps" is derived at read time, not stored, because it changes every minute |
 | **The tap log** | `TagTap`, `GET /api/tags/:id/log` | Every tap, accepted or refused. The refusals are the valuable half: "I tapped and it didn't work" is answerable here and nowhere else, and so is a pattern — one address checking in six students inside a minute — which is invisible in `AttendanceMark`. Names are resolved for the screen; **no email addresses**, so a tag log cannot become a way to harvest the roster |
 | **The apps** | `client/src/nfc.js`, `CheckInCard.jsx`, `AdminNfcTags.jsx`, `AdminLiveAttendance.jsx` | One check-in card serves both apps — the student marks a register, staff clock in, and what differs is one API call and the words on the result. The button is dead until a sticker is read and dead again 60 seconds later, and the code is dropped on failure too: a refused tap is not a credential to retry with |
@@ -821,7 +828,9 @@ proved versus what reading the code establishes:
 |---|---|
 | `teamsAttendance.test.js`, `teamsAttendanceSettings.test.js` | **Code-read as present and passing at commit time** — the matcher's date/time/title tiebreaks and ambiguity refusal, the interval-clip-and-merge arithmetic, and the threshold's exact rounding boundary, all pure and all database-free |
 | `scripts/smoke-teams-attendance.mjs` | Weighted, per the spec's own emphasis, toward the refusals: a sync while unconfigured (409) — the "already running" 409 is a real branch in the route but the suite does not exercise it, so it is not claimed here — a failed Graph call writing no marks (502, nothing written), a mark that already stands surviving a sync untouched, an unmatched participant appearing in `issues` and `participantsUnmatched` rather than as a guessed Absent, and — the fix-wave assertion that closes the gap this section used to describe wrongly — `POST /sync` answering 409 with `/switched off/i` once Teams is configured but before `enabled` is set true, proving OFF means nothing runs even when Graph credentials are already valid. Confirmed by the full test run this fix wave records (see the verification log) |
-| Client | **Builds** (`npm run --workspace client build`) — this task's own check. There is still no client test framework, so "builds" and "renders once the server answers" is the whole claim; the settings section has not been clicked in a browser |
+| Edge cases, and the proof they discriminate | **78 new unit tests added 1 Oct 2026** across `teamsAttendance.edge.test.js`, `teamsGraph.edge.test.js` and `teamsSettings.edge.test.js`, taking the Teams unit count from 36 to 114 — the cases that only appear against a real tenant on a bad day: a titleless class in a contested slot (which `"".includes("")` would otherwise make match every subject), a join link of the wrong Teams shape, an interval nested inside another, an inverted or zero-length interval, a malformed session window, a threshold of exactly 0, `ceil()` at 50% of 91 minutes, a late-evening UTC instant landing on the college's own calendar day, and the weekday mapping under three host timezones. **Each one was proved able to fail**: 42 mutations were introduced into the source in turn — dropping the empty-title guard, removing the interval merge, flooring the threshold instead of ceiling it, keying participants on email before the Microsoft id, parsing dates in host-local time, merging a settings patch over DEFAULTS instead of the college's own values — and all 42 turned the suite red, which is the standard testing.md sets after two earlier tests were found passing while discriminating nothing |
+| The settings contract, end to end | **11 new assertions in `smoke-teams-attendance.mjs`** (35 → 46), also 1 Oct 2026, covering what a unit test on `merge()` cannot reach: a PATCH carrying an unusable threshold answers 200 and leaves the college's own 75% standing **in the database**, not reset to the platform 50; 0% is clamped up to 1 and 250% down to 100 through the real route; an unknown key is dropped by the allowlist; and the switch **closes** as well as opens — a college that turned Teams attendance on and thought better of it gets the same 409 back from a warm process with valid credentials, writing no run row at all. Four route- and config-level mutations were proved to turn these red |
+| Client | **Walked in a real browser 1 Oct 2026** — this row used to say only that it *builds*, and that the settings section "has not been clicked in a browser". It has now: a Playwright pass over Attendance → Settings as an admin renders the whole "Teams online classes" card correctly with no console errors — the not-connected banner, the switch reading `Teams auto-attendance is OFF`, the threshold at 50, "Sync now", and the recent-runs list. There is still no client test *framework*, so this is a looked-at-once claim, not a regression guard. It earned its keep immediately: `max-w-xs` sat on the threshold field's whole `<label>` rather than on its input row, wrapping three lines of explanation into a 320px column inside a 1050px card while every sibling description ran full width. Nothing asserts a width, so only looking could have found it; fixed the same day |
 | In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant, a real organizer account, or a real online class — every claim above is a code read or a unit test, never a live Graph call |
 
 **Deliberately not built**, matching the spec: live in-meeting presence (this reads a
@@ -839,6 +848,14 @@ one Teams meeting per timetabled online class; `provisionTeams` (Phase B,
 keeps owners/members current. A college can run either without the other — they are
 gated, scheduled and journalled separately, and share only a settings row
 (`TeamsAutomationConfig`) and a run log (`TeamsProvisionSync`, discriminated by `job`).
+
+**This section used to describe Phase A as one meeting per timetabled class, full stop,
+and that is now only half true.** Since 14 Sep 2026 a class that belongs to a *series*
+gets ONE recurring meeting for the whole series instead of one per week, created by a
+separate series pass that runs ahead of the per-event pass described below — see
+**§3.12.1**. Everything in this section still holds exactly as written for **one-off**
+events (`seriesId` null), which are what the per-event pass now handles, and for legacy
+series created before that date, which are deliberately never converted.
 
 | Piece | Where | What it does |
 |---|---|---|
@@ -861,14 +878,58 @@ what reading the code establishes:
 |---|---|
 | `teamsMeetings.test.js` | **Code-read as present and passing at commit time** — `meetingFingerprint`'s exact field set and its sorted-attendee-list normalisation, pure and database-free, the one piece of Phase A's decision logic that was worth extracting rather than leaving as wiring (the same split `teamsAttendance.js`'s pure functions have from `teamsSync.js`'s wiring) |
 | `teamsProvisioning.test.js` | **Code-read as present and passing at commit time** — `teamNameFor`'s "course — cohort" naming and both name-length truncations against Graph's own `displayName` limits (120 for a Team, 50 for a channel), pure and database-free |
-| `scripts/smoke-teams-automation.mjs` | **Green — 83 assertions, all passing.** Weighted toward refusals the same way §3.11's own suite is: both switches off answering 409 on a manual run (the ship-off proof), a meeting created then left alone on a second run (idempotence), a reschedule producing exactly one update and no duplicate create, a pasted link producing no create at all, an unpublish producing a cancel that clears both the event's and its registers' Teams fields, a provisioning run creating a Team/channels/owners/members with an unmatched student reported rather than silently dropped, a second provisioning run adding no duplicate Team or channel, and (added in the final review fix wave) a channel's own email actually landing in a new meeting's attendee list, not merely resolved and cached. The controller's full sweep of this branch — every unit test plus every smoke suite — ran 35 passed / 0 failed / 1 documented skip |
-| Client | **Builds** (`npm run --workspace client build`) — this task's own check, same claim and same limits as §3.11's: there is no client test framework, so "builds" is as far as this goes, and the settings card has not been clicked in a browser |
+| `scripts/smoke-teams-automation.mjs` | **Green — 114 assertions, all passing** (re-run 1 Oct 2026; this row said **83** when written, and the 31 added since are §3.12.1's series scenario). Weighted toward refusals the same way §3.11's own suite is: both switches off answering 409 on a manual run (the ship-off proof), a meeting created then left alone on a second run (idempotence), a reschedule producing exactly one update and no duplicate create, a pasted link producing no create at all, an unpublish producing a cancel that clears both the event's and its registers' Teams fields, a provisioning run creating a Team/channels/owners/members with an unmatched student reported rather than silently dropped, a second provisioning run adding no duplicate Team or channel, and (added in the final review fix wave) a channel's own email actually landing in a new meeting's attendee list, not merely resolved and cached. The controller's full sweep of this branch — every unit test plus every smoke suite — ran 35 passed / 0 failed / 1 documented skip |
+| Client | **Walked in a real browser 1 Oct 2026**, same pass as §3.11's — this row used to say the settings card "has not been clicked in a browser". The "Teams automation" card renders correctly: its own not-connected banner, both switches reading `Meeting creation is OFF` and `Team provisioning is OFF`, both "Run now" buttons, and the shared run-history list showing a `MEETINGS`-tagged row. No console errors. That pass also found and fixed a real width bug in the sibling card — see §3.11 |
 | In use by a college | **No.** Nothing here has been exercised against a real Microsoft 365 tenant — every claim above is a code read or a unit test, never a live Graph call, exactly as §3.11 |
 
 **Deliberately not built**: removing anyone from a Team or a channel, renaming a Team or
 channel after creation, and any provisioning of a Team for a cohort that has no
 published timetable — all three are the additive-only boundary constraints.md sets, not
 gaps this feature intends to close later.
+
+### 3.12.1 Recurring series meetings — one meeting per class, not one per week (14 Sep 2026)
+
+Extends §3.12's Phase A. A weekly class is **one** recurring Teams meeting spanning the
+series' real first→last dates, not twelve separate meetings — and the single join link
+that follows from it is fanned onto every occurrence's event, its register and the
+student app. This is the shape a college actually recognises: students see one recurring
+entry in their calendar, the link never changes mid-term, and a teacher promoted to
+co-organizer is promoted once rather than weekly.
+
+The hard part is not creating the meeting. It is that **one meeting id now reports twelve
+weeks of attendance**, and a collector that flattened those into one list would credit a
+student present in week 1 to every week of the term. That is the risk the spec named
+highest, and the reason this is its own section rather than a line in §3.12.
+
+| Decision | Where | Why |
+| --- | --- | --- |
+| **The series owns the meeting, not an occurrence** | `TeamsSeriesMeeting`, keyed `@unique` on `seriesId` | A recurring meeting belongs to the whole series, so pinning it to an arbitrary "first" `TimetableEvent` would lose it the moment that week was unpublished or deleted. One-off events (`seriesId` null) keep the per-event columns on `TimetableEvent` and the per-event pass — `teamsMeetings.js` runs **two passes**, the series pass first, and a one-off is untouched by it |
+| **The range is computed from the WHOLE series, never the reconcile window** | `teamsMeetings.js` (`reconcileSeries`), a second query selecting `date` only across every published, wanted event | The reconcile window starts at yesterday, so computing `firstDate`/`weekdays` from the events *in* that window would walk them forward as past weeks age out — the fingerprint would change every week, and Microsoft would re-notify every attendee every week forever. This is the same class of bug the per-event fingerprint already fixed once (§3.12) reappearing by a different route, and it is why the range is queried separately rather than taken from the group already in hand |
+| **Per-occurrence attendance, matched on date** | `teamsGraph.js` (`attendanceByOccurrence`), `teamsAttendance.js` (`occurrenceForDate`, pure), `teamsSync.js` | Each occurrence's report keeps **its own date**, and a register reads only the occurrence whose date equals the session's date. A one-off meeting reports a single occurrence whose date equals that session's date, so the same lookup serves both paths without a branch. An occurrence that does not exist yet is a **note and no marks** — it stays eligible inside the 7-day retry window — never an Absent, because "the meeting had not happened yet" and "nobody came" are not the same fact |
+| **Reports are fetched once per run, per meeting id** | `teamsSync.js` (`occurrencesFor`, a `Map` keyed by meeting id) | Twelve registers sharing one recurring meeting would otherwise fetch the same report twelve times in a single run. The cache stores the **error** too, so a Graph failure is not retried twelve times either — each register notes it and stays eligible |
+| **The one link is fanned to blanks only** | `teamsMeetings.js`, `updateMany` filtered on `teamsJoinUrl: ""` / `null` | The never-overwrite rule §3.11 and §3.12 both follow, applied to the fan-out: an admin's pasted link, or a link already set, stands. The resolved `onlineMeeting` id is fanned the same way, so attendance collection reads it from the session rather than re-resolving it once per week |
+| **Co-organizers are written once, and again only on a real change** | `teamsMeetings.js`, gated on `coorganizersSetAt` plus a fingerprint difference | Promoting the teacher is the point of the model — they co-host every week without ever being the organizer whose calendar discovery reads. Rewriting that set on every hourly tick is the same re-notification problem in miniature. A failure to resolve or promote is a **note**, never a thrown run: the meeting and its link already stand, and losing those over a co-organizer write would be the worse outcome |
+| **Legacy series are left alone, deliberately** | `teamsMeetings.js`, `legacySeriesIds` computed once across **every** event, not just the window | The spec's rollout choice (a): a series already carrying per-event meetings is never converted, because converting means cancelling twelve meetings and re-notifying everyone on them. The set is computed across all events rather than the reconcile window for a reason worth stating — a legacy series' brand-new occurrence, rolling into the window after this deploy with no `teamsCalendarEventId` of its own yet, would otherwise be skipped by the per-event loop *and* by `reconcileSeries`, owned by neither and stranded with no meeting at all |
+| **Cancelling clears both copies, as §3.12** | `teamsMeetings.js` | A series that stops wanting meetings (unpublished across the board, or the checkbox cleared) has **its** recurring meeting cancelled — the clear is matched on the join URL this system wrote, so a pasted link is not cleared by it — and every occurrence's register put back to no join details, for the same reason §3.12 gives: leaving registers pointed at a meeting Microsoft has deleted has the attendance sync retry against it for its whole 7-day window |
+
+**Verification status.**
+
+| | |
+|---|---|
+| `teamsMeetings.test.js` (series fingerprint) | **Re-run 1 Oct 2026 — part of 114 Teams unit tests, 0 failed** (36 when this row was first written; see §3.11's edge-case row for the 78 added the same day). The series fingerprint's field set and its order-insensitivity: the same inputs in any order give the same fingerprint, while a changed lecturer, a changed end date or an added weekday each change it — the three inputs whose drift would cause the weekly re-notify this design exists to prevent |
+| `scripts/smoke-teams-automation.mjs` scenario 10 | **Re-run 1 Oct 2026 — 114 assertions, 0 failed.** One recurring meeting for a three-week series and **zero** per-occurrence `createClassMeeting` calls; all three occurrences carrying the same non-null join URL; co-organizers written exactly once, naming the resolved teacher; a second sync creating and updating nothing (the anti-churn gate); and a lecturer swap producing exactly one `updateRecurringClassMeeting`, no second create, and a rewritten co-organizer list naming the new lecturer |
+| `scripts/smoke-teams-attendance.mjs` | **Re-run 1 Oct 2026 — PASS.** The cross-contamination guard this section exists for: two registers a week apart share one recurring meeting id, alice attended week 1 only and bob week 2 only, and each register is marked from **its own** occurrence — alice is not Present in week 2, bob is not Present in week 1 |
+| Client | **No new client surface.** The series pass writes through the same `teamsJoinUrl` fields the timetable planner, staff timetable and student app already read (§3.12, §3.13). The settings cards that drive it were walked in a browser 1 Oct 2026 (§3.11, §3.12); the *series* behaviour itself has no screen of its own to look at |
+| In use by a college | **No.** As §3.11 and §3.12 — no real Microsoft 365 tenant, no real organizer account, no live Graph call. The whole phase is proved by the `TEAMS_GRAPH_FIXTURES`/`TEAMS_GRAPH_JOURNAL` seam and by unit tests |
+
+**Deliberately not built**, matching the spec's own non-goals: **single-week exceptions** —
+moving or cancelling one occurrence of a running series uses Graph recurrence exceptions,
+which this does not model, so a single moved occurrence may fall out of the recurring
+meeting until they ship, and v1's advice is to edit the whole series; **non-weekly
+patterns** — the entry form produces weekly-by-weekday series, and fortnightly or monthly
+ones are not modelled; and **private per-class channels**. A **conversion path for legacy
+per-event series** is likewise absent by choice, not by omission — see the rollout row
+above.
 
 ### 3.13 The student app refresh — a notification channel, self-service, one band ladder (12-13 Sep 2026)
 
@@ -933,6 +994,162 @@ adjustments after the fact. Not a bug and not an oversight caught by review — 
 cut, recorded here rather than silently dropped, because the college may reasonably ask
 for it as a follow-up and the honest map this file is meant to be should say what was
 asked for and not shipped, not just what was shipped.
+
+### 3.14 Staff presence check-in (21 Sep 2026)
+
+Staff clock-in gained the same question the student side has asked since 10 Sep: is the
+phone actually in the building? A member of staff clocking in now picks **On site** or
+**Online** from two tabs, with the Check In button dead until one is chosen. Online is one
+button and is never checked, under any setting — somebody working from home is by
+definition off the college network and away from every campus, so a rule that caught them
+would make the honest answer unrecordable. On site can be required to prove itself by up
+to three independent switches, **all defaulting off**: `staffTapEnabled` (tap an NFC
+sticker — this existed before this work; see §3.9's staff row), and two new ones,
+`staffNetworkCheck` (the request must arrive from a college IP range) and
+`staffGeofenceCheck` (the phone must report a position near a campus). This closes a gap
+the design doc for this work opens by naming directly: the presence engine (`presence.js`,
+§3.8.2 and the 10 Sep design it names) and the settings screen for it already existed and
+were already applied to students — `checkPresence` was simply never called from a staff
+route. It is now, from both `POST /api/checkins/check-in` (when `site === "Onsite"`) and
+`POST /api/checkins/tap-check-in` (always, because a tap is an onsite claim by
+construction).
+
+| Piece | Where | What it does |
+|---|---|---|
+| **The two new switches** | `AttendanceTapConfig` (`staffNetworkCheck`, `staffGeofenceCheck`), `attendanceTapSettings.js` | Separate from the student `networkCheck`/`geofenceCheck` pair, deliberately — the settings screen labels those as not affecting staff, so widening them would start refusing staff clock-ins at any college that had ticked one for students, on a deploy nobody connected to the change. They **share** `allowedNetworks` and `geofenceRadiusM` with the student pair: one college, one network, one set of campuses, and two lists that had to be kept in sync would drift silently |
+| **The translation layer** | `refusedForStaffPlace()` in `routes/checkins.js` | Translates the staff switches into the shape `presence.js` expects rather than teaching the engine about staff — the engine stays pure, database-free and shared. Every failing reason is logged to `TagTap`, not only the one returned, so a college switching both checks on for the first time sees that its IP list is wrong *and* its coordinates are, in one pass, rather than discovering the second a week after fixing the first |
+| **`campusesFor` lifted out of `routes/student.js`** | shared module | Staff pass no session, so they need the "every located campus" branch. Copying it was rejected on this codebase's own evidence (§3.8.2's cohort work): six independently-grown answers to "who is on this register" disagreed and were fixed six separate times |
+| **A site is now required on a self clock-in** | `POST /api/checkins/check-in` | `isSite` permits `null` (`v == null || SITES.includes(v)`) because the administrator's `PUT /checkins` legitimately fills in a missed clock-in with no known site — but the self route had reused the same check, so an empty body passed validation, the tap requirement never fired, and a row was written with `site: null`. Answers 400 now. `PUT /checkins` is untouched |
+| **Already-clocked-in wins over presence** | both routes | A second tap or press on the way past the door writes nothing, so there is nothing for a presence check to protect — answering "you're off campus" to a no-op would teach staff the feature is flaky on the one screen they use every morning. This deliberately differs from the student path, where every capture method writes |
+| **Check-out stays ungated** | `POST /api/checkins/:id/check-out` | Requiring proof of presence to clock *out* would strand anyone who has already left the building, with no recoverable path from the app. Accepted cost: hours-on-site is provable at one end, not both |
+| **The Android location permission** | `client/android` manifest | `ACCESS_FINE_LOCATION`, newly added. **Its absence was not a staff-only bug** — `wherePhoneIs()` calls `navigator.geolocation` inside the Capacitor WebView, which Android refuses without the permission, so the **student geofence could never have worked on Android before this**, and nobody had noticed because it ships off and no college had switched it on. Fine, not coarse: coarse alone lets Android 12+ offer an "approximate" toggle accurate to 1–3 km, which `presence.js` correctly refuses as `accuracy_too_poor` — the feature would appear to work, ask for a permission, receive it, and still refuse everybody |
+| **The client's own resolver** | `GET /api/checkins/tap-settings`, `staffPositionIfNeeded()` in `client/src/api.js` | The client used to ask the student-only `GET /student/me/tap-context` whether a position was needed; a staff caller got 403, the catch answered `false`, and every onsite clock-in with the geofence on would have been refused `position_missing` — the feature would have appeared completely broken. `tap-settings` (already `requireAuth`-only, already read by the staff screen) answers `needsLocation` instead. Its cache lives under its own `localStorage` key, cleared on sign-out by `forgetNeedsLocation()` — staff and students share handsets, so a cached `"0"` written by a student session must never silently stop a colleague's phone from ever sending a position |
+| **The screen** | `StaffHub.jsx`, `TapOnsiteSheet` | Reverses the 14 Sep "ONE TAP, EITHER WAY" collapse back to two tabs, on an explicit later instruction — recorded in the design doc precisely so a future reader does not find the 14 Sep comment, conclude the tabs were an accident, and tidy them away. The location request starts the moment the popup opens, in parallel with arming the NFC reader, because a cold indoor GPS fix can take the full 15-second timeout plus a 2-second backstop, and asking for it only after the sticker is read would leave someone holding a phone against a wall watching a spinner |
+
+**What this can and cannot prove**, unchanged from the 10 Sep design and worth restating
+because a college will be asked this at a funding audit: the network check proves the
+request reached the server from an address the college says is theirs — it does not prove
+which room, and a VPN defeats it. The geofence proves the device reported a position
+within a radius of a campus; indoor GPS is 10–50 metres and worse through concrete, so it
+can never prove which room. The sticker proves somebody was at that wall once, with this
+account signed in — the code is static, so a member of staff who notes it down can tap
+from home. **None of the three is proof.** Together they are a good deal more than a
+login on a phone, which is all that stood behind a staff clock-in before this work.
+
+**What is still unproven, in full, so nobody reads more into the run below than is
+there:**
+
+- **No physical NFC tap has ever been performed**, on any handset, against any sticker.
+  §3.9 said this about the student/staff tap route when it was built on 28 Aug and it is
+  still true: this work changed who the checks apply to, not whether the radio half has
+  ever been exercised.
+- **No real GPS fix has ever been taken.** Every geofence assertion in the suite supplies
+  a position directly in the request body. A cold indoor fix, a permission prompt, a
+  refused permission — none of it has executed once.
+- **No real college network.** Every network assertion spoofs `X-Forwarded-For`, which
+  only works in the suite because there is no proxy in front of it. In production,
+  Render's proxy is the trusted hop (`trust proxy: 1`), and the header a phone sends is
+  overwritten by what Render observed — see the long comment above
+  `refusedForStaffPlace` in `routes/checkins.js`.
+- **The Android location permission is declared and has never run on a device.**
+  `cap sync` copies web assets and config into the native project; it does not invoke
+  Gradle, so the merged `AndroidManifest.xml` — the file Android actually reads the
+  permission from — only regenerates on a real build, and no build has been produced on
+  this machine (no Java, no `ANDROID_HOME`, matching §3.9's existing note).
+- **The browser walkthrough cannot ever exercise the NFC popup's listening state.**
+  `client/src/nfc.js` returns `{ ok: false, reason: "web" }` whenever
+  `Capacitor.isNativePlatform()` is false — which is every case a browser can reach — so
+  On site with a sticker required renders "Use the app to tap in" in Edge/Chrome/Playwright
+  and never the live "Please tap the NFC sticker" popup. `_walk-staff-checkin.mjs`
+  (`docs/testing/2026-09-21-staff-check-in-e2e-test-plan.md` §3.2, step D) proves the
+  desktop fallback wording; the tap popup itself is provable only in the packaged app on a
+  real handset.
+
+**Verification status.** Re-measured 24 Sep 2026, one suite at a time, against a local
+PostgreSQL 16 (`edtech_dev` on `localhost:5432`) — this is a run, not a code read:
+
+| | |
+|---|---|
+| Whole platform suite (`npm test`) | **41 passed, 0 failed, 1 skipped** (the skip is `smoke-signup-2fa`, D2 — a switched-off feature, not a failure) |
+| `smoke-nfc-tap.mjs` | **228 checks, all passed** — up from 97 at the 3 Sep measurement (§5); the growth is this work's own staff-presence refusal assertions (off-network, off-campus, no-position, poor-accuracy, misconfiguration, the Online exemption under every combination of the two new switches) |
+| `smoke-qr-checkin.mjs` | **168 checks, all passed** — re-run alongside `smoke-nfc-tap.mjs` specifically to prove the geofence fixture the new suite exercises did not leak into the sibling suite |
+| Server unit tests | **1,750 passed, 0 failed** (`node --test "src/**/*.test.js"` from `server/`) |
+| Client pure-module tests | **125 passed, 0 failed** (`node --test "src/**/*.test.js"` from `client/`) |
+| Client build | `npm run --workspace client build` — succeeds |
+| Native config | `npm run --workspace client build` then `npx cap sync android`, re-run for this work because the Task 5 sync predates every client change on this branch — the two-tab screen, the checkboxes and the `api.js` resolver did not exist in the web assets `client/android` was carrying until this pass |
+
+Read `docs/testing/2026-09-21-staff-check-in-e2e-test-plan.md` for the full journey,
+including the eight-combination configuration matrix, every refusal's exact wording, the
+ordering rules, and the stress/concurrency script — its own baseline table is kept in step
+with the figures above.
+
+### 3.15 Academic departments — the boundary's remaining gaps closed (28 Sep 2026)
+
+**This is the first section in this file about the academic-departments feature itself.**
+The 12 Sep note at the top of this file flagged its own absence and is now answered here.
+What that note said about the *filter* remains exactly true — the school dropdown on ~20
+admin lists is a view, not a boundary — and what follows is about the boundary, which is
+older than the filter and enforced server-side by a Prisma client extension
+(`academicScopeGuard.js`), not by per-route checks.
+
+**Nothing is narrowed for any college by default.** `Staff.collegeWide` defaults to
+`true`, and sign-up approval deliberately leaves it alone, so the filtered branch of the
+guard runs only for an account a Super Admin has explicitly narrowed. That matters for
+reading everything below: these were holes in a door most colleges have not yet closed.
+
+Five gaps, each demonstrated and each proved able to fail by reintroducing it:
+
+| Gap | What a departmental admin could do | Now |
+| --- | --- | --- |
+| Whole-college jobs | Start the monthly attendance-letter run, a Moodle sync or preview, a Canvas preview, either Teams run — each declares itself institution-wide with `withoutAcademicScope`, so the guard was never asked. **The Teams half of that sentence was not true when it was written, and a live deployment proved it on 2 Oct 2026**: none of `runSync`, `runMeetingsSync` or `runProvisioning` declared anything. An HTTP request binds a scope in `requireAuth`, so "Sync now" worked every time, while every *scheduled* pass died with `HndSession.findMany was issued with no academic scope bound`, wrote no marks and logged a FAILED run — manual success and unattended failure from the same engine, which is why no suite caught it (they all drive it over HTTP). Fixed by wrapping all three at the engine entry, the same placement `moodle.js` and `prediction/runner.js` use, with `teamsScope.test.js` as the regression guard — a deliberately weak source-reading proxy, proved able to fail. The letter run wrote to every student in the college. | `requireCollegeWide` (in `auth.js`) refuses them, with `code: "COLLEGE_WIDE_REQUIRED"` so the client can tell this apart from a missing page grant |
+| Free text naming students | Read the whole college's audit trail, and every sync run's issue list. Neither is filterable: they are strings, not rows | The audit trail is college-wide only; run issue lists are withheld with `issuesWithheld: true`, so a screen cannot read the absence as "no issues" |
+| Deleting a school | Hard-delete a school full of another department's students. The "is it in use?" counts ran under the caller's own scope, so every count for another department was 0 and `SetNull` then detached the lot | The counts run institution-wide, and rename/retire/delete are college-wide only. Creating a school stays open to any planner: a school with nobody in it grants nothing |
+| Filing a course | Create a course in another department, move one of theirs into it, or un-assign it entirely | `resolveAcademicDepartment` refuses a department the caller is not in, and refuses null — 403, because the request is well formed and the caller is not allowed to make it |
+| A nested include | Delete an extension on another department's mitigating-circumstances claim, holding both ids. `AssessmentAdjustment` is `UNSCOPED` and the guard does not rewrite nested `include`s | The claim is read on its own first, which is the read the guard can see |
+
+**The Moodle sync also created rows nobody could see.** A unit was created with its
+`courseId` but no `academicDepartmentId`, and a student with neither — so every unit,
+session, assessment and student a sync added to a course mapped to Business was visible
+only to college-wide accounts, while the sync reported them as created, which they were.
+Both now take the department of their course, on create; an existing student's is filled
+in but never overwritten, because rewriting it nightly would move people across an access
+boundary depending on the order Moodle listed their courses in.
+
+**Two client fixes, one of them a plain bug:** the department editor and the Moodle
+category mapping were rendered inside a `canAccessPage(…, "referrals")` block, so an
+administrator holding `settings` but not `referrals` could not see either — the referrals
+reasoning is about *support* departments and never applied to these. The sidebar now also
+says which departments the signed-in account can see ("Viewing: Computing, Business"), and
+the school filter offers only the caller's own schools.
+
+**What this does NOT do.** Specs 3–6 of
+`docs/superpowers/specs/2026-09-04-academic-departments-design.md` are still open, and the
+first of them is the largest remaining hole in the boundary: **admissions, SLC and ISM
+return every row to any staff member with the page**, with the department attached only as
+a display label. `Admission.course` is a plain string with no `Course` relation, so there
+is nothing to scope through until that is repaired. HR (spec 4) has no department axis,
+every configuration table is still a single college-wide row (spec 5), and the mobile work
+(spec 6) has not started. Departments remain **flat** — there is no Faculty → Department
+nesting of the kind Moodle and Canvas categories have — and there is no department-level
+role: an account is college-wide or a plain member, with no Head of Department.
+
+| Check | Result |
+| --- | --- |
+| New suite | `scripts/smoke-department-gaps.mjs` — **14 passed, 0 failed**. Weighted negative, and every refusal paired with the permission that makes it mean something (the same account succeeding inside its own department, or a college-wide account succeeding where it is refused) |
+| Proved able to fail | Each of the five gaps reintroduced in turn; the delete case is the clearest — with the scoped count restored it answered `{"retired":false,"inUse":0}` for a school holding 4 records |
+| Moodle stamping | `server/src/moodleDepartmentStamp.test.js` — 3 passed. A **text** test, and it says so: `syncFromMoodle` talks to a real Moodle and there is no fake, so this reads the source. A weak proxy, stated as one |
+| Full suite | **42 passed, 0 failed, 1 skipped** (`DATABASE_URL=…edtech_dev npm test`) |
+| Scoped suite | `SMOKE_SCOPED_DEPARTMENT=1` — **36 passed, 3 failed, 1 skipped**. The 3 failed before this work too (`smoke-student-notifications`, `smoke-teams-automation`, `smoke-timetable-registers`) and none of them fails on a department refusal; `smoke-teams-attendance` was a fourth and now passes |
+| Server unit tests | **1,753 passed, 0 failed** (1,750 before this work, plus the 3 above) |
+| Client pure-module tests | **125 passed, 0 failed** |
+| Client build | succeeds |
+
+Four suites read the audit trail as evidence and would have stopped doing so in the scoped
+pass, where `scope-all-staff.js` narrows every account including the Super Admin. Those
+assertions are Article 9 privacy properties — that the trail records a decision and never
+its reason, carries no intervention notes, says who and where and never why — so
+`scripts/lib/college-wide-reader.mjs` supplies a college-wide reader in that pass only,
+rather than the assertions being weakened or skipped.
 
 ### 3.7 Business rules that are actually enforced
 
@@ -1256,11 +1473,22 @@ production before assuming it deployed.
 | ~~D17~~ | — | **FIXED 30 Aug, same day it was filed.** `server/create-admin.js` imported `runInTenant` and `crossTenant` from `src/db`, which exports neither, so the documented way to create or recover the first administrator threw on require. It no longer resolves an institution at all — there is one — and `Staff.email` is a plain unique again. Not covered by any suite, so this is code-read and `node --check`, not a demonstrated run |
 | ~~D18~~ | — | **RESOLVED 30 Aug by deletion.** `src/usage.js` had no caller once the platform dashboard went. It was deleted rather than kept against a Settings screen that does not exist; the tenant-aware original is in git history at the commit before the removal, and the de-tenanted rewrite in that commit's parent working tree was not kept |
 | D19 | low | **`sharepoint.forgetCached()` has no caller.** The old `forgetTenant(tenantId)` was called when a college saved its SharePoint credentials; the de-tenanted replacement is not called by anything. The three id caches have no TTL, so an administrator who corrects a wrong site address waits for a restart. Its own doc comment says as much — it is not dead code, it is uncalled code |
+| D20 | low | **Two more `upsert` + empty `update: {}` sites carry the same shape that caused the P2002 → HTTP 500 defect fixed on the staff presence branch** (see the long comment above `POST /check-in`'s create-catch in `routes/checkins.js`, and the assertion in `scripts/smoke-nfc-tap.mjs` under "two presses at once"). `routes/hnd.js:1136` (`replaceUnitEnrolments`) and `routes/hnd.js:1382` (`replaceStudentEnrolments`) both `prisma.enrolment.upsert({ ..., update: {} })` inside a loop. Prisma only compiles `upsert` to a single `INSERT ... ON CONFLICT` when the `update` branch is non-empty; with `update: {}` it degrades to a bare `SELECT` followed by a bare `INSERT`, so two concurrent requests that both try to enrol the same student on the same unit can both miss each other's row and the loser surfaces as an unhandled P2002 — a 500 on a bulk-enrolment save rather than the harmless idempotent write the code reads as. **Deliberately not fixed here** — diagnosed while reviewing the staff presence branch, out of that branch's scope, and recorded so the diagnosis is not lost before somebody next touches either route |
 | ~~T8b~~ | — | ~~`seed-admissions.js` on a bare client; five tools fail closed~~ — **dissolved 30 Aug**, see §2 |
 | ~~T9~~ | — | ~~Deployment config predates tenancy~~ — **resolved 25 Aug 2026**; its `DEFAULT_TENANT_SLUG` / `TENANT_BASE_DOMAIN` entries now name variables nothing in `server/src` reads |
 | 6 | low | `GET /student-reviews/roster` is open to any authenticated staff member with no page gate — a documented widening (a `pat`-only admin cannot call `/hnd/students`), and still the broadest read surface in that area |
 | 7 | low | `admissionDocs.js` says its document-type list is duplicated in `client/src/StaffHub.jsx` and must be kept in sync by hand |
 | 5 | — | "Personal template" documents (`scope:"personal"` with no assignee) are invisible to everyone. Still needs a product decision |
+
+**Five minors found reviewing the staff presence work (§3.14), deliberately left as recorded rather than fixed on the spot** — each is small enough that fixing it in the same pass as the documentation task would have been an undisclosed behaviour change, which this file's own conventions treat as worse than a known gap:
+
+| # | Severity | Item |
+|---|---|---|
+| SP1 | low | **A tap-route presence refusal logs `TagTap.tagId` as `null`.** The design intends this — presence is checked before the tag is looked up, matching the student route's own reasoning ("somebody off the college network should be told THAT, not handed 'tag not recognised'") — but `TagTap`'s own schema comment calls a resolved `tagId` "the valuable half" of the log, and the tap route goes to the trouble of resolving it anyway on the already-clocked-in path for exactly that reason. A presence refusal from `refusedForStaffPlace` does not receive the same treatment, silently, and nobody has decided whether that inconsistency is acceptable or worth the extra query |
+| SP2 | low | **A duplicate `AttendanceTag` lookup on the rare already-clocked-in-plus-unknown-code path** in `POST /tap-check-in`: the row is read once to resolve `tagId` for the log (SP1's fix would need it anyway), and if the code does not match a live tag the route falls through to the ordinary tag-lookup below, reading the same table again. Harmless — this path runs at most once per person per day — and left rather than restructured mid-documentation-pass |
+| SP3 | low | **The staff geofence settings copy omits the student panel's honesty caveat.** `AdminNfcTags.jsx`'s student geofence checkbox says outright: "it can't prove the reading was honest, because the position is sent by the phone." The staff geofence checkbox, added in the same feature, does not repeat it — an administrator reading only the staff card would not be told the same limitation applies there too |
+| SP4 | low | **A narrow first-render race in `StaffHub.jsx`'s check-in screen — previously misdescribed here, corrected 24 Sep 2026.** Before `api.staffTapSettings()` resolves, `tapRequired` reads `false`, so choosing **On site** in that window does *not* relabel the button to "Tap the sticker" and the first press is *not* a no-op, as an earlier edition of this row claimed. `checkInButton()` (`client/src/staffCheckInView.js`) returns `{ label: "Check in", enabled: true }` exactly as it would with no sticker required, the press sends `POST /check-in` with `site: "Onsite"`, and it is the **server**, not the client, that catches the case: `tap_required` comes back 409 and the client renders the correct refusal banner from `staffPlaceRefusal("tap_required")`, indistinguishable on screen from any other refusal. That is the server backstopping a client-side race window the client cannot yet know it is in — the correct architecture, not a defect — and the window closes the moment the settings fetch resolves, which is ordinarily well inside the time it takes a person to read the screen |
+| SP5 | low | **`forgetNeedsLocation()` does not clear an in-flight lookup promise.** If a `staffContextInFlight` request is still in the air when sign-out fires, that promise resolves after `forgetNeedsLocation()` has already reset the cached value, and its `.then()` writes the old session's answer back in. Harmless in practice — `needsLocation` is an institution-wide fact (does this college require a position), not a per-user one, so the value the stale promise writes back is correct regardless of who is signed in — but it is a real race in the code, not merely a theoretical one, and is recorded here rather than patched silently |
 
 ### Longer-standing gaps
 

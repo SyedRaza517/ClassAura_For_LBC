@@ -48,6 +48,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -182,8 +183,15 @@ async function waitForApi(timeoutMs = 45000) {
   return false;
 }
 
+// The throwaway college-wide account the run calls use in the scoped pass, disposed of in
+// cleanup() like every other fixture. Module level because cleanup() is defined above the
+// try block that makes it, and a college-wide admin left behind would be a permission this
+// suite granted to every suite that sorts after it.
+let disposeRunner = async () => {};
+
 async function cleanup() {
   try {
+    await disposeRunner().catch(() => {});
     await db.tagTap.deleteMany({ where: { sessionId: { in: made.sessions } } }).catch(() => {});
     for (const id of made.marks) await db.attendanceMark.delete({ where: { id } }).catch(() => {});
     for (const id of made.sessions) await db.hndSession.delete({ where: { id } }).catch(() => {});
@@ -361,6 +369,16 @@ try {
   // ====================================================================================
   const adminLogin = await login("admin@edtech.co.uk", SEED_PASSWORD);
   const adminToken = adminLogin.data?.token;
+  // THE TEAMS RUNS ARE WHOLE-COLLEGE JOBS and need a college-wide caller since
+  // 28 Sep 2026 (requireCollegeWide in routes/teamsAttendance.js and teamsAutomation.js):
+  // each one walks every course in the college, whoever presses the button. In the
+  // ordinary pass `runToken` IS this suite's own admin token and nothing is created; under
+  // SMOKE_SCOPED_DEPARTMENT=1, where every seeded account is narrowed, it is a throwaway
+  // college-wide account -- so these assertions keep testing the RUN rather than the new
+  // refusal. See lib/college-wide-reader.mjs.
+  const runner = await collegeWideReader({ call, token: adminToken, label: "tteams" });
+  const runToken = runner.token;
+  disposeRunner = runner.dispose;
   if (!adminToken) throw new Error(`admin sign-in failed (HTTP ${adminLogin.status}) — cannot run this suite`);
 
   // The seeded admin's adminPages is NULL (unconfigured → full access to everything
@@ -491,7 +509,7 @@ try {
   console.log("\n--- the ship-switched-off proof ---");
   /* ====================================================================== */
 
-  const unconfigured = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
+  const unconfigured = await call("/teams-attendance/sync", { method: "POST", token: runToken });
   check("a sync is refused before the Teams integration is configured",
     unconfigured.status === 409, `HTTP ${unconfigured.status}`);
   check("...and says so", /not configured/i.test(unconfigured.data?.error || ""), unconfigured.data?.error);
@@ -531,7 +549,7 @@ try {
   // credentials exist (the check above) or only after the switch is on (implicitly,
   // by every assertion after this) would never re-exercise the branch that was
   // missing, since both of those already answer 409/200 for other reasons.
-  const disabledSync = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
+  const disabledSync = await call("/teams-attendance/sync", { method: "POST", token: runToken });
   check("a sync is refused while configured but still switched off",
     disabledSync.status === 409, `HTTP ${disabledSync.status}`);
   check("...and says so", /switched off/i.test(disabledSync.data?.error || ""), disabledSync.data?.error);
@@ -560,7 +578,7 @@ try {
   // courtesy to anything else that might ever write one during this DATABASE_URL's
   // lifetime, even though nothing else does today.
   runStart = new Date();
-  const synced = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
+  const synced = await call("/teams-attendance/sync", { method: "POST", token: runToken });
   check("the sync runs and answers 200", synced.status === 200, `HTTP ${synced.status} ${synced.data?.error || ""}`);
 
   const s1Mark = await db.attendanceMark.findFirst({ where: { sessionId: sessA.id, studentId: s1.id } });
@@ -579,7 +597,12 @@ try {
   const tomorrowMarks = await db.attendanceMark.count({ where: { sessionId: sessB.id } });
   check("tomorrow's register has zero marks — a matched future session is never touched", tomorrowMarks === 0, `${tomorrowMarks} mark(s)`);
 
-  const runsAfterFirst = await call("/teams-attendance/runs", { token: adminToken });
+  // READ WITH runToken, because the assertions below are about the run's ISSUE LIST. A
+  // run's issues are free text naming students from every course it touched, so since
+  // 28 Sep 2026 the history endpoint withholds them from a narrowed caller and sets
+  // issuesWithheld — which in the scoped pass left these assertions reading [] and calling
+  // it a missing issue. The run is college-wide; so is the account that reads its report.
+  const runsAfterFirst = await call("/teams-attendance/runs", { token: runToken });
   const latestRun = runsAfterFirst.data?.runs?.[0];
   check("the run row reports exactly one unmatched participant",
     latestRun?.summary?.participantsUnmatched === 1, `participantsUnmatched=${latestRun?.summary?.participantsUnmatched}`);
@@ -679,7 +702,7 @@ try {
   console.log("\n--- idempotence: a second sync writes nothing new ---");
   /* ====================================================================== */
 
-  const secondSync = await call("/teams-attendance/sync", { method: "POST", token: adminToken });
+  const secondSync = await call("/teams-attendance/sync", { method: "POST", token: runToken });
   check("a second sync still answers 200", secondSync.status === 200, `HTTP ${secondSync.status}`);
   check("...and creates no new marks — the collected session is not revisited",
     secondSync.data?.summary?.marksCreated === 0, `marksCreated=${secondSync.data?.summary?.marksCreated}`);
@@ -688,6 +711,72 @@ try {
   check("session A still holds exactly three marks after the second sync", sessAMarkCount === 3, `${sessAMarkCount} mark(s)`);
   const sessATapCount = await db.tagTap.count({ where: { sessionId: sessA.id, method: "teams" } });
   check("...and exactly three Teams log rows, not six", sessATapCount === 3, `${sessATapCount} row(s)`);
+
+  /* ====================================================================== */
+  console.log("\n--- the settings contract, over HTTP and through the database ---");
+  /* ====================================================================== */
+
+  // teamsAttendanceSettings.merge is unit-tested, but the contract that matters to a
+  // college is the one the route and the config table implement together: a PATCH falls
+  // back to WHAT THIS COLLEGE ALREADY HAD, not to the platform default. Proving that at
+  // the merge() level leaves the possibility that the route passes DEFAULTS as the base,
+  // which would answer 200 OK while quietly resetting a threshold somebody tuned.
+  const setTo75 = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 75 } });
+  check("an administrator can set the threshold to 75%",
+    setTo75.status === 200 && setTo75.data?.settings?.minAttendancePct === 75,
+    `HTTP ${setTo75.status} pct=${setTo75.data?.settings?.minAttendancePct}`);
+
+  const badPatch = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: "half" } });
+  check("THE PATCH CONTRACT: an unusable threshold leaves the college's own 75 standing",
+    badPatch.data?.settings?.minAttendancePct === 75,
+    `pct=${badPatch.data?.settings?.minAttendancePct} (50 would mean it reset to the platform default)`);
+  check("...and the switch beside it was not disturbed either",
+    badPatch.data?.settings?.enabled === true, `enabled=${badPatch.data?.settings?.enabled}`);
+
+  const storedAfterBad = await db.teamsAttendanceConfig.findFirst({});
+  const storedPct = (storedAfterBad?.settings ?? {}).minAttendancePct;
+  check("...and the DATABASE agrees — the bad value was never written",
+    storedPct === 75, `stored=${JSON.stringify(storedPct)}`);
+
+  // The clamp, through the route rather than the pure function. 0% is the dangerous end:
+  // a report row showing one second of a two-hour lecture clears "more than 0%", so an
+  // unclamped zero would mark every ghost row Present.
+  const zeroPct = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 0 } });
+  check("a threshold of 0% is clamped up to 1, never stored as 0",
+    zeroPct.data?.settings?.minAttendancePct === 1, `pct=${zeroPct.data?.settings?.minAttendancePct}`);
+  const overPct = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { minAttendancePct: 250 } });
+  check("a threshold above 100% is clamped down to 100",
+    overPct.data?.settings?.minAttendancePct === 100, `pct=${overPct.data?.settings?.minAttendancePct}`);
+
+  const unknownKey = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { somethingNew: true, minAttendancePct: 60 } });
+  check("an unknown key is dropped by the allowlist rather than stored",
+    unknownKey.data?.settings?.somethingNew === undefined && unknownKey.data?.settings?.minAttendancePct === 60,
+    JSON.stringify(unknownKey.data?.settings));
+
+  /* ====================================================================== */
+  console.log("\n--- the switch closes again, not just opens ---");
+  /* ====================================================================== */
+
+  // The existing ship-switched-off proof near the top runs BEFORE the feature was ever
+  // enabled. This is the other direction: a college that turned Teams attendance on and
+  // then thought better of it. The same 409 must come back, from a process whose caches
+  // are already warm and whose credentials are still perfectly valid — which is exactly
+  // the state in which a stale cached `enabled: true` would go unnoticed.
+  const switchOff = await call("/teams-attendance/settings", { method: "PUT", token: adminToken, body: { enabled: false } });
+  check("the feature can be switched back off", switchOff.data?.settings?.enabled === false,
+    `enabled=${switchOff.data?.settings?.enabled}`);
+
+  const syncAfterOff = await call("/teams-attendance/sync", { method: "POST", token: runToken });
+  check("OFF MEANS NOTHING RUNS, even after it ran today: the sync is refused again",
+    syncAfterOff.status === 409, `HTTP ${syncAfterOff.status}`);
+  check("...and says it is switched off, not that it is unconfigured",
+    /switched off/i.test(syncAfterOff.data?.error || ""), syncAfterOff.data?.error);
+
+  const runsAfterOff = await db.teamsSync.count();
+  const syncAgain = await call("/teams-attendance/sync", { method: "POST", token: runToken });
+  check("...and a refused sync writes no run row at all",
+    syncAgain.status === 409 && (await db.teamsSync.count()) === runsAfterOff,
+    `HTTP ${syncAgain.status}, rows ${runsAfterOff} -> ${await db.teamsSync.count()}`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exitCode = 1;

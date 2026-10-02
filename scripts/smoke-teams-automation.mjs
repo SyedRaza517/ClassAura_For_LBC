@@ -77,6 +77,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
@@ -251,8 +252,15 @@ async function waitForApi(timeoutMs = 45000) {
   return false;
 }
 
+// The throwaway college-wide account the run calls use in the scoped pass, disposed of in
+// cleanup() like every other fixture. Module level because cleanup() is defined above the
+// try block that makes it, and a college-wide admin left behind would be a permission this
+// suite granted to every suite that sorts after it.
+let disposeRunner = async () => {};
+
 async function cleanup() {
   try {
+    await disposeRunner().catch(() => {});
     // Events first — TimetableEventGroup/TimetableEventStaff are Cascade off the event,
     // so this also removes both assignment rows. It does NOT remove the HndSession
     // registers those events built: HndSession.timetableEventId is SetNull (deleting a
@@ -410,6 +418,16 @@ try {
   // ====================================================================================
   const adminLogin = await login("admin@edtech.co.uk", SEED_PASSWORD);
   const adminToken = adminLogin.data?.token;
+  // THE TEAMS RUNS ARE WHOLE-COLLEGE JOBS and need a college-wide caller since
+  // 28 Sep 2026 (requireCollegeWide in routes/teamsAttendance.js and teamsAutomation.js):
+  // each one walks every course in the college, whoever presses the button. In the
+  // ordinary pass `runToken` IS this suite's own admin token and nothing is created; under
+  // SMOKE_SCOPED_DEPARTMENT=1, where every seeded account is narrowed, it is a throwaway
+  // college-wide account -- so these assertions keep testing the RUN rather than the new
+  // refusal. See lib/college-wide-reader.mjs.
+  const runner = await collegeWideReader({ call, token: adminToken, label: "tauto" });
+  const runToken = runner.token;
+  disposeRunner = runner.dispose;
   if (!adminToken) throw new Error(`admin sign-in failed (HTTP ${adminLogin.status}) — cannot run this suite`);
 
   // The seeded admin's adminPages is NULL by default (unconfigured -> full access —
@@ -465,11 +483,11 @@ try {
   console.log("\n--- refused before Teams is configured at all ---");
   /* ====================================================================== */
 
-  const unconfiguredMeetings = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const unconfiguredMeetings = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("run-meetings is refused before credentials exist", unconfiguredMeetings.status === 409, `HTTP ${unconfiguredMeetings.status}`);
   check("...and says so", /not configured/i.test(unconfiguredMeetings.data?.error || ""), unconfiguredMeetings.data?.error);
 
-  const unconfiguredProvisioning = await call("/teams-automation/run-provisioning", { method: "POST", token: adminToken });
+  const unconfiguredProvisioning = await call("/teams-automation/run-provisioning", { method: "POST", token: runToken });
   check("run-provisioning is refused before credentials exist", unconfiguredProvisioning.status === 409, `HTTP ${unconfiguredProvisioning.status}`);
   check("...and says so", /not configured/i.test(unconfiguredProvisioning.data?.error || ""), unconfiguredProvisioning.data?.error);
 
@@ -502,11 +520,11 @@ try {
   // the gap between "an admin pressed Test connection" and "an admin trusts this enough
   // to turn it on". OFF MEANS NOTHING RUNS (constraints.md): no Graph call of any kind,
   // for either engine, while its own switch is off.
-  const offMeetings = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const offMeetings = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("run-meetings is refused while configured but switched off", offMeetings.status === 409, `HTTP ${offMeetings.status}`);
   check("...and says so", /switched off/i.test(offMeetings.data?.error || ""), offMeetings.data?.error);
 
-  const offProvisioning = await call("/teams-automation/run-provisioning", { method: "POST", token: adminToken });
+  const offProvisioning = await call("/teams-automation/run-provisioning", { method: "POST", token: runToken });
   check("run-provisioning is refused while configured but switched off", offProvisioning.status === 409, `HTTP ${offProvisioning.status}`);
   check("...and says so", /switched off/i.test(offProvisioning.data?.error || ""), offProvisioning.data?.error);
 
@@ -560,7 +578,7 @@ try {
 
   runStart = new Date(); // captured before the first engine run — see cleanup()'s use of it
 
-  const sync1 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync1 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the first meetings sync runs and answers 200", sync1.status === 200, `HTTP ${sync1.status} ${sync1.data?.error || ""}`);
   check("it created exactly one meeting", sync1.data?.summary?.meetingsCreated === 1, JSON.stringify(sync1.data?.summary));
   check("it cancelled and updated nothing", sync1.data?.summary?.meetingsCancelled === 0 && sync1.data?.summary?.meetingsUpdated === 0, JSON.stringify(sync1.data?.summary));
@@ -593,7 +611,7 @@ try {
   console.log("\n--- scenario 3: idempotence — a second sync creates nothing new ---");
   /* ====================================================================== */
 
-  const sync2 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync2 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the second sync still answers 200", sync2.status === 200, `HTTP ${sync2.status}`);
   check("it created no new meeting", sync2.data?.summary?.meetingsCreated === 0, JSON.stringify(sync2.data?.summary));
   check("...and the journal still holds exactly one createClassMeeting", journalCount("createClassMeeting") === 1, `${journalCount("createClassMeeting")}`);
@@ -607,7 +625,7 @@ try {
   check("...and its register followed the move rather than freezing (no marks exist yet)",
     rescheduled.data?.registers?.updated === 1 && (rescheduled.data?.registers?.frozen || []).length === 0, JSON.stringify(rescheduled.data?.registers));
 
-  const sync3 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync3 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the third sync answers 200", sync3.status === 200, `HTTP ${sync3.status}`);
   check("it updated exactly the rescheduled meeting", sync3.data?.summary?.meetingsUpdated === 1, JSON.stringify(sync3.data?.summary));
   check("...and created no duplicate", sync3.data?.summary?.meetingsCreated === 0, JSON.stringify(sync3.data?.summary));
@@ -624,7 +642,7 @@ try {
   // function tests.
   /* ====================================================================== */
 
-  const sync4 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync4 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the fourth sync answers 200", sync4.status === 200, `HTTP ${sync4.status}`);
   check("THE GATE THAT ONCE NEVER CLOSED: it updated nothing when nothing changed", sync4.data?.summary?.meetingsUpdated === 0, JSON.stringify(sync4.data?.summary));
   check("...and the journal gained no second updateClassMeeting line", journalCount("updateClassMeeting") === 1, `${journalCount("updateClassMeeting")}`);
@@ -636,7 +654,7 @@ try {
   const unpublished = await call(`/timetabling/events/${eventAId}`, { method: "PUT", token: adminToken, body: { published: false } });
   check("event A can be unpublished", unpublished.status === 200, `HTTP ${unpublished.status}`);
 
-  const sync5 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync5 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the fifth sync answers 200", sync5.status === 200, `HTTP ${sync5.status}`);
   check("it cancelled exactly the meeting it owned", sync5.data?.summary?.meetingsCancelled === 1, JSON.stringify(sync5.data?.summary));
   check("the journal holds exactly one cancelClassMeeting", journalCount("cancelClassMeeting") === 1, `${journalCount("cancelClassMeeting")}`);
@@ -668,7 +686,7 @@ try {
   check("provisioning switches on", enabledProvisioning.status === 200 && enabledProvisioning.data?.settings?.provisionTeams === true, `HTTP ${enabledProvisioning.status}`);
   check("...leaving meeting creation as it was (still on) — a patch, not a replace", enabledProvisioning.data?.settings?.autoCreateMeetings === true, JSON.stringify(enabledProvisioning.data?.settings));
 
-  const prov1 = await call("/teams-automation/run-provisioning", { method: "POST", token: adminToken });
+  const prov1 = await call("/teams-automation/run-provisioning", { method: "POST", token: runToken });
   check("the first provisioning run answers 200", prov1.status === 200, `HTTP ${prov1.status} ${prov1.data?.error || ""}`);
   // AGGREGATE COUNTS ARE >=, NOT ===, AND DELIBERATELY. teamsCreated/channelsCreated are
   // institution-wide totals — this dev database's own seed data routinely holds OTHER
@@ -712,7 +730,7 @@ try {
   console.log("\n--- scenario 8: provisioning idempotence — never a second Team, never a second channel ---");
   /* ====================================================================== */
 
-  const prov2 = await call("/teams-automation/run-provisioning", { method: "POST", token: adminToken });
+  const prov2 = await call("/teams-automation/run-provisioning", { method: "POST", token: runToken });
   check("the second provisioning run answers 200", prov2.status === 200, `HTTP ${prov2.status}`);
   // These two ARE exact institution-wide totals, unlike run1's — every published cohort
   // that needed a Team got one on run1 (whichever cohort it was), so a run2 against the
@@ -755,7 +773,7 @@ try {
   const eventCId = createdC.data?.event?.id;
   made.events.push(eventCId);
 
-  const sync6 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const sync6 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the sixth meetings sync answers 200", sync6.status === 200, `HTTP ${sync6.status} ${sync6.data?.error || ""}`);
   check("it created exactly one new meeting — event C, the only event still wanting one it doesn't already have",
     sync6.data?.summary?.meetingsCreated === 1, JSON.stringify(sync6.data?.summary));
@@ -792,7 +810,7 @@ try {
   check("...and the three rows in the database actually share it", seriesEvents.length === 3, `${seriesEvents.length}`);
   for (const ev of seriesEvents) made.events.push(ev.id);
 
-  const syncSeries1 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const syncSeries1 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the series' first meetings sync answers 200", syncSeries1.status === 200, `HTTP ${syncSeries1.status} ${syncSeries1.data?.error || ""}`);
   check("it created exactly one recurring meeting for the whole series", syncSeries1.data?.summary?.seriesMeetingsCreated === 1, JSON.stringify(syncSeries1.data?.summary));
 
@@ -817,7 +835,7 @@ try {
     seriesEventsAfter1.every((e) => e.teamsJoinUrl === SERIES_JOIN_URL), JSON.stringify(seriesEventsAfter1.map((e) => e.teamsJoinUrl)));
 
   /* ---- idempotence: a second sync with nothing changed writes nothing new (the gate) ---- */
-  const syncSeries2 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const syncSeries2 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the series' second sync answers 200", syncSeries2.status === 200, `HTTP ${syncSeries2.status}`);
   check("it created no second recurring meeting", syncSeries2.data?.summary?.seriesMeetingsCreated === 0, JSON.stringify(syncSeries2.data?.summary));
   check("THE GATE: it updated nothing when nothing changed", syncSeries2.data?.summary?.seriesMeetingsUpdated === 0, JSON.stringify(syncSeries2.data?.summary));
@@ -831,7 +849,7 @@ try {
     check(`event ${ev.date} accepts the lecturer swap`, swapped.status === 200, `HTTP ${swapped.status}`);
   }
 
-  const syncSeries3 = await call("/teams-automation/run-meetings", { method: "POST", token: adminToken });
+  const syncSeries3 = await call("/teams-automation/run-meetings", { method: "POST", token: runToken });
   check("the series' third sync answers 200", syncSeries3.status === 200, `HTTP ${syncSeries3.status}`);
   check("it updated exactly the one recurring meeting", syncSeries3.data?.summary?.seriesMeetingsUpdated === 1, JSON.stringify(syncSeries3.data?.summary));
   check("...and created no second one", syncSeries3.data?.summary?.seriesMeetingsCreated === 0, JSON.stringify(syncSeries3.data?.summary));

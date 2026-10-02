@@ -16,7 +16,8 @@
 // with the attendance controls a subject-matter admin uses day to day.
 const express = require("express");
 const prisma = require("./../db");
-const { requireAuth, requirePage } = require("./../auth");
+const { requireAuth, requirePage, requireCollegeWide } = require("./../auth");
+const { callerIsCollegeWide } = require("../academicScope");
 const audit = require("./../audit");
 const config = require("./../teamsAttendanceConfig");
 const teamsSync = require("./../teamsSync");
@@ -59,7 +60,9 @@ router.put("/settings", requireAuth, requirePage("attendance-settings"), async (
   res.json({ settings });
 });
 
-router.post("/sync", requireAuth, requirePage("attendance-settings"), async (req, res) => {
+// A hand-started sync is the same whole-college job the scheduler runs, so it needs a
+// college-wide caller. See requireCollegeWide in auth.js.
+router.post("/sync", requireAuth, requirePage("attendance-settings"), requireCollegeWide("A Teams attendance sync"), async (req, res) => {
   await cfg.load("teams"); // see the comment above GET /settings
   if (!graph.isConfigured()) return res.status(409).json({ error: "Teams attendance is not configured — enter the credentials under Connected systems first." });
   // OFF MEANS NOTHING RUNS — this is not a second copy of the isConfigured() check above,
@@ -96,7 +99,7 @@ router.post("/sync", requireAuth, requirePage("attendance-settings"), async (req
 // client) and it reaches the settings screen the day it lands, with nothing here having
 // to change for that to happen. Naming the fields means a new column requires a
 // deliberate decision to add it here, which is the property an allowlist buys.
-const sRun = (r) => r && ({
+const sRun = (r, wide) => r && ({
   id: r.id,
   startedAt: r.startedAt,
   finishedAt: r.finishedAt,
@@ -104,13 +107,19 @@ const sRun = (r) => r && ({
   mode: r.mode,
   startedBy: r.startedBy,
   summary: JSON.parse(r.summary || "{}"),
-  issues: JSON.parse(r.issues || "[]"),
+  // FREE TEXT NAMING STUDENTS FROM EVERY DEPARTMENT, because the run was college-wide.
+  // The guard filters rows, not strings, so a narrowed caller gets the counts and the
+  // outcome but not the list; issuesWithheld tells the screen to say so rather than
+  // showing "no issues".
+  issues: wide ? JSON.parse(r.issues || "[]") : [],
+  issuesWithheld: !wide,
   error: r.error || null,
 });
 
 router.get("/runs", requireAuth, requirePage("attendance-settings"), async (_req, res) => {
   const runs = await prisma.teamsSync.findMany({ orderBy: { startedAt: "desc" }, take: 20 });
-  res.json({ runs: runs.map(sRun) });
+  const wide = callerIsCollegeWide();
+  res.json({ runs: runs.map((r) => sRun(r, wide)) });
 });
 
 module.exports = router;

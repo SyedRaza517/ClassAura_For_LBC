@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { api, getToken, setToken } from "./api";
+import { api, getToken, setToken, forgetNeedsLocation } from "./api";
 import { registerForPush, unregisterForPush } from "./push";
 import { clearBiometricPrefs } from "./biometric";
 
@@ -167,6 +167,10 @@ export function AuthProvider({ children }) {
     // The app-lock preference is stored per DEVICE, so clear it on the way out —
     // otherwise the next account to sign in on this phone inherits it.
     try { clearBiometricPrefs(); } catch (_) {}
+    // Same reasoning as the app-lock preference above: the next person to sign in on
+    // this handset is not necessarily the last one, so a cached "needs location"
+    // answer from THIS session must not survive to silently mis-serve the next.
+    forgetNeedsLocation();
     setToken(null);
     setUser(null);
   };

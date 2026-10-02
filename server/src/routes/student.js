@@ -18,6 +18,7 @@ const supportDepartments = require("../supportDepartments");
 const predictionRunner = require("../prediction/runner");
 const { resolveTapSession, statusFor, withinSessionWindow, termOpenOn, SELF_CHECKIN_STAMP, SELF_CHECKIN_QR_STAMP, SELF_CHECKIN_DECLARED_STAMP } = require("../attendanceTap");
 const { checkPresence } = require("../presence");
+const { campusesFor } = require("../campuses");
 const { verifyCode } = require("../attendanceQr");
 const { qrSigningKey, SecretsNotConfigured } = require("../secrets");
 const { isString, isRealDate, MAX_TEXT } = require("../validate");
@@ -163,7 +164,20 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
   // from the outside: every student is refused and the settings screen says the network is
   // enforced. So it is said out loud in the log where somebody reading the service's
   // output will meet it.
-  if (first.reason === "network_not_configured") {
+  //
+  // BOTH ALARMS ARE KEYED ON THE WHOLE LIST, NOT ON `first`, and the loop above is the
+  // reason. That loop writes EVERY failure to the log precisely so a college switching both
+  // checks on for the first time sees that its IP list is wrong AND its coordinates are,
+  // rather than discovering the second a week after fixing the first. Asking `first.reason`
+  // here contradicted that a few lines later: presence.js pushes the network failure before
+  // the geofence one, so with both switched on and both misconfigured the geofence alarm
+  // never fired — the one an operator is least likely to work out unaided, since it is
+  // fixed on a different screen from the one that turned the check on. The staff half of
+  // this rule (routes/checkins.js) says the same thing; fixing one and leaving its twin is
+  // exactly the drift presence.js exists to prevent.
+  //
+  // `first` stays as it is for the RESPONSE body: a student gets one refusal to act on.
+  if (verdict.failures.some((f) => f.reason === "network_not_configured")) {
     console.error("[presence] the college network check is ON but no usable IP range is saved — every check-in is being refused");
   }
   // THE SAME ALARM FOR THE GEOFENCE, which had none. The comment above states the
@@ -171,7 +185,7 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
   // where an operator will meet it — and then applied it to one of the two checks. The
   // geofence reaches the identical state by switching on with no campus pinned, or by
   // somebody clearing the coordinates of the only one that was.
-  if (first.reason === "campus_not_located") {
+  if (verdict.failures.some((f) => f.reason === "campus_not_located")) {
     console.error("[presence] the campus geofence is ON but no active campus has coordinates — every check-in is being refused");
   }
 
@@ -183,41 +197,6 @@ async function refusedForPlace(req, res, settings, method, sessionId = null) {
     reason: first.reason,
   });
   return true;
-}
-
-/**
- * The campuses a check-in for this class could legitimately be at.
- *
- * A class held in a room is at that room's campus, and that is the tightest answer
- * available. When there is no room, or the room predates campuses, EVERY located campus is
- * returned instead — because "which campus" is frequently unknowable and refusing all of
- * those would make the geofence unusable at exactly the colleges that want it. What it
- * still refuses is a phone at none of them, which is what the college asked for.
- *
- * Only called when the geofence is switched on: this is two queries on the check-in path,
- * and a college that has not opted in should not pay for them.
- */
-async function campusesFor(sessionId) {
-  if (sessionId) {
-    // Reached from the id rather than a loaded row, because the check runs BEFORE each
-    // route resolves its session — and it has to. A student off the college network must
-    // be told that, not handed "tag not recognised" or "wrong code" from a check they were
-    // never going to get past. One query, and only when the geofence is switched on.
-    const room = await prisma.hndSession.findUnique({
-      where: { id: sessionId },
-      select: { room: { select: { campusRef: { select: { latitude: true, longitude: true } } } } },
-    }).then((s) => s?.room).catch(() => null);
-    // Only when it actually has coordinates. A room on an unlocated campus falls through
-    // to the college-wide list rather than refusing — the class is somewhere, and the
-    // college's other campuses are a better guess than none. If NOTHING is located, the
-    // list comes back empty and presence.js refuses under `campus_not_located`, which is
-    // the loud failure a misconfiguration deserves.
-    if (room?.campusRef?.latitude != null && room?.campusRef?.longitude != null) return [room.campusRef];
-  }
-  return prisma.campus.findMany({
-    where: { active: true, latitude: { not: null }, longitude: { not: null } },
-    select: { latitude: true, longitude: true },
-  });
 }
 
 // The student's half of a refusal, in words they can act on.

@@ -19,6 +19,7 @@ import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { collegeWideReader } from "./lib/college-wide-reader.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..").replace(/\\/g, "/");
 const require = createRequire(pathToFileURL(join(ROOT, "server", "package.json")));
@@ -292,7 +293,13 @@ await check("the audit trail records the DECISION and never the reason", async (
   // Read as the FULL ADMIN on purpose: the whole risk is that health data reaches the
   // audit log, which is read by admins who were never granted the mitigations page. This
   // reads it as exactly such a person.
-  const log = await call("/audit?limit=100", { token: adminToken });
+  // THE AUDIT TRAIL IS COLLEGE-WIDE ONLY since 28 Sep 2026, so this assertion needs a
+  // college-wide reader to keep running in the scoped pass, where every seeded account is
+  // narrowed. In the ordinary pass this IS the caller's own token and nothing is created.
+  // See lib/college-wide-reader.mjs for why the assertion is worth the helper.
+  const reader = await collegeWideReader({ call, token: adminToken, label: "mit" });
+  const log = await call("/audit?limit=100", { token: reader.token });
+  await reader.dispose();
   const rows = log.body.entries || log.body.rows || log.body || [];
   const mine = (Array.isArray(rows) ? rows : []).filter((e) => (e.entityId === claimId) || (e.action || "").startsWith("mitigation."));
   assert.ok(mine.length, "no audit rows written for the claim at all");
