@@ -656,9 +656,26 @@ router.post("/:id/check-out", requireAuth, async (req, res) => {
   // Checking out twice silently rewrote the recorded departure to the current clock,
   // with no trace of the original. A stale tab or a retry could therefore falsify how
   // long someone was on site, so the first check-out is final.
+  // ...and "final" has to be enforced by the STATEMENT, not by the read above it. Two
+  // concurrent presses both read timeOut === null, both passed this `if`, and both wrote:
+  // within the same minute the stored value is identical and the damage invisible, but
+  // either side of a minute boundary the recorded departure MOVES, which is exactly what
+  // this rule exists to prevent. The `timeOut: null` in the WHERE is what makes the
+  // database settle it — the same fix, and the same reasoning, as the `timeIn: ""` clause
+  // in POST /tap-check-in above. The fast-path 409 is kept for the ordinary sequential
+  // double-press, where it answers without a write.
   if (rec.timeOut) return res.status(409).json({ error: `Already checked out at ${rec.timeOut}` });
-  const updated = await prisma.checkIn.update({ where: { id: rec.id }, data: { timeOut: nowTime() } });
-  res.json(sCheckin(updated));
+  const stamped = await prisma.checkIn.updateMany({
+    where: { id: rec.id, timeOut: null },
+    data: { timeOut: nowTime() },
+  });
+  const now = await prisma.checkIn.findUnique({ where: { id: rec.id } });
+  if (!now) return res.status(404).json({ error: "Record not found" });
+  // Matched nothing: somebody else's press won between the read and this write. Their
+  // departure stands, and saying so is the same answer the sequential double-press gets —
+  // a loser that is told it succeeded is how a stale tab falsifies a timesheet.
+  if (stamped.count === 0) return res.status(409).json({ error: `Already checked out at ${now.timeOut}` });
+  res.json(sCheckin(now));
 });
 
 // PUT /api/checkins  (admin) — upsert a record for any staff/date

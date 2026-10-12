@@ -346,15 +346,24 @@ test("decideStatus: both null and undefined firstJoin mean 'never seen', with an
   }
 });
 
-test("decideStatus: a malformed session window degrades to a 0-minute session", () => {
-  // Characterisation, and a wart worth seeing in writing: with no parseable start the
-  // required minutes collapse to 0, so the student is not Absent — but the lateness
-  // cutoff is computed from midnight, so any real join time sorts AFTER it and the mark
-  // becomes L. A session row this broken should never reach here (the sync selects on
-  // the register's own times), and the outcome is at least not a silent Absent.
-  const r = decideStatus({ session: { startTime: null, endTime: null }, minutes: 30, firstJoin: "09:05", minAttendancePct: 50, lateAfterMins: 10 });
-  assert.equal(r.status, "L");
-  assert.equal(r.remark, "");
+test("decideStatus: a malformed session window is NOT MEASURABLE, and scores nothing", () => {
+  // This test used to assert the opposite, and called it "a wart worth seeing in writing":
+  // with no parseable start the required minutes collapsed to 0, the student was therefore
+  // never Absent, and because the lateness cutoff was computed from midnight any real join
+  // sorted after it and the mark became "L". The wart is now fixed rather than recorded.
+  //
+  // The reason it had to be: the same collapse made `required` 0 for a session crossing
+  // midnight too, where `minutes < required` is 0 < 0 and EVERY joiner cleared even a 100%
+  // threshold on no measured attendance at all — a confident "P" in the generous
+  // direction. decideStatus now answers null, conventions.md's "not measurable", and the
+  // caller writes no mark.
+  for (const session of [
+    { startTime: null, endTime: null },
+    { startTime: "23:00", endTime: "00:30" }, // crosses midnight: unrepresentable here
+    { startTime: "09:00", endTime: "09:00" }, // degenerate: end not after start
+  ]) {
+    assert.equal(decideStatus({ session, minutes: 30, firstJoin: "09:05", minAttendancePct: 50, lateAfterMins: 10 }), null);
+  }
 });
 
 test("decideStatus: the remark names the session's real length, not the clipped total", () => {

@@ -134,15 +134,38 @@ function attendedMinutes(intervals, session) {
   let firstJoin = null;
   const clipped = [];
 
+  // How far before a class starts a join may still be THIS class's arrival. Needed
+  // because minutes-since-midnight makes 00:05 a SMALLER number than 23:35, so on a
+  // late-evening session a post-midnight rejoin used to become the "earliest" join, and
+  // the HH:MM compare in decideStatus then cleared a genuinely late student as punctual —
+  // the later they joined after midnight, the more punctual they looked. Two hours is
+  // generous on purpose: a student who opens the link early is a real case and must keep
+  // their true arrival, while nothing plausibly arrives for a 23:30 class at 00:05.
+  const EARLY_JOIN_ALLOWANCE_MINS = 120;
+
   for (const iv of list) {
     const rawJoin = toMins(iv?.joinedAt);
     const rawLeave = toMins(iv?.leftAt);
-    if (rawJoin === null || rawLeave === null) continue; // unparseable interval: ignored, not zeroed
 
-    if (firstJoinMins === null || rawJoin < firstJoinMins) {
+    // The join is recorded BEFORE the interval can be dropped, and the order is the whole
+    // point. Graph omits leaveDateTime for an attendee whose session never cleanly
+    // terminated — the closed laptop, the crashed client, a report generated while they
+    // were still in the call — who is also, inconveniently, the student most likely to
+    // have attended the entire class. Dropping firstJoin along with the minutes turned
+    // that into "A" with an empty remark, byte-for-byte the mark for never opening the
+    // link at all. Keeping it makes the same absence read "Joined 0 of 60 min", which a
+    // lecturer queries and an auditor can see.
+    //
+    // The asymmetry this fixes: an interval whose JOIN is unparseable has genuinely
+    // nothing to report, and still drops everything below. One whose LEAVE is missing is
+    // a measurement that half-succeeded, and the two were treated alike.
+    const plausible = winStart === null || rawJoin >= winStart - EARLY_JOIN_ALLOWANCE_MINS;
+    if (rawJoin !== null && plausible && (firstJoinMins === null || rawJoin < firstJoinMins)) {
       firstJoinMins = rawJoin;
       firstJoin = iv.joinedAt;
     }
+
+    if (rawJoin === null || rawLeave === null) continue; // unmeasurable span: ignored, not zeroed
 
     if (winStart === null || winEnd === null) continue; // malformed session window: nothing to clip into
     const from = Math.max(rawJoin, winStart);
@@ -194,11 +217,34 @@ function attendedMinutes(intervals, session) {
  * looks identical to "never joined at all" (both "A") can be told apart on the register:
  * "Joined N of M min". A null firstJoin (never parsed a single interval) is always
  * Absent with an empty remark — there is nothing to report joining.
+ *
+ * Returns null — NOT a status — when the session's own window cannot be measured (no
+ * start, no end, or an end not after the start). The caller must write no mark at all in
+ * that case; see the guard inside for why a 0-length window used to mean "everybody
+ * present".
  */
 function decideStatus({ minutes, firstJoin, session, minAttendancePct, lateAfterMins }) {
   const start = toMins(session?.startTime);
   const end = toMins(session?.endTime);
-  const sessionMinutes = start === null || end === null ? 0 : Math.max(0, end - start);
+  // A window we cannot measure is NOT a zero-length class, and the difference decides a
+  // mark. end <= start means the row is degenerate — a malformed time, or a session
+  // crossing midnight, which this module's minutes-since-midnight arithmetic cannot
+  // represent at all. null is conventions.md's "not measurable": the caller writes NO mark
+  // rather than a confident one.
+  //
+  // Keeping sessionMinutes at 0 instead — which is what this did — made `required` 0
+  // whatever the college had configured, so `minutes < required` was 0 < 0, false, and
+  // EVERY joiner cleared even a 100% threshold on no measured attendance whatsoever. A
+  // student who attended eighty real minutes and one who looked in for thirty seconds got
+  // the identical "P", and the error pointed the generous way: the direction nobody
+  // queries. Reachable, not theoretical — moodleAttendance.js wraps a session's end hour
+  // with % 24 and creates the row with no end-after-start check, so a 22:30 class lasting
+  // two hours imports as 22:30–00:30.
+  //
+  // Returning "A" was the other candidate and is worse: a confident wrong answer in the
+  // direction a student does complain about, for a session nobody could score either way.
+  if (start === null || end === null || end <= start) return null;
+  const sessionMinutes = end - start;
   // Not `|| 0`: a college that sets either of these to 0 (no minimum at all; any
   // lateness counts) means exactly that, and attendanceTap.js's lateAfterMins comment
   // already makes the case that `||` treats a real 0 no differently from a missing

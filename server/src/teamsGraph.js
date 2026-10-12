@@ -34,6 +34,11 @@ const cfg = require("./integrationConfig");
 const { readFileSync, appendFileSync } = require("node:fs");
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+// How many pages of one Graph collection graphFetch will follow before refusing. Fifty
+// pages of attendance records is a meeting with thousands of participants, which no class
+// register in this product describes; a tenant still handing back a nextLink at that point
+// is malfunctioning, and spinning on it would hang a sync rather than fail it.
+const MAX_PAGES = 50;
 const ZONE = require("./clock").ZONE;
 
 const TENANT_ID = () => cfg.peek("teams").tenantId || "";
@@ -171,7 +176,7 @@ async function getAccessToken() {
 // token, call Graph, throw a clear admin-facing error on any non-2xx. err.status is
 // kept on the thrown error — the sync (Task 7/8) branches on 404 the same way
 // sharepoint's folder resolution does.
-async function graphFetch(path, init = {}) {
+async function graphFetch(path, init = {}, depth = 0) {
   await cfg.load("teams");
   const token = await getAccessToken();
   let res;
@@ -201,6 +206,26 @@ async function graphFetch(path, init = {}) {
     const err = new Error(`Microsoft Graph request failed (HTTP ${res.status}) for ${init.method || "GET"} ${path}: ${detail}`);
     // Callers branch on the status — a 404 means "not there yet" — so carry it along.
     err.status = res.status;
+    // Graph names the wait in Retry-After when it throttles (429) or sheds load (503).
+    // It was parsed into nothing before: the one piece of information Microsoft sends to
+    // make recovery possible was dropped on the floor, and the sync's only answer to a
+    // throttle was to skip the whole meeting series for the run. Carried rather than
+    // acted on here, because honouring it is a decision about how long a run may take
+    // and that belongs to the caller, not to the fetch helper.
+    const retryAfter = Number(res.headers.get("retry-after"));
+    if (Number.isFinite(retryAfter)) err.retryAfter = retryAfter;
+    // A token Graph REJECTS is a token this process must stop using. Without this line a
+    // single 401 — a rolled secret, revoked consent, a skewed host clock — poisons every
+    // remaining call in this sync AND every sync the hourly scheduler starts for the next
+    // ~59 minutes, because the cache's own expiry (set 60s early, above) is otherwise the
+    // only thing that ever retires a token. There is no self-healing short of a restart:
+    // forgetCached() is only called when credentials are saved.
+    //
+    // Dropped rather than retried in place. A retry loop here would re-POST the
+    // client-credentials grant once per Graph call against an app whose consent has
+    // genuinely been revoked, turning one clear failure into a storm; the next call
+    // re-acquires naturally, which is all that is needed for a transient 401.
+    if (res.status === 401) cachedToken = null;
     throw err;
   }
 
@@ -208,8 +233,40 @@ async function graphFetch(path, init = {}) {
   if (res.status === 204) return null;
   const text = await res.text();
   if (!text) return null;
-  try { return JSON.parse(text); }
+  let body;
+  try { body = JSON.parse(text); }
   catch { throw new Error(`Microsoft Graph returned a non-JSON response (HTTP ${res.status}) for ${path}.`); }
+
+  // Graph returns every collection as ONE PAGE plus an @odata.nextLink, and this helper
+  // used to read `.value` and stop. That is not a cosmetic omission: the collection whose
+  // tail was dropped is an attendance report, and teamsSync.js iterates the ROSTER rather
+  // than the report, so a student who attended the whole hour but landed on page two
+  // reaches the sync as no participant at all and is written "A" with an empty remark —
+  // indistinguishable from a genuine absence, permanent, with the run still reporting
+  // "ok". That is precisely the figure-that-could-not-be-measured being coerced into a
+  // confident value that conventions.md forbids.
+  //
+  // Followed HERE rather than at each call site, deliberately: calendarView,
+  // attendanceReports and attendanceRecords all page, and three copies of the loop is
+  // three chances to forget one — which is exactly what happened, in all three. The
+  // alternative (a paginate() helper each caller opts into) was rejected for the same
+  // reason the academic-scope guard lives in db.js rather than in ~200 routes: a silent
+  // omission in the opt-in direction is invisible, and here it is invisible AND writes
+  // wrong marks onto real registers.
+  //
+  // The depth bound is not paranoia. A tenant that kept handing back a nextLink would
+  // otherwise spin until the request budget ran out, and a sync that never returns is
+  // worse than one that fails with a sentence an administrator can read.
+  if (body && Array.isArray(body.value) && body["@odata.nextLink"]) {
+    if (depth >= MAX_PAGES) {
+      throw new Error(`Microsoft Graph paged past ${depth} pages for ${path} — refusing to follow further.`);
+    }
+    const rest = await graphFetch(String(body["@odata.nextLink"]).replace(GRAPH_BASE, ""), init, depth + 1);
+    const merged = { ...body, value: [...body.value, ...((rest && rest.value) || [])] };
+    delete merged["@odata.nextLink"];
+    return merged;
+  }
+  return body;
 }
 
 // YYYY-MM-DD + HH:MM in London from a Graph dateTime (which arrives in the timezone
@@ -233,14 +290,47 @@ function localDateFromGraph(dt) {
   return new Date(dt).toLocaleDateString("en-CA", { timeZone: ZONE });
 }
 
+/**
+ * Who a single attendanceRecord is, as far as this college can tell: a Microsoft user id
+ * when there is one, else a lowercased email. Extracted so mergeRecords and
+ * countUnidentifiable cannot drift apart about what "identifiable" means — they used to
+ * be one loop, and the count below is only honest if it answers the same question.
+ *
+ * Deliberately blind to identity.guest.id and identity.phone.id. A guest id is not a
+ * student id and a phone number is not a student id; keying on either would put a
+ * stranger's minutes onto a register, which is the single failure this feature exists to
+ * refuse.
+ */
+function recordKey(rec) {
+  const email = String(rec.emailAddress || (rec.identity && rec.identity.user && rec.identity.user.email) || "").toLowerCase();
+  const msUserId = (rec.identity && rec.identity.user && rec.identity.user.id) || null;
+  return { email, msUserId, key: msUserId || email };
+}
+
+/**
+ * How many of a report's records name nobody this college could identify at all — an
+ * anonymous guest, a PSTN dial-in, an identity Graph returned empty.
+ *
+ * Counted rather than kept. Dropping them from the merge is right, for the reason
+ * recordKey gives; the bug was WHERE they were dropped. They vanished inside
+ * mergeRecords, which runs before teamsSync ever sees the report, so they never reached
+ * its unmatched counter and a run could report "0 unmatched participants" for a lecture a
+ * rostered student had dialled into from a train — and who is now carrying an unexplained
+ * Absent. The participant who most needs a human to look was the one the count could not
+ * see. This does not change a single mark; it changes what the run tells an administrator.
+ */
+function countUnidentifiable(records) {
+  let n = 0;
+  for (const rec of records || []) if (!recordKey(rec).key) n++;
+  return n;
+}
+
 /** Merge a report's attendanceRecords into one entry per person, intervals concatenated. */
 function mergeRecords(records) {
   const byKey = new Map();
   for (const rec of records || []) {
-    const email = String(rec.emailAddress || (rec.identity && rec.identity.user && rec.identity.user.email) || "").toLowerCase();
-    const msUserId = (rec.identity && rec.identity.user && rec.identity.user.id) || null;
-    const key = msUserId || email;
-    if (!key) continue; // an anonymous dial-in is not evidence about any student
+    const { email, msUserId, key } = recordKey(rec);
+    if (!key) continue; // not evidence about any student — counted by countUnidentifiable
     if (!byKey.has(key)) byKey.set(key, { email, msUserId, intervals: [] });
     for (const iv of rec.attendanceIntervals || []) {
       byKey.get(key).intervals.push({ joinedAt: zonedTime(iv.joinDateTime), leftAt: zonedTime(iv.leaveDateTime) });
@@ -333,7 +423,28 @@ async function attendanceByOccurrence(organizerId, meetingId) {
   const out = [];
   for (const r of reports.value || []) {
     const recs = await graphFetch(`/users/${organizerId}/onlineMeetings/${meetingId}/attendanceReports/${r.id}/attendanceRecords`);
-    out.push({ date: localDateFromGraph(r.meetingStartDateTime), intervals: mergeRecords(recs.value || []) });
+    const records = recs.value || [];
+    // THROW, rather than return what we got. graphFetch follows nextLink now, so a short
+    // read means something else went wrong — and a truncated report does not degrade
+    // gracefully here: teamsSync.js iterates the roster, not the report, so every
+    // participant missing from it becomes a confident "A" on a real register.
+    //
+    // Throwing lands in teamsSync.js's per-session catch, which notes the failure, writes
+    // NO marks and leaves teamsCollectedAt null so the retry window picks the register up
+    // again. A register that fills an hour late is a delay; a register full of fabricated
+    // absences is a record somebody has to defend at an audit.
+    //
+    // One-directional on purpose: more records than declared is fine, because one
+    // participant can hold several records. Fewer cannot be.
+    const declared = Number(r.totalParticipantCount);
+    if (Number.isFinite(declared) && records.length < declared) {
+      throw new Error(`Attendance report ${r.id} returned ${records.length} of ${declared} participants — refusing a truncated report.`);
+    }
+    out.push({
+      date: localDateFromGraph(r.meetingStartDateTime),
+      intervals: mergeRecords(records),
+      unidentifiableCount: countUnidentifiable(records),
+    });
   }
   return out;
 }
@@ -694,5 +805,5 @@ module.exports = {
   // Task 2: weekday helper for recurring meetings.
   graphWeekday,
   // Task 4: per-occurrence attendance helpers.
-  mergeRecords, localDateFromGraph,
+  mergeRecords, countUnidentifiable, localDateFromGraph,
 };

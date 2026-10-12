@@ -90,7 +90,7 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
   const summary = {
     meetingsDiscovered: 0, sessionsMatched: 0, sessionsAmbiguous: 0,
     reportsFetched: 0, marksCreated: 0, marksSkippedExisting: 0,
-    participantsUnmatched: 0,
+    participantsUnmatched: 0, participantsUnidentifiable: 0,
   };
   // One recurring meeting id is shared by every week of a series, so its attendance
   // reports are fetched ONCE per run and reused for each week's register — twelve weeks
@@ -193,6 +193,21 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
       // A future session is NEVER marked (global constraint). Zero-padded HH:MM
       // compares as strings, the codebase-wide convention.
       if (session.date === today && session.endTime >= nowTime) continue;
+      // A window decideStatus cannot score — an end that is not after its start, which a
+      // Moodle import produces by wrapping the hour with % 24 — is COLLECTED AND REFUSED,
+      // the same ruling as the term lock below and for the same reason: the row will not
+      // fix itself inside RETRY_DAYS, so leaving teamsCollectedAt null would re-ask an
+      // unanswerable question every hour for a week and then give up anyway. Stamping it
+      // now is honest about the outcome rather than a delay that changes nothing.
+      //
+      // Checked here as well as in decideStatus because the two answer different
+      // questions: decideStatus refuses to invent a mark, this refuses to spend a Graph
+      // call and then write nothing.
+      if (!(session.endTime > session.startTime)) {
+        note(`Register ${session.date} ${session.startTime} (${session.unit?.code || "?"}) has an end time that is not after its start — no Teams marks written.`);
+        await prisma.hndSession.update({ where: { id: session.id }, data: { teamsCollectedAt: new Date() } });
+        continue;
+      }
       // Term lock, as every write path honours it. Collected-and-refused, not
       // retried: the term will not reopen inside the retry window, so leaving
       // collectedAt null here would just have the sync ask the same unanswerable
@@ -239,6 +254,17 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
       }
       const participants = thisOccurrence.intervals;
       summary.reportsFetched++;
+      // Somebody was in the meeting whom nobody could identify — an anonymous guest or a
+      // dial-in with no email. They are correctly not matched to any student (guessing a
+      // phone number onto a register is the failure this feature exists to refuse), but
+      // they used to be dropped inside mergeRecords, before this counter existed, so a run
+      // could report "0 unmatched" for a lecture a rostered student dialled into. No mark
+      // changes; an administrator can now see that there is something to look at.
+      const unidentifiable = Number(thisOccurrence.unidentifiableCount) || 0;
+      if (unidentifiable > 0) {
+        summary.participantsUnidentifiable += unidentifiable;
+        note(`${unidentifiable} participant(s) in the ${session.date} ${session.startTime} meeting could not be identified at all — an anonymous guest or a phone dial-in.`);
+      }
 
       // Match participants to students: cached msUserId first, then email.
       const roster = await rosterForSession(session);
@@ -293,6 +319,11 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
           ? attendedMinutes(p.intervals, session)
           : { minutes: 0, firstJoin: null };
         const d = decideStatus({ minutes, firstJoin, session, minAttendancePct: cfgTeams.minAttendancePct, lateAfterMins: tap.lateAfterMins });
+        // null is "this window cannot be scored" (decideStatus's own contract), never a
+        // status. Unreachable today because the degenerate-window guard above rejects the
+        // whole session before any Graph call, and kept anyway: the two guards can drift,
+        // and the failure mode if they do is a confident wrong mark on a register.
+        if (!d) continue;
         rows.push({
           sessionId: session.id, studentId, status: d.status, remark: d.remark,
           takenBy: TEAMS_AUTO_STAMP,
@@ -307,6 +338,19 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
       // that already exists at that key, so the insert for it is silently skipped
       // rather than colliding — and a person's mark, or the earlier machine mark,
       // stands exactly as it was.
+      // WHO ALREADY HELD A MARK, read BEFORE the insert. `takenBy === TEAMS_AUTO_STAMP`
+      // after the fact cannot answer "did THIS run write it", because a mark an EARLIER
+      // Teams run wrote carries exactly the same stamp. That happens for real in two ways:
+      // a run killed after the tap rows are written but before teamsCollectedAt is set
+      // (the session stays eligible and is collected again), and two Node processes running
+      // the sync at once, which the in-process `running` flag cannot prevent. Both then
+      // logged a second "marked" row for a student nobody marked twice — the marks stayed
+      // correct, the audit trail did not. One extra read answers it for every student at
+      // once, which is cheaper than being wrong in the log the spec requires.
+      const alreadyHeld = new Set(rows.length === 0 ? [] : (await prisma.attendanceMark.findMany({
+        where: { sessionId: session.id, studentId: { in: rows.map((r) => r.studentId) } },
+        select: { studentId: true },
+      })).map((m) => m.studentId));
       const res = await prisma.attendanceMark.createMany({ data: rows, skipDuplicates: true });
       // Only when something was actually inserted: a session whose every row was a
       // duplicate changed no figure, so the cached matrix still describes the data.
@@ -324,10 +368,11 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
       // gives no guarantee about WHICH rows in a batch were the duplicates, only how many,
       // so `res.count` alone cannot tell "marked" from "already_marked" per student — only
       // the database's own account of what now stands can. A student whose mark carries
-      // takenBy === TEAMS_AUTO_STAMP is one this run just wrote (or, exactly once, a run
-      // that crashed after this createMany but before teamsCollectedAt was set — a retry
+      // takenBy === TEAMS_AUTO_STAMP is one a Teams run wrote — but NOT necessarily THIS
+      // one, which is why the set read above the insert decides it instead. This comment
+      // used to claim the stamp alone handled the crashed-run retry correctly ("a retry
       // would then find its own prior write already standing and correctly log THAT as
-      // "already_marked", not double-count it as newly marked); anything else is a mark
+      // already_marked"); it did not, and a test now pins the case. Anything else is a mark
       // that already stood before this run touched the session — a lecturer's tick, a
       // Moodle import, or an earlier capture method — and was correctly left alone.
       if (rows.length > 0) {
@@ -340,7 +385,7 @@ async function runSyncInner({ mode = "manual", startedBy = null } = {}) {
         for (const r of rows) {
           const mark = byStudent.get(r.studentId);
           if (!mark) continue; // every row was either just inserted or already existed
-          if (mark.takenBy === TEAMS_AUTO_STAMP) {
+          if (!alreadyHeld.has(r.studentId) && mark.takenBy === TEAMS_AUTO_STAMP) {
             tapRows.push({ studentId: r.studentId, sessionId: session.id, method: "teams", outcome: "marked", status: mark.status });
           } else {
             // Refused, not silent — the never-overwrite invariant above is a decision,
