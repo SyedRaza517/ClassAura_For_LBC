@@ -28,7 +28,7 @@ function withEnv(vars, fn) {
 test("still answers ok, with the service name the keep-alive and the runner look for", () => {
   const h = healthPayload();
   assert.equal(h.ok, true);
-  assert.equal(h.service, "edtech-hub-api");
+  assert.equal(h.service, "classaura-api");
 });
 
 test("names the deployed commit when the host provides one, and null when it does not", () => {

@@ -1,18 +1,30 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The EdTech APIs, both built from THIS repository.
+// The ClassAura APIs, both built from THIS repository.
 //
-//   production  service "EdTech" on Render, deploys from branch `production`
-//   staging     service "edtech-staging-api" on Render, deploys from branch `main`
+//   production  service "classaura-api" on Render, deploys from branch `production`
+//   staging     service "classaura-staging-api" on Render, deploys from branch `main`
 //
 // Kept here rather than only in .env files because .env.production is gitignored: a
 // clean clone has no copy of it, so without these a fresh CI build has nothing to fall
 // back to but the localhost URL in .env, which is the failure the guard below exists
 // to catch.
+//
+// THESE WERE EDTECH'S URLS UNTIL THIS REPOSITORY WAS FORKED FOR LBC, and leaving them
+// would have re-run the exact failure the guard below was written for: every production
+// build, and every packaged mobile app, calling another product's server against another
+// college's database. The guard could not have caught it either, because it derives its
+// allowlist from THIS map — so EdTech's hosts were the allowlist. Pointing the map at
+// ClassAura is what makes the guard refuse an EdTech build rather than bless one.
+//
+// CONFIRM THESE AGAINST THE REAL SERVICES. Render may append a suffix when a name is
+// taken (EdTech's production service was "edtech-xr8g", not "edtech"), so once the
+// ClassAura services exist, check their actual URLs in the dashboard and correct these.
+// A wrong host here does not fail quietly: the guard refuses the build.
 const API = {
-  production: "https://edtech-xr8g.onrender.com/api",
-  staging: "https://edtech-staging-api.onrender.com/api",
+  production: "https://classaura-api.onrender.com/api",
+  staging: "https://classaura-staging-api.onrender.com/api",
 };
 
 // The only hosts a build may be pointed at: the two APIs above, and nothing else.

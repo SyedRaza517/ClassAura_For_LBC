@@ -71,7 +71,14 @@ workflows:
         # an app that could not reach any API at all. It is the THIRD wrong API host this
         # repository has carried, which is why that allowlist exists; it now compares the
         # parsed host rather than doing a substring match, so a fourth cannot slip past.
-        VITE_API_URL: "https://edtech-xr8g.onrender.com/api"
+        # REPOINTED when this repository was forked for LBC. It said
+        # `edtech-xr8g.onrender.com` — EdTech's production API — which would have been a
+        # FOURTH wrong host, and the worst kind: a packaged app on a student's phone
+        # talking to another college's live database, with no way to correct it short of
+        # a new App Store release. Must match client/vite.config.js's API map or the
+        # allowlist there fails the build.
+        # TODO: confirm against the real Render service once classaura-api exists.
+        VITE_API_URL: "https://classaura-api.onrender.com/api"
         # Numeric Apple ID of the app from App Store Connect (step 3). Until you
         # have it, the "increment build number" step below will fail — set it first.
         # ClassAura's App Store Connect record, created 11 Sep 2026 against

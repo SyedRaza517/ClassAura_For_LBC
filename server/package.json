@@ -1,7 +1,7 @@
 {
-  "name": "edtech-hub-server",
+  "name": "classaura-server",
   "version": "1.0.0",
-  "description": "EdTech Staff Hub — API server",
+  "description": "ClassAura (LBC) — API server",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch --watch-path=./src src/index.js",

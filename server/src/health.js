@@ -22,7 +22,7 @@ function healthPayload() {
   const commit = process.env.RENDER_GIT_COMMIT;
   return {
     ok: true,
-    service: "edtech-hub-api",
+    service: "classaura-api",
     version: typeof commit === "string" && commit.trim() ? commit.trim().slice(0, 7) : null,
   };
 }

@@ -1,4 +1,4 @@
-# Render Blueprint for the EdTech Hub API.
+# Render Blueprint for the ClassAura API (LBC).
 # In Render:  New +  →  Blueprint  →  connect this repo.
 # It creates the web service below; paste the secret values when prompted.
 #
@@ -9,7 +9,7 @@
 # ADDING a variable here does not add it to the running service, and DELETING one
 # here does not remove it either — the old value keeps being injected into the
 # process until somebody deletes it in the Render dashboard, on BOTH services
-# (edtech-staging-api from `main`, and this one from `production`).
+# (classaura-staging-api from `main`, and this one from `production`).
 #
 # Removed here on 30 Aug 2026 when the platform stopped being multi-tenant, and
 # therefore still present in the dashboard until deleted by hand:
@@ -20,9 +20,9 @@
 # is read by the next person as evidence the feature is still there.
 services:
   - type: web
-    name: edtech-hub-api
+    name: classaura-api
     runtime: node
-    region: frankfurt          # closest EU region to your Supabase DB (eu-north-1)
+    region: frankfurt          # closest Render EU region to this deployment's Supabase DB (eu-west-2)
     plan: free                 # change to "starter" ($7/mo) to stop it sleeping after 15 min idle
     rootDir: server            # the API lives in /server
     # npm install runs the server's postinstall → prisma generate.
@@ -56,9 +56,9 @@ services:
       - key: JWT_SECRET
         sync: false              # the long random secret from server/.env
       - key: CLIENT_URL
-        sync: false              # your dashboard URL, e.g. https://edtech-hub.vercel.app  (set after step 2)
+        sync: false              # your dashboard URL, e.g. https://classaura.vercel.app  (set after step 2)
       - key: CORS_ORIGINS
-        sync: false              # dashboard URL + mobile: "https://edtech-hub.vercel.app,capacitor://localhost,http://localhost"
+        sync: false              # dashboard URL + mobile: "https://classaura.vercel.app,capacitor://localhost,http://localhost"
       - key: APP_TIMEZONE
         value: Europe/London     # the organisation's wall clock; drives dates, the term
                                  # gate and the 02:00 Moodle sync
