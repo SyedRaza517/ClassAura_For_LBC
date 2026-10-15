@@ -9,7 +9,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { buildStats, previousIntake } = require("./stats");
+const { buildStats, previousIntake, isCalendarDate, precedingWindow, parseScope } = require("./stats");
 const { merge } = require("./trackerSettings");
 const { DOC_KEYS } = require("../admissionDocs");
 
@@ -550,5 +550,256 @@ test("no course can report a yield above 100% whatever the paperwork says", () =
   for (const c of build(rows).yieldByCourse) {
     assert.ok(c.yieldRate == null || c.yieldRate <= 100, `${c.course} reported ${c.yieldRate}`);
     assert.ok(c.enrolled <= c.offers, `${c.course}: ${c.enrolled} enrolled > ${c.offers} offers`);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* What a URL is allowed to ask for                                            */
+/*                                                                             */
+/* EVERY TEST BELOW IS A REGRESSION TEST FOR A CONFIRMED 500 ON A LIVE         */
+/* DEPLOYMENT, reproduced against it before being fixed. They are here, against */
+/* the pure functions, rather than in an HTTP suite, because the route cannot   */
+/* be unit-tested without Prisma — which is exactly how four faults in it       */
+/* survived a green CI run. Each one was re-run with the old code put back to   */
+/* confirm it fails; a test that discriminates nothing is worse than no test.   */
+/* -------------------------------------------------------------------------- */
+
+test("a well-formed date that exists is accepted", () => {
+  // The other half of the guard. A validator that only rejects passes every test in
+  // this section while refusing the whole dashboard.
+  for (const d of ["2026-01-01", "2026-09-30", "2026-12-31", "0001-01-01", "9999-12-31"]) {
+    assert.equal(isCalendarDate(d), true, d + " is a real date and must be accepted");
+  }
+});
+
+test("a date whose month or day cannot exist is refused, not sent to the database", () => {
+  // ?from=2026-99-99 passed the old shape-only regex, became an Invalid Date, reached
+  // Prisma and threw. Confirmed 500 on from, on to, and on the pair.
+  for (const d of ["2026-99-99", "2026-13-01", "2026-00-01", "2026-01-00", "2026-01-32"]) {
+    assert.equal(isCalendarDate(d), false, d + " is not a date and must be refused");
+  }
+});
+
+test("a date that does not exist is refused rather than rolled forward", () => {
+  // The silent half, and the worse half: ?to=2026-02-30 answered 200, because
+  // new Date("2026-02-30") rolls to 2 March. The range quietly covered two extra days
+  // and nothing on the dashboard looked wrong.
+  assert.equal(isCalendarDate("2026-02-30"), false);
+  assert.equal(isCalendarDate("2026-04-31"), false);
+  assert.equal(isCalendarDate("2026-06-31"), false);
+  assert.equal(isCalendarDate("2026-09-31"), false);
+  assert.equal(isCalendarDate("2026-11-31"), false);
+});
+
+test("a leap day exists in a leap year and not in any other", () => {
+  assert.equal(isCalendarDate("2024-02-29"), true, "2024 is a leap year");
+  assert.equal(isCalendarDate("2000-02-29"), true, "a century divisible by 400 is a leap year");
+  assert.equal(isCalendarDate("2026-02-29"), false, "2026 is not");
+  assert.equal(isCalendarDate("1900-02-29"), false, "a century not divisible by 400 is not");
+});
+
+test("year zero is refused, because there is no year zero", () => {
+  // Not pedantry. Postgres implements the proleptic Gregorian calendar, where
+  // '0000-01-01'::date is an out-of-range error — another 500 rather than a refusal.
+  assert.equal(isCalendarDate("0000-01-01"), false);
+  assert.equal(isCalendarDate("0000-12-31"), false);
+});
+
+test("the YYYY-MM-DD shape is still required", () => {
+  for (const d of ["2026-1-1", "26-01-01", "2026/01/01", "01-01-2026", "2026-01-01T00:00:00Z", "", "today"]) {
+    assert.equal(isCalendarDate(d), false, JSON.stringify(d) + " is not the shape this filter takes");
+  }
+  assert.equal(isCalendarDate(null), false);
+  assert.equal(isCalendarDate(20260101), false);
+});
+
+test("an impossible date is a refusal with a reason, not a dropped filter", () => {
+  // Refused rather than ignored on purpose. Discarding an unusable `from` widens the
+  // range to all time while the date box on screen still shows what the user typed.
+  for (const q of [{ from: "2026-99-99" }, { to: "2026-99-99" }, { from: "2026-13-01" },
+    { from: "2026-00-01" }, { from: "2026-01-01", to: "2026-99-99" }, { to: "2026-02-30" }]) {
+    const out = parseScope(q);
+    assert.equal(out.scope, undefined, JSON.stringify(q) + " was accepted");
+    assert.match(out.error, /not a date on the calendar/);
+    assert.match(out.error, /YYYY-MM-DD/, "the message must say what the right shape is");
+  }
+});
+
+test("a usable scope comes back trimmed and capped, with no error", () => {
+  const out = parseScope({ intake: "  Sept 2026  ", course: "HND Business", from: "2026-01-01", to: "2026-03-31" });
+  assert.equal(out.error, undefined);
+  assert.deepEqual(out.scope, {
+    intake: "Sept 2026", course: "HND Business", compare: "", from: "2026-01-01", to: "2026-03-31",
+  });
+  assert.equal(parseScope({ course: "x".repeat(500) }).scope.course.length, 200);
+});
+
+test("a NUL byte in a filter is refused instead of being searched for", () => {
+  // trim() does not remove NUL — it is not whitespace — so "\u0000" stayed a truthy
+  // one-character filter value, reached the where clause, and Postgres refused the byte
+  // sequence with a 500. Confirmed on course, intake and compare, alone and embedded.
+  for (const q of [{ course: "\u0000" }, { intake: "\u0000" }, { compare: "\u0000" },
+    { course: "HND\u0000Business" }, { from: "2026-01-01\u0000" }]) {
+    const out = parseScope(q);
+    assert.equal(out.scope, undefined, JSON.stringify(q) + " was accepted");
+    assert.match(out.error, /control character/);
+  }
+});
+
+test("every control character that Postgres will not store is refused", () => {
+  for (const code of [0x00, 0x01, 0x07, 0x08, 0x0b, 0x0c, 0x0e, 0x1b, 0x1f, 0x7f]) {
+    const out = parseScope({ course: "HND" + String.fromCharCode(code) });
+    assert.equal(out.scope, undefined, "control character 0x" + code.toString(16) + " was accepted");
+  }
+});
+
+test("tab, newline and carriage return are not refused", () => {
+  // Deliberately allowed: Postgres stores them, so they cannot cause the failure above,
+  // and trim() already handles the only case that shows up in practice — one stuck on
+  // the end of a pasted course name. Refusing them would reject input that works today.
+  assert.equal(parseScope({ course: "HND Business\n" }).scope.course, "HND Business");
+  assert.equal(parseScope({ course: "HND\tBusiness" }).scope.course, "HND\tBusiness");
+});
+
+test("a repeated or non-string parameter is treated as absent, not coerced", () => {
+  // ?course=a&course=b arrives as an array. Coercing it would filter on "a,b".
+  assert.deepEqual(parseScope({ course: ["a", "b"], from: 20260101 }).scope,
+    { intake: "", course: "", compare: "", from: "", to: "" });
+  assert.deepEqual(parseScope().scope, { intake: "", course: "", compare: "", from: "", to: "" });
+});
+
+test("an inverted range is refused rather than filtering on nothing", () => {
+  const out = parseScope({ from: "2026-05-01", to: "2026-01-01" });
+  assert.equal(out.scope, undefined);
+  assert.match(out.error, /ends before it starts/);
+  // A single day is not inverted.
+  assert.equal(parseScope({ from: "2026-05-01", to: "2026-05-01" }).error, undefined);
+});
+
+/* -------------------------------------------------------------------------- */
+/* The comparison window derived from a date range                             */
+/* -------------------------------------------------------------------------- */
+
+test("the preceding window is the same length, ending the day before", () => {
+  // Equal length is the rule that matters: comparing a six-week range against a whole
+  // previous year is how a dashboard reports a healthy intake as a collapse.
+  assert.deepEqual(precedingWindow("2026-01-01", "2026-01-31"), { from: "2025-12-01", to: "2025-12-31" });
+  assert.deepEqual(precedingWindow("2026-03-01", "2026-03-01"), { from: "2026-02-28", to: "2026-02-28" });
+  assert.deepEqual(precedingWindow("2024-03-01", "2024-03-01"), { from: "2024-02-29", to: "2024-02-29" },
+    "the day before 1 March 2024 is a leap day");
+});
+
+test("no comparison is offered when the preceding window falls off the calendar", () => {
+  // THE CONFIRMED 500, and the reason it was hard to see: the range asked for is valid.
+  // It was the DERIVED window that broke — a thousand-year range has no thousand-year
+  // predecessor, the negative year made toISOString emit the extended form
+  // ("-000998-01-02T...") and slicing that to ten characters produced a string that was
+  // neither a date nor rejected until Prisma saw it. The control that isolated it was
+  // the identical range with compare=none answering 200.
+  //
+  // Null, not a clamped window: a comparison against a shorter period than the one on
+  // screen is the exact distortion the equal-length rule exists to prevent, and the
+  // dashboard already renders null as "no comparison period".
+  assert.equal(precedingWindow("1013-01-01", "2026-01-01"), null);
+  assert.equal(precedingWindow("1000-01-01", "2026-01-01"), null);
+  assert.equal(precedingWindow("0001-01-01", "1000-01-01"), null);
+  assert.equal(precedingWindow("0001-01-01", "0001-01-02"), null);
+});
+
+test("a range with room before it still gets its comparison", () => {
+  // The other half: a guard that returns null too eagerly silently removes every
+  // comparison chip on the dashboard, which is defect 4 in a different costume.
+  const prev = precedingWindow("1100-01-01", "2026-01-01");
+  assert.notEqual(prev, null, "this range has 1099 years before it and must be comparable");
+  assert.deepEqual(prev, { from: "0173-12-30", to: "1099-12-31" });
+});
+
+test("the derived window is always a date string this module would itself accept", () => {
+  // The specific shape of the defect: what came out of toISOString().slice(0, 10) was
+  // neither a date nor rejected — "-000998-0" — and travelled all the way to Prisma.
+  // Asserting the output round-trips through the validator catches that however the
+  // derivation is rewritten later.
+  //
+  // 0500-01-01..2026-01-01 is in this list for a reason: it is a range whose predecessor
+  // starts in 1027 BC, so it is the case that produced the malformed string. It must
+  // come back as null (no comparison) and never as a ten-character slice of
+  // "-001027-01-02T00:00:00.000Z". Without a case like it, this test passes on both the
+  // fixed and the broken derivation and therefore discriminates nothing — which was
+  // true of it until this line was added.
+  for (const [from, to] of [["2026-01-01", "2026-01-31"], ["0001-06-01", "0001-06-02"],
+    ["1100-01-01", "2026-01-01"], ["2026-02-28", "2026-03-01"], ["9999-12-30", "9999-12-31"],
+    ["0500-01-01", "2026-01-01"]]) {
+    const prev = precedingWindow(from, to);
+    if (prev === null) continue;
+    for (const end of ["from", "to"]) {
+      assert.match(prev[end], /^\d{4}-\d{2}-\d{2}$/, from + ".." + to + " derived " + prev[end]);
+      assert.equal(isCalendarDate(prev[end]), true, from + ".." + to + " derived " + prev[end]);
+    }
+    assert.ok(prev.to < from, "the comparison window must end before this one starts");
+  }
+});
+
+test("an unvalidated or inverted range derives no window at all", () => {
+  assert.equal(precedingWindow("2026-99-99", "2026-01-01"), null);
+  assert.equal(precedingWindow("2026-02-30", "2026-03-31"), null);
+  assert.equal(precedingWindow("", "2026-01-01"), null);
+  assert.equal(precedingWindow("2026-05-01", "2026-01-01"), null, "a negative span has no predecessor");
+});
+
+/* -------------------------------------------------------------------------- */
+/* Abbreviated intake labels                                                   */
+/*                                                                             */
+/* THE INTAKE TESTS ABOVE ALL USE FULL MONTH NAMES, which is why intake         */
+/* comparison could be dead in production while CI stayed green. The live       */
+/* college's intakes are "Sept 2026" and "Jan 2027", so intakeOrder returned    */
+/* null for every label it was ever given, previousIntake found nothing, and    */
+/* every comparison chip rendered blank with nothing on screen saying why.      */
+/* -------------------------------------------------------------------------- */
+
+const ABBREVIATED = ["Sept 2026", "Jan 2027"];
+
+test("the previous intake is found for the abbreviations this college actually uses", () => {
+  assert.equal(previousIntake(ABBREVIATED, "Jan 2027"), "Sept 2026");
+  assert.equal(previousIntake(ABBREVIATED, "Sept 2026"), null, "nothing precedes the earlier of the two");
+});
+
+test("every month orders the same abbreviated as it does in full", () => {
+  const full = ["January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"];
+  const abbr = full.map((m) => m.slice(0, 3) + " 2026");
+  for (let i = 1; i < full.length; i++) {
+    // The same answer from the abbreviated list as from the full one, for every month.
+    assert.equal(
+      previousIntake(abbr, full[i].slice(0, 3) + " 2026"),
+      full[i - 1].slice(0, 3) + " 2026",
+      full[i] + " abbreviated did not order correctly",
+    );
+    assert.equal(
+      previousIntake(full.map((m) => m + " 2026"), full[i] + " 2026"),
+      full[i - 1] + " 2026",
+      full[i] + " in full did not order correctly",
+    );
+  }
+});
+
+test("full and abbreviated labels order against each other in one list", () => {
+  // A college that added "September 2026" last year and "Jan 2027" this year has both
+  // spellings sitting in AdmissionIntake, and the comparison has to cross between them.
+  const mixed = ["September 2026", "Jan 2027", "Apr 2027", "September 2027"];
+  assert.equal(previousIntake(mixed, "Jan 2027"), "September 2026");
+  assert.equal(previousIntake(mixed, "September 2027"), "Apr 2027");
+});
+
+test("September is accepted as Sep, Sept and with a full stop", () => {
+  for (const label of ["September 2026", "Sept 2026", "Sep 2026", "sept 2026", "SEPT 2026", "Sept. 2026"]) {
+    assert.equal(previousIntake(["Apr 2026", label], label), "Apr 2026", label + " was not placed in time");
+  }
+});
+
+test("a label that still cannot be placed in time offers no comparison", () => {
+  // The abbreviations are a wider gate, not an open one. Guessing puts the wrong intake
+  // in the comparison, which is a silent sign flip on every chip — worse than no chip.
+  for (const label of ["Autumn 2026", "Q1 2027", "Rolling", "Michaelmas 2026", "2026", "Sept"]) {
+    assert.equal(previousIntake(["Apr 2026", "Sept 2026", label], label), null, label + " was ordered anyway");
   }
 });

@@ -24,7 +24,11 @@ const router = require("express").Router();
 const prisma = require("../db");
 const { requireAuth, requireAnyPage } = require("../auth");
 const audit = require("../audit");
-const { buildStats, previousIntake } = require("../admissions/stats");
+// parseScope and precedingWindow are pure and live beside their tests in stats.js, for
+// the same reason the arithmetic does: this file cannot be unit-tested without Prisma
+// and Express, so a rule left in it is a rule nothing checks. Every 500 this endpoint
+// has served came from a query parameter it decided about here, in untested code.
+const { buildStats, previousIntake, precedingWindow, parseScope } = require("../admissions/stats");
 const { merge } = require("../admissions/trackerSettings");
 const { ADMISSION_DOC_TYPES } = require("../admissionDocs");
 
@@ -66,11 +70,14 @@ const SELECT = {
   isms: { select: { interviewDate: true } },
 };
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const str = (v, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
-
 /**
  * The Prisma `where` for one scope.
+ *
+ * EVERY DATE REACHING THIS FUNCTION HAS ALREADY BEEN VALIDATED, by parseScope for the
+ * two an admin types and by precedingWindow for the two that are derived. That is load-
+ * bearing rather than tidy: `new Date()` below cannot report a bad date, it returns an
+ * Invalid Date that passes every truthiness check, travels into the query and surfaces
+ * as a 500 from inside Prisma. Do not add a caller that skips the validation.
  *
  * The date range filters on createdAt — when the record ARRIVED — because that is the
  * date every applicant has. Filtering on an offer or enrolment date would silently drop
@@ -142,16 +149,14 @@ async function resolveCompare({ intake, course, from, to, compare }) {
     // The preceding window of the SAME LENGTH, ending the day before this one starts.
     // Comparing a six-week range against a whole previous year is how a dashboard
     // reports a healthy intake as a collapse.
-    const start = new Date(`${from}T00:00:00.000Z`);
-    const end = new Date(`${to}T00:00:00.000Z`);
-    const span = end.getTime() - start.getTime() + 86400000;
-    const prevEnd = new Date(start.getTime() - 86400000);
-    const prevStart = new Date(start.getTime() - span);
-    return scopeWhere({
-      course,
-      from: prevStart.toISOString().slice(0, 10),
-      to: prevEnd.toISOString().slice(0, 10),
-    });
+    //
+    // Null when that window would fall off the start of the calendar — a thousand-year
+    // range has no thousand-year predecessor. The derivation, the floor and the reason
+    // clamping was rejected are all in precedingWindow, which is unit-tested; the
+    // arithmetic used to be inline here and served a 500 for every range beginning
+    // before about 1100.
+    const prev = precedingWindow(from, to);
+    return prev ? scopeWhere({ course, from: prev.from, to: prev.to }) : null;
   }
 
   return null;
@@ -162,11 +167,14 @@ async function resolveCompare({ intake, course, from, to, compare }) {
 /* -------------------------------------------------------------------------- */
 
 router.get("/", async (req, res) => {
-  const intake = str(req.query.intake);
-  const course = str(req.query.course);
-  const from = DATE_RE.test(str(req.query.from)) ? str(req.query.from) : "";
-  const to = DATE_RE.test(str(req.query.to)) ? str(req.query.to) : "";
-  const compare = str(req.query.compare);
+  // A CLEAN 400 WITH THE REASON, NEVER A 500 AND NEVER A SILENTLY DIFFERENT FILTER.
+  // This endpoint answered 500 for a date that does not exist (?from=2026-99-99) and for
+  // a NUL byte in any filter (?course=%00), because shape-checking a parameter is not
+  // validating it and trimming one is not sanitising it. Both are now refused here,
+  // before Prisma, with a message the client already renders verbatim.
+  const parsed = parseScope(req.query);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { intake, course, from, to, compare } = parsed.scope;
 
   const [config, courseFees] = await Promise.all([loadConfig(), loadCourseFees()]);
   const compareWhere = await resolveCompare({ intake, course, from, to, compare });

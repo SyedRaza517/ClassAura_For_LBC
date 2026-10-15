@@ -2944,25 +2944,75 @@ router.post("/sessions/:id/mark-remaining-absent", requireAuth, lecturerGate(["r
 
 /* ============================== percentages ============================== */
 
-// The attendance matrix: every student's percentage per unit, their overall
-// percentage across all units, and the cohort figures per unit + overall.
-//
-// ?semesterId=<id>       -> only sessions dated inside that semester
-// ?semesterId=unassigned -> only sessions outside every semester
-// (omitted)              -> every session on record
 // GET /hnd/attendance/monthly?studentId= — attendance % bucketed by calendar month,
 // for the whole college (default) or a single student. Counting happens IN POSTGRES
 // (GROUP BY on left(date,7) = 'YYYY-MM') so it stays memory-safe at scale, exactly
 // like the /attendance matrix. Powers the dashboards' "Attendance % by Year & Month".
-router.get("/attendance/monthly", requireAuth, async (req, res) => {
-  const studentId = str(req.query?.studentId);
-  const unitId = str(req.query?.unitId);
-  const courseId = str(req.query?.courseId);
+//
+// THE LEAVER RULE, WHICH THIS ENDPOINT SPENT ITS WHOLE LIFE WITHOUT.
+//
+// GET /attendance (the matrix) and GET /students/:id/attendance-terms both count a
+// mark only when the student is CURRENTLY enrolled on the unit the mark's session
+// belongs to. The matrix's own loop states why, and that comment is the specification
+// this block implements: the totals "must obey the SAME leaver rule as the rows
+// below, or the table contradicts itself" — because a Moodle attendance import writes
+// marks onto a synthetic TUTORIAL unit nobody is enrolled on, and the last time two
+// populations were counted on one screen every student row read 100% while the
+// "Cohort average", the "Across all units" donut and the headline "Overall
+// attendance" card read 75%, with "at risk: 0" beside it.
+//
+// This handler built its query from studentId/unitId/courseId/year/term and joined
+// Enrolment nowhere, so it counted EVERY mark in the table. Live, that was marked
+// 13185 / P 8579 / A 4473 against the matrix's 13103 / 8526 / 4444 — 82 marks on
+// units that 14 students have left, three of whom have no enrolments at all. Both
+// figures round to 65.6%, so the two dashboards looked like they agreed while their
+// marked/present/absent tiles plainly did not, and a student with zero enrolments and
+// ten orphaned marks was presented as the college's best attender at pct 100 —
+// where the matrix and the per-student drill-down both, correctly, say null.
+//
+// A SEMI-JOIN (EXISTS), NOT AN INNER JOIN ON "Enrolment". An inner join reads shorter
+// and, today, counts identically: Enrolment is @@unique([studentId, unitId]), so it
+// can match at most once per mark. But its correctness would then rest on that
+// constraint surviving every future migration, and the failure if it ever did not is
+// silent and inflationary — a mark counted twice raises `marked` while leaving `pct`
+// looking entirely plausible. EXISTS cannot fan out whatever the schema does later,
+// which is the property worth paying a subquery for in a figure the college reports
+// on. (It also keeps the mark row set a filtered subset of what it was, so the only
+// marks that can disappear from this endpoint are the ones the matrix already drops.)
+//
+// IT TAKES NO PARAMETER, so it cannot disturb the $n numbering of the filters below;
+// that is why it is pushed onto `conds` first rather than last.
+const ENROLLED_ONLY_SQL =
+  `EXISTS (SELECT 1 FROM "Enrolment" en WHERE en."studentId" = am."studentId" AND en."unitId" = se."unitId")`;
+
+/**
+ * The month-bucket aggregate for GET /attendance/monthly, as { sql, params }.
+ *
+ * Split out of the handler so the leaver rule above is reachable without a database.
+ * The counting itself is a GROUP BY in Postgres and stays there — pulling every
+ * AttendanceMark row into Node to group it in memory is what OOM-crashed this server
+ * at scale, and the fix for that is recorded two handlers down — so the only part of
+ * this that CAN be tested in process is the query it builds, and the test asserts the
+ * predicate's presence and the placeholder numbering rather than a row count. Hung
+ * off the router's exports for the same reason routes/mitigations.js hangs
+ * validateWindow there: Express needs `module.exports` to stay the router itself.
+ * Tests: routes/hnd.monthly.test.js.
+ *
+ * It reads the caller's academic scope through scopedStudentJoin, which THROWS when
+ * none is bound, so it is a pure function of its argument plus that ambient request
+ * state — exactly as the handler body was.
+ *
+ * @param {object} query  req.query (or a plain object, in tests)
+ */
+function buildMonthlyMarkQuery(query = {}) {
+  const studentId = str(query?.studentId);
+  const unitId = str(query?.unitId);
+  const courseId = str(query?.courseId);
   // Curriculum stage — "Year 1 · Term 2". Narrows to the units taught at that point
   // in the course. Ignored unless it parses to a sensible number, so a stray query
   // string can never silently empty the dashboard.
-  const yearNum = Number(req.query?.year);
-  const termNum = Number(req.query?.termNumber);
+  const yearNum = Number(query?.year);
+  const termNum = Number(query?.termNumber);
   const byYear = Number.isInteger(yearNum) && yearNum >= 1 && yearNum <= MAX_YEAR;
   const byTerm = Number.isInteger(termNum) && termNum >= 1 && termNum <= MAX_TERM;
   // ?academicDepartmentId= — the dashboard's School FILTER, a view an admin chose,
@@ -2974,7 +3024,7 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   // STUDENT, a session through its UNIT (see academicScopeSql.js for why those are
   // the definitions) — so an admin filtering by school X sees exactly the figures a
   // school-X-scoped member of staff sees unfiltered.
-  const deptFilter = str(req.query?.academicDepartmentId);
+  const deptFilter = str(query?.academicDepartmentId);
   // Join Unit when filtering by course or by curriculum stage.
   const needUnit = Boolean(courseId || byYear || byTerm);
   const unitJoin = needUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
@@ -2988,9 +3038,14 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
       count(*) FILTER (WHERE am.status='E')::int e,
       count(*) FILTER (WHERE am.status='A')::int a
     FROM "AttendanceMark" am JOIN "HndSession" se ON se.id = am."sessionId" ${unitJoin}${filtStJoin}`;
-  // Every filter here is optional, so `conds` is legitimately empty for the unfiltered
-  // dashboard and the WHERE clause is omitted entirely — see the guard below.
-  const conds = [], params = [];
+  // Every FILTER here is still optional, but `conds` is no longer ever empty: the
+  // leaver rule is unconditional, so the WHERE clause is now always emitted. The
+  // `conds.length ? … : …` shape below is kept rather than collapsed to its first
+  // branch, because what makes the second branch dead is one unconditional push, and
+  // deleting it would quietly make the departmental scope depend on that push — the
+  // next person to make the leaver rule conditional (a "show leavers" toggle, say)
+  // would drop a scoped caller's predicate and widen their figures to the college.
+  const conds = [ENROLLED_ONLY_SQL], params = [];
   if (studentId) { params.push(studentId); conds.push(`am."studentId" = $${params.length}`); }
   if (unitId) { params.push(unitId); conds.push(`se."unitId" = $${params.length}`); }
   if (courseId) { params.push(courseId); conds.push(`u."courseId" = $${params.length}`); }
@@ -3004,22 +3059,42 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   const dept = scopedStudentJoin('am."studentId"', params.length);
   const where = conds.length ? ` WHERE ${conds.join(" AND ")}${dept.sql}`
     : (dept.sql ? ` WHERE TRUE${dept.sql}` : "");
-  const rows = await prisma.$queryRawUnsafe(
-    `${base}${dept.join}${where} GROUP BY 1 ORDER BY 1`,
-    ...params, ...dept.params,
-  );
-  let P = 0, L = 0, E = 0, A = 0;
-  const months = rows.map((r) => {
-    P += r.p; L += r.l; E += r.e; A += r.a;
-    const s = summariseCounts(r.p, r.l, r.e, r.a);
-    return { month: r.ym, pct: s.pct, marked: s.marked, P: r.p, L: r.l, E: r.e, A: r.a };
-  });
-  const t = summariseCounts(P, L, E, A);
-  // Session count under the SAME course/unit scope (independent of student/marks),
-  // so the dashboard's "Total Sessions" tracks the filters too.
-  // The School filter needs the Unit join too: a session reaches a department
-  // through its unit, exactly as the caller's scope below defines it.
-  const sNeedUnit = needUnit || Boolean(deptFilter);
+  return {
+    sql: `${base}${dept.join}${where} GROUP BY 1 ORDER BY 1`,
+    params: [...params, ...dept.params],
+  };
+}
+
+/**
+ * The "Total Sessions" count that sits beside the chart, as { sql, params }.
+ *
+ * Session count under the SAME course/unit scope (independent of student/marks),
+ * so the dashboard's "Total Sessions" tracks the filters too.
+ * The School filter needs the Unit join too: a session reaches a department
+ * through its unit, exactly as the caller's scope below defines it.
+ *
+ * DELIBERATELY NOT SCOPED BY studentId, AND DELIBERATELY NOT GIVEN THE LEAVER RULE.
+ * A session is a scheduled class whose register may be empty; it has no student, so
+ * neither "whose session is this" nor "is that student still enrolled on it" is a
+ * question it can answer. The visible consequence is that a per-student request reads
+ * `marked: 19` beside `sessions: 601`, which is confusing — but it is a PRESENTATION
+ * problem belonging to whichever dashboard renders the two side by side, not a
+ * counting one. Narrowing this to the units one student is enrolled on would change
+ * what "Total Sessions" means for every other caller and make it disagree with the
+ * identical count GET /attendance publishes as scope.sessionCount, which is the
+ * disagreement the leaver rule above exists to end.
+ *
+ * @param {object} query  req.query (or a plain object, in tests)
+ */
+function buildMonthlySessionQuery(query = {}) {
+  const unitId = str(query?.unitId);
+  const courseId = str(query?.courseId);
+  const yearNum = Number(query?.year);
+  const termNum = Number(query?.termNumber);
+  const byYear = Number.isInteger(yearNum) && yearNum >= 1 && yearNum <= MAX_YEAR;
+  const byTerm = Number.isInteger(termNum) && termNum >= 1 && termNum <= MAX_TERM;
+  const deptFilter = str(query?.academicDepartmentId);
+  const sNeedUnit = Boolean(courseId || byYear || byTerm) || Boolean(deptFilter);
   const sJoin = sNeedUnit ? `JOIN "Unit" u ON u.id = se."unitId"` : "";
   const sConds = [], sParams = [];
   if (unitId) { sParams.push(unitId); sConds.push(`se."unitId" = $${sParams.length}`); }
@@ -3033,13 +3108,60 @@ router.get("/attendance/monthly", requireAuth, async (req, res) => {
   const sDept = scopedUnitJoin('se."unitId"', sParams.length);
   const sWhere = sConds.length ? ` WHERE ${sConds.join(" AND ")}${sDept.sql}`
     : (sDept.sql ? ` WHERE TRUE${sDept.sql}` : "");
-  const sessRows = await prisma.$queryRawUnsafe(
-    `SELECT count(*)::int n FROM "HndSession" se ${sJoin}${sDept.join}${sWhere}`,
-    ...sParams, ...sDept.params,
-  );
-  res.json({ months, totals: { pct: t.pct, marked: t.marked, present: P, late: L, excused: E, absent: A }, sessions: sessRows[0]?.n || 0 });
+  return {
+    sql: `SELECT count(*)::int n FROM "HndSession" se ${sJoin}${sDept.join}${sWhere}`,
+    params: [...sParams, ...sDept.params],
+  };
+}
+
+/**
+ * Fold the GROUP BY rows into the response's month buckets AND its totals.
+ *
+ * THE TOTALS ARE THE SUM OF THE BUCKETS, and that is the whole reason this is one
+ * function rather than two. The leaver rule therefore lands on both, and could not
+ * have been applied to one without the other: there is a single population, filtered
+ * once in SQL, and both halves of the response are read off it. Filtering only the
+ * totals (or only the buckets) is exactly the shape of the bug the matrix's comment
+ * describes — a chart whose columns and whose headline are computed over different
+ * sets of marks, agreeing closely enough, often enough, to look right. Keeping the
+ * fold in one place is what makes that impossible rather than merely unintended.
+ *
+ * NULL, NOT ZERO, for a month nobody was marked in and for a caller with no countable
+ * marks at all: summariseCounts returns pct null when `possible` is 0, and nothing
+ * here coerces it. That is the point of the fix as much as the agreement is — the
+ * student this was reported against has no enrolments, so after the leaver rule their
+ * marks are all excluded and their percentage is not measurable. `null` is the right
+ * answer, and 0 would be a lie that puts them top of a risk list for something nobody
+ * measured. `marked` genuinely is 0 for them, because zero marks were counted.
+ *
+ * @param {Array<{ym: string, p: number, l: number, e: number, a: number}>} rows
+ */
+function foldMonthlyBuckets(rows = []) {
+  let P = 0, L = 0, E = 0, A = 0;
+  const months = rows.map((r) => {
+    P += r.p; L += r.l; E += r.e; A += r.a;
+    const s = summariseCounts(r.p, r.l, r.e, r.a);
+    return { month: r.ym, pct: s.pct, marked: s.marked, P: r.p, L: r.l, E: r.e, A: r.a };
+  });
+  const t = summariseCounts(P, L, E, A);
+  return { months, totals: { pct: t.pct, marked: t.marked, present: P, late: L, excused: E, absent: A } };
+}
+
+router.get("/attendance/monthly", requireAuth, async (req, res) => {
+  const mark = buildMonthlyMarkQuery(req.query);
+  const rows = await prisma.$queryRawUnsafe(mark.sql, ...mark.params);
+  const { months, totals } = foldMonthlyBuckets(rows);
+  const sess = buildMonthlySessionQuery(req.query);
+  const sessRows = await prisma.$queryRawUnsafe(sess.sql, ...sess.params);
+  res.json({ months, totals, sessions: sessRows[0]?.n || 0 });
 });
 
+// The attendance matrix: every student's percentage per unit, their overall
+// percentage across all units, and the cohort figures per unit + overall.
+//
+// ?semesterId=<id>       -> only sessions dated inside that semester
+// ?semesterId=unassigned -> only sessions outside every semester
+// (omitted)              -> every session on record
 router.get("/attendance", requireAuth, async (req, res) => {
   const semesterId = str(req.query?.semesterId);
 
@@ -3317,4 +3439,17 @@ router.get("/students/:id/attendance-terms", requireAuth, async (req, res) => {
   });
 });
 
+// ASSIGNED TO THE ROUTER, NOT INSTEAD OF IT. index.js mounts this module as Express
+// middleware, which means `module.exports` has to stay the Router function itself —
+// swapping it for `{ router, buildMonthlyMarkQuery }` is a natural-looking refactor
+// that Express would not reject at require time and every HND route would 500 on its
+// first request. routes/mitigations.js records the same trap for the same reason, and
+// its test asserts the router is still callable; routes/hnd.monthly.test.js does too.
+//
+// These three are exported ONLY so the monthly attendance logic can be tested without
+// a database: the leaver-rule predicate and the $n numbering around it are the whole
+// of what a regression here looks like, and the counting they wrap happens in Postgres.
 module.exports = router;
+module.exports.buildMonthlyMarkQuery = buildMonthlyMarkQuery;
+module.exports.buildMonthlySessionQuery = buildMonthlySessionQuery;
+module.exports.foldMonthlyBuckets = foldMonthlyBuckets;

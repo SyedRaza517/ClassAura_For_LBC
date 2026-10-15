@@ -535,14 +535,51 @@ const MONTHS = [
   "july", "august", "september", "october", "november", "december",
 ];
 
+// Month name → month number, FULL NAMES AND ABBREVIATIONS.
+//
+// WHY THE ABBREVIATIONS ARE NOT OPTIONAL. This lookup was `MONTHS.indexOf(...)` on full
+// names alone, and it made automatic intake comparison permanently dead on a live
+// college: its intakes are labelled "Sept 2026" and "Jan 2027", exactly as the admin
+// typed them into AdmissionIntake, so intakeOrder returned null for every label,
+// previousIntake found nothing to compare against, and every comparison chip on the
+// dashboard rendered blank with nothing on screen saying why. The unit tests all used
+// "September 2026", so this passed CI for as long as it was broken in production —
+// which is the reason the tests below now assert both spellings of the same month.
+//
+// The college is not going to retype its intake list to suit a parser. A label is a
+// free-text field an admin picks for human readers, and "Sept 2026" is how a human
+// writes it.
+const MONTH_INDEX = (() => {
+  const map = new Map();
+  MONTHS.forEach((name, i) => {
+    map.set(name, i);
+    // The three-letter form, which is the abbreviation everyone actually uses and is
+    // unambiguous for all twelve months (jan feb mar apr may jun jul aug sep oct nov
+    // dec are distinct). Derived rather than listed so a second hand-maintained copy
+    // of the month names cannot drift from the first.
+    map.set(name.slice(0, 3), i);
+  });
+  // September is the one month whose common abbreviation is four letters, and it is
+  // also the biggest intake in the UK further-education year — the one label this
+  // college was most certain to have.
+  map.set("sept", 8);
+  return map;
+})();
+
 // An intake label is a month and a year — "September 2026" — because that is the
 // single combined string the admin adds to AdmissionIntake and the applicant picks on
 // the form. Sortable as year*12+month.
+//
+// The optional full stop accepts "Sept. 2026", which is the same abbreviation with
+// punctuation and no more ambiguous for it. Nothing looser is attempted on purpose:
+// "Autumn 2026", "Q1 2027" and "Rolling" still return null, because a label that
+// cannot be placed in time must offer NO comparison rather than a guessed one — see
+// previousIntake below for why a wrong comparison is worse than no comparison.
 const intakeOrder = (label) => {
-  const m = /^\s*([A-Za-z]+)\s+(\d{4})\s*$/.exec(String(label || ""));
+  const m = /^\s*([A-Za-z]+)\.?\s+(\d{4})\s*$/.exec(String(label || ""));
   if (!m) return null;
-  const month = MONTHS.indexOf(m[1].toLowerCase());
-  return month < 0 ? null : Number(m[2]) * 12 + month;
+  const month = MONTH_INDEX.get(m[1].toLowerCase());
+  return month === undefined ? null : Number(m[2]) * 12 + month;
 };
 
 /**
@@ -572,4 +609,181 @@ function previousIntake(labels, current) {
   return best;
 }
 
-module.exports = { buildStats, estimateRevenue, previousIntake, STAGES };
+/* -------------------------------------------------------------------------- */
+/* What a URL is allowed to ask for                                            */
+/*                                                                             */
+/* WHY THIS IS IN stats.js AND NOT IN THE ROUTE. Same reason previousIntake is  */
+/* here: the route cannot be unit-tested without Prisma and Express, so logic   */
+/* left in it is logic nothing checks until a request fails in production — and  */
+/* every defect fixed in this section was found that way, as a 500 on a live    */
+/* deployment. These functions are pure, take plain objects and strings, and     */
+/* the route is left as a thin adapter that turns { error } into a 400.          */
+/* -------------------------------------------------------------------------- */
+
+// The longest a filter value may be. A course or intake label is a short human string;
+// anything longer is either a mistake or somebody probing, and truncating is enough.
+const MAX_PARAM = 200;
+
+// C0 control characters, minus tab/newline/carriage-return, plus DEL.
+//
+// NUL IS THE ONE THAT MATTERS, AND IT IS WHY THIS EXISTS. Trimming and length-capping a
+// parameter is not sanitising it: NUL is not whitespace, so `"\u0000".trim()` is still a
+// one-character string, still truthy, and still reached the `where` clause as a real
+// filter value — at which point Postgres refuses the byte sequence outright and the
+// dashboard answers 500. Confirmed on ?course=%00, ?intake=%00, ?compare=%00 and
+// ?course=HND%00Business.
+//
+// Tab, newline and carriage return are deliberately NOT in this set. Postgres stores
+// them happily, so they cannot produce the failure above, and a value that merely has
+// one at either end is already fixed by trim(). Refusing them would reject input that
+// works today for no gain.
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+
+const isLeapYear = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const daysInMonth = (y, m) => (m === 2 && isLeapYear(y) ? 29 : MONTH_LENGTHS[m - 1]);
+
+/**
+ * True only for a `YYYY-MM-DD` string naming a day that exists.
+ *
+ * SHAPE IS NOT VALIDITY, and treating it as validity was two separate bugs.
+ * `/^\d{4}-\d{2}-\d{2}$/` accepts 2026-99-99, which became an Invalid Date, reached
+ * Prisma and threw — a 500 on a typo. It also accepts 2026-02-30, which was WORSE
+ * because it returned 200: `new Date("2026-02-30")` rolls forward to 2 March, so the
+ * filter quietly covered two days nobody asked for and no figure on the dashboard
+ * looked wrong. A date that does not exist is refused here rather than rolled.
+ *
+ * THE CALENDAR IS COMPUTED, NOT DELEGATED TO `Date`. Two traps rule `Date` out of the
+ * checking as well as the arithmetic: it rolls invalid components silently instead of
+ * reporting them (the 2026-02-30 bug), and `Date.UTC(y, ...)` maps years 0-99 onto
+ * 1900-1999, so a two-digit year would validate as something else entirely. A leap-year
+ * rule is four lines and has none of that behaviour.
+ *
+ * Year 0 and negative years are refused: there is no year 0 in the proleptic Gregorian
+ * calendar Postgres implements, `'0000-01-01'::date` is an out-of-range error there,
+ * and ISO 8601 cannot write a negative year in this four-digit form at all.
+ */
+function isCalendarDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const y = Number(value.slice(0, 4));
+  const m = Number(value.slice(5, 7));
+  const d = Number(value.slice(8, 10));
+  if (y < 1 || m < 1 || m > 12 || d < 1) return false;
+  return d <= daysInMonth(y, m);
+}
+
+// A UTC instant for a validated YYYY-MM-DD, and back again.
+//
+// setUTCFullYear, not Date.UTC, for the two-digit-year reason above: Date.UTC(26, 0, 1)
+// is 1926, setUTCFullYear(26, 0, 1) is year 26.
+//
+// The formatter is hand-rolled because toISOString().slice(0, 10) is what caused defect
+// 3 below — for a year outside 0001-9999 it emits the ISO extended form
+// ("-000998-01-02T…") and slicing that to ten characters yields "-000998-0", a string
+// that is neither a date nor rejected until Prisma sees it. Formatting from the
+// components cannot produce that, and the floor check in precedingWindow means a year
+// outside the four-digit range never reaches it in the first place.
+function instantOf(date) {
+  const d = new Date(0);
+  d.setUTCFullYear(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)));
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+const DAY_MS = 86400000;
+
+function dateStringOf(ms) {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  return `${String(y).padStart(4, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+// The earliest date this module will name. See isCalendarDate for why year 0 does not
+// exist; 0001-01-01 is therefore the floor, not an arbitrary limit.
+const FIRST_DAY_MS = instantOf("0001-01-01");
+
+/**
+ * The window of equal length immediately before [from, to], or null when there is none.
+ *
+ * THE SAME LENGTH, ENDING THE DAY BEFORE. Comparing a six-week range against a whole
+ * previous year is how a dashboard reports a healthy intake as a collapse.
+ *
+ * NULL WHEN THE PRECEDING WINDOW WOULD FALL OFF THE CALENDAR, and that is the fix for a
+ * confirmed 500: ?from=1013-01-01&to=2026-01-01 is a perfectly valid range, but the
+ * window before it of the same thousand-year length starts in 998 BC, and the malformed
+ * string that came out of toISOString for it (see dateStringOf) failed inside Prisma.
+ * The control that isolated it was the identical range with &compare=none returning
+ * 200: nothing was wrong with what the user asked for, only with what was derived.
+ *
+ * CLAMPING THE WINDOW TO 0001-01-01 WAS REJECTED. It would answer 200 with a comparison
+ * against a SHORTER period than the one on screen, which is precisely the distortion the
+ * equal-length rule exists to prevent, and nothing in the response would say so. Null is
+ * a real answer here and the route already knows how to render it — "no comparison
+ * period", no chip — because a first-ever intake has the same honest nothing to compare
+ * against.
+ *
+ * An inverted range gets null for the same reason rather than a window computed from a
+ * negative span, which would end before it started.
+ */
+function precedingWindow(from, to) {
+  if (!isCalendarDate(from) || !isCalendarDate(to)) return null;
+  const start = instantOf(from);
+  const end = instantOf(to);
+  if (end < start) return null;
+  const span = end - start + DAY_MS;
+  const prevStart = start - span;
+  if (prevStart < FIRST_DAY_MS) return null;
+  return { from: dateStringOf(prevStart), to: dateStringOf(start - DAY_MS) };
+}
+
+/**
+ * The dashboard's query parameters, validated: `{ scope }` or `{ error }`.
+ *
+ * ONE PLACE, AND IT REFUSES RATHER THAN IGNORING. Every value the route filters on
+ * passes through here, so there is no second route-shaped opinion on what a date is.
+ *
+ * A bad value is refused with a message instead of being dropped, which is a change
+ * from the behaviour this replaces: an unparseable `from` used to be silently discarded,
+ * and discarding a date filter widens the range to all time while the date box on screen
+ * still shows what the user typed. That is the same class of fault as the 2026-02-30
+ * roll — a filter that is not the one the user asked for, with nothing saying so — and
+ * an admin reading figures off this screen needs to know which it is.
+ */
+function parseScope(query = {}) {
+  const scope = {};
+  for (const key of ["intake", "course", "compare", "from", "to"]) {
+    const raw = query[key];
+    // Only a single string is a value. A repeated parameter (?course=a&course=b) arrives
+    // as an array and an unexpected shape arrives as whatever the parser made of it;
+    // both are treated as absent rather than coerced into a filter nobody asked for.
+    if (typeof raw !== "string") { scope[key] = ""; continue; }
+    if (CONTROL_CHARS.test(raw)) {
+      return { error: `The ${key} filter contains a control character, which is not text this can search for.` };
+    }
+    scope[key] = raw.trim().slice(0, MAX_PARAM);
+  }
+
+  for (const key of ["from", "to"]) {
+    if (scope[key] && !isCalendarDate(scope[key])) {
+      return { error: `"${scope[key]}" is not a date on the calendar. Use YYYY-MM-DD — for example 2026-09-01.` };
+    }
+  }
+
+  // Dates are strings and compare as strings — the convention this codebase holds
+  // everywhere — so this needs no parsing to be correct for same-shape dates.
+  if (scope.from && scope.to && scope.to < scope.from) {
+    return { error: `The range ends before it starts: ${scope.from} to ${scope.to}. Swap the two dates.` };
+  }
+
+  return { scope };
+}
+
+module.exports = {
+  buildStats,
+  estimateRevenue,
+  previousIntake,
+  isCalendarDate,
+  precedingWindow,
+  parseScope,
+  STAGES,
+};
