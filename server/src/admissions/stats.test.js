@@ -503,3 +503,52 @@ test("unparseable labels are ignored rather than ordered arbitrarily", () => {
 test("no comparison is offered when there is only one intake", () => {
   assert.equal(previousIntake(["September 2026"], "September 2026"), null);
 });
+
+/* -------------------------------------------------------------------------- */
+/* Own-counts, and a yield rate that cannot exceed 100%                        */
+/*                                                                             */
+/* Both rules here were written against figures this tracker actually reported */
+/* on a live college's data: "documents complete 55 (94.8%)" when ten of       */
+/* sixty-two applicants held all ten documents, and a yield rate of 110%.      */
+/* -------------------------------------------------------------------------- */
+
+test("a stage reports what the records own, not only what a later stage implies", () => {
+  // Enrolled, but holding no documents at all. The funnel implies every earlier stage
+  // from the enrolment — correct for a milestone, and the reason `count` reads 1 here.
+  // "Documents complete" is a state, not a milestone, and the records say otherwise.
+  const out = build([row({ enrollStatus: "Enroll", documents: [] })]);
+  const docs = stage(out, "documentsComplete");
+  assert.equal(docs.count, 1, "the funnel still implies the stage, keeping the chart monotonic");
+  assert.equal(docs.ownCount, 0, "but nobody actually holds the documents");
+});
+
+test("own-counts match the reached counts when the paperwork is complete", () => {
+  const out = build([row({ enrollStatus: "Enroll", documents: allDocs(), offerSentAt: new Date("2026-03-01"), offerStatus: "accepted", applicationSubmittedAt: new Date("2026-02-01"), isms: [{ interviewDate: "2026-02-20" }] })]);
+  for (const s of out.funnel) {
+    assert.equal(s.ownCount, s.count, `${s.key}: a complete record should own every stage it reached`);
+  }
+});
+
+test("yield never exceeds 100% when somebody is enrolled with no offer on file", () => {
+  // The exact shape that produced 110%: enrolled, with no offerSentAt and no
+  // offerStatus, so the enrolment reached the numerator while the offer never reached
+  // the denominator.
+  const out = build([
+    row({ course: "HND Business", enrollStatus: "Enroll", offerSentAt: null, offerStatus: null }),
+    row({ course: "HND Business", enrollStatus: "Enroll", offerSentAt: new Date("2026-03-01"), offerStatus: "accepted" }),
+  ]);
+  const c = out.yieldByCourse.find((x) => x.course === "HND Business");
+  assert.equal(c.offers, 2, "an enrolment is itself evidence an offer was made");
+  assert.equal(c.enrolled, 2);
+  assert.ok(c.yieldRate <= 100, `yieldRate was ${c.yieldRate}`);
+});
+
+test("no course can report a yield above 100% whatever the paperwork says", () => {
+  const rows = [];
+  for (let i = 0; i < 7; i++) rows.push(row({ course: "HND Leadership", enrollStatus: "Enroll", offerSentAt: null, offerStatus: null }));
+  for (let i = 0; i < 3; i++) rows.push(row({ course: "HND Leadership", offerSentAt: new Date("2026-03-01"), offerStatus: "sent" }));
+  for (const c of build(rows).yieldByCourse) {
+    assert.ok(c.yieldRate == null || c.yieldRate <= 100, `${c.course} reported ${c.yieldRate}`);
+    assert.ok(c.enrolled <= c.offers, `${c.course}: ${c.enrolled} enrolled > ${c.offers} offers`);
+  }
+});

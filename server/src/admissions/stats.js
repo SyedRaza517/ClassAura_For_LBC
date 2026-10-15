@@ -137,6 +137,35 @@ function reachedMatrix(rows, required) {
 const stageCounts = (matrix) =>
   STAGES.map((_, i) => matrix.reduce((a, reached) => a + (reached[i] ? 1 : 0), 0));
 
+/**
+ * How many rows own each stage ON THEIR OWN RULE, with nothing implied by a later one.
+ *
+ * WHY BOTH NUMBERS ARE NEEDED, AND WHY NEITHER IS WRONG
+ *
+ * reachedMatrix above implies every earlier stage from a later one, and the comment
+ * there is right about why: without it the funnel widens as it descends and reads as a
+ * broken chart. For a MILESTONE that rule also repairs the record — somebody enrolled
+ * was certainly offered a place, whether or not anyone filed the letter.
+ *
+ * "Documents complete" is not a milestone. It is a CURRENT STATE, and implying it from
+ * enrolment asserts something measurably false: this college has 40 enrolled students
+ * and 10 who hold all ten required documents. The funnel therefore reported 55 and
+ * printed "94.8%" beside it, where the true figure is 10 of 62 — and a registrar
+ * reading that stage concluded collection was finished while 52 files were incomplete.
+ *
+ * Removing the implication was the obvious fix and is the wrong one: it breaks
+ * monotonicity, fails both the unit test and the smoke suite that pin it, and restores
+ * exactly the broken-looking chart the rule exists to prevent.
+ *
+ * So the funnel keeps its shape and gains the truth beside it. `count` stays the
+ * reached figure the chart is drawn from; `ownCount` is what is actually true of the
+ * records right now. A caller rendering a stage whose meaning is a state — documents —
+ * should show ownCount, and the two being equal for every milestone stage is a useful
+ * signal in itself that the paperwork is complete.
+ */
+const stageOwnCounts = (rows, required) =>
+  STAGES.map((s) => rows.reduce((a, r) => a + (s.own(r, required) ? 1 : 0), 0));
+
 /* -------------------------------------------------------------------------- */
 /* Geography                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -328,8 +357,26 @@ function yieldByCourse(rows) {
     if (!byCourse.has(course)) byCourse.set(course, { course, applications: 0, offers: 0, enrolled: 0 });
     const c = byCourse.get(course);
     c.applications++;
-    if (STAGES.find((s) => s.key === "offersSent").own(r)) c.offers++;
-    if (r.enrollStatus === "Enroll") c.enrolled++;
+    // Offers counted the SAME way the funnel counts them — implied by enrolment, not
+    // only by the paperwork.
+    //
+    // This read `offersSent.own(r)` and produced a yield rate ABOVE 100%: one applicant
+    // is marked enrolled with no offerSentAt and no offerStatus, so the enrolment landed
+    // in the numerator while the offer never reached the denominator. HND Business
+    // reported 16 applications, 10 offers and 11 enrolments — 110% — and narrowing the
+    // scope amplified it to 200%, because a single row is a larger share of a smaller
+    // set. A conversion rate above 100% is not a figure anybody can act on; it just
+    // says the panel is wrong.
+    //
+    // The funnel already resolves this and hides it, by implying the offer from the
+    // enrolment. The two panels sat in ONE response disagreeing, which is how the
+    // defect stayed visible in the yield table while the funnel looked healthy. Using
+    // the same rule makes enrolled <= offers true by construction rather than by luck,
+    // and the two panels can no longer contradict each other.
+    const ownsOffer = STAGES.find((s) => s.key === "offersSent").own(r);
+    const ownsEnrol = STAGES.find((s) => s.key === "enrolled").own(r);
+    if (ownsOffer || ownsEnrol) c.offers++;
+    if (ownsEnrol) c.enrolled++;
   }
   return [...byCourse.values()]
     // pct, not a bare division: a course with no offers yet has an UNMEASURABLE yield,
@@ -423,13 +470,26 @@ function buildStats({ rows = [], compareRows = null, config, courseFees = {}, in
   const revenue = estimateRevenue(rows, courseFees);
   const beforeRevenue = compareRows ? estimateRevenue(compareRows, courseFees) : null;
 
+  const owned = stageOwnCounts(rows, required);
+
   const funnel = STAGES.map((s, i) => ({
     key: s.key,
     label: s.label,
     count: now.counts[i],
+    // What is true of the records themselves, with nothing implied by a later stage.
+    // Equal to `count` on a stage where the paperwork is complete; lower where it is
+    // not. See stageOwnCounts for why both are reported rather than one replacing the
+    // other — "documents complete" is the stage where the gap is not a filing lag but
+    // a fact, and 55-versus-10 is the difference between "collection is finished" and
+    // "fifty-two files are incomplete".
+    ownCount: owned[i],
     // Null for the first stage (nothing above it) and whenever the stage above is
     // empty — a conversion out of nobody is not 0%, it is unanswerable.
     conversionFromPrevious: i === 0 ? null : pct(now.counts[i], now.counts[i - 1]),
+    // The same conversion measured on own-counts. Where the two disagree, the records
+    // disagree with the chart, and that is worth being able to see without recomputing
+    // it by hand from the raw list.
+    ownConversionFromPrevious: i === 0 ? null : pct(owned[i], owned[i - 1]),
   }));
 
   const count = (key) => ({

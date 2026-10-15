@@ -1,18 +1,29 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The EdTech APIs, both built from THIS repository.
+// The ClassAura APIs, both built from THIS repository.
 //
-//   production  service "EdTech" on Render, deploys from branch `production`
-//   staging     service "edtech-staging-api" on Render, deploys from branch `main`
+// THESE NAMED THE EDTECH SERVICES UNTIL 15 OCT 2026, AND THAT BROKE THE FIRST DEPLOY OF
+// THIS REPOSITORY IN THE EXACT WAY THE COMMENT BELOW DESCRIBES. This repo was forked
+// from EdTech and inherited EdTech's hosts here, so when VITE_API_URL was set to the
+// ClassAura API, isOurApi() judged it "not ours" and substituted edtech-staging-api from
+// the branch name. The build passed, the page said ClassAura, and every request went to
+// another product's database. The mechanism is right and is kept; the values were wrong.
+//
+//   production  service "classaura-lbc-api" on Render, deploys from branch `production`
+//   staging     service "classaura-lbc-api" on Render, deploys from branch `main`
+//
+// Both keys hold the same service because ClassAura has one API today. The production
+// key is kept rather than removed because apiUrlForBranch() reads it by name; give it
+// its own entry when a `production` branch and a second service exist.
 //
 // Kept here rather than only in .env files because .env.production is gitignored: a
 // clean clone has no copy of it, so without these a fresh CI build has nothing to fall
 // back to but the localhost URL in .env, which is the failure the guard below exists
 // to catch.
 const API = {
-  production: "https://edtech-xr8g.onrender.com/api",
-  staging: "https://edtech-staging-api.onrender.com/api",
+  production: "https://classaura-lbc-api.onrender.com/api",
+  staging: "https://classaura-lbc-api.onrender.com/api",
 };
 
 // The only hosts a build may be pointed at: the two APIs above, and nothing else.

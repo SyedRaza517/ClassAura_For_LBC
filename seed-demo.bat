@@ -10,7 +10,19 @@ REM  To take the data out again:  seed-demo.bat remove
 REM ---------------------------------------------------------------------------
 cd /d "%~dp0server"
 
-set "PROD_URL=postgresql://postgres.lksgcfmlnvkqneukoioa:SyedRaza%%40517@aws-0-eu-west-2.pooler.supabase.com:5432/postgres"
+REM The production URL is read from the environment, never written here.
+REM It was a literal on this line, password and all. This file is committed and the
+REM repository is public, so that was a published credential -- and because the same
+REM password opens every database in this account, it exposed all of them.
+REM   set "CLASSAURA_PROD_URL=postgresql://postgres.<ref>:<password>@<host>:5432/postgres"
+REM An "@" in the password must be percent-encoded as %%40.
+if not defined CLASSAURA_PROD_URL (
+  echo.
+  echo   CLASSAURA_PROD_URL is not set -- see the comment above this line.
+  echo.
+  exit /b 1
+)
+set "PROD_URL=%CLASSAURA_PROD_URL%"
 
 if /i "%~1"=="remove" (
   set "MODE=--remove --apply"
