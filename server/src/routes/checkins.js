@@ -8,6 +8,8 @@ const { localDate, localTime } = require("../clock");
 const tapConfig = require("../attendanceTapConfig");
 const { checkPresence } = require("../presence");
 const { campusesFor } = require("../campuses");
+// For the absence list below: nobody is "absent" on a day the college was closed.
+const { ukBankHolidays } = require("../bankHolidays");
 
 // HH:MM, 24-hour. Times are stored as plain strings and rendered verbatim.
 const isTime = (v) => isString(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -107,8 +109,56 @@ router.get("/on-site", requireAuth, async (req, res) => {
     },
   });
 
+  // Who is NOT in — for the same audience that may see departure times, and nobody else.
+  //
+  // ABSENCE IS PERSONAL. Read next to a leave calendar it can reveal sickness, so it
+  // goes only to callers holding the Check-In or Daily Summaries page — the same gate
+  // that gates timeOut below, and for the same reason: a presence list must not become
+  // a record of somebody else's working life. Who holds those pages is decided in the
+  // Access tab rather than here.
+  //
+  // Staff and Leave are UNSCOPED in academicScopeModels.js, so these two queries see
+  // the whole college without a withoutAcademicScope() hatch. That is correct for this
+  // feature — "who is in the building" is a question about the building.
+  let absence = {};
+  if (hasPage(req.user, ["checkin", "summaries"])) {
+    const wd = new Date(`${date}T00:00:00Z`).getUTCDay();
+    const holiday = ukBankHolidays(Number(date.slice(0, 4))).includes(date);
+    // On a weekend or bank holiday nobody is expected in, so nobody is "absent" — the
+    // word would otherwise accuse forty people of missing a day that did not exist.
+    if (wd === 0 || wd === 6 || holiday) {
+      absence = { absent: [], onLeave: [], nonWorkingDay: holiday ? "bank holiday" : "weekend" };
+    } else {
+      const inIds = new Set(rows.map((r) => r.staffId));
+      const [staff, leave] = await Promise.all([
+        // pendingActivation accounts cannot sign in yet, so cannot have checked in. Nor
+        // can anyone whose account did not exist on that day — looking back a month must
+        // not list last week's new starter as absent for days before they were hired.
+        prisma.staff.findMany({
+          where: { pendingActivation: false, createdAt: { lte: new Date(`${date}T23:59:59.999Z`) } },
+          select: { id: true, name: true, initials: true, colour: true, jobTitle: true, dept: true, site: true },
+          orderBy: { name: "asc" },
+        }),
+        prisma.leave.findMany({ where: { status: "approved", start: { lte: date }, end: { gte: date } }, select: { staffId: true } }),
+      ]);
+      const onLeaveIds = new Set(leave.map((l) => l.staffId));
+      const card = (s) => ({ staffId: s.id, name: s.name, initials: s.initials, colour: s.colour, jobTitle: s.jobTitle, dept: s.dept, site: s.site || null });
+      const notIn = staff.filter((s) => !inIds.has(s.id));
+      // APPROVED LEAVE IS NOT ABSENCE. They were never expected, so listing them as
+      // absent reads as a no-show against someone who did nothing wrong. The TYPE of
+      // leave is deliberately not sent: "on leave" is a fact about the rota, while
+      // "sick leave" is a fact about a person.
+      absence = {
+        absent: notIn.filter((s) => !onLeaveIds.has(s.id)).map(card),
+        onLeave: notIn.filter((s) => onLeaveIds.has(s.id)).map(card),
+        nonWorkingDay: null,
+      };
+    }
+  }
+
   res.json({
     date,
+    ...absence,
     people: rows
       .filter((r) => r.staff)
       .map((r) => ({

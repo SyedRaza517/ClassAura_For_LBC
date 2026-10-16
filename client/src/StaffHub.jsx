@@ -111,7 +111,28 @@ const aggregateStats = (list) => {
 const fmtDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const fmtDay  = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 const nowTime = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+// A stored "HH:MM" as a reader says it. Check-in times are strings in London local
+// time, never Dates — parsing one into a Date to format it would hand a clock change
+// the chance to move somebody's arrival by an hour. So this is string arithmetic.
+// Anything that is not HH:MM comes back untouched rather than as "NaN:NaN AM".
+const fmtTime12 = (hm) => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hm || ""));
+  if (!m) return hm || "—";
+  const h = Number(m[1]);
+  return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
+};
 function daysBetween(a, b) { const d1 = new Date(a), d2 = new Date(b); if (isNaN(d1) || isNaN(d2)) return 0; return Math.max(1, Math.round((d2 - d1) / 86400000) + 1); }
+
+// A site's own colour, so its filter chip, its badge and the people in it read as one
+// place at a glance. Derived from the NAME, so a college that adds a campus gets a
+// colour for it without a release; the palette is the console's own accent set.
+const SITE_PALETTE = ["#1a3a8f", "#0d7a5f", "#6d28d9", "#b45309", "#0e7490", "#be123c", "#4d7c0f"];
+const siteColour = (name) => { let h = 0; for (const ch of String(name || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return SITE_PALETTE[h % SITE_PALETTE.length]; };
+// A #rrggbb colour at low opacity, for tinted backgrounds. Anything else — a missing
+// or odd staff colour — falls back to navy rather than emitting invalid CSS, which
+// renders as a transparent background and looks like a styling bug.
+const tint = (hex, a = "1a") => (/^#[0-9a-f]{6}$/i.test(hex || "") ? hex : NAVY) + a;
+const solid = (hex) => (/^#[0-9a-f]{6}$/i.test(hex || "") ? hex : NAVY);
 
 /* ---------- read-only display helpers (pure, safe fallbacks) ---------- */
 const firstNameOf = (name) => (name ? String(name).split(" ")[0] : "there");
@@ -1934,85 +1955,213 @@ const ON_SITE_FILTERS = [
   { key: "SL", label: "SL" },
 ];
 
+// Day picker shared by Staff on Site and the all-staff summaries: ‹ previous, a date
+// field, next ›, and Today. Never goes past `max` (today), because tomorrow has no
+// check-ins to show and offering the arrow invites the question.
+//
+// DAYS ARE SHIFTED AT 12:00 UTC, not midnight. Adding 24 hours to a midnight instant
+// lands on the same calendar day when the clocks go back and skips one when they go
+// forward; from mid-day there is no clock change large enough to cross a date
+// boundary, so ‹ and › always move exactly one day whatever the season.
+function DateNav({ date, onChange, max }) {
+  const shift = (n) => {
+    const d = new Date(`${date}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    const next = d.toISOString().slice(0, 10);
+    onChange(next > max ? max : next);
+  };
+  const atMax = date >= max;
+  const arrow = "press flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition disabled:opacity-35";
+  return (
+    <div className="mb-3 flex items-center gap-1.5">
+      <button type="button" aria-label="Previous day" onClick={() => shift(-1)} className={arrow}><ChevronLeft size={18} /></button>
+      <input type="date" value={date} max={max} aria-label="Pick a date"
+        onChange={e => { const v = e.target.value; if (v) onChange(v > max ? max : v); }}
+        className="h-10 min-w-0 flex-1 rounded-xl bg-white px-3 text-sm font-bold text-slate-700 ring-1 ring-slate-200 focus:outline-none" />
+      <button type="button" aria-label="Next day" onClick={() => shift(1)} disabled={atMax} className={arrow}><ChevronRight size={18} /></button>
+      <button type="button" onClick={() => onChange(max)} disabled={atMax}
+        className="press h-10 shrink-0 rounded-xl px-3.5 text-xs font-bold text-white transition disabled:opacity-40" style={{ background: NAVY }}>Today</button>
+    </div>
+  );
+}
+
+const ABSENT_FILTER = "__absent";
+
 function StaffOnSiteScreen({ store, me }) {
   const [data, setData] = useState(null);   // null = loading
   const [site, setSite] = useState("");
   const [err, setErr] = useState("");
+  // Past days are offered to the same admins the SERVER lets see them (Check-In or
+  // Daily Summaries). This only decides whether to draw the controls — the server
+  // enforces it and answers 403 either way, so a client that got this wrong would be
+  // rude rather than dangerous. Only whether to DRAW the controls is decided here.
+  const today = todayISO();
+  const canPickDate = canAccessPage(me, "checkin") || canAccessPage(me, "summaries");
+  const [date, setDate] = useState(today);
+  const isToday = date === today;
 
-  // Refresh on mount and every 60s while the screen is visible: people arrive
-  // through the morning, and a stale list is worse than no list.
+  // Refresh on mount and every 60s while the screen is visible and showing TODAY:
+  // people arrive through the morning, and a stale list is worse than no list. A past
+  // day cannot change, so it is fetched once and left alone.
   useEffect(() => {
     let cancelled = false;
-    const load = () => store.staffOnSite()
+    setData(null);
+    const load = () => store.staffOnSite(isToday ? undefined : date)
       .then(d => { if (!cancelled) { setData(d); setErr(""); } })
-      .catch(e => { if (!cancelled) { setData(prev => prev || { people: [] }); setErr(e.message || "Could not load who's in today."); } });
+      .catch(e => { if (!cancelled) { setData(prev => prev || { people: [] }); setErr(e.message || "Could not load who was in."); } });
     load();
-    const id = setInterval(() => {
+    const id = isToday ? setInterval(() => {
       if (typeof document === "undefined" || document.visibilityState === "visible") load();
-    }, 60000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, 60000) : null;
+    return () => { cancelled = true; if (id) clearInterval(id); };
+  }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const all = data?.people || [];
-  const shown = site ? all.filter(p => p.site === site) : all;
+  const shown = site && site !== ABSENT_FILTER ? all.filter(p => p.site === site) : all;
   // Counts per building, so the filter says how many are behind each one before
   // you tap it.
   const countFor = (k) => (k ? all.filter(p => p.site === k).length : all.length);
   const noSite = all.filter(p => !p.site).length;
+  // Absent / On leave arrive ONLY for viewers the server allows. For everyone else the
+  // keys are simply missing, so the chip and the tiles never render — there is nothing
+  // hidden on the client that a reader of this bundle could switch back on.
+  const canSeeAbsent = Array.isArray(data?.absent);
+  const showingAbsent = canSeeAbsent && site === ABSENT_FILTER;
+  const onlineCount = all.filter(p => /Online/i.test(p.checkedInAt || "")).length;
+  // The headline numbers. "In" counts everybody present, and Online is a SUBSET of it
+  // rather than a fourth column — somebody working online has checked in, and adding
+  // the two would report more people than the college employs.
+  const stats = [
+    { k: "", label: "In", n: all.length, dot: "#34d399" },
+    { k: null, label: "Online", n: onlineCount, dot: "#5eead4" },
+    ...(canSeeAbsent ? [
+      { k: ABSENT_FILTER, label: "Absent", n: data.absent.length, dot: "#fda4af" },
+      { k: ABSENT_FILTER, label: "On leave", n: data.onLeave.length, dot: "#7dd3fc" },
+    ] : []),
+  ];
+
+  // One card shape for present, absent and on-leave people; only the right-hand side
+  // differs. Edged and faintly washed in the person's own colour — or, for absent and
+  // on leave, in the status colour, so those lists cannot be misread as people who are in.
+  const personCard = (p, i, right, accent) => (
+    <Card key={p.staffId || p.id} className="flex items-center gap-3 border-l-4 !p-3 fade-up"
+      style={{ animationDelay: `${Math.min(i, 10) * 40}ms`, borderLeftColor: solid(accent || p.colour), background: `linear-gradient(90deg, ${tint(accent || p.colour, "17")}, #ffffff 55%)` }}>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ring-2 ring-white" style={{ background: solid(p.colour) }}>{p.initials}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-bold text-slate-700">
+          {p.name}{p.staffId === me?.id && <span className="ml-1.5 text-[10px] font-bold text-slate-500">(you)</span>}
+        </p>
+        <p className="truncate text-[11px] text-slate-500">{[p.jobTitle, p.dept].filter(Boolean).join(" · ") || "Staff"}</p>
+        {/* The check-in records Onsite/Online, which is a different question from which
+            building someone belongs to. Only "Online" is worth saying — it means they
+            are not in the building at all. */}
+        {/Online/i.test(p.checkedInAt || "") && (
+          <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-700 ring-1 ring-teal-200"><Wifi size={10} /> Working online</span>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">{right}</div>
+    </Card>
+  );
+  const siteBadge = (p) => (p.site
+    ? <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: tint(siteColour(p.site), "1f"), color: siteColour(p.site) }}>{p.site}</span>
+    : <span className="inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600 ring-1 ring-amber-200">No site</span>);
+  const pill = (cls, Icon, label, value) => (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-extrabold tabular-nums ring-1 ${cls}`}>
+      {Icon && <Icon size={11} />}{label && <span className="text-[10px] font-bold uppercase opacity-70">{label}</span>}{value}
+    </span>
+  );
 
   return (
     <Screen>
+      {canPickDate && <DateNav date={date} onChange={setDate} max={today} />}
+
+      {data !== null && (
+        <div className="mb-3 rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: `linear-gradient(135deg, ${NAVY_DARK}, ${NAVY} 45%, ${BLUE_LT})` }}>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-white/70">{isToday ? "Today" : fmtDay(date)}</p>
+          <p className="text-lg font-extrabold leading-tight">Who's on site</p>
+          <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }}>
+            {stats.map(t => (
+              <button key={t.label} type="button" disabled={t.k === null} onClick={() => t.k !== null && setSite(t.k)}
+                className="press min-w-0 rounded-xl bg-white/15 px-1.5 py-2 text-center ring-1 ring-white/20 transition hover:bg-white/25 disabled:cursor-default">
+                <p className="text-xl font-extrabold tabular-nums">{t.n}</p>
+                <p className="flex items-center justify-center gap-1 text-[10px] font-bold uppercase tracking-wide text-white/85">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: t.dot }} />{t.label}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mb-3 flex gap-1.5 overflow-x-auto pb-0.5">
         {ON_SITE_FILTERS.map(s => (
           <button key={s.key} type="button" onClick={() => setSite(s.key)}
-            className={`press flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition ${site === s.key ? "text-white ring-transparent shadow-sm" : "bg-white text-slate-500 ring-slate-200"}`}
-            style={site === s.key ? { background: NAVY } : {}}>
+            className={`press flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition ${site === s.key ? "text-white ring-transparent shadow-sm" : "bg-white text-slate-600 ring-slate-200"}`}
+            style={site === s.key ? { background: s.key ? siteColour(s.key) : NAVY } : {}}>
+            {s.key && site !== s.key && <span className="h-2 w-2 rounded-full" style={{ background: siteColour(s.key) }} />}
             {s.label}
             <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${site === s.key ? "bg-white/25" : "bg-slate-100 text-slate-500"}`}>{countFor(s.key)}</span>
           </button>
         ))}
+        {canSeeAbsent && (
+          <button type="button" onClick={() => setSite(ABSENT_FILTER)}
+            className={`press flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold ring-1 transition ${showingAbsent ? "text-white ring-transparent shadow-sm" : "bg-white text-rose-600 ring-rose-200"}`}
+            style={showingAbsent ? { background: "#be123c" } : {}}>
+            Absent
+            <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${showingAbsent ? "bg-white/25" : "bg-rose-50 text-rose-600"}`}>{data.absent.length}</span>
+          </button>
+        )}
       </div>
 
       {err && <Card className="mb-3 !p-3"><p className="text-xs font-semibold text-rose-600">{err}</p></Card>}
 
-      {data === null ? (
+      {showingAbsent ? (
+        data.nonWorkingDay ? (
+          <Card><EmptyState Icon={Users} title={`${isToday ? "Today is" : "That day was"} a ${data.nonWorkingDay}`} msg="Nobody is expected in, so nobody is marked absent." /></Card>
+        ) : (
+          <div className="space-y-2">
+            {data.absent.length === 0
+              ? <Card><EmptyState Icon={Users} title="Nobody is absent" msg={`Everyone expected in ${isToday ? "today" : "that day"} checked in or was on leave.`} /></Card>
+              : data.absent.map((p, i) => personCard(p, i, <>
+                  {pill("bg-rose-50 text-rose-700 ring-rose-200", null, "", "Not checked in")}
+                  {siteBadge(p)}
+                </>, "#e11d48"))}
+            {data.onLeave.length > 0 && (
+              <>
+                <p className="px-1 pt-2 text-[11px] font-extrabold uppercase tracking-widest text-sky-600">On leave · {data.onLeave.length}</p>
+                {data.onLeave.map((p, i) => personCard(p, i, <>
+                  {pill("bg-sky-50 text-sky-700 ring-sky-200", null, "", "On leave")}
+                  {siteBadge(p)}
+                </>, "#0284c7"))}
+              </>
+            )}
+          </div>
+        )
+      ) : data === null ? (
         <div className="flex flex-col items-center gap-2 py-12 text-slate-500"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading who's in…</p></div>
       ) : shown.length === 0 ? (
-        <Card><EmptyState Icon={Users} title={site ? `Nobody from ${site} yet` : "Nobody has checked in yet"}
-          msg={site ? "Try another building, or All." : "Check-ins appear here as people arrive."} /></Card>
+        <Card><EmptyState Icon={Users} title={site ? `Nobody from ${site}${isToday ? " yet" : ""}` : isToday ? "Nobody has checked in yet" : "Nobody checked in that day"}
+          msg={site ? "Try another building, or All." : isToday ? "Check-ins appear here as people arrive." : "Try another day."} /></Card>
       ) : (
         <div className="space-y-2">
-          {shown.map((p, i) => (
-            <Card key={p.id} className="flex items-center gap-3 !p-3 fade-up" style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}>
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p.colour || NAVY }}>{p.initials}</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-slate-700">
-                  {p.name}{p.staffId === me?.id && <span className="ml-1.5 text-[10px] font-bold text-slate-500">(you)</span>}
-                </p>
-                <p className="truncate text-[11px] text-slate-500">{[p.jobTitle, p.dept].filter(Boolean).join(" · ") || "Staff"}</p>
-                {/* The check-in records Onsite/Online, which is a different question
-                    from which building someone belongs to. Only "Online" is worth
-                    saying — it means they are not in the building at all. */}
-                {/Online/i.test(p.checkedInAt || "") && (
-                  <p className="truncate text-[10px] font-semibold text-emerald-600">Working online</p>
-                )}
-              </div>
-              <div className="shrink-0 text-right">
-                <p className="text-sm font-extrabold tabular-nums" style={{ color: NAVY }}>{p.timeIn}</p>
-                {p.site
-                  ? <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{p.site}</span>
-                  : <span className="mt-0.5 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-600">No site</span>}
-                {p.timeOut && <p className="mt-0.5 text-[10px] text-slate-500">Left {p.timeOut}</p>}
-              </div>
-            </Card>
-          ))}
+          {shown.map((p, i) => personCard(p, i, <>
+            {pill("bg-emerald-50 text-emerald-700 ring-emerald-200", LogIn, "In:", fmtTime12(p.timeIn))}
+            {/* Out ONLY when the server sent the field, which it does for Check-In and
+                Daily Summaries admins alone. "—" means no check-out recorded, which for
+                today usually means still in. The absence of the key is the permission
+                check: there is nothing here to reveal for anybody else. */}
+            {"timeOut" in p && (p.timeOut
+              ? pill("bg-rose-50 text-rose-700 ring-rose-200", LogOut, "Out:", fmtTime12(p.timeOut))
+              : pill("bg-slate-50 text-slate-500 ring-slate-200", LogOut, "Out:", "—"))}
+            {siteBadge(p)}
+          </>))}
         </div>
       )}
 
-      {data !== null && (
-        <Card className="mt-3 !p-3 text-center">
+      {data !== null && !showingAbsent && (
+        <Card className="mt-3 !p-3 text-center" style={{ background: tint(site ? siteColour(site) : NAVY, "0f") }}>
           <p className="text-sm font-bold text-slate-600">
-            Checked in today{site ? ` (${site})` : ""}: <span style={{ color: NAVY }}>{shown.length}</span>
+            Checked in {isToday ? "today" : "that day"}{site ? ` (${site})` : ""}: <span style={{ color: NAVY }}>{shown.length}</span>
           </p>
           {!site && noSite > 0 && (
             <p className="mt-1 text-[11px] text-slate-500">
@@ -2416,7 +2565,111 @@ function ApprovalScreen({ store, me }) {
 }
 
 /* ----- Daily Summary ----- */
+// Every colleague's daily summary for one day — the mobile counterpart of the console's
+// Daily Summaries page. Reached only by admins holding Check-In or Daily Summaries,
+// because GET /checkins blanks other people's summary text for everybody else: without
+// that grant this tab would render a list of empty cards and look broken.
+//
+// It reads store.checkins rather than fetching, because the store already holds the
+// recent window for exactly this audience. The consequence is worth stating: a date
+// older than that window shows everyone as "not checked in" rather than erroring, since
+// the rows simply are not loaded. Today and the recent past — what this screen is for —
+// are always covered.
+function AllStaffSummaries({ store }) {
+  const today = todayISO();
+  const [date, setDate] = useState(today);
+  const byStaff = new Map(store.checkins.filter(c => c.date === date).map(c => [c.staffId, c]));
+  // Who wrote one first, then who was in without writing one, then everyone else — the
+  // order an admin reads in: what happened, then who to chase.
+  const rank = (s) => { const r = byStaff.get(s.id); return r?.summary ? 0 : r?.in ? 1 : 2; };
+  const people = [...(store.staff || [])].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const wrote = people.filter(s => byStaff.get(s.id)?.summary).length;
+  const inNoSummary = people.filter(s => { const r = byStaff.get(s.id); return r?.in && !r.summary; }).length;
+  const pct = people.length ? Math.round((wrote / people.length) * 100) : 0;
+  // Written / In but nothing written / Not checked in — each with its own colour, so a
+  // scroll down the list shows at a glance who still has to be chased.
+  const STATUS = {
+    0: { label: "Written", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", Icon: CheckCircle2 },
+    1: { label: "No summary yet", cls: "bg-amber-50 text-amber-700 ring-amber-200", Icon: Clock3 },
+    2: { label: "Not checked in", cls: "bg-slate-100 text-slate-500 ring-slate-200", Icon: null },
+  };
+  return (
+    <>
+      <DateNav date={date} onChange={setDate} max={today} />
+      <div className="mb-3 rounded-2xl p-4 text-white shadow-md fade-up" style={{ background: "linear-gradient(135deg, #065f46, #0d7a5f 45%, #14b8a6)" }}>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-white/70">{date === today ? "Today" : fmtDay(date)}</p>
+        <p className="text-lg font-extrabold leading-tight">Daily summaries</p>
+        <div className="mt-2 flex items-end justify-between gap-3">
+          <p className="text-3xl font-extrabold tabular-nums leading-none">{wrote}<span className="text-base font-bold text-white/75"> / {people.length}</span></p>
+          <p className="min-w-0 text-right text-[11px] font-semibold text-white/85">wrote a summary{inNoSummary ? <><br />{inNoSummary} in without one</> : null}</p>
+        </div>
+        <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-white/20">
+          <div className="h-full rounded-full bg-white transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <div className="space-y-2">
+        {people.length === 0 && <Card><EmptyState Icon={Users} title="No staff to show" msg="Staff records load with the rest of the app — try again in a moment." /></Card>}
+        {people.map((s, i) => {
+          const r = byStaff.get(s.id);
+          const st = STATUS[rank(s)];
+          return (
+            <Card key={s.id} className="border-l-4 !p-3 fade-up"
+              style={{ animationDelay: `${Math.min(i, 10) * 40}ms`, borderLeftColor: solid(s.colour), background: `linear-gradient(90deg, ${tint(s.colour, "14")}, #ffffff 55%)` }}>
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm ring-2 ring-white" style={{ background: solid(s.colour) }}>{s.initials}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold text-slate-700">{s.name}</p>
+                  <p className="truncate text-[11px] text-slate-500">
+                    {s.dept || "Staff"}{r?.in ? <> · <span className="font-semibold text-emerald-700">In {fmtTime12(r.in)}</span>{r.out ? <> · <span className="font-semibold text-rose-700">Out {fmtTime12(r.out)}</span></> : null}</> : null}
+                  </p>
+                </div>
+                <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${st.cls}`}>{st.Icon && <st.Icon size={11} />}{st.label}</span>
+              </div>
+              {r?.summary && (
+                <p className="mt-2 whitespace-pre-wrap break-words rounded-xl border-l-2 px-3 py-2 text-sm text-slate-700"
+                  style={{ background: tint(s.colour, "10"), borderLeftColor: tint(s.colour, "66") }}>{r.summary}</p>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function SummaryTabs({ view, setView }) {
+  return (
+    <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
+      {[{ k: "mine", l: "My summary" }, { k: "all", l: "All staff" }].map(t => (
+        <button key={t.k} type="button" onClick={() => setView(t.k)}
+          className={`press min-w-0 rounded-lg py-2 text-xs font-bold transition ${view === t.k ? "text-white shadow-sm" : "text-slate-500"}`}
+          style={view === t.k ? { background: t.k === "all" ? "linear-gradient(135deg, #0d7a5f, #14b8a6)" : `linear-gradient(135deg, ${NAVY}, ${BLUE_LT})` } : {}}>{t.l}</button>
+      ))}
+    </div>
+  );
+}
+
+// The tab switch lives here and the two views are separate components, so that
+// returning early for "all" cannot change how many hooks MySummary runs. Putting both
+// in one component and branching inside it would reorder hooks on every tab press.
 function SummaryScreen({ store, me }) {
+  // Mirrors the server's canReadSummaries (Check-In or Daily Summaries page). Without
+  // it the server blanks other people's summaries anyway, so offering the tab would
+  // only ever show empty cards.
+  const canSeeAll = canAccessPage(me, "summaries") || canAccessPage(me, "checkin");
+  const [view, setView] = useState("mine");
+  if (canSeeAll && view === "all") {
+    return (
+      <Screen>
+        <SummaryTabs view={view} setView={setView} />
+        <AllStaffSummaries store={store} />
+      </Screen>
+    );
+  }
+  return <MySummary store={store} me={me} tabs={canSeeAll ? <SummaryTabs view={view} setView={setView} /> : null} />;
+}
+
+function MySummary({ store, me, tabs }) {
   const today = todayISO();
   const rec = store.checkins.find(c => c.staffId === me.id && c.date === today);
   const [text, setText] = useState(rec?.summary || "");
@@ -2433,6 +2686,7 @@ function SummaryScreen({ store, me }) {
   };
   return (
     <Screen>
+      {tabs}
       <Card>
         <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{fmtDay(today)}</p>
         <p className="mb-3 text-lg font-extrabold" style={{ color: NAVY }}>What did you work on today?</p>
