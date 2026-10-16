@@ -1,7 +1,27 @@
-# Deployment guide — EdTech Hub
+# Deployment guide — ClassAura for London Brookes College
+
+> **Read this box before the rest of the file.** Much of what follows describes EdTech,
+> the product this repository was forked from, and names services that are not ours.
+> The live ClassAura deployment, verified 16 Oct 2026, is:
+>
+> | Piece | Where |
+> |---|---|
+> | API | Render **`classaura-lbc-api`** → `https://classaura-lbc-api.onrender.com`, deploys from **`main`** |
+> | Dashboard | Vercel **`classaura-lbc-client`** → `https://classaura-lbc-client.vercel.app`, production target **`main`** |
+> | Database | Supabase **eu-central-1 (Frankfurt)**, co-located with the API |
+> | Android | `uk.co.classaura.app`, versionCode 6 / 1.1.2 |
+> | iOS | `uk.co.classaura.app`, App Store Connect app `6811078668`, built by Codemagic |
+>
+> **`main` is production. There is no staging.** A push to `main` reaches the college's
+> live system. The `production` branch is a leftover from the fork, deploys nothing, and
+> is several commits behind.
+>
+> Anything below naming `edtech-hub-api`, `edtech-xr8g`, `edtech-hub.vercel.app` or
+> Supabase **eu-north-1** is the old product's, not ours. The procedures are still
+> correct; the names are not.
 
 Four things ship: **API** (Render) → **Dashboard** (Vercel) → **Android** (Play) → **iOS** (App Store).
-Database is already on **Supabase** (PostgreSQL, eu-north-1). Deploy in that order.
+Deploy in that order.
 
 ---
 
