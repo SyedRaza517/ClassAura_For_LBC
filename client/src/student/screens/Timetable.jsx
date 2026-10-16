@@ -108,7 +108,12 @@ function ModuleTimetable({ events, today }) {
           // long timetable doesn't leave the last module waiting seconds to animate.
           <div key={g.key} className="fade-up mb-3 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-800 dark:ring-slate-700/60" style={{ animationDelay: `${Math.min(gi, 6) * 55}ms` }}>
             <div className="px-3.5 py-3 text-white" style={{ background: g.colour }}>
-              <p className="text-[15px] font-extrabold leading-tight">{g.title}</p>
+              {/* break-words, for the same reason the facts below it wrap rather than
+                  truncate: this block is overflow-hidden (it has to be, for the rounded
+                  corners over a coloured band), so a module name with no space in it was
+                  being cut off at the card's edge with nothing to show it had been. The
+                  name is the one thing on this card a student scrolls to find. */}
+              <p className="break-words text-[15px] font-extrabold leading-tight">{g.title}</p>
               {/* WRAPPED, NOT TRUNCATED, and that is the width fix.
                   These lines were `truncate` inside a single flex row, so on a phone the
                   room and the lecturer were cut to an ellipsis and the course and school

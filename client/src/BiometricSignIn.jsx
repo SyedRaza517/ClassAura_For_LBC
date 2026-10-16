@@ -104,7 +104,14 @@ export default function BiometricSignIn({ className = "", email = "" }) {
               {busy
                 ? <><Loader2 size={16} className="animate-spin" /> Waiting for you…</>
                 : <><Icon size={17} /> Sign in with {m.label}</>}
-              {!busy && offer.owner && <span className="ml-1 max-w-[45%] truncate text-[11px] font-semibold text-slate-600">as {offer.owner}</span>}
+              {/* min-w-0 is what makes the truncate real. `truncate` sets
+                  white-space: nowrap, which makes this flex item's min-content width the
+                  whole email address — and a flex item's automatic minimum width beats
+                  its max-width, so `max-w-[45%]` was quietly ignored and the account name
+                  held the button wider than the sign-in card instead of ellipsising
+                  inside it. The owner is a full college address, so on a 320px screen
+                  that is most addresses. */}
+              {!busy && offer.owner && <span className="ml-1 min-w-0 max-w-[45%] truncate text-[11px] font-semibold text-slate-600">as {offer.owner}</span>}
             </button>
           );
         })}

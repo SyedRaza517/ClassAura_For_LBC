@@ -143,12 +143,23 @@ export function Funnel({ funnel = [], overallConversion }) {
           // looks absent rather than small.
           const width = top > 0 ? Math.max(8, (s.count / top) * 100) : 8;
           return (
+            // THE FIXED SIDE COLUMNS ARE NARROWER AT BASE WIDTH. 128px of stage label plus
+            // 56px of conversion plus two 12px gaps is 208px of a 320px phone's ~248px of
+            // panel, which left the bar — the thing the row exists to show — about 40px
+            // wide and its own count label unable to fit inside it, so the number pushed
+            // the row past the card edge. 96px and 48px at base give the bar roughly
+            // double that; sm: restores both to the designed widths, so the desktop funnel
+            // is pixel-identical. Dropping the numeric column on the phone was rejected:
+            // the conversion rate is the one figure this panel is read for.
             <li key={s.key} className="flex items-center gap-3">
-              <div className="w-32 shrink-0 text-right">
+              <div className="w-24 shrink-0 text-right sm:w-32">
                 <p className="text-xs font-semibold text-slate-600">{s.label}</p>
                 <p className="text-xs tabular-nums text-slate-500">{fmtNum(s.count)}</p>
               </div>
-              <div className="flex-1">
+              {/* min-w-0 so the bar track yields rather than the row growing: flex-1 is
+                  `flex: 1 1 0%`, but the automatic minimum size would still hold the
+                  track open to the width of the count printed inside the bar. */}
+              <div className="min-w-0 flex-1">
                 <div
                   className="flex h-9 items-center justify-center rounded-md text-xs font-bold text-white transition-all duration-500"
                   style={{ width: `${width}%`, marginLeft: `${(100 - width) / 2}%`, background: FUNNEL_RAMP[i] || FUNNEL_RAMP.at(-1) }}
@@ -156,7 +167,7 @@ export function Funnel({ funnel = [], overallConversion }) {
                   {fmtNum(s.count)}
                 </div>
               </div>
-              <div className="w-14 shrink-0 text-right text-xs font-bold tabular-nums text-slate-500">
+              <div className="w-12 shrink-0 text-right text-xs font-bold tabular-nums text-slate-500 sm:w-14">
                 {/* Null for the first stage, and whenever the stage above is empty. A
                     conversion out of nobody is unanswerable, not 0%. */}
                 {fmtPct(s.conversionFromPrevious)}
@@ -256,7 +267,10 @@ export function SourcesDonut({ sources = [] }) {
         {sources.map((s, i) => (
           <li key={s.source} className="flex items-center gap-2 text-xs">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colourOf(s, i) }} />
-            <span className={s.source === "Not recorded" ? "text-slate-500" : "text-slate-600"}>{s.source}</span>
+            {/* min-w-0 and break-words: the source is admissions' own wording
+                ("College Website/Social Media"), and as a flex item its automatic
+                minimum size would otherwise hold the legend row wider than the panel. */}
+            <span className={`min-w-0 break-words ${s.source === "Not recorded" ? "text-slate-500" : "text-slate-600"}`}>{s.source}</span>
             <span className="ml-auto tabular-nums font-bold text-slate-700">{fmtPct(s.pct)}</span>
             <span className="w-10 text-right tabular-nums text-slate-500">{fmtNum(s.count)}</span>
           </li>
@@ -288,17 +302,21 @@ function BarList({ rows, labelKey, valueKey, format = fmtNum, mutedWhen, scaleMa
         const v = r[valueKey];
         const muted = mutedWhen?.(r);
         return (
+          // Same base-width narrowing as the funnel's rows, and for the same reason: at
+          // 128px + 56px the bar between them had nothing left on a small phone. The
+          // label keeps its truncate and its title attribute, so a course name clipped
+          // at 96px is still readable on hover and on a long press.
           <li key={r[labelKey]} className="flex items-center gap-3 text-xs">
-            <span className={`w-32 shrink-0 truncate ${muted ? "text-slate-500" : "text-slate-600"}`} title={r[labelKey]}>
+            <span className={`w-24 shrink-0 truncate sm:w-32 ${muted ? "text-slate-500" : "text-slate-600"}`} title={r[labelKey]}>
               {r[labelKey]}
             </span>
-            <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+            <span className="h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-100">
               <span
                 className="block h-full rounded-full transition-all duration-500"
                 style={{ width: `${v == null ? 0 : (Number(v) / max) * 100}%`, background: muted ? MUTED : SERIES[0] }}
               />
             </span>
-            <b className={`w-14 shrink-0 text-right tabular-nums ${muted ? "text-slate-500" : "text-slate-700"}`}>
+            <b className={`w-12 shrink-0 text-right tabular-nums sm:w-14 ${muted ? "text-slate-500" : "text-slate-700"}`}>
               {format(v)}
             </b>
           </li>
@@ -448,48 +466,59 @@ export function TargetsTable({ targets = [] }) {
     t.target == null ? DASH : t.unit === "percent" ? fmtPct(t.target) : t.unit === "currency" ? fmtMoney(t.target) : fmtNum(t.target);
 
   return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-500">
-          <th className="pb-2 font-bold">Metric</th>
-          <th className="pb-2 text-right font-bold">Actual</th>
-          <th className="pb-2 text-right font-bold">Target</th>
-          <th className="pb-2 text-right font-bold">vs target</th>
-        </tr>
-      </thead>
-      <tbody>
-        {targets.map((t) => {
-          // A rate's distance from its target is in percentage POINTS; a count's is a
-          // percentage of the target. Mixing them is how "3pp behind" gets reported as
-          // "30% behind" on the same row.
-          const v = t.unit === "percent" ? t.variancePp : t.variancePct;
-          const suffix = t.unit === "percent" ? "pp" : "%";
-          const good = v != null && v >= 0;
-          return (
-            <tr key={t.key} className="border-b border-slate-100 last:border-0">
-              <td className="py-2 font-semibold text-slate-600">{t.label}</td>
-              <td className="py-2 text-right tabular-nums font-bold text-slate-800">{fmtActual(t)}</td>
-              <td className="py-2 text-right tabular-nums text-slate-500">{fmtTarget(t)}</td>
-              <td className="py-2 text-right">
-                {v == null ? (
-                  // No target set, or an actual nobody could measure. Not a 0% variance,
-                  // which reads as "exactly on target".
-                  <span className="text-slate-300">{DASH}</span>
-                ) : (
-                  <span
-                    className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums"
-                    style={{ background: good ? "#0ca30c1a" : "#d03b3b1a", color: good ? "#0a7d0a" : "#b83232" }}
-                  >
-                    {/* The arrow is a second channel beside the colour, so the row is
-                        readable without seeing green and red as different. */}
-                    {good ? "▲" : "▼"} {v > 0 ? "+" : ""}{v}{suffix}
-                  </span>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    // A four-column table of a metric name and three money/percentage figures has a
+    // min-content width of its own — "Revenue (est.)" beside "£1,234,567" is already
+    // past 240px — and a table that cannot shrink below that is the classic cause of the
+    // whole page scrolling sideways rather than just the table. The wrapper confines the
+    // overflow to this panel; min-w-0 is on it because the panel is a grid child, and
+    // without it the wrapper would inherit the table's minimum and scroll nothing. The
+    // alternative, a stacked card per metric under sm:, was rejected as a rewrite of a
+    // table whose whole point is comparing a column of actuals against a column of
+    // targets.
+    <div className="min-w-0 overflow-x-auto">
+      <table className="w-full min-w-[17rem] text-xs">
+        <thead>
+          <tr className="border-b border-slate-200 text-left text-[11px] uppercase tracking-wide text-slate-500">
+            <th className="pb-2 font-bold">Metric</th>
+            <th className="pb-2 text-right font-bold">Actual</th>
+            <th className="pb-2 text-right font-bold">Target</th>
+            <th className="pb-2 text-right font-bold">vs target</th>
+          </tr>
+        </thead>
+        <tbody>
+          {targets.map((t) => {
+            // A rate's distance from its target is in percentage POINTS; a count's is a
+            // percentage of the target. Mixing them is how "3pp behind" gets reported as
+            // "30% behind" on the same row.
+            const v = t.unit === "percent" ? t.variancePp : t.variancePct;
+            const suffix = t.unit === "percent" ? "pp" : "%";
+            const good = v != null && v >= 0;
+            return (
+              <tr key={t.key} className="border-b border-slate-100 last:border-0">
+                <td className="py-2 font-semibold text-slate-600">{t.label}</td>
+                <td className="py-2 text-right tabular-nums font-bold text-slate-800">{fmtActual(t)}</td>
+                <td className="py-2 text-right tabular-nums text-slate-500">{fmtTarget(t)}</td>
+                <td className="py-2 text-right">
+                  {v == null ? (
+                    // No target set, or an actual nobody could measure. Not a 0% variance,
+                    // which reads as "exactly on target".
+                    <span className="text-slate-300">{DASH}</span>
+                  ) : (
+                    <span
+                      className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums"
+                      style={{ background: good ? "#0ca30c1a" : "#d03b3b1a", color: good ? "#0a7d0a" : "#b83232" }}
+                    >
+                      {/* The arrow is a second channel beside the colour, so the row is
+                          readable without seeing green and red as different. */}
+                      {good ? "▲" : "▼"} {v > 0 ? "+" : ""}{v}{suffix}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

@@ -72,8 +72,16 @@ function Field({ f, value, missing, onChange }) {
     control = <input type={f.type || "text"} {...common} placeholder={f.placeholder || ""} autoComplete="off" />;
   }
 
+  // min-w-0 on every cell, not only the wide ones. A grid child defaults to
+  // `min-width: auto`, which is its own min-content width, and a form control brings an
+  // intrinsic width with it: a <select> is sized to its widest option (several of this
+  // form's run past 90 characters), and a date or text <input> to its default `size`.
+  // `w-full` sets the width but does nothing about that minimum, so the cell refused to
+  // shrink and the whole 320px form scrolled sideways — the single commonest way a long
+  // application form loses a phone applicant. Shrinking the type instead was rejected:
+  // the questions are the college's own wording and must stay legible.
   return (
-    <div data-akey={f.key} className={wide ? "sm:col-span-2" : ""}>
+    <div data-akey={f.key} className={`min-w-0 ${wide ? "sm:col-span-2" : ""}`}>
       <label htmlFor={`apply-${f.key}`} className="block text-[13px] font-semibold leading-snug text-slate-600">
         {f.label}{f.required && <span className="ml-0.5 text-rose-500">*</span>}
       </label>
@@ -133,7 +141,7 @@ export default function AdmissionApply() {
   // ---- Success -------------------------------------------------------------
   if (done) return (
     <Shell center>
-      <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
+      <div className="scale-in rounded-2xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5 sm:p-8">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
         <div className="bounce-in mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200">
           <CheckCircle2 size={34} />
@@ -149,7 +157,11 @@ export default function AdmissionApply() {
   // ---- Form ----------------------------------------------------------------
   return (
     <Shell>
-      <form onSubmit={submit} noValidate className="scale-in rounded-2xl bg-white p-6 shadow-2xl ring-1 ring-black/5 sm:p-8">
+      {/* 16px of card gutter at base, the designed 32px from sm: up. The Shell outside
+          this form already spends 16px a side, so p-6 here left a 320px phone 240px of
+          actual field width; p-4 gives it back 16px without touching any width at which
+          the form was ever comfortable. */}
+      <form onSubmit={submit} noValidate className="scale-in rounded-2xl bg-white p-4 shadow-2xl ring-1 ring-black/5 sm:p-8">
         {/* Header */}
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-4"><BrandLockup /></div>

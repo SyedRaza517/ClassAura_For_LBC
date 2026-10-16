@@ -193,7 +193,23 @@ function MitigationForm({ onCancel, onSent }) {
         This goes to staff who handle mitigating circumstances. They'll get back to you with a decision.
       </p>
 
-      <div className="mt-3 grid grid-cols-2 gap-3">
+      {/* ONE DATE PER ROW ON A PHONE, two from `sm:` up — the worst overflow on this
+          screen and the only one that was visible without text zoom.
+          `<input type="date">` is not a plain text box: the UA draws dd/mm/yyyy plus a
+          calendar button inside it and gives it an intrinsic width of roughly 150px
+          once this form's px-3 and border are added. `w-full` does not help, because a
+          percentage width is ignored while the browser works out how narrow a grid item
+          may be — so two of them side by side demanded ~340px inside a card that has
+          256px at 320px and 296px at 360px, and the second field hung off the right of
+          the card on every small handset.
+          `min-w-0` on the two wrappers would have stopped the spill but not fixed it:
+          the fields would have been squeezed to ~120px each and the UA would then clip
+          its own date text, which is a worse answer on the one form in this app that a
+          student fills in while something has already gone wrong in their life. Full
+          width each, stacked, is legible at 320px and the `sm:` pair keeps the side-by-
+          side pairing — which reads as a range, and is the reason it was written that
+          way — on every screen that can hold it. */}
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">Covers from</label>
           {/* text-base (16px) on every field in this form, not text-sm (14px) — iOS

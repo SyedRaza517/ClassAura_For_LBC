@@ -113,6 +113,24 @@ export default function StaffTimetable({ meId }) {
                 {g.items.filter((e) => e.date < today).length} of {g.items.length} taught so far
               </p>
             </div>
+            {/* THE TABLE SCROLLS; THE CARD DOES NOT GROW, AND IT NO LONGER CLIPS.
+                `w-full` only ever meant "fill the card", never "fit inside it": a table's
+                width is its content's, and once the columns' min-content exceeds the card
+                the table simply overhangs. On the widest row this draws — nothing hoisted
+                into the band, so Wk, Date, Time, Room, Group and Join are all present —
+                that min-content is around 380px against the 288px a 320px phone leaves
+                after `p-4`. The card is `overflow-hidden` for its rounded corners, so the
+                surplus was cut off rather than reachable, and the column it cut was the
+                last one: the Join button, which is the only thing on this screen a
+                lecturer actually presses.
+                A scroller inside the card rather than a stacked card list under `sm:`,
+                because the hoisting above already does the job a stacked list would. When
+                the time, room and group agree across every week — the common case — they
+                move into the coloured band and the table is three columns, which fits a
+                320px screen with room to spare. It is only the module taught in a
+                different room each week that needs the extra columns, and for that one a
+                sideways nudge is a smaller surprise than a different presentation. */}
+            <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead>
                 <tr className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-600">
@@ -150,6 +168,7 @@ export default function StaffTimetable({ meId }) {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         );
       })}

@@ -24,7 +24,10 @@ function Row({ label, children, hint }) {
     <label className="block">
       <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-500">{hint}</span>}
+      {/* break-words on the hint, not for the prose but for the odd long token in it —
+          a domain, a registration path — which at 200% OS text zoom in a 288px column is
+          wider than the column and would otherwise widen the whole settings card. */}
+      {hint && <span className="mt-1 block break-words text-[11px] text-slate-500">{hint}</span>}
     </label>
   );
 }
@@ -44,8 +47,13 @@ function ColourField({ label, value, onChange, disabled, hint }) {
           className="h-9 w-12 flex-none cursor-pointer rounded border border-slate-300 bg-white p-1"
           aria-label={label + " swatch"}
         />
+        {/* min-w-0 beside the fixed 48px swatch. A text <input> contributes its default
+            intrinsic width (the browser's `size` of 20 characters, around 170px) as the
+            flex item's automatic minimum, which `w-full` does not lower — so swatch plus
+            hex box demanded about 230px and the pair would not fit a narrow settings
+            column once the OS text size was turned up. */}
         <input
-          className={inputCls + (valid || !value ? "" : " border-rose-300")}
+          className={inputCls + " min-w-0" + (valid || !value ? "" : " border-rose-300")}
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}

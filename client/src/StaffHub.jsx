@@ -383,7 +383,30 @@ const initialsOf = (name) => name.split(" ").map(w => w[0]).slice(0, 2).join("")
 /* ---------- shared UI ---------- */
 function Card({ children, className = "", style }) { return <div style={style} className={`rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 ${className}`}>{children}</div>; }
 const inputCls = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100";
-function Field({ label, children }) { return <div><label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</label><div className="mt-1">{children}</div></div>; }
+// A labelled form field. `min-w-0` ON THE WRAPPER, and it is load-bearing rather than
+// decorative — this is the first appearance in this file of the one bug that breaks every
+// narrow-phone layout here, so the reasoning is written out once, in full, and referred to
+// from the other places it crops up.
+//
+// A grid or flex CHILD defaults to `min-width: auto`, which means "never shrink below your
+// own min-content width" — and for a form control that minimum is the browser's own idea of
+// how wide the field has to be, not anything this stylesheet asked for. A native
+// `<input type="date">` or `<input type="time">` reports something like 110-150px once the
+// dd/mm/yyyy placeholder and the picker glyph are counted, so the two-column pairs that use
+// this component (Request Leave's From/To, the timesheet form's From/To, PlaceFields'
+// Year/Term) could not fit their own tracks on a 320px handset: `minmax(0, 1fr)` was being
+// overridden from below by the children, the grid grew past the card, and the whole screen
+// scrolled sideways. The `w-full` on the control itself cannot help, because a percentage
+// width resolves against a track that the control has already forced wide.
+//
+// Setting the minimum to zero lets the track win and the `w-full` control follow it down.
+// Dropping those pairs to one column under `sm:` was rejected: a From/To pair reads as a
+// range precisely because the two halves sit side by side, and stacking them is a worse
+// answer than two narrower date fields. Nothing changes at tablet and desktop widths — the
+// tracks there are already wider than any control's minimum, so relaxing a minimum that was
+// never being hit has no effect, which is also why this is safe to do in a component the
+// admin console uses in a few hundred places.
+function Field({ label, children }) { return <div className="min-w-0"><label className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</label><div className="mt-1">{children}</div></div>; }
 function PrimaryBtn({ children, onClick, disabled, colour = BUTTON, className = "" }) {
   return <button onClick={onClick} disabled={disabled} className={`shine press flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-md shadow-slate-900/10 transition-all duration-200 hover:opacity-95 hover:shadow-lg hover:shadow-slate-900/15 active:scale-95 disabled:opacity-40 disabled:shadow-none ${className}`} style={{ background: `linear-gradient(135deg, ${colour} 0%, ${alpha(colour, 90)} 100%)`, color: BUTTON_TEXT }}>{children}</button>;
 }
@@ -533,7 +556,20 @@ function SchoolFilter({ schools, value, onChange, className }) {
       onChange={e => onChange(e.target.value)}
       // A full REPLACEMENT when given, never appended: two Tailwind sizing utilities on
       // one element resolve by stylesheet order, not by which the caller wrote last.
-      className={className || "shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200"}
+      //
+      // `max-w-full` is in the default for a reason that is easy to miss: a <select>'s
+      // intrinsic width is its WIDEST OPTION, and that is also its min-content width, so
+      // as a flex child it cannot shrink and `shrink-0` is not what is stopping it —
+      // removing that class would change nothing. Nor can `flex-wrap` rescue it, because
+      // wrapping moves whole items onto a new line, it does not make one narrower. With
+      // school names running to "School of Engineering and the Built Environment" this
+      // control was single-handedly pushing console panels past the right edge of a
+      // phone, on whichever of its twenty call sites happened to be on screen. Capping
+      // it at the parent's width is inert at every width where it already fits, so no
+      // desktop render moves. Note that the cap only reaches the sites that take this
+      // default — because `className` replaces rather than appends, the callers that
+      // pass their own string carry their own `max-w-full`, and must keep doing so.
+      className={className || "max-w-full shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200"}
       title="Narrow the list to one school"
     >
       <option value="">All schools</option>
@@ -1454,7 +1490,17 @@ function TapOnsiteSheet({ onClose, onDone }) {
   return createPortal(
     <div className="fixed inset-0 z-[90]" role="dialog" aria-modal="true" aria-label="Tap onsite">
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] shadow-2xl fade-up sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[22rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
+      {/* THE SHEET CAPS ITS OWN HEIGHT AND SCROLLS. It is pinned to the bottom edge, so
+          anything taller than the screen grows UPWARDS and off the top — on a 320x568
+          iPhone SE with the OS text size turned up, the refusal phase (a 56px badge, a
+          heading, three lines of advice and a Try again button) is exactly the case that
+          does it, and the heading is the part that disappears. `max-h` plus `overflow-y-auto`
+          keeps the whole sheet reachable instead. dvh rather than vh because a mobile
+          browser's `vh` is the tallest the viewport ever gets, URL bar included, which is
+          the measurement that makes a "capped" overlay still overflow. Capped at 85% so the
+          dimmed backdrop stays visibly tappable — a sheet filling the screen edge to edge
+          reads as a page, and people stop looking for the way out of it. */}
+      <div className="absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto rounded-t-3xl bg-white p-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] shadow-2xl fade-up sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:w-[22rem] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200 sm:hidden" aria-hidden="true" />
         <button onClick={onClose} aria-label="Close" className="press absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"><X size={18} /></button>
 
@@ -2093,9 +2139,21 @@ function MonthGrid({ store, big, showPending }) {
           // The whole cell is the hit target, so a day can be opened without aiming at
           // one of the name chips inside it.
           const dayLabel = `${fmtDate(iso)}${bh ? ` — ${bh}` : ""}${evts.length ? ` — ${evts.length} on leave` : ""}`;
+          // `min-w-0` on the cell, and the `truncate` on the chips inside it is the
+          // reason rather than a substitute for it: `truncate` sets white-space:nowrap,
+          // which makes a chip's min-content width its FULL width, and a grid child's
+          // default `min-width: auto` then hands that figure to the track as a floor.
+          // So the longest name in the month — the bank-holiday chip is worse, since
+          // "🏛 Early May bank holiday" never breaks — was setting the width of all
+          // seven columns, and the calendar grew past whatever was holding it. Seven
+          // columns cannot drop to fewer and still be a month, so the cells have to be
+          // the thing that shrinks; with the floor gone the tracks divide the width
+          // evenly and the chips finally ellipsise, which is what they were always
+          // dressed to do. The full name stays in the title/aria label and in the day
+          // popup, so nothing is lost, only abbreviated.
           if (big) return (
             <button key={d} type="button" onClick={() => setDayOpen(iso)} title={dayLabel} aria-label={dayLabel}
-              className={`press min-h-[78px] rounded-xl border p-1.5 text-left transition-all duration-200 hover:shadow-sm ${bh ? "border-amber-300 bg-amber-50 hover:border-amber-400" : isToday ? "border-blue-300 bg-blue-50/40 glow-pulse" : "border-slate-100 hover:border-blue-200 hover:bg-blue-50/30"}`}>
+              className={`press min-h-[78px] min-w-0 rounded-xl border p-1.5 text-left transition-all duration-200 hover:shadow-sm ${bh ? "border-amber-300 bg-amber-50 hover:border-amber-400" : isToday ? "border-blue-300 bg-blue-50/40 glow-pulse" : "border-slate-100 hover:border-blue-200 hover:bg-blue-50/30"}`}>
               {/* spans, not p/div: a <button> may only contain phrasing content, and
                   the cell itself is the hit target. */}
               <span className={`block text-xs font-bold ${isToday ? "text-blue-700" : bh ? "text-amber-700" : "text-slate-500"}`}>{d}</span>
@@ -2158,8 +2216,18 @@ function CalendarScreen({ store }) {
         {approved.length === 0 && <Card><EmptyState Icon={CalendarCheck} title="No approved leave" msg="Approved absences across the college will appear here." /></Card>}
         {approved.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); return (
           <Card key={l.id} className="flex items-center gap-3 !p-3 fade-up" style={{ animationDelay: `${i * 50}ms` }}>
-            <span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
-            <div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
+            {/* `shrink-0` on the avatar, `min-w-0` on the name column: the row is
+                avatar + name + leave-type pill, and on a 320px screen those three want
+                more width than the card has. A flex child shrinks before it overflows,
+                and the avatar is the child that can — it is a 36px box holding ~20px of
+                initials, so it was the one squeezed, turning every circle into an oval
+                next to a long name. Pinning it and letting the name column shrink
+                instead puts the give where it belongs; `break-words` is what stops a
+                single long surname (which cannot wrap at a space) spilling back out of
+                the column the moment its minimum is relaxed. See Field above for the
+                min-width:auto rule all of this follows from. */}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
+            <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{fmtDate(l.start)}{l.end !== l.start && ` → ${fmtDate(l.end)}`}</p></div>
             <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}>{t.label}</span>
           </Card>
         ); })}
@@ -2321,8 +2389,12 @@ function ApprovalScreen({ store, me }) {
         {pending.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); return (
           <Card key={l.id} className="fade-up" style={{ animationDelay: `${i * 60}ms` }}>
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
-              <div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{p?.role}</p></div>
+              {/* Same three-part row as the holiday calendar's, fixed the same way and
+                  for the same reason — see the comment there. The request cards are the
+                  worst case of it, because a request carries a job title under the name
+                  ("Lecturer in Computing") as well as a leave-type pill beside it. */}
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span>
+              <div className="min-w-0 flex-1"><p className="break-words text-sm font-bold text-slate-700">{p?.name}</p><p className="break-words text-xs text-slate-500">{p?.role}</p></div>
               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}>{t.label}</span>
             </div>
             <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600"><p><b>{fmtDate(l.start)}</b>{l.end !== l.start && <> → <b>{fmtDate(l.end)}</b></>} · {store.chargeableDays(l.start, l.end)} day(s)</p><p className="mt-1 italic text-slate-500">"{l.reason}"</p></div>
@@ -2498,13 +2570,28 @@ function TimesheetMonthGrid({ month, byDate, onPick }) {
             : `${fmtDate(iso)} — nothing logged`;
           return (
             <button key={d} type="button" onClick={() => onPick(iso)} title={label} aria-label={label}
-              className={`press min-h-[62px] rounded-lg border p-1 text-left transition ${
+              className={`press min-h-[62px] min-w-0 rounded-lg border p-1 text-left transition ${
                 list.length ? "border-transparent" : isToday ? "border-blue-300 bg-blue-50/50" : "border-slate-100 hover:border-blue-200 hover:bg-blue-50/30"}`}
               style={list.length ? { background: locked ? "#f1f5f9" : "#eef2ff" } : {}}>
               <span className={`block text-[10px] font-bold ${isToday ? "text-blue-700" : "text-slate-500"}`}>{d}</span>
               {list.length > 0 && (
                 <>
-                  <span className={`block text-[8px] font-bold uppercase ${locked ? "text-slate-500" : "text-indigo-600"}`}>Present</span>
+                  {/* THE WORST INSTANCE OF THE min-width:auto BUG IN THE APP, and the one
+                      that was spilling at every width rather than only on a small handset.
+                      "Present" is one word, bold, uppercase and unbreakable: about 36px of
+                      text in a cell whose share of a seven-column grid inside a padded card
+                      is ~34px on a 320px screen and ~41px on the 390px reference phone.
+                      With the cell carrying a grid child's default minimum, that 36px became
+                      the floor for all seven tracks, so the month grid was wider than its
+                      own card everywhere and the whole timesheet screen scrolled sideways.
+                      `min-w-0` on the cell above lets the tracks divide the card instead,
+                      and `truncate` here is the other half of the fix — without it the word
+                      simply hangs out over the cell's right border, which looks like a
+                      rendering fault rather than a tight fit. The day's full detail is in
+                      the title and aria-label, and tapping the cell opens the editor, so an
+                      abbreviated word costs nothing. Shrinking the type further was rejected:
+                      8px is already the floor for something anyone is expected to read. */}
+                  <span className={`block truncate text-[8px] font-bold uppercase ${locked ? "text-slate-500" : "text-indigo-600"}`}>Present</span>
                   {list.slice(0, 2).map(e => (
                     <span key={e.id} className="block truncate text-[8px] font-semibold leading-tight text-slate-500">{shortTime(e.start)}–{shortTime(e.end)}</span>
                   ))}
@@ -2601,10 +2688,21 @@ function TimesheetDayModal({ store, date, entries, onClose, onSaved }) {
             <div className="space-y-2">
               {shifts.map((sh, i) => (
                 <div key={i} className="rounded-xl bg-slate-50 p-2.5 ring-1 ring-slate-200">
+                  {/* `min-w-0` on both time fields. Unlike the Field-wrapped pairs
+                      elsewhere these inputs are flex children directly, so the fix has to
+                      sit on the control itself rather than on a wrapper. Four things share
+                      this row — two native time pickers, the word "to" and a delete
+                      button — and a time picker refuses to go below roughly 110px of its
+                      own accord, which on a 320px screen is already more than half of what
+                      the dialog has to give. The row therefore pushed out through the side
+                      of the modal and took the backdrop's scroll with it. Stacking the
+                      pair was rejected for the same reason as the From/To grids: a shift
+                      is one range, and splitting it over two rows makes a list of three
+                      shifts read as six separate times. */}
                   <div className="flex items-center gap-2">
-                    <input type="time" value={sh.start} onChange={e => setShift(i, { start: e.target.value })} className={inputCls + " !py-2"} />
+                    <input type="time" value={sh.start} onChange={e => setShift(i, { start: e.target.value })} className={inputCls + " !py-2 min-w-0"} />
                     <span className="shrink-0 text-xs font-bold text-slate-600">to</span>
-                    <input type="time" value={sh.end} onChange={e => setShift(i, { end: e.target.value })} className={inputCls + " !py-2"} />
+                    <input type="time" value={sh.end} onChange={e => setShift(i, { end: e.target.value })} className={inputCls + " !py-2 min-w-0"} />
                     <button type="button" onClick={() => removeShift(i)} aria-label="Remove this shift"
                       className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600">
                       <Trash2 size={15} />
@@ -2727,7 +2825,16 @@ function TimesheetScreen({ store, me }) {
         <ClipboardList size={64} className="float-slow absolute -right-3 -top-3 text-white/10" />
         <p className="relative text-[11px] font-semibold uppercase tracking-wide text-white/60">Hours this month</p>
         <p className="relative text-3xl font-extrabold">{fmtHours(totalMin)}<span className="text-lg font-bold text-white/70"> h</span></p>
-        <div className="relative mt-3 flex gap-2">
+        {/* `flex-wrap`, plus `gap-y` through the shorthand gap: three pills — campus
+            hours, online hours, session count — come to about 285px side by side, which
+            fits the 390px reference phone with room to spare and overruns a 320px one by
+            roughly a pill's width. A row of chips is the case flex-wrap exists for; the
+            alternatives were worse on inspection. Letting the row scroll sideways hides
+            the session count behind a gesture nobody is told about, and dropping a chip
+            at base width removes a figure the screen is here to report. The `ml-auto` on
+            the last chip still right-aligns it on whichever line it lands on, so the
+            arrangement at 390px and above is pixel-identical to before. */}
+        <div className="relative mt-3 flex flex-wrap gap-2">
           <span className="flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold ring-1 ring-white/15"><Building2 size={12} /> Campus {fmtHours(campusMin)}h</span>
           <span className="flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold ring-1 ring-white/15"><Wifi size={12} /> Online {fmtHours(onlineMin)}h</span>
           <span className="ml-auto flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-semibold ring-1 ring-white/15">{list.length} session{list.length === 1 ? "" : "s"}</span>
@@ -3126,11 +3233,24 @@ const fmtMonth = (ym) => { const [y, m] = String(ym || "").split("-"); if (!y ||
 const pctColour = (v) => riskBand(v).colour;
 const kNum = (n) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "")}K` : String(n);
 
+// A filter pill: its own label, then a bare select. Every filter bar in this console is a
+// `flex-wrap` row of these, so one pill wider than the viewport is one pill that hangs off
+// the edge of its line rather than wrapping — wrapping only moves whole items.
+//
+// Worst case before this change was about 274px: 24px of padding, a "Year / Term" label,
+// the gap, and a select pinned at `max-w-[180px]`. The console offers 280px at 320px wide,
+// so it fitted by six pixels, which is not a margin. `max-w-[140px]` at base brings that to
+// 234px and restores the original 180px from 640px up, where these bars sit three and four
+// pills to a row and the extra width is worth having. The select's own `max-width` is what
+// caps its automatic minimum size as a flex child, so the cap is doing real work here and
+// not merely trimming a preferred width — without it a long option such as a unit code plus
+// its full title would set the pill's floor. `min-w-0` on the wrapper and the select keeps
+// that floor honest.
 function FilterSelect({ label, value, onChange, options }) {
   return (
-    <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs ring-1 ring-slate-200">
-      <span className="font-semibold text-slate-500">{label}</span>
-      <select value={value} onChange={e => onChange(e.target.value)} className="max-w-[180px] bg-transparent text-sm font-medium text-slate-700 outline-none">
+    <label className="flex min-w-0 items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs ring-1 ring-slate-200">
+      <span className="shrink-0 font-semibold text-slate-500">{label}</span>
+      <select value={value} onChange={e => onChange(e.target.value)} className="min-w-0 max-w-[140px] bg-transparent text-sm font-medium text-slate-700 outline-none sm:max-w-[180px]">
         {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
     </label>
@@ -3261,15 +3381,29 @@ function ExecHero({ attPct, passRate, students, courses, marks }) {
   const Stat = ({ label, value, sub }) => (
     <div className="min-w-0 flex-1">
       <p className="text-[11px] font-bold uppercase tracking-widest text-white/60">{label}</p>
-      <p className="mt-0.5 text-3xl font-extrabold leading-none tracking-tight text-white sm:text-4xl">{value}</p>
+      <p className="mt-0.5 text-2xl font-extrabold leading-none tracking-tight text-white sm:text-4xl">{value}</p>
       {sub && <p className="mt-1 text-[11px] text-white/60">{sub}</p>}
     </div>
   );
+  // Three `flex-1 min-w-0` stats sharing one row, and that combination is why this hero
+  // was clipping rather than wrapping. `flex-1` sets the basis to 0 and `min-w-0` lets
+  // each stat shrink to nothing, so the row never reaches the point where `flex-wrap`
+  // would fire — it just keeps dividing the available width three ways. At 320px, after
+  // the console's padding and `p-5` here and two `gap-6` gutters, that was about 64px a
+  // stat, and "100%" set in a 30px extra-bold face needs nearer 70px with no space in it
+  // to break at. The surplus went straight under the hero's own `overflow-hidden`.
+  //
+  // Fixed from both ends rather than one: `p-4` and `gap-4` at base recover 32px of the
+  // 240px that was there, and the figure drops to 24px, which needs about 55px. Both
+  // revert at `sm:`, where the original `p-5`, `gap-6` and 36px figure have room. Keeping
+  // the big type and letting the row wrap to two lines instead was the alternative, and
+  // it needs the `flex-1` taken off, which would leave three stats of unequal width on a
+  // tablet — the thing the equal basis is there to prevent.
   return (
-    <div className="animated-gradient relative mb-4 overflow-hidden rounded-2xl p-5 shadow-md fade-up"
+    <div className="animated-gradient relative mb-4 overflow-hidden rounded-2xl p-4 shadow-md fade-up sm:p-5"
       style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_DARK} 55%, ${MAROON} 140%)`, backgroundSize: "200% 200%" }}>
       <GraduationCap size={150} className="pointer-events-none absolute -right-6 -top-8 text-white/[0.06]" />
-      <div className="relative flex flex-wrap items-end gap-6">
+      <div className="relative flex flex-wrap items-end gap-4 sm:gap-6">
         <Stat label="Attendance" value={attPct == null ? "—" : `${attPct}%`} sub={marks == null ? undefined : `${kNum(marks)} marks recorded`} />
         <span className="hidden h-12 w-px bg-white/15 sm:block" />
         <Stat label="Student pass rate" value={passRate == null ? "—" : `${passRate}%`} />
@@ -3282,7 +3416,11 @@ function ExecHero({ attPct, passRate, students, courses, marks }) {
 
 function ExecKpi({ label, value, tone = NAVY, sub, Icon }) {
   return (
-    <div className="group relative overflow-hidden rounded-2xl p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:ring-transparent fade-up"
+    // These tiles sit two-up at base width (see the grid in ExecutiveDashboard), which on
+    // a 320px screen leaves each one about 134px, and `p-4` spent 32px of that on gutters
+    // before the label row had taken its share. `p-3 sm:p-4` is the cheapest 8px in the
+    // component and changes nothing from 640px up.
+    <div className="group relative overflow-hidden rounded-2xl p-3 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:ring-transparent fade-up sm:p-4"
       style={{ background: `linear-gradient(150deg, #ffffff 0%, #ffffff 55%, ${alpha(tone, 6)} 100%)` }}>
       {/* A wash of the tile's own colour in the corner, and a watermark of its icon.
           Enough colour to make a row of tiles scannable at a glance without turning
@@ -3291,10 +3429,30 @@ function ExecKpi({ label, value, tone = NAVY, sub, Icon }) {
       {Icon && <Icon size={72} className="pointer-events-none absolute -bottom-3 -right-2 opacity-[0.05] transition-transform duration-500 group-hover:rotate-6" style={{ color: tone }} />}
       <span className="absolute inset-x-0 top-0 h-1" style={{ background: `linear-gradient(90deg, ${tone}, ${alpha(tone, 33)})` }} />
 
+      {/* The 32px icon badge is `hidden sm:flex` at base, and that is a judgement call
+          worth justifying rather than a mechanical fix.
+
+          Two-up at 320px the tile holds about 110px of content. The badge plus its gap
+          claimed 40px of it, leaving 70px for a label set in 11px bold uppercase with
+          `tracking-wide` — and "ASSESSMENTS" or "ATTENDANCE" measures nearer 85px as a
+          single unbreakable word. So the label ran under the tile's `overflow-hidden` and
+          lost its last two or three letters, with no ellipsis to show it had happened.
+
+          The badge is decoration: the same glyph is already drawn at size 72 as a
+          watermark in the bottom corner of every tile, so dropping the small copy loses
+          no information and the tile still reads as belonging to its icon. The two
+          alternatives both cost more than they save — `truncate` replaces a silent clip
+          with a visible one but still withholds the word, and shrinking the label to 10px
+          or dropping the tracking saves about 12px, which is not enough on its own and
+          makes every tile harder to read in exchange. From 640px there is room for both,
+          so the badge comes back and nothing above that width changes.
+
+          `min-w-0 break-words` stays on the label regardless, as the backstop for a
+          longer label added later. */}
       <div className="relative flex items-start justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="min-w-0 break-words text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
         {Icon && (
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white shadow-sm transition-transform duration-300 group-hover:scale-110"
+          <span className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white shadow-sm transition-transform duration-300 group-hover:scale-110 sm:flex"
             style={{ background: `linear-gradient(135deg, ${tone}, ${alpha(tone, 73)})` }}>
             <Icon size={15} />
           </span>
@@ -3926,7 +4084,37 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         </nav>
         <div className="rounded-xl bg-slate-50 p-3 text-center"><p className="text-[11px] text-slate-600">Logged in as</p><p className="text-sm font-bold text-slate-700">{me?.name || "Administrator"}</p>{me?.isSuperAdmin && <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide" style={{ color: MAROON }}>Super Admin</p>}<DepartmentScopeLine user={me} /></div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-x-hidden bg-slate-100 p-5 md:p-7">
+      {/* The console shell's horizontal overflow, and why it is split between the two
+          elements the way it is.
+
+          `overflow-x-hidden` on the outer flex row above stays: that is what guarantees
+          the DOCUMENT never scrolls sideways, which is the one behaviour nobody wants
+          back. But the same class on <main> was doing something quite different and much
+          worse. Every admin panel renders inside here, and a panel wider than the
+          viewport was being *clipped* rather than scrolled — the content simply did not
+          exist as far as the reader was concerned, with no scrollbar, no shadow and no
+          cut-off glyph to suggest there was more. That is not a cosmetic bug: in the
+          timetable planner it swallowed four of the seven navigation tabs and the
+          "Publish this period" button, and in the staff timetable it swallowed the Join
+          button. A control you cannot see is a control you cannot press.
+
+          So at base width <main> scrolls instead of clipping, and from `md:` up it keeps
+          the old `overflow-x-hidden` exactly as it was, because on a laptop the sidebar
+          is showing, the panels fit, and the clip is a useful backstop against a stray
+          wide child nudging the whole console. Nothing above 768px renders differently.
+
+          A sideways scrollbar is admittedly a worse look than a tidy fit, and the
+          alternative — leave the clip and make all sixty-odd panels in this file fit
+          280px unaided — is what the rest of this pass is actually doing. The two are
+          not in competition. This is the net underneath that work: when a panel we have
+          not reached, or one added next month, turns out to be over-wide, the reader
+          gets an awkward scroll instead of silently losing a button.
+
+          `p-3` at base recovers 16px of the 320px viewport for free — a third of the
+          usable width was going to gutters. `sm:p-5` restores the previous value from
+          640px, so this is a base-width-only change despite touching an unprefixed
+          class. */}
+      <main className="min-w-0 flex-1 overflow-x-auto bg-slate-100 p-3 sm:p-5 md:overflow-x-hidden md:p-7">
         {!sidebarOpen && (
           <button onClick={() => toggleSidebar(true)} title="Show menu" className="press mb-4 hidden items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 md:inline-flex"><PanelLeftOpen size={16} /> Menu</button>
         )}
@@ -4329,7 +4517,30 @@ function AdminMitigations() {
         {MIT_STATUSES.map((s) => (
           <button key={s} onClick={() => setStatus(s)} className={`rounded-full px-3 py-1.5 text-xs font-bold capitalize transition ${status === s ? "text-white shadow-sm" : "bg-white text-slate-500 ring-1 ring-slate-200"}`} style={status === s ? { background: grad(BLUE) } : {}}>{s}</button>
         ))}
-        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto shrink-0 rounded-lg border-0 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
+        {/* `max-w-full` on every school and course picker in this console, and this is the
+            first of them, so the reasoning lives here.
+
+            A `<select>` sizes itself to its widest OPTION, and a school is named "School of
+            Engineering and the Built Environment" — comfortably past 300px. That intrinsic
+            width is also the select's min-content width, which is what a flex child's
+            default `min-width: auto` resolves to, so the picker would not shrink and
+            `flex-wrap` could not help: wrapping moves a whole item to the next line, it
+            does not make an over-wide one narrower. On a 320px console the picker simply
+            hung off the end of its row, and until the `<main>` fix above it was being
+            clipped there rather than scrolled.
+
+            `max-width` is the one declaration that clamps a flex child's automatic minimum,
+            which is why it works where `min-w-0` alone would not — a select has a
+            content-based minimum, not an auto one. `max-w-full` is also inert at any width
+            where the control already fits, so no filter bar on a laptop moves a pixel; the
+            select merely truncates its own label on a phone, which browsers do with an
+            ellipsis and which costs nothing, because the chosen value is shown in full the
+            moment the list is opened.
+
+            `shrink-0` is left alone deliberately. It is doing a different job — keeping the
+            picker from being squeezed by the status pills to its left — and `max-w-full`
+            caps the used width whether or not the item is allowed to shrink. */}
+        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto max-w-full shrink-0 rounded-lg border-0 bg-white px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
       </div>
 
       {err && <Card className="!bg-rose-50 !ring-rose-200"><p className="text-xs font-semibold text-rose-700">{err}</p></Card>}
@@ -4814,7 +5025,7 @@ function PredictionRegister({ bands, summary, onChanged }) {
             <input type="checkbox" checked={needing} onChange={e => setNeeding(e.target.checked)} className="h-4 w-4 rounded" />
             Needs an intervention
           </label>
-          <div className="pb-1"><SchoolFilter schools={schools} value={school} onChange={setSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" /></div>
+          <div className="pb-1"><SchoolFilter schools={schools} value={school} onChange={setSchool} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" /></div>
           <PrimaryBtn colour={BLUE} onClick={load} disabled={loading}>{loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Filter</PrimaryBtn>
           <PrimaryBtn colour={MAROON} onClick={() => recalc(false)} disabled={busy}>
             {busy ? <><Loader2 size={16} className="animate-spin" /> Scoring…</> : <><RefreshCw size={16} /> Recalculate</>}
@@ -5335,7 +5546,7 @@ function PredictionInterventions({ onChanged }) {
           {[["open", "Open"], ["reviewed", "Reviewed"], ["closed", "Closed"], ["", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setStatus(k)} className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${status === k ? "text-white" : "bg-slate-50 text-slate-500 ring-1 ring-slate-200"}`} style={status === k ? { background: grad(BLUE) } : {}}>{label}</button>
           ))}
-          <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
+          <SchoolFilter schools={schools} value={school} onChange={setSchool} className="ml-auto max-w-full shrink-0 rounded-lg border-0 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 outline-none ring-1 ring-slate-200" />
         </div>
       </Card>
 
@@ -5711,8 +5922,10 @@ function AdminAccess({ store }) {
           </div>
         </div>
 
-        {/* Editor */}
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70">
+        {/* Editor — `p-4 sm:p-5`, because 40px of gutter out of the 280px a 320px console
+            offers is 14% of the panel spent on nothing, and the page-grant tickboxes
+            inside it are full-width rows that use every pixel. Unchanged from 640px. */}
+        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 sm:p-5">
           {!sel && <EmptyState Icon={ShieldCheck} title="Pick a person" msg="Choose someone on the left to set which admin pages they can access." />}
           {/* THE SUPER ADMIN'S PAGES ARE FIXED. THEIR DEPARTMENT MEMBERSHIP IS NOT.
               This screen used to refuse both together, which left the account that sets
@@ -5732,12 +5945,16 @@ function AdminAccess({ store }) {
           )}
           {sel && !sel.isSuperAdmin && (
             <>
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span>
-                  <div><p className="font-bold text-slate-800">{sel.name}</p><p className="text-[11px] text-slate-500">{pages.length === 0 ? "No admin access" : allOn ? "Full admin access" : `${pages.length} of ${ADMIN_PAGES.length} pages`}</p></div>
+              {/* `gap-3` on the row — `justify-between` alone leaves no guaranteed space,
+                  so at 320px the name and "Select all" met in the middle with nothing
+                  between them — plus the usual `min-w-0`/`truncate` on the name column and
+                  `shrink-0` on the avatar and the link, so the name is what gives way. */}
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: sel.colour }}>{sel.initials}</span>
+                  <div className="min-w-0"><p className="truncate font-bold text-slate-800">{sel.name}</p><p className="truncate text-[11px] text-slate-500">{pages.length === 0 ? "No admin access" : allOn ? "Full admin access" : `${pages.length} of ${ADMIN_PAGES.length} pages`}</p></div>
                 </div>
-                <button onClick={toggleAll} className="text-xs font-bold text-blue-600 hover:underline">{allOn ? "Clear all" : "Select all"}</button>
+                <button onClick={toggleAll} className="shrink-0 text-xs font-bold text-blue-600 hover:underline">{allOn ? "Clear all" : "Select all"}</button>
               </div>
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {ADMIN_PAGES.map(k => {
@@ -6049,30 +6266,55 @@ function DashboardHero({ name, subtitle, right, tone = BLUE }) {
     <div className="relative mb-5 overflow-hidden rounded-3xl p-5 text-white shadow-xl fade-up sm:p-6" style={{ background: `linear-gradient(120deg, ${tone} 0%, ${NAVY_DARK} 100%)`, boxShadow: `0 22px 44px -20px ${tone}` }}>
       <div className="pointer-events-none absolute -right-10 -top-16 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
       <div className="pointer-events-none absolute -bottom-24 right-28 h-56 w-56 rounded-full bg-white/5 blur-2xl" />
+      {/* `min-w-0` on the greeting block and on its text column, for the same reason as
+          AdminHeader below: both are flex children that would otherwise refuse to go
+          narrower than their longest word. The date line is the long one — "Wednesday 14
+          October 2026" written out in full — and at 320px it was setting the hero's
+          minimum width and shouldering `right` off the end of the row. The 48px avatar
+          already has `shrink-0`, so the text is the only thing that can give. */}
       <div className="relative flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
+        <div className="flex min-w-0 items-center gap-3.5">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/25 backdrop-blur"><G size={24} /></span>
-          <div>
-            <p className="text-xl font-extrabold leading-tight sm:text-2xl">{greet.word}{name ? `, ${String(name).split(" ")[0]}` : ""}</p>
-            <p className="mt-0.5 text-[13px] font-medium text-white/75">{subtitle || today}</p>
+          <div className="min-w-0">
+            <p className="break-words text-xl font-extrabold leading-tight sm:text-2xl">{greet.word}{name ? `, ${String(name).split(" ")[0]}` : ""}</p>
+            <p className="mt-0.5 break-words text-[13px] font-medium text-white/75">{subtitle || today}</p>
           </div>
         </div>
-        {right && <div className="relative">{right}</div>}
+        {right && <div className="relative min-w-0">{right}</div>}
       </div>
     </div>
   );
 }
+// Every page of the console draws one of these, so it is worth a word on the three
+// handset changes made here — they are each worth roughly sixty copies of themselves.
+//
+// `min-w-0` twice: once on the title block, which is a flex child of the wrapping
+// header row, and once on the text column inside it. Both default to `min-width: auto`,
+// meaning neither will go narrower than its own longest unbroken word, and the word in
+// question is set in a 24px extra-bold face. A unit code like "HND-COMP-401" measures
+// about 160px on its own; a subtitle naming a course and a room adds more. On a 320px
+// phone the main element offers 280px, so the header was setting a floor that the rest
+// of the page then had to match, and `justify-between` pushed the action buttons past
+// the edge. `break-words` lets a genuinely long token break rather than win.
+//
+// `text-xl sm:text-2xl` on the heading. 24px is not an unreasonable page title, but it
+// is unreasonable when 280px has to hold a title, a subtitle and a toolbar; 20px at
+// base buys back about a sixth of every word's width, which compounds with the
+// `min-w-0` above. Restored to the original 24px from 640px, so tablets and desktops
+// are untouched. Shrinking it further, or hiding the subtitle on a phone, was rejected:
+// the subtitle is where the register's date, time and audience live, and a lecturer
+// checking they have opened the right session reads exactly that line.
 function AdminHeader({ title, subtitle, action, Icon, tone = BLUE }) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3 fade-up">
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <span className="h-10 w-1.5 shrink-0 rounded-full" style={{ background: `linear-gradient(180deg, ${tone}, ${NAVY_DARK})` }} />
         {Icon && <span className="hidden h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg transition-transform duration-300 hover:scale-105 hover:-rotate-3 sm:flex" style={{ background: grad(tone), boxShadow: `0 10px 22px -8px ${alpha(tone, 56)}` }}><Icon size={24} /></span>}
-        <div>
-          <h2 className="text-2xl font-extrabold tracking-tight" style={{ color: NAVY_DARK }}>{title}</h2>
+        <div className="min-w-0">
+          <h2 className="break-words text-xl font-extrabold tracking-tight sm:text-2xl" style={{ color: NAVY_DARK }}>{title}</h2>
           {/* slate-600, not slate-500: the header sits directly on the bg-slate-100
               main (no white card), where slate-500 measures 4.34:1 and fails AA. */}
-          {subtitle && <p className="text-sm text-slate-600">{subtitle}</p>}
+          {subtitle && <p className="break-words text-sm text-slate-600">{subtitle}</p>}
         </div>
       </div>
       {action}
@@ -6166,7 +6408,7 @@ function AdminOverview({ store, setTab }) {
           <div className="grid gap-2 sm:grid-cols-2">
             {inToday.length === 0 && <div className="sm:col-span-2"><EmptyState Icon={Clock3} title="No check-ins yet" msg="Staff who clock in today will appear here." /></div>}
             {inToday.map((c, i) => { const p = store.staff.find(s => s.id === c.staffId); return (
-              <div key={c.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-sm pop" style={{ animationDelay: `${i * 40}ms` }}><span className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-600">In {c.in}{c.out ? ` · Out ${c.out}` : ""}</p></div><span className={`h-2.5 w-2.5 rounded-full ${c.out ? "bg-slate-300" : "bg-emerald-500"}`} /></div>
+              <div key={c.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-sm pop" style={{ animationDelay: `${i * 40}ms` }}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-700">{p?.name}</p><p className="text-xs text-slate-600">In {c.in}{c.out ? ` · Out ${c.out}` : ""}</p></div><span className={`h-2.5 w-2.5 rounded-full ${c.out ? "bg-slate-300" : "bg-emerald-500"}`} /></div>
             ); })}
           </div>
         </div>
@@ -6412,7 +6654,12 @@ function AdminCalendar({ store }) {
     <>
       <AdminHeader title="Holiday Calendar" subtitle="Organisation-wide view of approved absences — click any day to see who is off" Icon={CalendarDays}
         action={<PrimaryBtn onClick={openAdd}><Plus size={16} /> Add holiday</PrimaryBtn>} />
-      <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 fade-up">
+      {/* `p-3 sm:p-5`. MonthGrid is seven columns wide and is the tightest thing in this
+          console: at 320px the 40px of `p-5` left each day cell about 34px, which is
+          barely a two-digit date and not a touch target at all. Giving the grid back
+          16px is the one change available here that does not mean rewriting MonthGrid,
+          which several other screens share. Unchanged from 640px up. */}
+      <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200/70 fade-up sm:p-5">
         <MonthGrid store={store} big showPending />
         <div className="mt-4 border-t border-slate-100 pt-4"><p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Leave types</p><LeaveLegend />
           <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><span className="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" /> Bank holiday — a fixed day off for all staff, separate from the bookable allowance</div>
@@ -6667,7 +6914,7 @@ function AdminApprovals({ store }) {
             {pending.length === 0 && <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200"><EmptyState Icon={CheckCircle2} title="Nothing to approve" msg="You're all caught up." /></div>}
             {pending.map((l, i) => { const p = store.staff.find(s => s.id === l.staffId); const t = leaveTypeMeta(l.type); const T = t.icon; return (
               <div key={l.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${i * 50}ms` }}>
-                <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="flex-1"><p className="text-sm font-bold text-slate-700">{p?.name}</p><p className="text-xs text-slate-500">{p?.role}</p></div><span className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}><T size={11} /> {t.label}</span></div>
+                <div className="flex items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: p?.colour }}>{p?.initials}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-700">{p?.name}</p><p className="truncate text-xs text-slate-500">{p?.role}</p></div><span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: t.colour + "1a", color: t.colour }}><T size={11} /> {t.label}</span></div>
                 <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600"><p><b>{fmtDate(l.start)}</b>{l.end !== l.start && <> → <b>{fmtDate(l.end)}</b></>} · {store.chargeableDays(l.start, l.end)}d</p><p className="mt-1 italic text-slate-500">"{l.reason}"</p></div>
                 <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => { setNoteModal({ leave: l, action: "rejected" }); setNote(""); }} className="flex items-center justify-center gap-1.5 rounded-xl border-2 border-rose-200 py-2.5 text-sm font-bold text-rose-600 hover:bg-rose-50"><XCircle size={16} /> Decline</button><PrimaryBtn colour="#059669" onClick={() => { setNoteModal({ leave: l, action: "approved" }); setNote(""); }} className="!py-2.5"><CheckCircle2 size={16} /> Approve</PrimaryBtn></div>
               </div>
@@ -6862,20 +7109,33 @@ function AdminSignups({ store }) {
             {pending.map((r, i) => (
               <div key={r.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md fade-up" style={{ animationDelay: `${i * 50}ms` }}>
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: NAVY }}>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-sm" style={{ background: NAVY }}>
                     {initialsOf(r.name)}
                   </span>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-slate-700">{r.name}</p>
-                    <p className="text-xs text-slate-500">{r.kind === "student" ? "Student" : `${r.role} · ${r.dept}`}</p>
+                  {/* `min-w-0` + `truncate`, `shrink-0` on the avatar and the badge column:
+                      a sign-up row is an avatar, a name and two status pills, and the name
+                      is the only part that can sensibly be shortened. Left as it was, the
+                      name column held at its longest word and the "Pending" pill — the
+                      thing the row exists to show — was pushed off the card at 320px. */}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-slate-700">{r.name}</p>
+                    <p className="truncate text-xs text-slate-500">{r.kind === "student" ? "Student" : `${r.role} · ${r.dept}`}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end gap-1">
                     <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${r.kind === "student" ? "bg-violet-100 text-violet-700" : "bg-blue-100 text-blue-700"}`}>{r.kind === "student" ? <><GraduationCap size={10} /> Student</> : <><Briefcase size={10} /> Staff</>}</span>
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Pending</span>
                   </div>
                 </div>
                 <div className="mt-3 space-y-1 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  <p className="flex items-center gap-1.5"><Mail size={12} className="text-slate-400" /> {r.email}</p>
+                  {/* An email address is one unbroken token, so it has no wrap opportunity
+                      and `break-words` cannot help it — `break-all` is the only thing that
+                      will split "first.last@students.edtech.co.uk" rather than let it set
+                      the panel's width. A college address of that shape measures about
+                      230px at this size, against the 224px this strip has on a 320px
+                      phone, so it was over the edge by a hair on every row. `min-w-0` on
+                      the span is what lets the break take effect inside the flex row, and
+                      `shrink-0` keeps the envelope icon from being flattened first. */}
+                  <p className="flex items-center gap-1.5"><Mail size={12} className="shrink-0 text-slate-400" /> <span className="min-w-0 break-all">{r.email}</span></p>
                   {r.kind === "student"
                     ? <>
                         <p className="flex items-center gap-1.5"><GraduationCap size={12} className="text-slate-400" /> Student{r.collegeId ? ` · College ID ${r.collegeId}` : ""}</p>
@@ -6977,8 +7237,10 @@ function AdminSignups({ store }) {
             </div>
           ) : (
             <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200">
-              <p className="text-sm font-bold text-slate-700">{modal?.req.name}</p>
-              <p>{modal?.req.email}</p>
+              <p className="break-words text-sm font-bold text-slate-700">{modal?.req.name}</p>
+              {/* `break-all`, as on the pending-list rows above: an email has nowhere to
+                  wrap, and this panel sits inside a dialog that clips rather than scrolls. */}
+              <p className="break-all">{modal?.req.email}</p>
               <p>{modal?.req.kind === "student" ? `Student${modal?.req.collegeId ? ` · College ID ${modal.req.collegeId}` : ""}` : `${modal?.req.role} · ${modal?.req.dept}`}</p>
             </div>
           )}
@@ -7242,7 +7504,7 @@ function AdminStudentQueries({ store }) {
         <div className="flex gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
           {["all", "open", "answered"].map(f => <button key={f} onClick={() => setFilter(f)} className={`rounded-lg px-3 py-1.5 text-xs font-bold capitalize transition ${filter === f ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={filter === f ? { background: NAVY } : {}}>{f}</button>)}
         </div>
-        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={school} onChange={setSchool} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       <div className="space-y-3">
@@ -7464,10 +7726,15 @@ function HndSemesterPicker({ store }) {
   const { semesters, semesterId, setSemesterId, unassignedSessions } = store;
   if (!semesters.length) return null;
   return (
-    <label className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
-      <CalendarDays size={14} className="text-slate-400" />
-      <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Semester</span>
-      <select value={semesterId} onChange={e => setSemesterId(e.target.value)} className="bg-transparent text-xs font-bold outline-none" style={{ color: NAVY }}>
+    // `min-w-0` on the pill, `shrink-0` on the icon and the word "Semester", `max-w-full`
+    // on the select: the picker's widest option is "Outside any semester (N)" or a term
+    // name in full, which a select takes as its intrinsic — and therefore its minimum —
+    // width. See the note on the first SchoolFilter in AdminMitigations for why
+    // `max-width` is the declaration that fixes this and `min-w-0` on its own is not.
+    <label className="flex min-w-0 items-center gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
+      <CalendarDays size={14} className="shrink-0 text-slate-400" />
+      <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-slate-500">Semester</span>
+      <select value={semesterId} onChange={e => setSemesterId(e.target.value)} className="max-w-full bg-transparent text-xs font-bold outline-none" style={{ color: NAVY }}>
         <option value="">All semesters</option>
         {semesters.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         {unassignedSessions > 0 && <option value="unassigned">Outside any semester ({unassignedSessions})</option>}
@@ -8312,12 +8579,17 @@ function HndPercentages({ store }) {
           ))}
         </div>
         {atRisk > 0 && <span className="flex items-center gap-1.5 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 ring-1 ring-rose-200"><AlertCircle size={13} /> {atRisk} below 70%</span>}
+        {/* `max-w-full`, and this picker is the worst offender of the lot: its options are
+            course names in full — "Pearson BTEC Level 5 Higher National Diploma in Business
+            (October 2025)" — so its intrinsic width, which is also its minimum width as a
+            flex child, runs to several hundred pixels. See the first SchoolFilter in
+            AdminMitigations for the full reasoning. */}
         <select value={courseId} onChange={e => setCourseId(e.target.value)}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400">
+          className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400">
           <option value="">All courses</option>
           {(store.courses || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400" />
         <button type="button" onClick={() => setShowTutorial(v => !v)}
           title="Tutorial and seminar attendance imported from Moodle, held on a synthetic unit per course"
           className={`press rounded-xl px-3 py-1.5 text-xs font-bold ring-1 transition ${showTutorial ? "text-white ring-transparent" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"}`}
@@ -8555,10 +8827,19 @@ function HndStudents({ store }) {
                 <button key={m.id} onClick={() => toggleUnit(m.id)} type="button"
                   className={`press flex items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-bold ring-1 transition ${form.unitIds.includes(m.id) ? "text-white ring-transparent" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
                   style={form.unitIds.includes(m.id) ? { background: NAVY } : {}}>
-                  <span className={`flex h-4 w-4 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
+                  {/* `shrink-0` on the tick box and `min-w-0 break-words` on the code.
+                      Two unit chips to a row inside a modal leaves each one about 120px on
+                      a 320px handset, and once the padding and the 16px box are taken out
+                      the code has roughly 77px — less than a full code such as
+                      "HND-COMP-401" needs, and a code has no space in it to wrap at. The
+                      cell therefore set its own floor, the grid grew past the dialog, and
+                      the dialog's `overflow-hidden` cut the right-hand column off. The
+                      sibling list below (units carried over from another course) already
+                      does this correctly and is the pattern being matched here. */}
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
                     {form.unitIds.includes(m.id) && <Check size={10} className="text-white" />}
                   </span>
-                  {m.code}
+                  <span className="min-w-0 break-words">{m.code}</span>
                 </button>
               ))}
               {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-500">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
@@ -8804,14 +9085,17 @@ function AdminStudents({ store }) {
             <button key={f.k} onClick={() => setStatusFilter(f.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${statusFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={statusFilter === f.k ? { background: NAVY } : {}}>{f.l}</button>
           ))}
         </div>
+        {/* `max-w-full` on both: the unit filter's options are a code plus the unit title
+            in full, which a select adopts as its intrinsic and therefore its minimum width.
+            See the first SchoolFilter in AdminMitigations for why max-width is the fix. */}
         {store.units.length > 0 && (
-          <select value={unitFilter} onChange={e => setUnitFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
+          <select value={unitFilter} onChange={e => setUnitFilter(e.target.value)} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
             <option value="">All units</option>
             {store.units.map(m => <option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}
           </select>
         )}
         {/* Filter by attendance-risk flag (red = High Risk). */}
-        <select value={riskFilter} onChange={e => setRiskFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
+        <select value={riskFilter} onChange={e => setRiskFilter(e.target.value)} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
           <option value="all">All risk levels</option>
           <option value="High Risk">🔴 High Risk</option>
           <option value="Monitor">🟠 Monitor</option>
@@ -8820,7 +9104,7 @@ function AdminStudents({ store }) {
           <option value="Perfect">🟣 Perfect</option>
           <option value="No data">⚪ No data</option>
         </select>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         {riskFilter === "High Risk" && <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-600 ring-1 ring-rose-200">Showing red flags</span>}
         <span className="ml-auto text-xs font-semibold text-slate-500">{filtered.length} of {total}</span>
       </div>
@@ -8912,10 +9196,19 @@ function AdminStudents({ store }) {
                 <button key={m.id} onClick={() => toggleUnit(m.id)} type="button"
                   className={`press flex items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-bold ring-1 transition ${form.unitIds.includes(m.id) ? "text-white ring-transparent" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`}
                   style={form.unitIds.includes(m.id) ? { background: NAVY } : {}} title={m.name}>
-                  <span className={`flex h-4 w-4 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
+                  {/* `shrink-0` on the tick box and `min-w-0 break-words` on the code.
+                      Two unit chips to a row inside a modal leaves each one about 120px on
+                      a 320px handset, and once the padding and the 16px box are taken out
+                      the code has roughly 77px — less than a full code such as
+                      "HND-COMP-401" needs, and a code has no space in it to wrap at. The
+                      cell therefore set its own floor, the grid grew past the dialog, and
+                      the dialog's `overflow-hidden` cut the right-hand column off. The
+                      sibling list below (units carried over from another course) already
+                      does this correctly and is the pattern being matched here. */}
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 ${form.unitIds.includes(m.id) ? "border-white bg-white/20" : "border-slate-300"}`}>
                     {form.unitIds.includes(m.id) && <Check size={10} className="text-white" />}
                   </span>
-                  {m.code}
+                  <span className="min-w-0 break-words">{m.code}</span>
                 </button>
               ))}
               {pickableUnits.length === 0 && <p className="col-span-2 text-xs text-slate-500 sm:col-span-3">{store.units.length === 0 ? "No units yet — add one on the Units tab." : "This course has no units yet."}</p>}
@@ -9591,7 +9884,20 @@ function SelfReflectionScreen({ store, me }) {
 
       {pageErr && <Card className="!bg-rose-50 !ring-rose-200 text-[12px] font-semibold text-rose-600">{pageErr}</Card>}
 
-      <div className="flex items-center gap-2">
+      {/* Four controls on one row: Cancel/Back, Save draft, a spacer, and Next or Submit.
+          Measured at 320px that is roughly 300px of buttons inside 288px of Screen, so
+          the Submit button on the final page was being pushed past the right edge — the
+          one control on the screen that the whole form exists to reach.
+
+          `flex-wrap` rather than shrinking the buttons: these are the primary actions on
+          a long form and they are already at the 44px touch minimum, so trimming padding
+          or type to buy pixels would make them harder to hit, not easier. The spacer gets
+          `hidden sm:block` because a zero-width flex item that still grows will happily
+          claim a whole wrapped line to itself, leaving a blank gap between the two rows
+          of buttons; `sm:` keeps the desktop arrangement — Back and Save draft left,
+          Next right — byte-for-byte identical. On a wrapped phone layout the actions sit
+          left-aligned in reading order instead, which is the normal handset idiom. */}
+      <div className="flex flex-wrap items-center gap-2">
         <button onClick={step === 0 ? () => setMode("list") : back} disabled={busy}
           className="press rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-40">
           {step === 0 ? "Cancel" : "Back"}
@@ -9600,7 +9906,7 @@ function SelfReflectionScreen({ store, me }) {
           className="press rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-200 disabled:opacity-40">
           Save draft
         </button>
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         {isLast
           ? <button onClick={() => save("submitted")} disabled={busy}
               className="press flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>
@@ -9770,9 +10076,26 @@ function ReviewField({ q, value, onChange, disabled }) {
           {q.options.map(o => {
             const on = chosen.includes(o);
             return (
-              <label key={o} className={`flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-sm ring-1 transition ${on ? "bg-blue-50 font-semibold text-slate-800 ring-blue-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"} ${disabled ? "pointer-events-none opacity-60" : ""}`}>
-                <input type="checkbox" checked={on} disabled={disabled} onChange={() => toggle(o)} className="h-4 w-4 rounded accent-blue-700" />
-                {o}
+              // The option rows of both ReviewField pickers get the same three
+              // adjustments, for reasons that apply equally to the radio variant below.
+              //
+              // `shrink-0` on the box: a 16px checkbox is a flex child like any other and
+              // will be squeezed to a sliver by a long option string before the string
+              // consents to wrap, which leaves the reader with a row they cannot tell is
+              // ticked. `min-w-0 break-words` on a span around the label: the bare text
+              // node was an anonymous flex item at `min-width: auto`, so an option
+              // containing one long unbroken token — a unit code, a hyphen-free course
+              // title — pushed the row past the card edge instead of breaking. These
+              // option lists come from a form the college authors at runtime, so the
+              // lengths are not ours to predict.
+              //
+              // `py-3 sm:py-2` lifts the row to about 45px at base, over the 44px touch
+              // minimum; a radio button on a phone is tapped by its row, not its 16px
+              // dot. Restored to the original `py-2` from 640px up, where the pointer is
+              // precise and the tighter list reads better.
+              <label key={o} className={`flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-3 text-sm ring-1 transition sm:py-2 ${on ? "bg-blue-50 font-semibold text-slate-800 ring-blue-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"} ${disabled ? "pointer-events-none opacity-60" : ""}`}>
+                <input type="checkbox" checked={on} disabled={disabled} onChange={() => toggle(o)} className="h-4 w-4 shrink-0 rounded accent-blue-700" />
+                <span className="min-w-0 break-words">{o}</span>
               </label>
             );
           })}
@@ -9785,9 +10108,11 @@ function ReviewField({ q, value, onChange, disabled }) {
     <div>{label}
       <div className="space-y-1.5">
         {q.options.map(o => (
-          <label key={o} className={`flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-2 text-sm ring-1 transition ${value === o ? "bg-blue-50 font-semibold text-slate-800 ring-blue-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"} ${disabled ? "pointer-events-none opacity-60" : ""}`}>
-            <input type="radio" name={q.id} checked={value === o} disabled={disabled} onChange={() => set(o)} className="h-4 w-4 accent-blue-700" />
-            {o}
+          // Same three adjustments as the checkbox list above; the reasoning is written
+          // out there.
+          <label key={o} className={`flex cursor-pointer items-center gap-2.5 rounded-xl px-3 py-3 text-sm ring-1 transition sm:py-2 ${value === o ? "bg-blue-50 font-semibold text-slate-800 ring-blue-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"} ${disabled ? "pointer-events-none opacity-60" : ""}`}>
+            <input type="radio" name={q.id} checked={value === o} disabled={disabled} onChange={() => set(o)} className="h-4 w-4 shrink-0 accent-blue-700" />
+            <span className="min-w-0 break-words">{o}</span>
           </label>
         ))}
       </div>
@@ -9853,7 +10178,12 @@ function ReviewAnswers({ form, answers }) {
                       ? <ul className="mt-0.5 space-y-0.5">
                           {q.rows.map(r => v[r.key] ? <li key={r.key} className="text-sm text-slate-700"><span className="text-slate-500">{r.label}:</span> <b>{v[r.key]}</b></li> : null)}
                         </ul>
-                      : <p className="whitespace-pre-wrap text-sm text-slate-700">{String(v)}</p>}
+                      // `break-words` alongside `whitespace-pre-wrap`: pre-wrap keeps the
+                      // author's line breaks and wraps at spaces, but it will not break
+                      // inside a word, and these are free-text answers a member of staff
+                      // typed on a phone — a pasted URL or a long file path is entirely
+                      // normal and would otherwise set the card's minimum width.
+                      : <p className="whitespace-pre-wrap break-words text-sm text-slate-700">{String(v)}</p>}
                 </div>
               );
             })}
@@ -10075,9 +10405,9 @@ function AdminStaffReviews({ store }) {
               <button key={f.type} onClick={() => { setPickedType(f.type); setStep(0); setPageErr(""); }} disabled={f.pending}
                 className={`press w-full rounded-2xl p-4 text-left ring-1 transition ${f.pending ? "cursor-not-allowed bg-slate-50 opacity-70 ring-slate-200" : "bg-white ring-slate-200 hover:bg-blue-50/50 hover:ring-blue-300"}`}>
                 <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={{ background: typeTone(f.type).colour }}><ClipboardList size={18} /></span>
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-slate-700">{f.title}</p>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white" style={{ background: typeTone(f.type).colour }}><ClipboardList size={18} /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-bold text-slate-700">{f.title}</p>
                     <p className="text-[11px] text-slate-500">
                       {f.pending ? "Questions not set up yet" : `${f.sections.reduce((n, s) => n + s.questions.length, 0)} questions · ${f.sections.length} sections`}
                     </p>
@@ -10153,16 +10483,28 @@ function AdminStaffReviews({ store }) {
           <div className="space-y-4">
             <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-200">
               <span className="flex h-9 w-9 items-center justify-center rounded-full text-[11px] font-bold text-white" style={{ background: viewing.staff?.colour || NAVY }}>{viewing.staff?.initials}</span>
-              <div className="flex-1">
-                <p className="text-sm font-bold text-slate-700">{viewing.staff?.name}</p>
-                <p className="text-[11px] text-slate-600">
+              {/* `min-w-0` so the text column can give way, `truncate` so it does so by
+                  ellipsising rather than by holding the row open, and `shrink-0` on the
+                  avatar and the status pill so the giving-way happens in the one place
+                  where losing characters costs least. Without the first of these the
+                  column sat at its longest word and pushed the Draft/Submitted pill out
+                  of the dialog. */}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-slate-700">{viewing.staff?.name}</p>
+                <p className="truncate text-[11px] text-slate-600">
                   {viewing.term || "—"}{viewing.academicYear ? ` · ${viewing.academicYear}` : ""}
                   {viewing.completedBy ? ` · recorded by ${viewing.completedBy}` : ""}
                 </p>
               </div>
-              <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${viewing.status === "draft" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{viewing.status === "draft" ? "Draft" : "Submitted"}</span>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${viewing.status === "draft" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{viewing.status === "draft" ? "Draft" : "Submitted"}</span>
             </div>
-            <div className="flex gap-2">
+            {/* `flex-wrap`: two `flex-1` buttons, but each one's content — a 16px icon, a
+                gap, "Download Excel" and `px-4` — needs about 124px before it will shrink
+                any further, and a 320px phone offers 120px a side inside this dialog. Eight
+                pixels over is still over, and the dialog clips rather than scrolls. Wrapping
+                gives each button its own full-width line at base and changes nothing at any
+                width where the pair already fits. */}
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => { if (!srExportPdf(viewing, formOf(viewing.type))) store.notify("Your browser blocked the print window — allow pop-ups for this site and try again.", "error"); }}
                 className="press flex flex-1 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-200">
                 <FileText size={16} /> Download PDF
@@ -10612,10 +10954,26 @@ function StudentReviewScreen({ store, me }) {
                   {progressChoices.map(p => {
                     const t = progressTone(p); const on = form.progress === p;
                     return (
+                      // `min-w-0 break-words` on a span around the label, and `py-3` at
+                      // base. This is a phone screen — StaffApp renders it, despite the
+                      // component living down here among the console pages — so 320px has
+                      // to work properly rather than merely survive.
+                      //
+                      // The label was a bare text node, which the flex layout treats as an
+                      // anonymous item at `min-width: auto`: it refuses to wrap below its
+                      // longest word and instead sets the button's minimum width. These
+                      // options come from the server (`options.progress`), not from the
+                      // PROGRESS_TONE constant above, so the college can lengthen them
+                      // without anybody here getting a say. The same applies to the
+                      // Concerns list below.
+                      //
+                      // `py-3 sm:py-2.5` clears the 44px touch minimum at base and restores
+                      // the original spacing from 640px up, so the console's own copy of
+                      // this screen is untouched.
                       <button key={p} type="button" onClick={() => set("progress", p)} disabled={busy}
-                        className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-bold ring-1 transition ${on ? `${t.bg} ${t.text} ring-transparent` : "bg-white text-slate-500 ring-slate-200"}`}>
+                        className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm font-bold ring-1 transition sm:py-2.5 ${on ? `${t.bg} ${t.text} ring-transparent` : "bg-white text-slate-500 ring-slate-200"}`}>
                         <span className={`h-4 w-4 shrink-0 rounded-full ring-2 ${on ? "ring-transparent" : "ring-slate-300"}`} style={{ background: on ? t.colour : "transparent" }} />
-                        {p}
+                        <span className="min-w-0 break-words">{p}</span>
                       </button>
                     );
                   })}
@@ -10627,10 +10985,11 @@ function StudentReviewScreen({ store, me }) {
                   {concernChoices.map(c => {
                     const on = form.concerns.includes(c);
                     return (
+                      // Same treatment as the Progress list above; the reasoning is there.
                       <button key={c} type="button" onClick={() => set("concerns", toggleConcern(form.concerns, c))} disabled={busy}
-                        className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold ring-1 transition ${on ? "bg-blue-50 text-blue-800 ring-blue-200" : "bg-white text-slate-500 ring-slate-200"}`}>
+                        className={`press flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm font-semibold ring-1 transition sm:py-2.5 ${on ? "bg-blue-50 text-blue-800 ring-blue-200" : "bg-white text-slate-500 ring-slate-200"}`}>
                         <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-md ring-2 ${on ? "text-white ring-transparent" : "ring-slate-300"}`} style={on ? { background: NAVY } : {}}>{on && <Check size={11} />}</span>
-                        {c}
+                        <span className="min-w-0 break-words">{c}</span>
                       </button>
                     );
                   })}
@@ -10666,10 +11025,16 @@ function StudentReviewScreen({ store, me }) {
 
           {formErr && <Card className="!bg-rose-50 !ring-rose-200 text-[12px] font-semibold text-rose-600">{formErr}</Card>}
 
-          <div className="flex items-center gap-2">
+          {/* Cancel and Save fit 320px as written, but only just, and "Save changes" is
+              longer than "Save review" — so the edit path is the tight one, and a reader
+              at 200% OS text zoom has no margin at all. `flex-wrap` costs nothing when
+              there is room and drops Save to its own line when there is not. The spacer
+              is `hidden sm:block` for the reason given on the reflection form: a growing
+              zero-width item takes an entire wrapped line for itself and leaves a gap. */}
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setMode("list")} disabled={busy}
               className="press rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-40">Cancel</button>
-            <div className="flex-1" />
+            <div className="hidden flex-1 sm:block" />
             <button onClick={save} disabled={busy}
               className="press flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white shadow-md disabled:opacity-40" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>
               {busy ? <Loader size={16} /> : <Save size={16} />} {editing ? "Save changes" : "Save review"}
@@ -10706,9 +11071,17 @@ function StudentReviewScreen({ store, me }) {
   );
 }
 
+// `min-w-0 break-words` on the wrapper, exactly as on `Field` far above and for the same
+// reason: every use of DetailRow is a cell of a `grid-cols-2` in StudentReviewDetail, and
+// a grid child at the default `min-width: auto` will not go narrower than its own longest
+// unbroken word. The content here is student names, unit titles and staff names — "Health
+// and Social Care" is fine, a single long word is not — and on a 320px phone each column
+// is only about 120px wide, so one long token in either cell widened the grid past the
+// card. Harmless everywhere else: the console's View modal gives these cells far more room
+// than any word needs, so a minimum that is never reached costs nothing to relax.
 function DetailRow({ label, children }) {
   return (
-    <div>
+    <div className="min-w-0 break-words">
       <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
       <div className="mt-0.5 text-sm text-slate-600">{children}</div>
     </div>
@@ -10732,8 +11105,11 @@ function StudentReviewDetail({ r }) {
           ? <span className="text-slate-300">None recorded</span>
           : <span className="flex flex-wrap gap-1.5">{r.concerns.map(c => <span key={c} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">{c}</span>)}</span>}
       </DetailRow>
-      <DetailRow label="Summary of discussion"><p className="whitespace-pre-wrap leading-relaxed">{r.summary || <span className="text-slate-300">—</span>}</p></DetailRow>
-      <DetailRow label="Agreed actions"><p className="whitespace-pre-wrap leading-relaxed">{r.agreedActions || <span className="text-slate-300">—</span>}</p></DetailRow>
+      {/* `break-words` beside `whitespace-pre-wrap`: pre-wrap honours the line breaks the
+          lecturer typed and wraps at spaces, but it will not break mid-word, so a pasted
+          link or a long reference in a free-text box would otherwise push the card wide. */}
+      <DetailRow label="Summary of discussion"><p className="whitespace-pre-wrap break-words leading-relaxed">{r.summary || <span className="text-slate-300">—</span>}</p></DetailRow>
+      <DetailRow label="Agreed actions"><p className="whitespace-pre-wrap break-words leading-relaxed">{r.agreedActions || <span className="text-slate-300">—</span>}</p></DetailRow>
       <div className="grid grid-cols-2 gap-3.5">
         <DetailRow label="Follow-up required">
           {r.followUp
@@ -10895,7 +11271,12 @@ function AdminStudentReviews({ store }) {
             <button key={f.k} onClick={() => setFollowFilter(f.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${followFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={followFilter === f.k ? { background: NAVY } : {}}>{f.l}</button>
           ))}
         </div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        {/* `min-w-0 max-w-full` written in by hand because SchoolFilter's className is a
+            full REPLACEMENT, not an append — a call site that passes its own string does
+            not inherit the cap the component's default carries, and a <select> whose
+            widest option is "School of Engineering and the Built Environment" will
+            otherwise refuse to shrink and carry this toolbar off the edge of a phone. */}
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
         <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search student, lecturer, unit or summary…" className="w-56 bg-transparent text-sm outline-none" />
@@ -11060,6 +11441,26 @@ const PROGRAMME_COLOURS = ["#1a3a8f", "#0d7a5f", "#6d28d9", "#b45309", "#0e7490"
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/*
+ * A NOTE ON THE NARROW-HANDSET CLASSES THAT FOLLOW, because they recur right through
+ * the rest of this file and are not self-explanatory one at a time.
+ *
+ * A flex or grid child defaults to `min-width: auto`, which resolves to its own
+ * min-content width — so it refuses to shrink below that even inside a `1fr` track or
+ * a `flex-1`. For a `<select>` the min-content width is its WIDEST OPTION, and the
+ * options here are course titles, staff names and audit verbs; for a toolbar it is the
+ * widest control. At 320px the console's `<main>` leaves about 280px, so either of
+ * those spills the row. `min-w-0` on the child is what lets the shrink happen, and
+ * `max-w-full` is what stops a select that has no flexible sibling to give way.
+ *
+ * Where a grid of three or more cells sits inside a Modal the arithmetic is tighter
+ * still — the dialog is `min(100vw-2rem, width)` with `p-5` and `overflow-hidden`, so
+ * roughly 248px of content that CLIPS rather than scrolls. Those grids drop to fewer
+ * columns at base and are restored at `sm:`, never the other way round.
+ *
+ * Everything added below is either base-only or additive, so `sm:` and above render
+ * exactly as they did.
+ */
 function HndCourses({ store, onOpen }) {
   const [modal, setModal] = useState(false);
   const [edit, setEdit] = useState(null);
@@ -11142,8 +11543,11 @@ function HndCourses({ store, onOpen }) {
           A course groups the units taught under it — e.g. <span className="font-semibold">HND Business</span>.
           Add your courses here, then open one to add its units.
         </p>
-        <div className="flex items-center gap-2">
-          <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        <div className="flex min-w-0 items-center gap-2">
+          {/* SchoolFilter takes className as a REPLACEMENT, not an append, so the cap
+              that lives in its default has to be written into every caller's own
+              string — see the component. */}
+          <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
           <PrimaryBtn onClick={openAdd}><Plus size={16} /> Add course</PrimaryBtn>
         </div>
       </div>
@@ -11160,7 +11564,7 @@ function HndCourses({ store, onOpen }) {
                 <span className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-xs font-extrabold text-slate-800 shadow-sm"><Layers size={12} /> Course</span>
               </div>
               <div className="flex flex-1 flex-col p-4">
-                <h3 className="text-base font-extrabold leading-snug" style={{ color: NAVY_DARK }}>{p.name}</h3>
+                <h3 className="break-words text-base font-extrabold leading-snug" style={{ color: NAVY_DARK }}>{p.name}</h3>
                 <p className="mt-1 text-xs font-semibold text-slate-500">{p.unitCount || 0} unit{(p.unitCount || 0) === 1 ? "" : "s"}</p>
                 {(() => {
                   const cs = (store.cohorts || []).filter(c => c.courseId === p.id);
@@ -11439,10 +11843,13 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
   // One shell for every control, so the bar reads as one row of things rather than as
   // several bars that happen to sit together — which is what it was.
   const Pick = ({ label, value, onChange, children, wide }) => (
-    <label className="flex items-center gap-1.5 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+    <label className="flex min-w-0 max-w-full items-center gap-1.5 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
+      <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+      {/* The `wide` cap is 16rem of LECTURER NAME, which with its own label beside it is
+          wider than a 320px handset has to give. Capped harder at base and restored at
+          `sm:`; `min-w-0` is what lets the shrink reach the select at all. */}
       <select value={value} onChange={onChange}
-        className={`bg-transparent text-sm font-semibold text-slate-700 outline-none ${wide ? "max-w-[16rem]" : ""}`}>
+        className={`min-w-0 bg-transparent text-sm font-semibold text-slate-700 outline-none ${wide ? "max-w-[9rem] sm:max-w-[16rem]" : "max-w-full"}`}>
         {children}
       </select>
     </label>
@@ -11461,16 +11868,16 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
         </div>
 
         {courseOpts.length > 1 && (
-          <label className="flex items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
+          <label className="flex min-w-0 max-w-full items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-blue-300">
             {/* The colour dot carries over from the pills it replaced. It is what explains
                 the colours on the unit cards below; without it the gallery's grouping is
                 unexplained. */}
             <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-slate-300"
               style={chosenCourse?.colour ? { background: chosenCourse.colour } : { background: "transparent" }} />
-            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Course</span>
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-500">Course</span>
             <select value={f.course || ""} title={chosenCourse?.full || ""}
               onChange={e => { on.course?.(e.target.value); on.year?.(""); on.term?.(""); on.status?.(""); }}
-              className="max-w-[18rem] bg-transparent text-sm font-semibold text-slate-700 outline-none">
+              className="min-w-0 max-w-[11rem] bg-transparent text-sm font-semibold text-slate-700 outline-none sm:max-w-[18rem]">
               {courseOpts.map(c => <option key={c.id || "all"} value={c.id} title={c.full}>{c.label}</option>)}
             </select>
           </label>
@@ -11551,7 +11958,7 @@ function UnitFilterBar({ units, inCourse, courses, f, on, today, right = null, s
           </>
         )}
         {chosenCourse?.id && chosenCourse.full !== chosenCourse.label && (
-          <span className="truncate text-slate-500" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
+          <span className="min-w-0 truncate text-slate-500" title={chosenCourse.full}>{chosenCourse.full.split("|").slice(1).join("|").trim()}</span>
         )}
       </div>
     </div>
@@ -11862,7 +12269,10 @@ function Units({ store, onView, courseFilter = "", setCourseFilter }) {
                 </select>
               </Field>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            {/* Three columns of label inside a ~248px dialog gave each one about
+                75px, which broke "Unit number" over two lines and pushed the Tutor
+                select past the clip. Two at base, three from `sm:` as before. */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field label="Unit number"><input value={form.unitNumber} onChange={e => setForm(f => ({ ...f, unitNumber: e.target.value }))} placeholder="e.g. 1" className={inputCls} /></Field>
               <Field label="Unit code"><input value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="e.g. OBM" className={inputCls} /></Field>
               {/* Stores the staff id, not the name: a lecturer can then be shown their
@@ -12344,7 +12754,7 @@ function AssessmentsOverview({ store }) {
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search course…" className="w-44 bg-transparent text-sm outline-none sm:w-56" /></div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
         <div className="ml-auto flex items-center gap-3">
           <span className="hidden items-center gap-2 text-[11px] font-semibold text-slate-500 sm:flex">
             {GRADE_BANDS.map(b => <span key={b} className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: gradeTone(b).colour }} />{b}</span>)}
@@ -12428,8 +12838,8 @@ function AssessmentsManage({ store, onGrade, unitId, setUnitId, courseFilter = "
       </div>
       {selected && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-lg font-extrabold" style={{ color: NAVY_DARK }}>{selected.name}</p>
+          <div className="min-w-0">
+            <p className="break-words text-lg font-extrabold" style={{ color: NAVY_DARK }}>{selected.name}</p>
             <p className="text-xs text-slate-500">{selected.unitNumber ? `Unit ${selected.unitNumber} · ` : ""}{selected.code}{courseOf ? ` · ${courseOf.name}` : ""} · {selected.studentCount == null ? "students not recorded" : `${selected.studentCount} student${selected.studentCount === 1 ? "" : "s"}`}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -12805,9 +13215,13 @@ function StudentAssessments({ store }) {
           </div>
           {Object.entries(byUnit).map(([mid, m]) => (
             <div key={mid} className="mb-4">
-              <p className="mb-1.5 flex items-center gap-2 text-sm font-bold text-slate-700"><span className="flex h-6 w-9 items-center justify-center rounded text-[10px] font-extrabold text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>{m.code.slice(0, 5)}</span>{m.name}</p>
+              <p className="mb-1.5 flex items-center gap-2 text-sm font-bold text-slate-700"><span className="flex h-6 w-9 shrink-0 items-center justify-center rounded text-[10px] font-extrabold text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>{m.code.slice(0, 5)}</span><span className="min-w-0 break-words">{m.name}</span></p>
+              {/* The wrapper was overflow-hidden with no scroller, so on a handset the
+                  four columns of this per-unit table were silently clipped at the
+                  marks rather than reachable. */}
               <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
+                <table className="w-full min-w-[460px] text-sm">
                   <tbody>
                     {m.items.map((a, i) => { const gt = gradeTone(a.grade); return (
                       <tr key={a.id} className={`${i ? "border-t border-slate-100" : ""}`}>
@@ -12819,6 +13233,7 @@ function StudentAssessments({ store }) {
                     ); })}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           ))}
@@ -12893,15 +13308,17 @@ function AssessmentRecords({ store }) {
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <select value={fCourse} onChange={e => { setFCourse(e.target.value); setFUnit(""); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
+        {/* Both of these list "CODE — Unit name", so their intrinsic width is a
+            sentence. Without min-w-0 they set the width of the whole toolbar. */}
+        <select value={fCourse} onChange={e => { setFCourse(e.target.value); setFUnit(""); }} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
           <option value="">All courses</option>
           {store.courses.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <select value={fUnit} onChange={e => setFUnit(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
+        <select value={fUnit} onChange={e => setFUnit(e.target.value)} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
           <option value="">All units{fCourse ? " in course" : ""}</option>
           {(fCourse ? coursesInProg(fCourse) : store.units).map(m => <option key={m.id} value={m.id}>{m.code} — {m.name}</option>)}
         </select>
-        <SchoolFilter schools={schools} value={fSchool} onChange={setFSchool} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={fSchool} onChange={setFSchool} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search student or assessment…" className="w-40 bg-transparent text-sm outline-none sm:w-52" /></div>
         <PrimaryBtn className="ml-auto" onClick={openAdd}><Plus size={16} /> Add grade record</PrimaryBtn>
       </div>
@@ -13166,7 +13583,9 @@ function AdminPAT({ store }) {
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search student, summary or type…" className="w-44 bg-transparent text-sm outline-none sm:w-60" />
         </div>
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
+        {/* "Stage 2 - Absence Concern Meeting" is the widest option and therefore
+            this control's min-content width — comfortably wider than a 320px row. */}
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none">
           <option value="">All query types</option>
           {QUERY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
@@ -13175,7 +13594,7 @@ function AdminPAT({ store }) {
             <button key={f.k} onClick={() => setFollowFilter(f.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${followFilter === f.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={followFilter === f.k ? { background: NAVY } : {}}>{f.l}</button>
           ))}
         </div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <span className="ml-auto text-xs font-semibold text-slate-500">{list.length} of {total}</span>
       </div>
 
@@ -13594,8 +14013,11 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
                     {r.student?.name || "Unknown student"}
                     {r.student?.studentRef && <span className="ml-1.5 text-xs font-semibold text-slate-500">{r.student.studentRef}</span>}
                   </p>
-                  <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">
+                  {/* Free text somebody typed, so it can hold a URL or a reference
+                      with no break opportunity in it; break-words keeps that inside
+                      the card instead of widening the row. */}
+                  <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
+                  <p className="mt-1 break-words text-[11px] text-slate-500">
                     {/* WHO ASKED changes how you open the conversation, so it leads the
                         line rather than sitting at the end of it. A self-referral has no
                         raisedBy at all — the student is not a colleague — so the old
@@ -13613,12 +14035,12 @@ function ReferralsQueue({ store, deptKey, deptName, deptActive }) {
                   </p>
                   {/* The department's OWN notes. Shown only here, never on Sent by me. */}
                   {r.notes && (
-                    <p className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600 ring-1 ring-slate-100">{r.notes}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words rounded-xl bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600 ring-1 ring-slate-100">{r.notes}</p>
                   )}
                   {r.status === "closed" && (
                     <p className="mt-2 text-[12px] text-slate-500">
                       <span className="font-bold text-slate-600">{referralOutcomeLabel(r.outcome)}</span>
-                      {r.outcomeDetail ? <span className="block whitespace-pre-wrap text-slate-500">{r.outcomeDetail}</span> : null}
+                      {r.outcomeDetail ? <span className="block whitespace-pre-wrap break-words text-slate-500">{r.outcomeDetail}</span> : null}
                     </p>
                   )}
                 </div>
@@ -13830,7 +14252,7 @@ function ReferralsMine({ store }) {
                       </p>
                       {/* The reason is shown because the tutor WROTE it. It is the one
                           field both sides of this feature can read. */}
-                      <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-slate-600">{r.reason}</p>
                       <p className="mt-1 text-[11px] text-slate-500">
                         Sent {fmtDate(r.raisedOn)}
                         {r.acceptedOn ? ` · picked up ${fmtDate(r.acceptedOn)}` : ""}
@@ -14014,13 +14436,13 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
               {history.map(t => (
                 <div key={t.id} className="text-[12px] leading-relaxed text-slate-600">
                   <p className="font-semibold text-slate-700">{t.fromName} <ArrowRight size={11} className="inline" /> {t.toName}</p>
-                  <p className="whitespace-pre-wrap">{t.reason}</p>
+                  <p className="whitespace-pre-wrap break-words">{t.reason}</p>
                   <p className="text-[11px] text-slate-600">{t.transferredBy || "A member of staff"} · {fmtDate(t.transferredOn)}</p>
                   {/* Present ONLY when this reader is on the department that wrote them.
                       Absent is not empty: for everybody else the field never arrives, so
                       the block is not rendered rather than rendered blank. */}
                   {typeof t.notesAtTransfer === "string" && t.notesAtTransfer && (
-                    <p className="mt-1 whitespace-pre-wrap rounded-lg bg-white px-2.5 py-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">
+                    <p className="mt-1 whitespace-pre-wrap break-words rounded-lg bg-white px-2.5 py-1.5 text-[11px] text-slate-500 ring-1 ring-slate-200">
                       <span className="font-bold text-slate-500">Your notes at the hand-off — </span>{t.notesAtTransfer}
                     </p>
                   )}
@@ -14050,7 +14472,7 @@ function ReferralThreadModal({ referral, title, showHistory, onClose }) {
                   {" · "}
                   {m.authorRole === "student" ? "the student" : m.authorRole === "referrer" ? "who referred" : "the department"}
                 </p>
-                <p className="mt-0.5 whitespace-pre-wrap">{m.body}</p>
+                <p className="mt-0.5 whitespace-pre-wrap break-words">{m.body}</p>
               </div>
             ))}
           </div>
@@ -14595,7 +15017,10 @@ function AdminKPI({ store }) {
       {/* Per-staff KPI table */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <p className="text-sm font-bold text-slate-700">Per-staff breakdown</p>
-        <div className="ml-auto flex items-center gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
+        {/* flex-wrap rather than a narrower set of labels: the five items here add up
+            to a shade over the 280px a 320px handset leaves, and at any width that
+            fits them the wrap never engages, so desktop is untouched. */}
+        <div className="ml-auto flex flex-wrap items-center gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200">
           <span className="px-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">Sort</span>
           {[{ k: "score", l: "Score" }, { k: "submission", l: "Registers" }, { k: "cohort", l: "Attendance" }, { k: "name", l: "Name" }].map(o => (
             <button key={o.k} onClick={() => setSort(o.k)} className={`press rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${sort === o.k ? "text-white" : "text-slate-500 hover:bg-slate-100"}`} style={sort === o.k ? { background: NAVY } : {}}>{o.l}</button>
@@ -14668,10 +15093,12 @@ function StaffKpiDetail({ k, store }) {
       <div className="flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm" style={{ background: k.s.colour }}>{k.s.initials}</span>
         <div className="min-w-0 flex-1"><p className="truncate text-base font-extrabold" style={{ color: NAVY_DARK }}>{k.s.name}</p><p className="truncate text-xs text-slate-500">{k.s.role} · {k.s.dept}</p></div>
-        {k.score != null && <span className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-extrabold text-white shadow" style={{ background: pctTone(k.score).colour }}>{k.score}</span>}
+        {k.score != null && <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-extrabold text-white shadow" style={{ background: pctTone(k.score).colour }}>{k.score}</span>}
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      {/* "Register submission" over three columns of a ~248px dialog cannot wrap
+          anywhere that fits, so these stack at base and go back to a row at `sm:`. */}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {metrics.map(m => (
           <div key={m.label} className="rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200/70">
             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{m.label}</p>
@@ -14945,7 +15372,7 @@ function AdminStaff({ store }) {
             {HOME_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 outline-none" />
         <span className="ml-auto text-xs font-semibold text-slate-500">{filtered.length} of {total}</span>
       </div>
 
@@ -15233,7 +15660,7 @@ function MoodleCard({ store }) {
 
       {status?.failed && (
         <p className="flex items-start gap-1.5 rounded-xl bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-700 ring-1 ring-rose-200">
-          <AlertCircle size={13} className="mt-px shrink-0" />{status.failed}
+          <AlertCircle size={13} className="mt-px shrink-0" /><span className="min-w-0 break-words">{status.failed}</span>
         </p>
       )}
 
@@ -15297,7 +15724,9 @@ function MoodleCard({ store }) {
               </button>
               {showIssues && (
                 <ul className="mt-1.5 max-h-52 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-2">
-                  {issues.map((m, i) => <li key={i} className="text-[11px] leading-relaxed text-slate-600">• {m}</li>)}
+                  {/* Sync issues name files, URLs and Moodle ids — break-all because
+                      several of those have no space to wrap at. */}
+                  {issues.map((m, i) => <li key={i} className="break-all text-[11px] leading-relaxed text-slate-600">• {m}</li>)}
                 </ul>
               )}
             </div>
@@ -15455,7 +15884,7 @@ function AdminSlc({ store }) {
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-sm text-slate-500"><b className="text-slate-700">{applied}</b> of {rows.length} have applied</span>
             <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200"><Search size={15} className="text-slate-400" /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, ID, course, CRN…" className="w-56 bg-transparent text-sm outline-none" /></div>
-            <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+            <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
             {statusFilter && <button onClick={() => setStatusFilter("")} className="text-xs font-semibold text-blue-600">Clear filter</button>}
           </div>
 
@@ -15861,7 +16290,8 @@ function AdminAttendanceEmails({ store }) {
                   its bottom bands would otherwise read a healthy run as hundreds of
                   students mysteriously passed over. */}
               <p className="mt-1 text-slate-500">{runResult.sent} sent, {runResult.failed} failed, {runResult.skipped} skipped{runResult.notTriggered ? `, ${runResult.notTriggered} in bands that don't send email` : ""}</p>
-              {runResult.errors?.length > 0 && <ul className="mt-2 list-disc pl-4 text-xs text-rose-600">{runResult.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+              {/* These carry the recipient address that failed, so break-all. */}
+              {runResult.errors?.length > 0 && <ul className="mt-2 list-disc pl-4 text-xs text-rose-600">{runResult.errors.map((e, i) => <li key={i} className="break-all">{e}</li>)}</ul>}
             </div>
           )}
         </>
@@ -15900,8 +16330,13 @@ function AdminAttendanceEmails({ store }) {
             </div>
           </div>
 
+          {/* Seven columns, five of them fixed-width, so this table cannot fit the
+              ~248px of a dialog on a 320px handset. It scrolls sideways instead of
+              being clipped, and keeps a floor so the columns do not collapse into
+              each other on the way. */}
           <div className="mt-3 overflow-hidden rounded-xl ring-1 ring-slate-200">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
+            <table className="w-full min-w-[620px] text-sm">
               <thead><tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-600">
                 <th className="px-2 py-2 w-14">Order</th>
                 <th className="px-2 py-2">Band name</th>
@@ -15936,6 +16371,7 @@ function AdminAttendanceEmails({ store }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Live preview — the question an administrator is actually asking while moving
@@ -15987,7 +16423,7 @@ function AdminAttendanceEmails({ store }) {
                       <div className="mt-3 rounded-lg bg-slate-50 p-3">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-600">Preview · {sample.name} ({sample.pct}%)</p>
                         <p className="mt-1 text-xs font-bold text-slate-600">{previewAttendance(config?.templates?.[b.key]?.subject, config?.values, sample, data?.period)}</p>
-                        <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{previewAttendance(config?.templates?.[b.key]?.body, config?.values, sample, data?.period)}</p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-500">{previewAttendance(config?.templates?.[b.key]?.body, config?.values, sample, data?.period)}</p>
                       </div>
                     )}
                     </>)}
@@ -16496,9 +16932,11 @@ function AdminIsm({ store }) {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, course or interviewer…" className="w-60 bg-transparent text-sm outline-none" />
+          {/* 15rem of input plus its icon and padding is wider than the ~280px a
+              320px handset leaves, and this box is the row's own width. */}
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, course or interviewer…" className="w-40 bg-transparent text-sm outline-none sm:w-60" />
         </div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       {loading ? <div className="skeleton h-64 rounded-2xl" /> : (
@@ -16819,9 +17257,9 @@ function AdminAdmissions({ store }) {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="ml-auto flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
           <Search size={15} className="text-slate-400" />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, phone or course…" className="w-60 bg-transparent text-sm outline-none" />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, email, phone or course…" className="w-40 bg-transparent text-sm outline-none sm:w-60" />
         </div>
-        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
+        <SchoolFilter schools={schools} value={schoolFilter} onChange={setSchoolFilter} className="min-w-0 max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 outline-none" />
       </div>
 
       {/* Bulk action bar — shown only while one or more applications are ticked. */}
@@ -17057,14 +17495,17 @@ function AuditDiff({ before, after }) {
     return String(v);
   };
   return (
+    // break-all on both value cells: these are raw stored values — ids, tokens,
+    // serialised JSON — and a single unbroken one would set the width of the whole
+    // audit table rather than wrapping inside its own cell.
     <table className="w-full text-[12px]">
       <tbody>
         {keys.map(k => (
           <tr key={k} className="align-top">
-            <td className="w-44 py-1 pr-3 font-semibold text-slate-500">{k}</td>
-            <td className="py-1 pr-2 text-slate-500 line-through decoration-slate-300">{show(before ? before[k] : null)}</td>
+            <td className="w-28 break-all py-1 pr-3 font-semibold text-slate-500 sm:w-44">{k}</td>
+            <td className="break-all py-1 pr-2 text-slate-500 line-through decoration-slate-300">{show(before ? before[k] : null)}</td>
             <td className="w-4 py-1 text-slate-400">&rarr;</td>
-            <td className="py-1 font-medium text-slate-700">{show(after ? after[k] : null)}</td>
+            <td className="break-all py-1 font-medium text-slate-700">{show(after ? after[k] : null)}</td>
           </tr>
         ))}
       </tbody>
@@ -17145,7 +17586,9 @@ function AuditTrail() {
           <Search size={15} className="text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search this page…" className="w-full bg-transparent text-sm outline-none" />
         </div>
-        <select value={filters.action} onChange={e => setFilters(f => ({ ...f, action: e.target.value }))} className="rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200 outline-none">
+        {/* A grid child, so min-width:auto here is the widest audit verb plus its
+            count — long enough to push the page sideways at base width. */}
+        <select value={filters.action} onChange={e => setFilters(f => ({ ...f, action: e.target.value }))} className="min-w-0 max-w-full rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-slate-200 outline-none">
           <option value="">All actions</option>
           {actions.map(a => <option key={a.action} value={a.action}>{a.action} ({a.count})</option>)}
         </select>
@@ -17183,9 +17626,9 @@ function AuditTrail() {
                     <td className="whitespace-nowrap px-5 py-3 text-[12px] text-slate-500">{auditWhen(r.at)}</td>
                     <td className="px-5 py-3">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.cls}`}>{tone.label}</span>
-                      <p className="mt-1 text-[12px] text-slate-600">{r.actorEmail || <span className="text-slate-400">&mdash;</span>}</p>
+                      <p className="mt-1 break-all text-[12px] text-slate-600">{r.actorEmail || <span className="text-slate-400">&mdash;</span>}</p>
                     </td>
-                    <td className="px-5 py-3 text-slate-700">{r.summary}</td>
+                    <td className="break-words px-5 py-3 text-slate-700">{r.summary}</td>
                     <td className="px-5 py-3"><code className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">{r.action}</code></td>
                     <td className="px-5 py-3 text-right">
                       {hasDetail ? (

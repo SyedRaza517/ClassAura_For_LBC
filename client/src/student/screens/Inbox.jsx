@@ -63,7 +63,15 @@ function NotifRow({ n, onOpen }) {
             something else on this row. */}
         <span className="flex items-start gap-1.5">
           {!n.read && <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />}
-          <span className={`block text-[13px] leading-snug ${n.read ? "font-semibold text-slate-500 dark:text-slate-400" : "font-extrabold text-slate-800 dark:text-slate-100"}`}>
+          {/* min-w-0 + break-words. `n.message` is written by whichever route fired the
+              notification, not by this screen, and those messages routinely quote an
+              identifier a browser will not break on its own — a unit code, an
+              assessment title, a date range joined by dashes. This span is a flex item
+              inside the row's unread-dot layout, so until now its `min-width: auto`
+              meant an unbreakable token sized the row and pushed the whole inbox wider
+              than the phone. Breaking mid-token is the right trade for a list whose job
+              is to be scanned: a clipped message cannot be read at all. */}
+          <span className={`block min-w-0 break-words text-[13px] leading-snug ${n.read ? "font-semibold text-slate-500 dark:text-slate-400" : "font-extrabold text-slate-800 dark:text-slate-100"}`}>
             {n.message}
           </span>
         </span>

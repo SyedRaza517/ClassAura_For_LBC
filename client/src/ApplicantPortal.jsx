@@ -111,7 +111,10 @@ export function ApplicantAuth({ onBack }) {
         <button onClick={onBack} className="press mb-4 inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-bold text-white backdrop-blur hover:bg-white/25">
           <ArrowLeft size={14} /> Back
         </button>
-        <div className="scale-in rounded-3xl bg-white/95 p-7 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl">
+        {/* p-7 is 28px a side, which on a 320px handset spends 56px of a 288px card on
+            nothing. Stepped down at base and restored from sm: up, so the roomy desktop
+            card is unchanged and only the small phone gets the narrower gutter. */}
+        <div className="scale-in rounded-3xl bg-white/95 p-5 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl sm:p-7">
           <div className="mb-5 flex flex-col items-center text-center">
             <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LT})` }}>
               <GraduationCap size={26} />
@@ -131,7 +134,15 @@ export function ApplicantAuth({ onBack }) {
 
           <form onSubmit={submit} className="flex flex-col gap-3.5">
             {mode === "register" && (
-              <div className="grid grid-cols-2 gap-3">
+              // One column at base, two from sm: up. Two text inputs side by side inside a
+              // 288px card leave about 110px each once the gutter and gap are taken out, and
+              // an <input> carries a browser-default intrinsic width (the `size` attribute)
+              // that `w-full` alone does not stop from contributing to the grid's minimum —
+              // so the row pushed the card wide on a 320px phone. Keeping two columns and
+              // merely shrinking the type was rejected: a name field you cannot see what you
+              // typed in is the first thing an applicant meets, and this is the registration
+              // screen for a member of the public on whatever handset they own.
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="First name" required><input className={inputCls} value={f.firstName} onChange={set("firstName")} autoComplete="given-name" /></Field>
                 <Field label="Surname" required><input className={inputCls} value={f.surname} onChange={set("surname")} autoComplete="family-name" /></Field>
               </div>
@@ -214,7 +225,14 @@ function FormField({ f, value, onChange, courses, intakes }) {
   } else {
     control = <input {...common} type={f.type === "date" ? "date" : f.type === "email" ? "email" : f.type === "tel" ? "tel" : "text"} />;
   }
-  return <div className={f.span === 2 ? "sm:col-span-2" : ""}><Field label={f.label} hint={f.hint} required={f.required}>{control}</Field></div>;
+  // min-w-0 is not decoration. A <select> or an <input> has an intrinsic width of its
+  // own — Chrome sizes a select to its widest option, and this form's options run to
+  // "Two evenings online - 6 p.m.-9 p.m. (6hrs) plus One day In-Campus 10 a.m. - 5 p.m.
+  // (6hrs)" — and a grid child defaults to `min-width: auto`, which is that intrinsic
+  // width rather than zero. The control therefore refused to shrink below its widest
+  // option and spilled the card sideways on a 320px screen however many `w-full`s were
+  // on it. min-w-0 lets the cell shrink to the track and `w-full` then does the work.
+  return <div className={`min-w-0 ${f.span === 2 ? "sm:col-span-2" : ""}`}><Field label={f.label} hint={f.hint} required={f.required}>{control}</Field></div>;
 }
 
 /* ============================================================= *
@@ -253,8 +271,12 @@ export default function ApplicantPortal({ user, logout }) {
 
   return (
     <div className="min-h-screen" style={{ fontFamily: FONT, background: "radial-gradient(1200px 600px at 50% -10%, #e7f5f3 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
-      {/* Top bar */}
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+      {/* Top bar.
+          pt-safe-top, not a magic number. index.html sets viewport-fit=cover, so on a
+          notched iPhone the top of a sticky top-0 bar sits underneath the status bar and
+          the applicant's own name is the thing hidden by it. env(safe-area-inset-top) is
+          0 everywhere else, which is why this is additive rather than a handset branch. */}
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 pt-safe-top backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl text-white shadow-sm" style={{ background: `linear-gradient(135deg, ${TEAL}, ${TEAL_LT})` }}><GraduationCap size={18} /></div>
           <div className="mr-auto min-w-0">
@@ -283,7 +305,13 @@ export default function ApplicantPortal({ user, logout }) {
       </main>
 
       {toast && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-lg" style={{ background: toast.tone === "error" ? MAROON : TEAL }}>
+        // Capped and centred rather than left to its own width: a flash message can be a
+        // server error sentence, and at 320px an uncapped one ran off both edges. The cap
+        // is calc(100% - 2rem) of the viewport — not 100vw, which counts a desktop
+        // scrollbar and so can itself be a source of horizontal scroll. The bottom offset
+        // clears the home indicator on a notched iPhone; env() is 0 everywhere else.
+        <div className="fixed left-1/2 z-50 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-xl px-4 py-2.5 text-center text-sm font-bold text-white shadow-lg"
+          style={{ background: toast.tone === "error" ? MAROON : TEAL, bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}>
           {toast.msg}
         </div>
       )}
@@ -408,7 +436,7 @@ function ApplicationTab({ me, onSaved, flash }) {
           {sec.note && <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{sec.note}</p>}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             {sec.fields.map((f) => (
-              <div key={f.key} className={`${f.span === 2 ? "sm:col-span-2" : ""} ${missing.includes(f.key) ? "rounded-xl ring-2 ring-rose-300" : ""}`} style={missing.includes(f.key) ? { padding: 2 } : undefined}>
+              <div key={f.key} className={`min-w-0 ${f.span === 2 ? "sm:col-span-2" : ""} ${missing.includes(f.key) ? "rounded-xl ring-2 ring-rose-300" : ""}`} style={missing.includes(f.key) ? { padding: 2 } : undefined}>
                 <FormField f={f} value={form[f.key]} onChange={set} courses={courses} intakes={intakes} />
               </div>
             ))}
@@ -416,7 +444,14 @@ function ApplicationTab({ me, onSaved, flash }) {
         </div>
       ))}
 
-      <div className="sticky bottom-3 flex flex-wrap justify-end gap-2 rounded-2xl border border-slate-100 bg-white/95 p-3 shadow-lg backdrop-blur">
+      {/* The submit bar is pinned to the bottom of the scrollport, which on a notched
+          iPhone is behind the home indicator — i.e. "Submit application" was the one
+          control the gesture area sat on. The offset is written inline, as calc() over
+          env(), because that is how the sibling public pages (AdmissionApply's Shell and
+          friends) already do it, and because a Tailwind `bottom-safe-bottom` would read
+          as 0 on every phone without a notch and lose the 12px lift the design has. */}
+      <div className="sticky flex flex-wrap justify-end gap-2 rounded-2xl border border-slate-100 bg-white/95 p-3 shadow-lg backdrop-blur"
+        style={{ bottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}>
         <GhostBtn onClick={() => save(false)} disabled={!!busy}>{busy === "save" ? <><Loader2 size={15} className="animate-spin" /> Saving…</> : <><Save size={15} /> Save draft</>}</GhostBtn>
         <PrimaryBtn onClick={() => save(true)} disabled={!!busy}>{busy === "submit" ? <><Loader2 size={16} className="animate-spin" /> Submitting…</> : <>{submitted ? "Update & re-submit" : "Submit application"} <ArrowRight size={16} /></>}</PrimaryBtn>
       </div>
@@ -495,7 +530,7 @@ function InterviewTab({ me }) {
       )}
 
       {!invited ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm sm:p-8">
           <CalendarClock size={30} className="mx-auto mb-2 text-slate-300" />
           <p className="font-bold text-slate-600">No interview scheduled yet</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">When the admissions team schedules your interview, the date, time and joining details will appear here — and we'll email you.</p>
@@ -539,7 +574,7 @@ function OfferTab({ me, onAccepted, flash }) {
   const download = () => api.downloadApplicantOfferLetter(`Offer Letter - ${me.name}.pdf`).catch((e) => flash(e.message, "error"));
 
   if (!o.status) return (
-    <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
+    <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm sm:p-8">
       <Award size={30} className="mx-auto mb-2 text-slate-300" />
       <p className="font-bold text-slate-600">No offer yet</p>
       <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">Once your application and interview are complete, your offer letter will appear here for you to download and accept.</p>
@@ -549,9 +584,12 @@ function OfferTab({ me, onAccepted, flash }) {
   const accepted = o.status === "accepted";
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-      <div className="px-6 py-7 text-center text-white" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
+      <div className="px-5 py-6 text-center text-white sm:px-6 sm:py-7" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
         <div className="text-4xl">🎉</div>
-        <h2 className="mt-2 text-2xl font-extrabold">Congratulations, {me.firstName || me.name}!</h2>
+        {/* break-words because the name is somebody else's data: a long unhyphenated
+            surname at text-2xl is wider than a 288px card and would otherwise be the one
+            thing on the offer screen that spills off the side of the phone. */}
+        <h2 className="mt-2 break-words text-2xl font-extrabold">Congratulations, {me.firstName || me.name}!</h2>
         <p className="mt-1 text-[12px] font-bold uppercase tracking-[0.16em] text-white/80">Unconditional Offer</p>
       </div>
       <div className="flex flex-col gap-4 p-6">

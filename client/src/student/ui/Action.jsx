@@ -6,7 +6,14 @@ import { toneFromColour, toneVars } from "./tokens";
 export function Action({ onClick, Icon, label, sub, c, badge, i = 0 }) {
   const tone = toneFromColour(c);
   return (
-    <button onClick={onClick} className="tone-soft press fade-up relative flex flex-col items-start gap-2.5 rounded-3xl p-4 text-left shadow-card ring-1"
+    // min-w-0 for the same reason HeroTile and Stat now carry it: these render two
+    // across in Home's Quick-actions grid, and a grid item will not shrink below its
+    // own content while `min-width: auto` stands. Today's longest label ("Ask the
+    // College") still fits the 138px a cell gets at 320px, so this is pre-emptive — but
+    // `sub` is built from live state ("3 new replies", "Next at 18:00", whatever
+    // checkInSub returns next) and the cell is the one place a longer phrase would show
+    // up as a sideways scroll of the whole screen rather than as a tighter tile.
+    <button onClick={onClick} className="tone-soft press fade-up relative flex min-w-0 flex-col items-start gap-2.5 rounded-3xl p-4 text-left shadow-card ring-1"
       style={{ ...toneVars(tone), animationDelay: `${300 + i * 55}ms` }}>
       <span className="tone-solid relative flex h-11 w-11 items-center justify-center rounded-2xl shadow-md" style={toneVars(tone)}>
         <Icon size={19} />

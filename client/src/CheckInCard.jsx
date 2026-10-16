@@ -174,10 +174,20 @@ export default function CheckInCard({
     const { Icon, title, body } = messages[status.reason] || messages.error;
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        {/* min-w-0 on every text column that sits beside an icon in this file, here and
+            in the three rows below. A flex child's min-width defaults to `auto`, so it
+            will not shrink below the widest unbreakable run of its own content — and the
+            content here is not all ours to vouch for: `renderResult` is supplied by the
+            caller (the student app passes a unit title, the staff app a site name), and
+            an NFC failure message comes from the platform, which on Android can be a
+            single long constant. One class per column keeps a long word wrapping inside
+            the card rather than holding the card open and pushing a 320px screen into
+            horizontal scroll. It changes nothing at any width where the text already
+            fits, which is every width above a small handset. */}
         <div className="flex gap-3">
           <Icon size={20} className="mt-0.5 shrink-0 text-slate-400" />
-          <div>
-            <p className="text-sm font-semibold text-slate-800">{title}</p>
+          <div className="min-w-0">
+            <p className="break-words text-sm font-semibold text-slate-800">{title}</p>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{body}</p>
           </div>
         </div>
@@ -194,7 +204,7 @@ export default function CheckInCard({
       {result && (
         <div role="status" aria-live="polite" className="mb-3 flex gap-2.5 rounded-xl bg-emerald-50 p-3 ring-1 ring-emerald-200">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" />
-          <div className="text-[13px] leading-relaxed text-emerald-900">
+          <div className="min-w-0 break-words text-[13px] leading-relaxed text-emerald-900">
             {renderResult ? renderResult(result) : "Checked in."}
           </div>
         </div>
@@ -203,7 +213,7 @@ export default function CheckInCard({
       {error && (
         <div role="alert" aria-live="assertive" className="mb-3 flex gap-2.5 rounded-xl bg-rose-50 p-3 ring-1 ring-rose-200">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-600" />
-          <p className="text-[13px] leading-relaxed text-rose-900">{error}</p>
+          <p className="min-w-0 break-words text-[13px] leading-relaxed text-rose-900">{error}</p>
         </div>
       )}
 
@@ -220,7 +230,7 @@ export default function CheckInCard({
             >
               {scanning ? <Loader2 size={19} className="animate-spin" /> : <Nfc size={19} />}
             </span>
-            <p className="text-[13px] leading-snug text-slate-600">
+            <p className="min-w-0 text-[13px] leading-snug text-slate-600">
               {armed
                 ? <>Sticker read. <span className="font-semibold text-slate-800">Press {actionLabel.toLowerCase()}</span> — {remaining}s left.</>
                 : scanning

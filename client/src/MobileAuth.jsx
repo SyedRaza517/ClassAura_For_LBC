@@ -261,9 +261,16 @@ function SignUp({ goSignIn }) {
       </div>
       <div className="w-full rounded-xl bg-slate-50 p-3 text-left ring-1 ring-slate-200">
         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Submitted</p>
-        <p className="mt-1 text-xs font-bold text-slate-700">{form.name}</p>
-        <p className="text-[11px] text-slate-500">{form.email}</p>
-        <p className="text-[11px] text-slate-500">{role === "student" ? `Student · ID ${form.collegeId}` : `${form.position} · ${form.dept} · ${form.site}`}</p>
+        {/* break-words on all three: this box echoes back exactly what was typed, and an
+            email address is one unbreakable token as far as the line-breaker is concerned,
+            so a long college address (firstname.lastname@institution.ac.uk) set the box's
+            minimum width wider than the shell and took the sign-up screen into horizontal
+            scroll at 320px. The position/department line can carry an equally long single
+            word, and a name typed without spaces will do it too, so all three are treated
+            the same rather than only the one that was caught. */}
+        <p className="mt-1 break-words text-xs font-bold text-slate-700">{form.name}</p>
+        <p className="break-words text-[11px] text-slate-500">{form.email}</p>
+        <p className="break-words text-[11px] text-slate-500">{role === "student" ? `Student · ID ${form.collegeId}` : `${form.position} · ${form.dept} · ${form.site}`}</p>
       </div>
       <button onClick={goSignIn} className="press w-full rounded-xl py-2.5 text-sm font-bold text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
         Back to sign in

@@ -182,10 +182,23 @@ function TodaysClasses({ today, loading, canDeclare, onDeclared, canScan, onScan
             <div className="p-4">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className={`text-[15px] font-extrabold leading-tight ${over && !mark ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}>
+                  {/* break-words on the unit name, and flex-wrap on the line under it.
+                      Both are about the ~174px this column actually gets at 320px once
+                      the "On now" pill has taken its share. The name is a college-set
+                      string with no guaranteed space in it, and this card is
+                      overflow-hidden for its rounded corners, so a long one was being
+                      silently CUT rather than spilling where somebody would notice it.
+                      The time line can carry three facts at once (the hours, "in at
+                      09:05" and "term closed"); as an unwrapped flex row the browser's
+                      only remaining move was to wrap each span's text inside its own
+                      narrow box, which stacked three ragged columns. Letting the row
+                      itself wrap puts each fact on its own line in the order it is
+                      written, which is how it reads anyway. gap-1.5 is already set and
+                      applies to both axes, so the wrapped lines space themselves. */}
+                  <p className={`break-words text-[15px] font-extrabold leading-tight ${over && !mark ? "text-slate-400 dark:text-slate-500" : "text-slate-800 dark:text-slate-100"}`}>
                     {c.unitName || c.unitCode}
                   </p>
-                  <p className="mt-1 flex items-center gap-1.5 text-[12.5px] font-bold tabular-nums text-slate-600 dark:text-slate-300">
+                  <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[12.5px] font-bold tabular-nums text-slate-600 dark:text-slate-300">
                     <Clock3 size={12.5} className="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
                     {c.startTime}&ndash;{c.endTime}
                     {c.checkedInAt && <span className="font-semibold text-emerald-600 dark:text-emerald-400">&middot; in at {c.checkedInAt}</span>}
@@ -324,7 +337,10 @@ export function CheckInScreen({ tapContext, timetable, reload, pendingQr, onQrDo
             <p className={`text-[11px] font-bold uppercase tracking-wider ${running ? "text-white/70" : "text-slate-400 dark:text-slate-500"}`}>
               {ttLongDate(tapContext.date)}
             </p>
-            <p className={`mt-0.5 text-[17px] font-extrabold leading-tight ${running ? "text-white" : "text-slate-800 dark:text-slate-100"}`}>
+            {/* break-words for the same reason as the class cards below: the one-line
+                answer embeds a college-set unit name at 17px inside an overflow-hidden
+                card, so without it an unbreakable name is clipped instead of wrapped. */}
+            <p className={`mt-0.5 break-words text-[17px] font-extrabold leading-tight ${running ? "text-white" : "text-slate-800 dark:text-slate-100"}`}>
               {running > 1 ? `${running} classes on now`
                 : running === 1 ? `${(tapContext.now[0].unitName || tapContext.now[0].unitCode)} is on now`
                 : next ? "No class on right now"

@@ -8,7 +8,14 @@ import { toneVars } from "./tokens";
 // a bare colour string, so this component never has to invent its own dark-mode value.
 export function HeroTile({ onClick, pct, label, tone, foot, i }) {
   return (
-    <button onClick={onClick} className="tone-panel press fade-up rounded-3xl p-4 shadow-card ring-1"
+    // min-w-0: this is a grid item (Home's `grid-cols-2`), and a grid item defaults to
+    // `min-width: auto`, which means it refuses to be narrower than its own content
+    // however small the track is — the archetypal small-phone overflow in this codebase.
+    // Ring now carries a `max-width: 100%` of its own, but a percentage max-width is
+    // ignored while the browser is working out intrinsic contributions, so without this
+    // the 112px ring still sized the tile and the cap never came into play. The pair is
+    // what makes the tile honour its track at 320px; neither half works alone.
+    <button onClick={onClick} className="tone-panel press fade-up min-w-0 rounded-3xl p-4 shadow-card ring-1"
       style={{ ...toneVars(tone), animationDelay: `${i * 70}ms` }}>
       <div className="flex flex-col items-center">
         <Ring pct={pct} size={112} stroke={11} tone={tone} />

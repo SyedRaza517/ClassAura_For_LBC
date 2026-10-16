@@ -34,11 +34,18 @@ export function ResultsScreen({ results, busy, err }) {
           <p className="mt-1.5 text-[11px] font-semibold text-slate-400 dark:text-slate-400">{results.graded} of {results.count} assessment{results.count === 1 ? "" : "s"} marked</p>
         </div>
         {graded.length > 0 && (
+          // min-w-0 + truncate, the same pair (and the same reasoning) as the
+          // attendance legend in ui/StatusBar.jsx: a grid item will not go narrower
+          // than its own longest word, and "Distinction" at 9px is within a few pixels
+          // of the 57px a quarter of this panel leaves at 320px. Dropping to
+          // `grid-cols-2 sm:grid-cols-4` was rejected — these four are a single ladder
+          // and reading it as one row is the point, where the Quick-actions grid on
+          // Home is a list that happens to be laid out in columns.
           <div className="mt-4 grid grid-cols-4 gap-1.5">
             {Object.entries(bands).map(([b, n]) => (
-              <div key={b} className="tone-soft rounded-xl py-1.5 text-center" style={toneVars(BAND_TONE[b])}>
+              <div key={b} className="tone-soft min-w-0 rounded-xl py-1.5 text-center" style={toneVars(BAND_TONE[b])}>
                 <p className="tone-text text-sm font-extrabold tabular-nums" style={toneVars(BAND_TONE[b])}>{n}</p>
-                <p className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">{b}</p>
+                <p className="truncate text-[9px] font-semibold text-slate-500 dark:text-slate-400">{b}</p>
               </div>
             ))}
           </div>

@@ -69,8 +69,28 @@ export function CodeInput({ value, onChange, onComplete, disabled, autoFocus = t
     if (e.key === "ArrowRight" && i < 5) refs.current[i + 1]?.focus();
   };
 
+  // THE SIX BOXES HAVE TO BE ABLE TO SHRINK, and saying so takes two classes.
+  //
+  // `w-10` with `gap-2` is a hard floor of 280px — six 40px boxes and five 8px gaps —
+  // and it really was a floor rather than a preference: a flex item's automatic minimum
+  // size is the smaller of its content-based minimum and its SPECIFIED width, so each
+  // box's minimum resolved to exactly the 40px it had been given and flex-shrink could
+  // never take a pixel off it. Anywhere this row sits in a card with less than 280px of
+  // content width it spilled out of that card instead of tightening up, and that is most
+  // of its call sites on a 320px handset: the admin login card (max-w-sm inside p-4, then
+  // p-7 of its own) leaves 232px, the reset-password and delete-account panels less
+  // still. The person was being asked to type a six-digit code with its last two digits
+  // off the right-hand edge of the screen, on the one screen that stands between them and
+  // their account.
+  //
+  // `min-w-0` removes the floor so the row takes whatever width it is actually given, and
+  // the narrower base gap buys back 2.5px per box before any squeezing has to happen.
+  // `sm:gap-2` restores the original spacing from 640px up, so every desktop and tablet
+  // render is pixel-identical to before. Making the boxes fluid (`flex-1`) was rejected:
+  // on a wide card that stretches six single-character fields across the whole row, which
+  // reads as six empty text inputs rather than as one code.
   return (
-    <div className="flex justify-center gap-2" onPaste={(e) => {
+    <div className="flex justify-center gap-1.5 sm:gap-2" onPaste={(e) => {
       const text = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 6);
       if (text) { e.preventDefault(); onChange(text); refs.current[Math.min(text.length, 5)]?.focus(); if (text.length === 6) onComplete?.(text); }
     }}>
@@ -91,7 +111,7 @@ export function CodeInput({ value, onChange, onComplete, disabled, autoFocus = t
           // to a single box, and maxLength=1 would silently throw five of them away.
           maxLength={6}
           aria-label={`Digit ${i + 1} of 6`}
-          className="h-12 w-10 rounded-xl border border-slate-200 bg-white text-center text-lg font-bold tabular-nums text-slate-800 outline-none transition focus:border-transparent focus:ring-2 disabled:opacity-60"
+          className="h-12 w-10 min-w-0 rounded-xl border border-slate-200 bg-white text-center text-lg font-bold tabular-nums text-slate-800 outline-none transition focus:border-transparent focus:ring-2 disabled:opacity-60"
           style={{ "--tw-ring-color": NAVY }}
         />
       ))}

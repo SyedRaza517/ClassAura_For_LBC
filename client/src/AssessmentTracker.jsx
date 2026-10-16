@@ -377,26 +377,34 @@ export default function AssessmentTracker({ me }) {
         />
       </div>
 
+      {/* A SELECT IS SIZED BY ITS WIDEST OPTION, which here is a course title the
+          college wrote — "BTEC Higher National Diploma in Computing (Software
+          Engineering)" is not an unusual one. Left alone, the closed control is as wide
+          as that string and will not shrink: min-width:auto on a flex item is floored
+          at min-content, and a select's min-content is its longest option. So min-w-0 on
+          the label and the control removes that floor, and max-w-full then caps the
+          control at the row it sits in. Nothing moves above a phone, where the natural
+          width already fits and neither class has anything to do. */}
       <div className="flex flex-wrap items-center gap-2">
-        <label className="text-[12px] font-semibold text-slate-600">
+        <label className="min-w-0 text-[12px] font-semibold text-slate-600">
           <span className="sr-only">Course</span>
           <select
             value={course}
             onChange={(e) => setCourse(e.target.value)}
             aria-label="Filter by course"
-            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-indigo-300"
+            className="min-w-0 max-w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-indigo-300"
           >
             <option value="">All courses</option>
             {courses.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
-        <label className="text-[12px] font-semibold text-slate-600">
+        <label className="min-w-0 text-[12px] font-semibold text-slate-600">
           <span className="sr-only">Class</span>
           <select
             value={cohort}
             onChange={(e) => setCohort(e.target.value)}
             aria-label="Filter by class"
-            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-indigo-300"
+            className="min-w-0 max-w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-indigo-300"
           >
             <option value="">All classes</option>
             {cohorts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
@@ -427,7 +435,20 @@ export default function AssessmentTracker({ me }) {
               </header>
 
               {/* Wide table, own scroll container — the page body must never scroll
-                  sideways on a laptop. */}
+                  sideways on a laptop.
+
+                  AND THE ASSESSMENT COLUMN IS STICKY. Nine columns against a 960px
+                  floor is three screenfuls on a handset, and a horizontally scrolled
+                  grade grid whose titles have slid off answers nothing — you are
+                  reading across a row to find out about one assessment, so the
+                  assessment has to stay. The same decision, for the same reason, as the
+                  name column on the live register (AdminLiveAttendance's table).
+
+                  The sticky column is CAPPED at 10rem below sm, because an untruncated
+                  title would otherwise be allowed to claim half a 320px screen and pin
+                  it there, leaving a slit of figures that cannot be widened by
+                  scrolling. sm:max-w-none hands the column back its content width, so
+                  every laptop and desktop reading of this table is unchanged. */}
               <div className="overflow-x-auto">
                 {/* 820 → 960: "Total students" was added and the two deadlines now carry
                     a state line under the date, so the old floor let columns collide
@@ -441,7 +462,7 @@ export default function AssessmentTracker({ me }) {
                         submitted" was asked for separately and is the figure marking is
                         actually chased on. */}
                     <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-500">
-                      <th className="px-5 py-2 font-bold">Assessment</th>
+                      <th className="sticky left-0 z-10 max-w-[10rem] bg-white px-5 py-2 font-bold sm:max-w-none">Assessment</th>
                       <th className="px-3 py-2 font-bold" title="Students enrolled on this module — the denominator of the submission rate.">
                         Total students
                       </th>
@@ -467,7 +488,7 @@ export default function AssessmentTracker({ me }) {
                   <tbody className="divide-y divide-slate-100">
                     {items.map((r) => (
                       <tr key={r.assessmentId}>
-                        <td className="px-5 py-2.5 font-semibold text-slate-700">
+                        <td className="sticky left-0 z-10 max-w-[10rem] bg-white px-5 py-2.5 font-semibold text-slate-700 sm:max-w-none">
                           {r.title}
                           <span className="ml-2 text-[11px] font-medium text-slate-500">{r.type}</span>
                         </td>

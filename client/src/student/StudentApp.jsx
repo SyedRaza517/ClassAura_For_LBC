@@ -501,8 +501,18 @@ function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn 
         // names this exact break) — alpha() is the fix. The inactive grey stays a
         // literal hex; it is legible against both bg-white/90 and dark:bg-slate-900/90.
         return (
+          // min-w-0 is what makes the `truncate` on the label below actually fire.
+          // `flex-1` is `flex: 1 1 0%`, but a flex item still defaults to
+          // `min-width: auto`, so the button could not shrink below its own content —
+          // and the label is `whitespace-nowrap` (that is what `truncate` is), so its
+          // content width is the full word. Six tabs at 320px works out at 53px each
+          // and "Attendance" alone wants about 55, which is the bar nudging the page
+          // into a horizontal scroll before a single pixel of text zoom is applied; at
+          // 200% Dynamic Type it is not close. With min-w-0 the track wins and the word
+          // ellipsises, which is what the author of that `truncate` plainly intended.
+          // Shortening the labels was rejected — they are copy, and this task is layout.
           <button key={key} onClick={() => setScreen(key)} aria-current={on ? "page" : undefined}
-            className="press relative flex flex-1 flex-col items-center gap-1 py-2">
+            className="press relative flex min-w-0 flex-1 flex-col items-center gap-1 py-2">
             {/* .pop only while active — replays once per tab change, exactly as the
                 staff bar does, so the two bars keep one motion language. */}
             <span className={`relative flex h-8 w-12 items-center justify-center rounded-2xl transition-all duration-200 ${on ? "pop" : ""}`}
@@ -585,8 +595,16 @@ function Header({ title, screen, setScreen, user, onRefresh, busy, unread }) {
             <div className="min-w-0 flex-1">
               <p className="text-[12px] font-medium text-white/75">{greeting},</p>
               <p className="truncate text-[19px] font-extrabold leading-tight tracking-tight text-white">{first}</p>
-              <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/90 ring-1 ring-white/15">
-                <User size={9} />{user.studentRef || "Student"}
+              {/* max-w-full + truncate on the reference itself. An `inline-flex` box is
+                  sized to its content, and `studentRef` is a college-set string this app
+                  never validates the shape of — the two in front of us are short, but an
+                  institution numbering students "2026-BSC-COMP-00147" has no space to
+                  break and would have pushed this pill straight out through the header's
+                  px-4 on a 320px screen. The greeting and the name above are already
+                  truncated for the same reason; this was the one line in the block that
+                  was not. */}
+              <p className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/90 ring-1 ring-white/15">
+                <User size={9} className="shrink-0" /><span className="truncate">{user.studentRef || "Student"}</span>
               </p>
             </div>
           </div>

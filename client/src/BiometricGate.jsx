@@ -170,8 +170,26 @@ export default function BiometricGate({ user, onUnlock, logout }) {
   }, [attempt]);
 
   return (
+    // THE GATE HAS TO BE SCROLLABLE, because it is the one screen a user cannot walk
+    // away from. Everything here — the headline, the Unlock button, "turn off app lock",
+    // "Sign out instead" — adds up to roughly 500px, and the container is pinned to
+    // 100dvh with no overflow. On a handset in landscape (iOS allows it; see
+    // Info.plist's UISupportedInterfaceOrientations) that is about 390px of height, so
+    // both escape hatches sat below the bottom edge of a screen that could not be
+    // scrolled: a locked app with no reachable way out, which is precisely the state the
+    // comments above go to such lengths to make impossible. A short desktop browser
+    // window does the same thing on the web build.
+    //
+    // overflow-y-auto on the container, and the content moved into one wrapper carrying
+    // `my-auto` rather than the container keeping `justify-center`. That pairing is the
+    // point: `justify-content: center` in a scroll container puts the overflow beyond
+    // the START edge out of reach in every engine, so centring and scrolling cannot both
+    // be had that way. An auto margin centres the wrapper while there is free space and
+    // collapses to zero when there is not, which leaves both ends scrollable. App.jsx's
+    // change-password overlay already solves the identical problem with the identical
+    // `my-auto`, so this is the house pattern rather than a new one.
     <div
-      className="animated-gradient flex w-full flex-col items-center justify-center p-6 text-center"
+      className="animated-gradient flex w-full flex-col items-center overflow-y-auto p-6 text-center"
       style={{
         height: "100dvh",
         fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif",
@@ -181,59 +199,61 @@ export default function BiometricGate({ user, onUnlock, logout }) {
         paddingBottom: "max(env(safe-area-inset-bottom), 24px)",
       }}
     >
-      <div className="float mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-white/10 text-white ring-1 ring-white/20">
-        <Fingerprint size={40} />
+      <div className="my-auto flex w-full flex-col items-center">
+        <div className="float mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-white/10 text-white ring-1 ring-white/20">
+          <Fingerprint size={40} />
+        </div>
+
+        <h1 className="text-xl font-extrabold tracking-tight text-white">Staff Hub is locked</h1>
+        <p className="mt-1 max-w-xs text-sm text-white/70">
+          {user?.name ? `${user.name.split(/\s+/)[0]}, use ` : "Use "}{label} to continue.
+        </p>
+
+        {unavailable && (
+          <div className="pop mt-4 max-w-xs rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold leading-snug text-amber-200 ring-1 ring-white/15">
+            {unavailable}
+            <span className="mt-1 block font-normal text-white/60">Unlock will ask for your device PIN or passcode instead.</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="pop mt-4 max-w-xs rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold leading-snug text-rose-200 ring-1 ring-white/15">
+            <XCircle size={14} className="mr-1 inline align-[-2px]" />{error}
+          </div>
+        )}
+
+        <button
+          onClick={attempt}
+          disabled={busy}
+          className="press shine mt-7 flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-sm font-bold shadow-xl transition disabled:opacity-70"
+          style={{ color: NAVY }}
+        >
+          {busy ? <><Loader2 size={18} className="animate-spin" /> Waiting for you…</> : <><ShieldCheck size={18} /> Unlock</>}
+        </button>
+
+        {/* The escape hatch for a credential the authenticator no longer holds (a
+            Windows Hello PIN reset, a changed Android screen lock). Every check then
+            fails with a 60-second timeout the browser reports as a "cancel", so without
+            this the gate can never open AND the setting can never be turned off. */}
+        <button
+          onClick={async () => { await resetBiometric(); logout(); }}
+          className="press mt-5 text-xs font-semibold text-white/45 underline transition hover:text-white/75"
+        >
+          Can't unlock? Turn off app lock and sign in with your password
+        </button>
+
+        <button
+          onClick={logout}
+          className="press mt-3 flex items-center gap-1.5 text-xs font-semibold text-white/50 transition hover:text-white/80"
+        >
+          <LogOut size={13} /> Sign out instead
+        </button>
+
+        <p className="mt-8 max-w-xs text-[11px] leading-relaxed text-white/35">
+          Your session stays signed in. This lock keeps staff records private if your
+          phone is unlocked by someone else.
+        </p>
       </div>
-
-      <h1 className="text-xl font-extrabold tracking-tight text-white">Staff Hub is locked</h1>
-      <p className="mt-1 max-w-xs text-sm text-white/70">
-        {user?.name ? `${user.name.split(/\s+/)[0]}, use ` : "Use "}{label} to continue.
-      </p>
-
-      {unavailable && (
-        <div className="pop mt-4 max-w-xs rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold leading-snug text-amber-200 ring-1 ring-white/15">
-          {unavailable}
-          <span className="mt-1 block font-normal text-white/60">Unlock will ask for your device PIN or passcode instead.</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="pop mt-4 max-w-xs rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold leading-snug text-rose-200 ring-1 ring-white/15">
-          <XCircle size={14} className="mr-1 inline align-[-2px]" />{error}
-        </div>
-      )}
-
-      <button
-        onClick={attempt}
-        disabled={busy}
-        className="press shine mt-7 flex w-full max-w-xs items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-sm font-bold shadow-xl transition disabled:opacity-70"
-        style={{ color: NAVY }}
-      >
-        {busy ? <><Loader2 size={18} className="animate-spin" /> Waiting for you…</> : <><ShieldCheck size={18} /> Unlock</>}
-      </button>
-
-      {/* The escape hatch for a credential the authenticator no longer holds (a
-          Windows Hello PIN reset, a changed Android screen lock). Every check then
-          fails with a 60-second timeout the browser reports as a "cancel", so without
-          this the gate can never open AND the setting can never be turned off. */}
-      <button
-        onClick={async () => { await resetBiometric(); logout(); }}
-        className="press mt-5 text-xs font-semibold text-white/45 underline transition hover:text-white/75"
-      >
-        Can't unlock? Turn off app lock and sign in with your password
-      </button>
-
-      <button
-        onClick={logout}
-        className="press mt-3 flex items-center gap-1.5 text-xs font-semibold text-white/50 transition hover:text-white/80"
-      >
-        <LogOut size={13} /> Sign out instead
-      </button>
-
-      <p className="mt-8 max-w-xs text-[11px] leading-relaxed text-white/35">
-        Your session stays signed in. This lock keeps staff records private if your
-        phone is unlocked by someone else.
-      </p>
     </div>
   );
 }
@@ -293,7 +313,16 @@ export function BiometricSetupPrompt() {
       style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)" }}
     >
       <div className="fade-up fixed inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={notNow} />
-      <div className="scale-in relative w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5">
+      {/* max-h/overflow-y, the same cap ConfirmDialog.jsx carries and for the same
+          reason. This sheet is a fixed overlay with no height limit of its own, and it
+          stacks an icon, a heading, a four-line paragraph and two full-width buttons —
+          around 400px. On a handset in landscape (roughly 740x360) the two buttons, the
+          only way out of it, were simply below the bottom of the screen with nothing to
+          scroll: the offer could be neither accepted nor declined. dvh rather than vh
+          because mobile Safari resolves vh against the viewport with the URL bar hidden,
+          so 85vh can be taller than what is actually on screen — the scar StaffHub's own
+          Modal carries and which ConfirmDialog cites. */}
+      <div className="scale-in relative max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-3xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5">
         <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl text-white shadow-md" style={{ background: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` }}>
           <Fingerprint size={30} />
         </div>

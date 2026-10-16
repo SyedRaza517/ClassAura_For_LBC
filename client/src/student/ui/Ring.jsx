@@ -16,7 +16,22 @@ export function Ring({ pct, size = 132, stroke = 13, label, tone = NEUTRAL_TONE 
   const c = 2 * Math.PI * r;
   const shown = useCountUp(pct ?? 0);
   return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
+    // maxWidth 100% is the ONE thing standing between this component and a horizontal
+    // page scroll on a 320px handset. `size` is a pixel literal, and HeroTile asks for
+    // 112 of them inside a `grid-cols-2` cell: at 320px that cell is 138px wide and
+    // HeroTile's own p-4 leaves 106px of content box, so an unconstrained 112px ring
+    // pushed each tile 6px past its track and the right-hand one 6px off the screen.
+    //
+    // A smaller `size` from HeroTile was rejected: the number would have shrunk on
+    // every phone to buy 6px back on the narrowest one, and the next caller to pass a
+    // generous size would reopen the same hole. Capping here fixes it for all of them.
+    // Height deliberately stays at `size` rather than following the width (which would
+    // need `aspect-ratio`, unsupported before Safari 15 — the same vintage of WebView
+    // theme.js's own `:has()` comment is written around). It costs a few pixels of slack
+    // at the bottom of the tile and nothing else: the svg's default preserveAspectRatio
+    // centres the circle in the box on BOTH axes, and the number below is centred in
+    // that same box, so the two stay registered however much the width is clipped.
+    <div className="relative shrink-0" style={{ width: size, height: size, maxWidth: "100%" }}>
       <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full -rotate-90">
         {/* currentColor + a text-* pair (rather than a fixed rgba) so the unfilled
             track is still visible against a dark card — 8% black is close to

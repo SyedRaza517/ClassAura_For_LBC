@@ -112,7 +112,17 @@ export default function AdminNfcTags() {
           <ul className="divide-y divide-slate-100">
             {tags.map((t) => (
               <li key={t.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
-                <div className="min-w-0 flex-1">
+                {/* THE ROW WRAPS ON A PHONE, and min-w-full is what makes it. flex-1
+                    sets a flex-basis of 0, which is also the width the wrap algorithm
+                    uses when deciding how much fits on a line — so the sticker's name
+                    counted for nothing, all three controls stayed on the one line, and
+                    the name was left truncating inside the 30px they had not claimed. A
+                    minimum of the full line gives the name its own row on the phone and
+                    drops the buttons beneath it; sm:min-w-0 hands the row straight back
+                    to flex-1 at every width the console is actually read at, so nothing
+                    above 640px moves. The same two classes do the same job for the
+                    campus rows in the geofence panel below. */}
+                <div className="min-w-full flex-1 sm:min-w-0">
                   <p className="truncate text-sm font-semibold text-slate-800">{t.label}</p>
                   <p className="text-[12px] text-slate-500">
                     {/* "Never used" is a real and important state — a sticker registered
@@ -455,7 +465,13 @@ function NetworkPanel({ draft, saving, save, rejected }) {
               discovered by a hall of students who cannot check in. */}
           {seen && !seen.allowlistable && (
             <div className="mt-2 text-[11.5px] leading-snug text-amber-800">
-              You're connecting over IPv6 (<span className="font-mono">{seen.ip}</span>), which this
+              {/* break-all, because an IPv6 address is one unbreakable 39-character
+                  token in a monospace face, and this panel is already indented by the
+                  checkbox's pl-7 inside the card's own padding — on a 320px screen
+                  there is not room for it on one line and no space in it to wrap at.
+                  Breaking mid-address is acceptable where overflowing the card is not:
+                  the address here is shown to be recognised, not to be transcribed. */}
+              You're connecting over IPv6 (<span className="break-all font-mono">{seen.ip}</span>), which this
               check can't match yet. If that's how the whole college connects, leave this switched
               off and use the sticker or the code instead.
             </div>
@@ -465,7 +481,11 @@ function NetworkPanel({ draft, saving, save, rejected }) {
             <div className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[11.5px] leading-snug text-rose-800 ring-1 ring-rose-200">
               These lines weren't saved — they're either not valid addresses, or wide enough to
               let in networks that aren't yours (anything bigger than a /16):{" "}
-              <span className="font-mono">{rejected.join(", ")}</span>. Everything else was saved.
+              {/* break-all for the same reason as the IPv6 note above, and a stronger
+                  one: these are the administrator's own rejected LINES read back, not
+                  addresses we validated, so a 200-character paste is exactly the input
+                  that reaches here. */}
+              <span className="break-all font-mono">{rejected.join(", ")}</span>. Everything else was saved.
             </div>
           )}
 
@@ -622,7 +642,12 @@ function GeofencePanel({ draft, saving, save }) {
                   const pinned = c.latitude != null && c.longitude != null;
                   return (
                     <li key={c.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-                      <div className="min-w-0 flex-1">
+                      {/* min-w-full sm:min-w-0 — the registered-stickers list explains
+                          why. Worse here than there: this row is nested inside the
+                          panel's own padding and the pl-7 indent, so the campus name was
+                          down to a few characters while "Set from where I am" wrapped
+                          itself into three lines beside it. */}
+                      <div className="min-w-full flex-1 sm:min-w-0">
                         <p className="truncate text-[13px] font-semibold text-slate-800">{c.name}</p>
                         <p className="text-[11px] text-slate-500">
                           {pinned ? (
@@ -1269,8 +1294,14 @@ function TapLog({ tag, onClose }) {
   return (
     <ModalPortal>
       <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-6" onClick={onClose}>
+        {/* pb-safe-bottom sm:pb-0: at base this is a bottom sheet flush to the edge of
+            the screen (items-end, p-0, rounded only along the top), so on a notched
+            phone its last tap row sits under the home indicator — and the list is the
+            whole point of the sheet. The sm: reset keeps the centred desktop card
+            exactly as it was, where the inset resolves to zero anyway but saying so
+            costs nothing. */}
         <div role="dialog" aria-modal="true" aria-label={"Taps on " + tag.label}
-          className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+          className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-t-2xl bg-white pb-safe-bottom sm:rounded-2xl sm:pb-0" onClick={(e) => e.stopPropagation()}>
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
             <div>
               <h3 className="text-sm font-bold text-slate-800">{tag.label}</h3>

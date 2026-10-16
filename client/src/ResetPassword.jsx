@@ -57,7 +57,13 @@ function AuthCard({ header, body }) {
   return (
     <div className="animated-gradient flex min-h-screen w-full items-center justify-center p-4"
       style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
-      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl ring-1 ring-black/5">
+      {/* p-5 on the phone, the original p-7 from 640px up. The card is already capped by
+          the page's own p-4, so at 320px the 28px of inner padding was spending 56 of the
+          288 available pixels on whitespace — and this card hosts the six-box
+          authenticator code input (TwoFactor.jsx#CodeInput), which is the one piece of
+          content here that genuinely needs the width. Stepped down at base only, so no
+          screen at or above `sm:` changes at all. */}
+      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl ring-1 ring-black/5 sm:p-7">
         <div className="mb-5 flex flex-col items-center text-center">
           <div className="float mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
             <GraduationCap size={26} />
@@ -226,7 +232,13 @@ export default function ResetPasswordPage({ token, onDone }) {
     <AuthCard
       header={(<>
         <h1 className="text-xl font-extrabold tracking-tight text-slate-800">Choose a new password</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        {/* break-words because an email address is one unbreakable token as far as the
+            line-breaker is concerned. A college address of any length —
+            firstname.lastname@institution.ac.uk and longer — therefore set this
+            paragraph's minimum width wider than the card and pushed the whole page into
+            horizontal scroll at 320px. Nothing else on the screen can be blamed: the
+            card itself is capped, the fields are w-full. */}
+        <p className="mt-1 break-words text-sm text-slate-500">
           {state.name ? `${state.name.split(/\s+/)[0]} — ` : ""}for {state.email}
         </p>
       </>)}

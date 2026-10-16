@@ -82,17 +82,39 @@ export default function TimetableSettingsModal({ open, settings, scope = "me", o
   // of the screen and could leave its Save button below the fold.
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
+      {/* WIDTH AND HEIGHT ARE ALREADY RIGHT; THE NOTCH WAS NOT. ModalPortal does nothing
+          about size — it only moves this out of the console's transformed view container
+          — so the capping is all here, and it holds: `w-full max-w-3xl` inside a `p-3`
+          backdrop is 296px at 320px of viewport, and `max-h-[90vh]` over a `flex-1
+          overflow-y-auto` body means the header and the Save footer stay put while only
+          the tabs' contents scroll.
+          What `p-3` could not express is viewport-fit=cover. `inset-0` is the whole
+          screen including the status-bar strip, and a 90vh panel centred in an 852px
+          iPhone leaves 43px above it against the 59px the Dynamic Island claims — so the
+          top of the green header bar, and "My Settings" in it, were behind the system
+          clock. max() rather than a breakpoint: with no safe area, which is every desktop
+          and the 320x568 handset this is measured against, it resolves to the same
+          0.75rem p-3 already gave and nothing moves. */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div className="flex items-center justify-between px-4 py-3" style={{ background: TT.green, color: TT.greenText }}>
             <p className="text-base font-extrabold">{scope === "me" ? "My Settings" : "Timetable display — college defaults"}</p>
             <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 hover:bg-white/20"><X size={18} /></button>
           </div>
 
-          <div className="flex gap-1 border-b border-slate-200 px-3 pt-2">
+          {/* The three labels want about 300px and a 320px screen leaves this row 272,
+              so without the scroller flex shrank them to min-content and "Calendar view"
+              folded onto two lines — one tab half an inch taller than its neighbours,
+              which reads as a rendering fault rather than as a tab. Scrolled rather than
+              wrapped for the same reason the planner's seven tabs are: a tab rail folded
+              onto two lines stops looking like one row of peers. `whitespace-nowrap` is
+              what forbids the fold, `shrink-0` is what makes the row overflow (and so
+              scroll) instead of squeezing; above `sm:` there is nothing to scroll and the
+              row is identical to before. */}
+          <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3 pt-2">
             {[["calendar", "Calendar view"], ["events", "Events"], ["annotations", "Annotations"]].map(([k, l]) => (
               <button key={k} onClick={() => setTab(k)}
-                className={`rounded-t-lg px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
+                className={`shrink-0 whitespace-nowrap rounded-t-lg px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
                 style={tab === k ? { borderColor: TT.green } : undefined}>{l}</button>
             ))}
           </div>

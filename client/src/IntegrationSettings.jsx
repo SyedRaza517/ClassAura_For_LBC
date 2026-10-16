@@ -166,7 +166,13 @@ function Row({ label, children, hint }) {
     <label className="block">
       <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-500">{hint}</span>}
+      {/* break-words on the hint. These hints name domains, entitlements and setup paths
+          — "developer.anthology.com", "course.gradebook.MODIFY",
+          "OnlineMeetingArtifact.Read.All" — and a browser will not break inside one of
+          those. At the default text size they fit; at 200% OS text zoom in a narrow
+          column they are wider than it, and an unbreakable word widens its block, which
+          widens the card, which scrolls the page. */}
+      {hint && <span className="mt-1 block break-words text-[11px] text-slate-500">{hint}</span>}
     </label>
   );
 }
@@ -275,7 +281,7 @@ function ProviderCard({ item, onSaved, onRemoved }) {
               discovered after a term of empty columns. It is not an error and not a
               warning about anything the college has done, so it reads as neither. */}
           {form.note && (
-            <p className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
+            <p className="break-words rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900 ring-1 ring-amber-200">
               {form.note}
             </p>
           )}
@@ -327,7 +333,7 @@ function ProviderCard({ item, onSaved, onRemoved }) {
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800 ring-1 ring-rose-200">
-              <AlertTriangle size={15} className="mt-0.5 flex-none" /> {error}
+              <AlertTriangle size={15} className="mt-0.5 flex-none" /> <span className="min-w-0 break-words">{error}</span>
             </div>
           )}
 
@@ -337,7 +343,9 @@ function ProviderCard({ item, onSaved, onRemoved }) {
           {test && (
             <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm font-medium ring-1 ${test.ok ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-rose-50 text-rose-800 ring-rose-200"}`}>
               {test.ok ? <CheckCircle2 size={15} className="mt-0.5 flex-none" /> : <AlertTriangle size={15} className="mt-0.5 flex-none" />}
-              <span>{test.note}</span>
+              {/* min-w-0 and break-words: a failed test quotes the provider's own
+                  message, which routinely carries the site URL that was tried. */}
+              <span className="min-w-0 break-words">{test.note}</span>
             </div>
           )}
 

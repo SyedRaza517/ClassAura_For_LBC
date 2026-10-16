@@ -395,7 +395,17 @@ export default function MyTimetable({ onBack }) {
             answers for themselves in My Settings. */}
         {keyOpen && (
           <>
-            <div className="absolute right-24 top-12 z-40 w-64 rounded bg-white p-3 text-slate-700 shadow-xl">
+            {/* RIGHT-24 IS A DESKTOP OFFSET AND WAS OFF THE LEFT EDGE OF A PHONE.
+                96px of inset plus a 256px card is 352px of pane needed before the first
+                letter is on screen, and the pane this bar sits in is about 280px at 320px
+                of viewport — so the key opened with its left third outside the box, where
+                the console's overflow-x-hidden cut it off. The 96px exists to clear the
+                three bar buttons to its right and point the popover at the one that
+                opened it, which is worth having wherever there is room for it; below
+                `sm:` there is not, so it tucks into the corner instead and the whole card
+                is readable. The width stays 256: at 320px that leaves 8px either side,
+                and a narrower card would start wrapping "Course Offering". */}
+            <div className="absolute right-2 top-12 z-40 w-64 rounded bg-white p-3 text-slate-700 shadow-xl sm:right-24">
               <p className="mb-2 text-base font-semibold">Event colour key</p>
               {[["Module Offering", "module"], ["Room", "room"], ["Group", "group"], ["Course Offering", "course"], ["Event Category", "category"]].map(([l, k]) => (
                 <p key={k} className={`flex items-center gap-2 py-1.5 text-sm ${settings?.colourBy === k ? "font-bold text-slate-900" : ""}`}>
@@ -601,8 +611,22 @@ export default function MyTimetable({ onBack }) {
             {/* Click anywhere else to dismiss. Without this the panel could only be
                 closed by its own X, which on a grid you are scanning is a click you
                 should not have to aim for. */}
+            {/* THE SHEET SITS AT bottom: 0, WHICH ON A NOTCHED IPHONE IS UNDER THE HOME
+                INDICATOR. index.html sets viewport-fit=cover, so the last ~34px of the
+                sheet is behind the bar the system draws for the swipe-up gesture — and
+                the bottom of this sheet is where the group chips and the register list
+                are, so the last chip was both half-hidden and sitting exactly where a
+                thumb's swipe is claimed by the OS instead.
+                Padded on the SCROLL CONTAINER rather than on the content inside it, so
+                the inset is the floor of the scrollable area: a long roster can still be
+                scrolled all the way to its last name, and that name comes to rest above
+                the indicator rather than under it.
+                `max-sm:` is the same correspondence `max-sm:rounded-b-none` beside it
+                already relies on — the sheet is only ever drawn when `handset` is true,
+                and that hook's query is max-width 640 — so both halves of "this is the
+                bottom sheet" are expressed the same way rather than two. */}
             <div ref={panelBox} style={style}
-              className="z-40 max-h-[80vh] overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 max-sm:rounded-b-none">
+              className="z-40 max-h-[80vh] overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200 max-sm:rounded-b-none max-sm:pb-safe-bottom">
               {/* The header carries the class's OWN colour, so the panel and the tile it
                   came from are visibly the same thing. A white card beside a coloured
                   grid reads as a different screen. */}

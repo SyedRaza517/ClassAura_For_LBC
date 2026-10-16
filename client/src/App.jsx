@@ -176,7 +176,14 @@ function ChangePasswordGate({ user, onDone, logout }) {
       style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}
     >
       <style>{GLOBAL_STYLE}</style>
-      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl ring-1 ring-black/5">
+      {/* p-5 on the phone, the original p-7 from 640px up. The same step-down as the
+          AuthCard twins in ResetPassword.jsx and AcceptInvite.jsx, and kept in step with
+          them deliberately — all three are the same branded gate card and a reader who
+          finds one should not have to wonder whether the others differ on purpose. At
+          320px the outer p-4 plus 28px of inner padding spent 88 of 320 pixels on
+          whitespace before the three password fields got any. Base width only; nothing
+          at or above `sm:` changes. */}
+      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl ring-1 ring-black/5 sm:p-7">
         <div className="fade-up flex flex-col items-center text-center">
           <div className="float relative mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
             <KeyRound size={26} />
@@ -393,7 +400,10 @@ export default function App() {
   if (!user && offline) return (
     <>
       <style>{GLOBAL_STYLE}</style>
-      <div className="flex flex-col items-center justify-center gap-4 px-8 text-center" style={{ minHeight: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: "radial-gradient(1200px 600px at 50% -10%, #e7ecf6 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
+      {/* px-6 at base, the original px-8 from 640px up: 64px of side padding on a 320px
+          screen left 256px for a two-line headline and two buttons, which is the kind of
+          squeeze that turns "Can't reach the server" into three lines. Base width only. */}
+      <div className="flex flex-col items-center justify-center gap-4 px-6 text-center sm:px-8" style={{ minHeight: "100dvh", fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: "radial-gradient(1200px 600px at 50% -10%, #e7ecf6 0%, #f1f5f9 45%, #eef1f6 100%)" }}>
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
           <WifiOff size={28} className="text-slate-400" />
         </div>
@@ -586,7 +596,14 @@ function Shell({ user, logout, entry }) {
           dashboard (where the view toggle is needed). */}
       {!(handset && view === "app") && (
       <div className={`animated-gradient slide-down z-50 flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-white shadow-lg ${handset ? "" : "sticky top-0"}`} style={{ background: `linear-gradient(90deg, #0f172a 0%, ${NAVY_DARK} 50%, #0f172a 100%)`, backgroundSize: "220% 220%", ...(handset ? { paddingTop: "max(env(safe-area-inset-top), 8px)" } : {}) }}>
-        <div className="flex items-center gap-2">
+        {/* shrink-0 on the mark and on the actions group at the far end, so the only thing
+            this bar gives up when it runs out of room is the centred college name — which
+            already carries `min-w-0 truncate` and is designed to be the part that yields.
+            Without it the three groups shrank in proportion and the "Sign out" label
+            wrapped onto a second line, growing the sticky bar and shoving the console down
+            the page. This bar is hidden on the handset staff app but IS shown to an admin
+            on a phone (the dashboard view), which is where it was seen. */}
+        <div className="flex shrink-0 items-center gap-2">
           <div className="flex h-7 w-8 items-center justify-center rounded-lg bg-white/95 ring-1 ring-white/15"><BrandMark size={20} /></div>
           <span className="hidden font-extrabold tracking-tight text-white sm:inline" style={{ fontFamily: "'Lora', serif" }}>{brandShort}</span>
         </div>
@@ -596,7 +613,7 @@ function Shell({ user, logout, entry }) {
               open, so switching again from the header was redundant. */}
           <span className="min-w-0 truncate font-semibold tracking-wide text-slate-200">{brandName}</span>
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex shrink-0 items-center gap-2.5">
           <LiveClock />
           <div className="hidden min-w-0 items-center gap-2 sm:flex">
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ring-1 ring-white/20" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>{initialsOf(user.name)}</div>
@@ -654,7 +671,13 @@ function Shell({ user, logout, entry }) {
         </div>
       )}
 
-      <div className="pointer-events-none fixed bottom-5 right-5 z-[80] flex flex-col gap-2">
+      {/* pb-safe-bottom (tailwind.config.js maps it to env(safe-area-inset-bottom)) on top
+          of bottom-5. The toast stack is pinned to the bottom edge, and 20px of it sits
+          inside the home indicator's own region on a notched iPhone, so the last toast
+          read with a translucent white pill drawn across its text. Padding rather than a
+          larger `bottom-*` because the inset is 0 on the web and on every un-notched
+          device, where this leaves the stack exactly where it was. */}
+      <div className="pointer-events-none fixed bottom-5 right-5 z-[80] flex flex-col gap-2 pb-safe-bottom">
         {toasts.map((t) => {
           const tone = t.type === "success" ? "#059669" : t.type === "error" ? MAROON : NAVY;
           const I = t.type === "success" ? CheckCircle2 : t.type === "error" ? XCircle : Sparkles;

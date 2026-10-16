@@ -67,8 +67,20 @@ function Kpis({ stats, comparedTo }) {
         ? `from ${rev.coveredEnrolments} of ${rev.totalEnrolments} enrolments`
         : sub;
 
+  // ONE TILE PER ROW AT BASE WIDTH, two from sm: up — which is what this grid already did
+  // at every width below lg, so nothing from the tablet breakpoint upwards moves.
+  //
+  // Two columns on a 320px phone cannot work here and the reason is not the gap. A StatCard
+  // spends 40px on its own padding and 44px on its icon, and its figure is text-3xl — so
+  // "£1,234,567" alone has a min-content width around 110px, giving the tile a floor near
+  // 195px against a 138px track. Tailwind's grid-cols-2 is minmax(0,1fr), so the track does
+  // not grow; the tile overflows it, the grid overflows the page, and the whole screen
+  // scrolls sideways. The alternative fix — min-w-0 plus truncation inside the tile — has to
+  // be made in StatCard.jsx, which this screen only consumes and which four other
+  // dashboards render, so it is not this file's to make. Stacking is the honest local fix:
+  // six tall tiles are a scroll, and a clipped revenue figure is a wrong number.
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       <StatCard label="Enquiries" value={k.enquiries.value} sub={sub} Icon={Users} tone={SERIES[0]} animate trend={chip(k.enquiries, "%")} delay={0} />
       <StatCard label="Applications" value={k.applications.value} sub={sub} Icon={FileText} tone={SERIES[1]} animate trend={chip(k.applications, "%")} delay={40} />
       {/* Rates pass a STRING ("42.6%" or "—"), which StatCard renders as-is rather than
@@ -169,9 +181,16 @@ function SettingsModal({ intake, onClose, onSaved }) {
                 measuring against zero.
                 {intake && " These apply to this intake only; empty boxes fall back to the default."}
               </p>
+              {/* min-w-0 on each cell. An <input type="number"> carries a default
+                  intrinsic width of about 170px (the browser's `size` of 20 characters),
+                  and a grid child's `min-width: auto` is exactly that intrinsic width —
+                  so two of them in a 248px modal demanded 350px and pushed the dialog
+                  past the screen edge, `w-full` notwithstanding. Two columns are kept:
+                  each cell holds one short label and a number, which is precisely the
+                  case where a two-across row still reads at 320px. */}
               <div className="grid grid-cols-2 gap-3">
                 {TARGETS.map((t) => (
-                  <label key={t.key} className="block">
+                  <label key={t.key} className="block min-w-0">
                     <span className="mb-1 block text-xs font-semibold text-slate-600">{t.label}{t.unit && ` (${t.unit})`}</span>
                     <input type="number" min="0" step="any" className={inputCls}
                       value={targets[t.key] ?? ""} onChange={(e) => setTarget(t.key, e.target.value)} placeholder="none" />
@@ -341,31 +360,39 @@ export default function AdmissionTracker() {
       </header>
 
       {/* Filters in one row above the charts, so the scope of every panel is stated
-          once rather than implied per panel. */}
-      <div className="grid grid-cols-2 gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 lg:grid-cols-5">
-        <label className="block">
+          once rather than implied per panel.
+          One filter per row at base, two from sm: up — which is what this did at every
+          width below lg, so the tablet and desktop rows are untouched. Two of these are
+          <select>s holding full course names ("HND - Sustainable Business Management")
+          and two are <input type="date">, which iOS renders wider than its own label
+          suggests; both bring an intrinsic width that a grid child's `min-width: auto`
+          adopts as its floor, so a 138px track held a 200px control and the card spilled.
+          min-w-0 on every cell is the other half of the fix: without it the control still
+          refuses to shrink to whatever track it is given, at any breakpoint. */}
+      <div className="grid grid-cols-1 gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/70 sm:grid-cols-2 lg:grid-cols-5">
+        <label className="block min-w-0">
           <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Intake</span>
           <select className={inputCls} value={intake} onChange={(e) => setIntake(e.target.value)}>
             <option value="">All intakes</option>
             {options.intakes.map((i) => <option key={i.label} value={i.label}>{i.label}</option>)}
           </select>
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Course</span>
           <select className={inputCls} value={course} onChange={(e) => setCourse(e.target.value)}>
             <option value="">All courses</option>
             {options.courses.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Enquired from</span>
           <input type="date" className={inputCls} value={from} onChange={(e) => setFrom(e.target.value)} />
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Enquired to</span>
           <input type="date" className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Compare to</span>
           <select className={inputCls} value={compare} onChange={(e) => setCompare(e.target.value)}>
             {/* "Automatic" is the previous intake, or the preceding window of the same

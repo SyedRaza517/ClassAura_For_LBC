@@ -114,8 +114,15 @@ function SupportList({ referrals, busy, departments, onNew, onOpen }) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     {/* The NAME, resolved by the server. A slug is what the database
-                        stores and is not something to show anybody about themselves. */}
-                    <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{r.departmentName}</p>
+                        stores and is not something to show anybody about themselves.
+                        break-words because of what sits beside it: "Waiting to be
+                        picked up" is a nowrap-in-practice pill about 150px wide, which
+                        at 320px leaves this column barely 100px. The name is whatever
+                        an administrator typed into the department list, so it cannot be
+                        assumed to contain a space to break at — and the enclosing
+                        min-w-0 means an unbreakable one would spill past the card
+                        rather than be contained by it. */}
+                    <p className="break-words text-sm font-extrabold text-slate-800 dark:text-slate-100">{r.departmentName}</p>
                     <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">Referred {r.raisedOn}</p>
                   </div>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ${st.cls}`}>{st.label}</span>
@@ -213,7 +220,10 @@ function SupportRequestForm({ departments, onSent, onCancel }) {
                 <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ring-1 ${dept === d.key ? "ring-transparent" : "ring-slate-300 dark:ring-slate-600"}`} style={dept === d.key ? { background: NAVY } : {}}>
                   {dept === d.key && <CheckCircle2 size={13} className="text-white" />}
                 </span>
-                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{d.name}</span>
+                {/* min-w-0 + break-words: a flex item defaults to `min-width: auto`,
+                    so a long department name (administrator-set, no length limit) made
+                    this option wider than the card instead of wrapping inside it. */}
+                <span className="min-w-0 break-words text-sm font-bold text-slate-700 dark:text-slate-200">{d.name}</span>
               </button>
             ))}
           </div>

@@ -22,7 +22,12 @@ function AuthCard({ header, body }) {
   return (
     <div className="animated-gradient flex min-h-screen w-full items-center justify-center p-4"
       style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif", background: `linear-gradient(160deg, ${NAVY} 0%, ${NAVY_DARK} 55%, #0f172a 100%)`, backgroundSize: "220% 220%" }}>
-      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-7 shadow-2xl ring-1 ring-black/5">
+      {/* p-5 on the phone, the original p-7 from 640px up — the same step-down as
+          ResetPassword.jsx's twin of this card, and for the same reason: capped by the
+          page's p-4 already, 28px of inner padding was spending 56 of 288 available
+          pixels at 320px on whitespace that the invited person's own email address
+          needed. Base-width only, so nothing at or above `sm:` moves. */}
+      <div className="scale-in w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl ring-1 ring-black/5 sm:p-7">
         <div className="mb-5 flex flex-col items-center text-center">
           <div className="float mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${NAVY}, ${MAROON})` }}>
             <GraduationCap size={26} />
@@ -122,8 +127,16 @@ export default function AcceptInvite({ token, onDone }) {
       body={(
         <form onSubmit={submit} className="flex flex-col gap-3.5">
           <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-xs ring-1 ring-slate-200">
-            <p className="flex items-center gap-1.5 font-bold text-slate-700"><UserCheck size={13} /> {state.name}</p>
-            <p className="mt-0.5 text-slate-500">{state.email}</p>
+            {/* min-w-0 on the name row and break-words on the address below it. An email
+                address is a single unbreakable token to the line-breaker, so a long
+                college address (firstname.lastname@institution.ac.uk) set this summary
+                box's minimum width wider than the card and took the whole page into
+                horizontal scroll at 320px — on the first screen a new member of staff
+                ever sees. The name row gets min-w-0 for the same family of reason: it is
+                a flex row, and without it the text refuses to wrap below its own
+                min-content width however narrow the box gets. */}
+            <p className="flex min-w-0 items-center gap-1.5 font-bold text-slate-700"><UserCheck size={13} className="shrink-0" /> <span className="min-w-0 break-words">{state.name}</span></p>
+            <p className="mt-0.5 break-words text-slate-500">{state.email}</p>
             {(state.role || state.dept) && <p className="text-slate-500">{[state.role, state.dept].filter(Boolean).join(" · ")}</p>}
           </div>
 

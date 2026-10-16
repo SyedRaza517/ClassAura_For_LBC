@@ -219,7 +219,9 @@ export default function TemplateEditor({ kind, label, spec, template, onChanged,
       {notice && <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 ring-1 ring-emerald-200"><CheckCircle2 size={15} /> {notice}</div>}
 
       {!template?.hasPdf ? (
-        <div className="rounded-xl border-2 border-dashed border-slate-300 p-10 text-center">
+        // 24px of padding at base, the designed 40px from sm: up. p-10 on a 320px phone
+        // spent 80px of the width on empty space around two sentences.
+        <div className="rounded-xl border-2 border-dashed border-slate-300 p-6 text-center sm:p-10">
           <FileText size={28} className="mx-auto mb-2 text-slate-300" />
           <p className="text-sm font-semibold text-slate-600">Upload the {label.toLowerCase()} you already send</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">

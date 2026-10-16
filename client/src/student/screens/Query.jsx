@@ -62,8 +62,16 @@ export function QueryScreen({ queries = [], reload }) {
           app (Reviews, Support) arrives one row after another, and these did not. */}
       {queries.map((q, i) => (
         <div key={q.id} className="fade-up space-y-1.5" style={{ animationDelay: `${Math.min(i, 6) * 55}ms` }}>
+          {/* min-w-0 is what lets the `truncate` beside it work. `flex-1` sets the
+              basis to 0 but leaves `min-width: auto`, so this item could not shrink
+              below its own content — and `truncate` makes that content a single
+              unwrapped line of whatever the student typed in the Subject field. A long
+              subject therefore widened the row past the screen and carried the status
+              pill off the right edge with it, rather than ellipsising. The subject is
+              free text with no length limit on this form, so this is not a corner case;
+              it is the first student who types a sentence into it. */}
           <div className="flex items-center gap-2 px-1">
-            <p className="flex-1 truncate text-[12px] font-extrabold text-slate-600 dark:text-slate-300">{q.subject}</p>
+            <p className="min-w-0 flex-1 truncate text-[12px] font-extrabold text-slate-600 dark:text-slate-300">{q.subject}</p>
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${q.status === "open" ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"}`}>{q.status === "open" ? "Awaiting reply" : "Answered"}</span>
           </div>
           <div className="flex justify-end">

@@ -45,7 +45,12 @@ function ReviewCard({ r, i, bands }) {
         <div className="min-w-0 flex-1">
           {/* The unit can be null — a unit may be reorganised away long after the
               conversation happened, and the record outlives it. */}
-          <p className="text-[13px] font-extrabold leading-tight text-slate-700 dark:text-slate-200">{r.unit?.name || "General progress review"}</p>
+          {/* break-words: the unit name is a college-set string, this column is about
+              127px wide at 320px once the code chip and the progress chip have taken
+              theirs, and the card is not overflow-hidden — so an unbreakable name spilt
+              visibly past the card's own ring rather than merely looking cramped. The
+              free-text blocks below (ReviewText) already break for the same reason. */}
+          <p className="break-words text-[13px] font-extrabold leading-tight text-slate-700 dark:text-slate-200">{r.unit?.name || "General progress review"}</p>
           <p className="mt-0.5 text-[11px] leading-snug text-slate-400 dark:text-slate-500">{fmtDate(r.date) || "—"}{r.staffName ? ` · ${r.staffName}` : ""}</p>
         </div>
         {r.progress && <span className="tone-soft shrink-0 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-[11px] font-extrabold ring-1" style={toneVars(t)}>{r.progress}</span>}

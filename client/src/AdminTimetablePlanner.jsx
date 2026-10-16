@@ -1153,10 +1153,25 @@ export default function AdminTimetablePlanner({ store }) {
   const TABS = [["calendar", "Calendar", CalendarDays], ["events", "Events", List], ["groups", "Groups", Users], ["schools", "Schools", GraduationCap], ["rooms", "Rooms", DoorOpen], ["campuses", "Campuses", Building2], ["categories", "Categories", Tag]];
   return (
     <div>
-      <div className="mb-4 flex gap-1 border-b border-slate-200">
+      {/* SEVEN TABS DO NOT FIT A PHONE, AND THE CONSOLE CLIPS RATHER THAN SCROLLS.
+          Each of these is an icon plus a word in a bold 14px — about 80px — so the row
+          asks for roughly 560px. StaffHub's `<main>` is `overflow-x-hidden`, which means
+          the surplus was not merely off to the right where a swipe would reach it: it was
+          CUT OFF. On a 320px screen that left Calendar, Events and part of Groups, and no
+          route to Rooms, Campuses or Categories at all — an administrator on a handset
+          could not get to half this page, with nothing on screen to suggest the tabs
+          existed.
+          Scrolling the strip rather than wrapping it, and that is the deliberate half:
+          these are tabs, and a tab row folded onto two lines stops reading as one rail of
+          peers — the second line looks like a different kind of thing. It is also the
+          pattern StaffHub already uses for its own narrow tab strips, so the two behave
+          the same way under a thumb. `shrink-0` keeps the labels and their icons at full
+          size instead of letting flex squash them towards min-content; at desktop widths
+          there is no overflow, so no scrollbar appears and nothing moves. */}
+      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map(([k, l, I]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
+            className={`flex shrink-0 items-center gap-1.5 px-3 py-2 text-sm font-bold ${tab === k ? "border-b-2 text-slate-800" : "text-slate-500 hover:text-slate-600"}`}
             style={tab === k ? { borderColor: NAVY } : undefined}>
             <I size={15} /> {l}
           </button>
@@ -1779,7 +1794,18 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         <select value={view} onChange={(e) => setView(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold text-slate-600">
           {["day", "week", "month", "timeline"].map((v) => <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>)}
         </select>
-        <div className="ml-auto flex items-center gap-1">
+        {/* THE ACTIONS WRAP AMONG THEMSELVES, not only away from the row above.
+            The strip around this is `flex-wrap`, so this group folds onto its own line on
+            a narrow screen — but the group itself did not wrap, and at about 300px of
+            buttons it was still wider than the 280px the console leaves at 320px. Being a
+            flex item does not save it: `min-width: auto` keeps a non-wrapping row at its
+            own min-content width, so it simply overhung, and `<main>`'s overflow-x-hidden
+            clipped the overhang — taking the right-hand edge of "Publish this period" and
+            the display-settings gear with it. Wrapping inside the group lowers its
+            min-content to its widest single button, which fits. `ml-auto` is kept: it is
+            what pushes the group right when there IS room, which is every width at or
+            above `sm:`, so the desktop row is unchanged. */}
+        <div className="ml-auto flex flex-wrap items-center gap-1">
           <button onClick={() => setEditing(blank())} className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ background: NAVY }}><Plus size={14} /> New event</button>
           <button
             onClick={() => setAsk({ kind: "publish" })}
@@ -2057,7 +2083,16 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
         // would fix all of them at once, but it is used in 110 places and this is not
         // the change to make blind. A portal takes this screen out of the containing
         // block entirely, which is also the right thing for a modal on its own merits.
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
+        // THE NOTCH EATS A CENTRED 90vh PANEL, which `p-3` alone cannot answer.
+        // index.html sets viewport-fit=cover, so `inset-0` really is the whole screen
+        // including the strip the Dynamic Island sits in. A 90vh panel centred in 852px
+        // leaves 43px above it, against the 59px that strip claims — so the top of this
+        // modal's coloured header, and the title in it, sat behind the status bar.
+        // `max()` rather than a breakpoint or an added inset: where there is no safe area
+        // — every desktop, and the 320x568 handset this pass is measured against — it
+        // resolves to exactly the 0.75rem `p-3` already gave, so nothing anywhere else
+        // moves. The same two classes are on the repeat dialog below, for the same reason.
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between px-4 py-3 text-white" style={{ background: NAVY }}>
               <p className="text-base font-extrabold">{editing.id ? "Edit event" : "New event"}</p>
@@ -2534,7 +2569,9 @@ function PlannerCalendarTab({ mode = "calendar", staff = [], units = [], cohorts
           it rather than be filed behind it. See ModalPortal.jsx. */}
       {ask?.kind === "repeat" && (
         <ModalPortal>
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
+          {/* The safe-area padding is the event modal's, at this dialog's own `p-4` —
+              see the note there for why it is a max() rather than a breakpoint. */}
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]" style={{ background: "rgba(15,23,42,.45)", backdropFilter: "blur(2px)" }} onClick={() => setAsk(null)}>
             <div className="max-h-[85dvh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
               <p className="text-base font-extrabold text-slate-800">Repeat weekly</p>
               <p className="mt-1 text-sm leading-relaxed text-slate-500">A copy of this class on the same weekday, every week, up to and including the date you choose.</p>

@@ -65,7 +65,16 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
   // itself in a box taller than the window.
   return (
     <ModalPortal>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3">
+      {/* The sizing this picker needs it already has, and from here rather than from
+          ModalPortal, which only moves the overlay out of the console's transformed view
+          container and says nothing about width: `w-full max-w-3xl` in a `p-3` backdrop
+          is 296px at 320px of viewport, the two result columns are `grid-cols-1
+          sm:grid-cols-2` so they stack rather than halve, and `max-h-[90vh]` over a
+          `flex-1 overflow-y-auto` body scrolls the lists while the search row and the
+          footer stay where they are.
+          The safe-area padding is the one thing p-3 could not say — see the fuller note
+          in TimetableSettingsModal.jsx, whose shell this is a copy of. */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
           <div className="flex items-center justify-between px-4 py-3" style={{ background: TT.green, color: TT.greenText }}>
             <p className="text-base font-extrabold">Select timetables</p>
@@ -128,7 +137,15 @@ export default function SelectTimetablesModal({ open, initialType, initialSelect
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-slate-200 p-3">
+          {/* THE FOOTER WRAPS, because "Reset to my timetable" is a sentence rather than a
+              label. It plus Apply plus the gap want about 275px and this row has 272 at
+              320px of viewport, so flex shrank the Reset button to min-content and broke
+              its wording across two lines inside the button — the one place a footer
+              cannot afford to look accidental, since Apply beside it is the destructive-ish
+              action. Wrapping puts each button on its own line intact instead. `flex-wrap`
+              only ever acts when the line is genuinely short, so the desktop footer is
+              untouched; `justify-end` keeps them right-aligned either way. */}
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 p-3">
             {/* Reset means "back to my own timetable", not "clear the boxes" — that is
                 what the server does with no type, so there is one meaning, not two. */}
             <button onClick={() => { setSelected([]); onApply?.({ type: null, ids: [], labels: [] }); }}

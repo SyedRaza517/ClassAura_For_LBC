@@ -39,9 +39,23 @@ export default function StatCard({ label, value, sub, Icon, tone = NAVY, delay =
     <div className="hover-lift group relative overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:ring-slate-300/80 fade-up" style={{ animationDelay: `${delay}ms` }}>
       <div className="absolute inset-x-0 top-0 h-1" style={{ background: grad(tone) }} />
       <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-60 transition-transform duration-500 group-hover:scale-150" style={{ background: tone + "12" }} />
-      <div className="relative flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {/* min-w-0 on the text column, shrink-0 on the icon, break-words on the label.
+          This is the same defect that spilled the attendance tiles out of their card in
+          AdminLiveAttendance.jsx, and it is here for the same reason: a flex child's
+          min-width defaults to `auto`, which means it refuses to shrink below its own
+          min-content width — the longest single word of the label. A tile is normally one
+          of four across a dashboard, so on a 320px phone it has around 150px to live in,
+          and 40px of p-5 plus a 44px icon leaves the label about 65px. "BALANCES" or
+          "SUBMISSIONS" set at uppercase text-xs is wider than that, so the column held
+          itself open, the icon was pushed out of the tile, and the row of tiles pushed
+          past the right edge of the card holding them.
+          min-w-0 lets the column shrink, break-words lets a long word break rather than
+          become a new floor, and shrink-0 keeps the icon its intended size instead of
+          being squashed into an oval once the column finally yields. All three are inert
+          at any width where the tile already fits, so the dashboard is untouched. */}
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="break-words text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
           {/* The value wears the accent colour; the label and sub-line stay in text
               tokens. A figure is identified by the tile it sits in, not by being
               coloured — so nothing here depends on colour alone to be readable. */}
@@ -49,7 +63,7 @@ export default function StatCard({ label, value, sub, Icon, tone = NAVY, delay =
           {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
           {trend && <span className="mt-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-extrabold" style={{ background: tc + "1a", color: tc }}>{trend.up ? "▲" : "▼"} {trend.text}</span>}
         </div>
-        <span className="flex h-11 w-11 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${alpha(tone, 50)}` }}><Icon size={22} /></span>
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6" style={{ background: grad(tone), boxShadow: `0 8px 18px -6px ${alpha(tone, 50)}` }}><Icon size={22} /></span>
       </div>
     </div>
   );

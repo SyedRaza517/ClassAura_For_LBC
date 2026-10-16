@@ -71,9 +71,21 @@ export default function Login({ onBack }) {
       </div>
 
       {/* Login card */}
-      <div className="scale-in hover-lift relative w-full max-w-sm rounded-3xl border border-white/40 bg-white/95 p-7 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl">
+      {/* TWO BASE-WIDTH-ONLY CHANGES HERE, both about the same 320px screen.
+          p-5 instead of p-7 below 640px: this card is max-w-sm (384px) inside the page's
+          own p-4, so on a 320px handset it is 288px wide and 28px of inner padding spent
+          56 of those pixels before anything was drawn. It matters more here than on a
+          card of plain text, because when an admin has two-step verification switched on
+          this is where TwoFactor.jsx's six-box code input renders, and that row wants
+          every pixel it can get. sm:p-7 restores the original on every larger screen.
+          The back button is 44px square rather than 32px, which is the minimum comfortable
+          touch target on a handset, with its inset dropped from 4 to 2 so the arrow stays
+          in the same optical corner — the identical pair of values App.jsx already uses on
+          the change-password modal's close button, so this is the house pattern rather
+          than a new one. */}
+      <div className="scale-in hover-lift relative w-full max-w-sm rounded-3xl border border-white/40 bg-white/95 p-5 shadow-2xl ring-1 ring-black/5 backdrop-blur-xl sm:p-7">
         {onBack && !challenge && !forgot && (
-          <button onClick={onBack} title="Back" className="press absolute left-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <button onClick={onBack} title="Back" className="press absolute left-2 top-2 flex h-11 w-11 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
             <ArrowLeft size={16} />
           </button>
         )}

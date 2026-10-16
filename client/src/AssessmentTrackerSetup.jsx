@@ -153,7 +153,18 @@ export default function AssessmentTrackerSetup() {
                   </p>
                 </div>
 
-                <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-600">
+                {/* min-w-0 on the label and the control, max-w-full on the control. A
+                    select is as wide as its widest option and refuses to shrink below
+                    it — min-width:auto on a flex item floors at min-content, and for a
+                    select that is the longest member of staff's name. On a 320px screen
+                    this row has about 250px to spend, and one double-barrelled name with
+                    a title in front of it was enough to push the card's edge past the
+                    screen's. Removing the floor and capping the width lets the control
+                    take the row it has; the name it shows is clipped by the control's
+                    own rendering, which is the ordinary behaviour of a narrow select and
+                    not something this screen should reinvent. The console reading is
+                    untouched: nothing here applies until the row actually runs short. */}
+                <label className="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-slate-600">
                   <UserCog size={14} className="text-slate-400" />
                   <span className="sr-only sm:not-sr-only">Module leader</span>
                   <select
@@ -161,7 +172,7 @@ export default function AssessmentTrackerSetup() {
                     disabled={!!saving[`leader:${m.unitId}`]}
                     onChange={(e) => saveLeader(m.unitId, e.target.value)}
                     aria-label={`Module leader for ${m.unitCode}`}
-                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] font-medium text-slate-700 outline-none focus:border-indigo-300 disabled:opacity-50"
+                    className="min-w-0 max-w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[13px] font-medium text-slate-700 outline-none focus:border-indigo-300 disabled:opacity-50"
                   >
                     <option value="">— not set —</option>
                     {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}

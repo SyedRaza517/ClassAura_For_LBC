@@ -195,9 +195,19 @@ export default function AdminLiveAttendance({ settingsHref = null }) {
       {/* On the phone: one row of day navigation, in the app's own furniture. The
           arrows shift a day at a time from the SERVER's answer for today; "Today"
           appears only once you have left it. The range picker stays console-only —
-          reading a fortnight of registers is desk work. */}
+          reading a fortnight of registers is desk work.
+
+          IT WRAPS, because the one thing in this row whose width we do not control is
+          the date field: a native date input is sized by the browser's own rendering of
+          dd/mm/yyyy plus its picker glyph, and will not shrink below that whatever the
+          flex basis says. Two 44px arrows, that field and the "Today" button together
+          overflowed a 320px shell — and the overflow arrives exactly when somebody has
+          pressed an arrow, since that is what makes "Today" appear. Wrapping drops the
+          button to a second line there and changes nothing at any width where all four
+          fit. min-w-0 was the wrong tool for once: it would have let the field shrink
+          and clip its own digits rather than wrap. */}
       {handset && (
-        <div className="fade-up flex items-center gap-2">
+        <div className="fade-up flex flex-wrap items-center gap-2">
           <button onClick={() => shiftDay(-1)} aria-label="Previous day"
             className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-sm ring-1 ring-slate-200/70"><ChevronRight size={18} className="rotate-180" /></button>
           <label className="flex h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70">
@@ -395,13 +405,18 @@ function TodayTotals({ totals, classes }) {
           <div
             key={t.key}
             title={totals[t.key] === null && t.key === "notMarked" ? NOT_MEASURED : undefined}
-            className={`rounded-xl px-1 py-2 text-center ring-1 sm:px-3 sm:py-2.5 ${t.cls}`}
+            /* min-w-0 is the whole fix: a grid item defaults to min-width:auto, so
+               each tile held its min-content width ("Excused" plus padding) and spilled
+               out of its minmax(0,1fr) track and past the card's edge. Flooring it at 0
+               lets the tile obey the track, and break-words lets a long label wrap
+               inside it rather than push it wide again. */
+            className={`flex min-w-0 flex-col items-center justify-center rounded-xl px-1 py-2 text-center ring-1 sm:px-2 sm:py-2.5 ${t.cls}`}
           >
             {/* Keyed on the value: a register filling while this is open remounts
                 the number, and .pop replays — the count visibly ticks up rather
                 than silently being a different number when the eye returns. */}
             <p key={String(totals[t.key])} className="pop text-base font-bold tabular-nums leading-none sm:text-xl">{shown(totals[t.key])}</p>
-            <p className="mt-1 text-[9px] font-semibold leading-tight opacity-80 sm:text-[11px]">{t.label}</p>
+            <p className="mt-1 w-full break-words text-[9px] font-semibold leading-tight opacity-80 sm:text-[11px]">{t.label}</p>
           </div>
         ))}
       </div>
@@ -606,7 +621,16 @@ function StudentHistory({ sessionId, studentId, row = null, onClose }) {
               </div>
             )}
 
-            <div className={tab === "attendance" ? "max-h-[55vh] overflow-y-auto" : "hidden"}>
+            {/* overflow-auto, not overflow-y-auto. Four columns of which three refuse to
+                wrap — a date, a time range and a status pill — plus a class description
+                capped at 14rem come to roughly 500px of unshrinkable table, and this
+                sheet is full-bleed on a 320px phone. With the vertical axis alone
+                scrollable the table pushed the sheet sideways and took the page's own
+                horizontal scroll with it; on both axes the table scrolls inside its own
+                box, which is what the sticky header above was already written for. No
+                effect at desktop widths, where the four columns fit the 2xl sheet and
+                the horizontal bar never appears. */}
+            <div className={tab === "attendance" ? "max-h-[55vh] overflow-auto" : "hidden"}>
               <table className="w-full border-collapse text-left">
                 <thead className="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                   <tr className="shadow-[inset_0_-1px_0_0_#e2e8f0]">
@@ -1204,11 +1228,20 @@ function ConductSheet({ row, vocabulary, sessionId, onClose, onLogged }) {
     }
   };
 
+  // The entry's label is COLLEGE COPY, not ours: the vocabulary is editable in Settings,
+  // so "Outstanding contribution" or "Persistent lateness" is as likely as "Merit".
+  // These chips sit two to a row in a bottom sheet that is the full width of the phone,
+  // which leaves about 140px a chip — less than the longest single word in several
+  // perfectly reasonable entries. min-w-0 on the button lets it obey its grid track
+  // (see TodayTotals for why a grid item will not shrink without it) and break-words on
+  // the label lets a long word break inside the chip rather than push the pair of them
+  // past the sheet's edge. The points badge keeps shrink-0: a chip whose number has been
+  // squeezed off is worse than a label that has wrapped.
   const Chip = ({ e }) => (
     <button type="button" onClick={() => log(e)} disabled={busy || !!done}
-      className={`press flex min-h-11 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left ring-1 transition disabled:opacity-50 ${
+      className={`press flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-left ring-1 transition disabled:opacity-50 ${
         e.tone === "positive" ? "bg-emerald-50 text-emerald-800 ring-emerald-200 hover:bg-emerald-100" : "bg-rose-50 text-rose-800 ring-rose-200 hover:bg-rose-100"}`}>
-      <span className="text-[13px] font-bold">{e.label}</span>
+      <span className="min-w-0 break-words text-[13px] font-bold">{e.label}</span>
       <span className={`shrink-0 rounded-full bg-white px-1.5 py-0.5 text-[11px] font-extrabold tabular-nums ring-1 ${
         e.tone === "positive" ? "text-emerald-700 ring-emerald-200" : "text-rose-700 ring-rose-200"}`}>
         {e.points > 0 ? `+${e.points}` : e.points}
@@ -1363,7 +1396,13 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
               longer cleared back to unmarked: tapping the active mark leaves it set.
               Clearing a check-in was removed by product decision — it let a student's
               own scan be silently wiped, and a wrong mark is corrected by choosing the
-              right status, not by blanking it. */}
+              right status, not by blanking it.
+
+              Each button carries min-w-0 (see TodayTotals): "Excused" under the letter
+              is what sets a button's min-content width, and four of those plus the
+              card's padding is more than a 320px shell has. The letter is the control
+              and the word beneath it the gloss, so a word that has to crowd is the
+              right thing to give up — the row must stay four across and on the card. */}
           <div className="mt-2 grid grid-cols-4 gap-1.5" role="group" aria-label={`Attendance for ${r.student.name}`}>
             {["P", "L", "E", "A"].map((k) => {
               const active = r.status === k;
@@ -1373,7 +1412,7 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
                   onClick={() => setMark(r.student.id, k)}
                   aria-pressed={active}
                   title={canMark ? STATUS[k].label : "You can see this register but not change it."}
-                  className={`press flex h-11 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${
+                  className={`press flex h-11 min-w-0 flex-col items-center justify-center rounded-xl ring-1 transition disabled:opacity-50 ${
                     active ? `${STATUS[k].cls} ring-2 pop` : "bg-white text-slate-500 ring-slate-200"}`}>
                   <span className="text-[14px] font-extrabold leading-none">{k}</span>
                   <span className="mt-0.5 text-[9px] font-semibold leading-none opacity-80">{STATUS[k].label}</span>
@@ -1389,14 +1428,20 @@ function HandsetRegister({ rows, total, canMark, saving, setMark, onHistory, onA
 
 // Compact and centred on a phone, roomier and left-aligned from sm up — the same
 // component, so the two form factors cannot drift apart in what they count.
+//
+// min-w-0 for the same reason TodayTotals' tiles carry it: four of these sit in a
+// grid-cols-4 row, and a grid item's default min-width:auto would hold each one at the
+// width of "Present" in uppercase with its tracking plus the padding, which is more
+// than a quarter of a 320px shell once the page's own padding is taken off. Floored at
+// 0 the tile obeys its minmax(0,1fr) track and the label wraps inside it instead.
 function Tally({ n, label, colour }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-1.5 py-2 text-center sm:px-4 sm:py-3 sm:text-left">
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-white px-1.5 py-2 text-center sm:px-4 sm:py-3 sm:text-left">
       {/* Keyed on the value so the ten-second poll's changes replay .pop — the
           count visibly ticks when somebody taps in, on the screen whose whole job
           is to be watched while that happens. */}
       <p key={n} className="pop text-lg font-extrabold tabular-nums leading-none sm:text-2xl" style={{ color: colour }}>{n}</p>
-      <p className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px] sm:tracking-wider">{label}</p>
+      <p className="mt-1 break-words text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px] sm:tracking-wider">{label}</p>
     </div>
   );
 }
@@ -1627,7 +1672,15 @@ function Projector({ unitName, times, img, reconnecting, counts, onClose }) {
   // turn "full screen" into "full page" — the overlay laid out against the scroll
   // height and the tallies pushed past the projector's bottom edge.
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label="Check-in code, full screen" className="fixed inset-0 z-[95] flex flex-col bg-white">
+    // pb-safe-bottom on the column itself (tailwind.config.js maps it to
+    // env(safe-area-inset-bottom)), not on the tally row's own padding: the row carries
+    // p-5 md:p-8 and a bottom override would have to be restated at md as well, where
+    // one unprefixed utility beating a prefixed one is a stylesheet-order question
+    // nobody should have to think about. Padding the flex column lifts whatever is last
+    // clear of the home indicator and resolves to zero everywhere else, so the
+    // projector on a laptop is untouched. It matters here because the lecturer may well
+    // show this from the phone app while the room scans it off their screen.
+    <div role="dialog" aria-modal="true" aria-label="Check-in code, full screen" className="fixed inset-0 z-[95] flex flex-col bg-white pb-safe-bottom">
       <div className="flex items-start justify-between gap-4 p-5 md:p-8">
         <div className="min-w-0">
           <p className="truncate text-2xl font-extrabold text-slate-900 md:text-4xl">{unitName}</p>
@@ -1682,11 +1735,16 @@ function Projector({ unitName, times, img, reconnecting, counts, onClose }) {
   );
 }
 
+// The projector's own tallies. Three to a row at every width, so each one gets a third
+// of the screen minus the row's padding — which on a 320px handset is about 85px, and
+// "PRESENT" in uppercase at tracking-wider plus px-4 of padding is more than that. So:
+// min-w-0 to let the tile obey its track, and the padding steps back up at sm, which
+// leaves the laptop and the projector exactly as they were.
 function BigTally({ n, label, colour }) {
   return (
-    <div className="rounded-2xl border border-slate-200 px-4 py-4 text-center md:py-5">
+    <div className="min-w-0 rounded-2xl border border-slate-200 px-2 py-3 text-center sm:px-4 sm:py-4 md:py-5">
       <p className="text-4xl font-extrabold tabular-nums leading-none md:text-6xl" style={{ color: colour }}>{n}</p>
-      <p className="mt-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 md:text-sm">{label}</p>
+      <p className="mt-2 break-words text-[11px] font-bold uppercase tracking-wider text-slate-500 md:text-sm">{label}</p>
     </div>
   );
 }

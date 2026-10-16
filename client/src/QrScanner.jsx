@@ -100,8 +100,14 @@ export default function QrScanner({ onScan, onClose }) {
             <div className="h-56 w-56 rounded-2xl border-2 border-white/80" />
           </div>
         )}
+        {/* The error card takes the BOTTOM inset, for the same reason the header above
+            takes the top one. 24px clears a flat bottom edge but not an iPhone's home
+            indicator, which owns roughly 34px and is drawn OVER this overlay — so the
+            last line of the explanation, the line telling the reader to use their phone's
+            camera app instead, sat under a translucent white pill. env() resolves to 0 on
+            the web and on older devices, where this stays the 1.5rem it was. */}
         {err && (
-          <div className="absolute inset-x-4 bottom-6 rounded-2xl bg-white p-4 text-slate-800" role="alert">
+          <div className="absolute inset-x-4 rounded-2xl bg-white p-4 text-slate-800" role="alert" style={{ bottom: "calc(env(safe-area-inset-bottom) + 1.5rem)" }}>
             <p className="text-sm font-bold">Camera not available</p>
             <p className="mt-1 text-[13px] leading-relaxed text-slate-600">{err}</p>
           </div>

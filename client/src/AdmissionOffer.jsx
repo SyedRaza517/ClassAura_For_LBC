@@ -71,10 +71,13 @@ export default function AdmissionOffer({ token }) {
     }
   };
 
+  // The cards below were p-8 at every width. 32px a side, inside a Shell already spending
+  // 16px, left a 320px handset 224px of card — so they are 24px at base and the designed
+  // 32px from sm: up. Nothing at or above the tablet breakpoint changes.
   // ---- Checking ------------------------------------------------------------
   if (state.status === "checking") return (
     <Shell center>
-      <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
+      <div className="scale-in rounded-2xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5 sm:p-8">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
         <div className="flex items-center justify-center gap-2 py-2 text-slate-500">
           <Loader2 size={22} className="animate-spin" />
@@ -87,7 +90,7 @@ export default function AdmissionOffer({ token }) {
   // ---- Invalid / expired ---------------------------------------------------
   if (state.status === "invalid") return (
     <Shell center>
-      <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
+      <div className="scale-in rounded-2xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5 sm:p-8">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
         <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 ring-1 ring-rose-200">
           <AlertCircle size={28} />
@@ -103,7 +106,7 @@ export default function AdmissionOffer({ token }) {
   // ---- Accepted ------------------------------------------------------------
   if (state.status === "accepted") return (
     <Shell center>
-      <div className="scale-in rounded-2xl bg-white p-8 text-center shadow-2xl ring-1 ring-black/5">
+      <div className="scale-in rounded-2xl bg-white p-6 text-center shadow-2xl ring-1 ring-black/5 sm:p-8">
         <div className="mb-4 flex justify-center"><BrandLockup /></div>
         <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200">
           <CheckCircle2 size={34} />
@@ -126,7 +129,10 @@ export default function AdmissionOffer({ token }) {
           <PartyPopper size={34} />
         </div>
 
-        <h1 className="text-2xl font-extrabold tracking-tight text-slate-800 sm:text-3xl">
+        {/* break-words: the name comes from the applicant's own record, and a long
+            unhyphenated one at text-2xl is wider than a 288px card. There is nothing to
+            truncate to here — this is the greeting on an offer letter, so it wraps. */}
+        <h1 className="break-words text-2xl font-extrabold tracking-tight text-slate-800 sm:text-3xl">
           Congratulations{state.name ? `, ${state.name}` : ""}!
         </h1>
 
