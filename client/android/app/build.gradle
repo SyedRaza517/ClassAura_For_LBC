@@ -110,8 +110,15 @@ android {
         // refresh. The build number climbs because it always climbs; the marketing
         // version climbs because this is the first time the app's capabilities changed
         // rather than its fixes.
-        versionCode 5
-        versionName "1.1.1"
+        //
+        // 6 (16 Oct 2026), versionName 1.1.1 -> 1.1.2. The first ClassAura build made
+        // against the COLLEGE'S OWN API: every earlier one was aimed at the EdTech
+        // deployment this repository was forked from, so nothing a user did in it could
+        // reach London Brookes' database. No capability changed, which is why the
+        // marketing version moves by a patch and not a minor — but it is the first
+        // build of this app that is wired to the right system at all.
+        versionCode 6
+        versionName "1.1.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
