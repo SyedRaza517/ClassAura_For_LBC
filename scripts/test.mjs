@@ -249,11 +249,16 @@ if (runUnit) {
   //   dueNext       — the Home screen's interleave of unmarked assessments and
   //     next-48h classes into one soonest-first list; the rule that fails silently is
   //     an overdue item not sorting ahead of everything still in the future.
+  //   appFunctions  — which functions the college offers, as both shells read it. The
+  //     two rules that fail silently are failing CLOSED on a missing payload (an app
+  //     build older than the server renders no navigation at all) and keeping the
+  //     client's own nav order instead of the college's (which looks right in every
+  //     default configuration, because the default order IS the client's).
   // client/package.json is "type": "module", so node runs them directly.
   // EXPLICIT FILES, not a glob: a glob invites somebody to point it at src/, where
   // every .jsx would be dragged in and none of them can run under plain node.
   console.log(`${"─".repeat(64)}\n▶ unit tests (client/src, pure)\n${"─".repeat(64)}`);
-  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js", "src/pendingQr.test.js", "src/student/dueNext.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
+  const rc = spawnSync("node", ["--test", "src/timetableView.test.js", "src/navGroups.test.js", "src/qrResultView.test.js", "src/scanLink.test.js", "src/checkInAction.test.js", "src/scanText.test.js", "src/pendingQr.test.js", "src/student/dueNext.test.js", "src/appFunctions.test.js"], { cwd: join(root, "client"), stdio: "inherit", shell: false, env: { ...process.env } });
   results.push({ suite: "unit tests (client, pure)", status: rc.status === 0 ? "passed" : "failed", code: rc.status });
   console.log("");
 }

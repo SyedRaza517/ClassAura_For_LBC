@@ -162,6 +162,12 @@ app.use("/api/branding", wrapAsync(require("./routes/branding")));
 // The college's academic departments -- Business, Computing, Law -- and who may see
 // them. Gated on the existing "settings" page rather than a new ADMIN_PAGES key.
 app.use("/api/academic-departments", wrapAsync(require("./routes/academicDepartments")));
+// Which staff pages and student screens this college offers at all -- the Develop App
+// screen. SUPER-ADMIN ONLY and deliberately NOT a grantable page: a screen that can
+// switch a function off for the whole institution must not itself be handed out, and
+// must not be reachable through the very mechanism it configures. There is no
+// "develop-app" key in ADMIN_PAGES for exactly that reason -- see routes/developApp.js.
+app.use("/api/develop-app", wrapAsync(require("./routes/developApp")));
 // Mapping the VLE's own course grouping (Moodle category, Canvas sub-account) onto an
 // academic department -- captured by the sync, mapped once by hand, never guessed.
 app.use("/api/vle-department-mapping", wrapAsync(require("./routes/vleDepartmentMapping")));

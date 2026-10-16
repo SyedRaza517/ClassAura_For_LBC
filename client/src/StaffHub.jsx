@@ -27,6 +27,11 @@ import {
 } from "recharts";
 import { downloadCSV } from "./csv";
 import { groupNav } from "./navGroups";
+// Which functions this college offers -- the Develop App toggle, as the staff shell
+// reads it. PURE and tested under plain node (src/appFunctions.test.js). It decides
+// what to DRAW; requireAnyPage on the server decides what may be reached, and asks the
+// same question first, so a page hidden here is also refused there.
+import { isOn as appIsOn, labelOf as appLabelOf } from "./appFunctions";
 import { CHECK_IN_METHODS, MACHINE_METHODS, selfCheckInMethod } from "./checkInMethods";
 import StatCard, { grad, useCountUp } from "./StatCard";
 import { BrandMark, BrandLockup } from "./Brand";
@@ -69,6 +74,7 @@ import useReveal from "./RevealButton";
 import IntegrationSettings from "./IntegrationSettings";
 import BrandingSettings from "./BrandingSettings";
 import DocumentSettings from "./DocumentSettings";
+import DevelopApp from "./DevelopApp";
 import { ADMISSION_SECTIONS, ADMISSION_REQUIRED } from "./admissionSections";
 
 /* ============================================================
@@ -3188,9 +3194,15 @@ const warnOnPageListDrift = (allNav) => {
   const noNav = ADMIN_PAGES.filter(k => !reached(k));
   // The reverse direction too: a label for a page nobody can be granted is dead weight,
   // usually the fossil of a page renamed in one list only. allNav is deliberately NOT
-  // checked in reverse — "audit", "access" and "assessment-tracker-setup" are meant to
-  // be absent from ADMIN_PAGES (see the comments on each), so flagging them would train
-  // people to ignore this.
+  // checked in reverse — "audit", "access", "develop-app", "my-timetable" and
+  // "assessment-tracker-setup" are meant to be absent from ADMIN_PAGES (see the comments
+  // on each), so flagging them would train people to ignore this.
+  //
+  // "develop-app" is the newest of them and the one it is most important stays absent: a
+  // key in ADMIN_PAGES is a key the Access tab offers as a checkbox, and the screen that
+  // can switch every other function off must not be grantable. Its absence is also what
+  // stops it being switched off by its own toggle — see the registry in
+  // server/src/appFunctions.js, which has no entry for it.
   const orphanLabels = Object.keys(PAGE_LABELS).filter(k => !ADMIN_PAGES.includes(k));
   if (noLabel.length) console.warn("[StaffHub] ADMIN_PAGES keys with no PAGE_LABELS entry (they render as an unlabelled checkbox on the Access tab):", noLabel);
   if (noNav.length) console.warn("[StaffHub] ADMIN_PAGES keys with no allNav entry (grantable, but they reach no screen):", noNav);
@@ -3208,6 +3220,12 @@ const canAccessPage = (user, key) => {
   // so the isSuperAdmin short-circuit below can never be reached with a student.
   if (user.kind === "student" || user.isStudent) return false;
   if (key === "access") return !!user.isSuperAdmin;   // never assignable to others
+  // Same rule, same reason: a screen that switches a function off for the WHOLE
+  // college is not a department's tool. It is also absent from ADMIN_PAGES, so there
+  // is no checkbox for it on the Access tab and no grant that could ever satisfy it —
+  // which is what makes it unswitchable rather than merely guarded. The server agrees
+  // (routes/developApp.js gates on requireSuperAdmin, not on a page).
+  if (key === "develop-app") return !!user.isSuperAdmin;
   if (user.isSuperAdmin) return true;
   if (user.accountRole !== "ADMIN") return false;
   const pages = user.adminPages;
@@ -3893,6 +3911,11 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     { key: "settings", label: "Settings", I: Settings },
     { key: "audit", label: "Audit Trail", I: History },
     { key: "access", label: "Access", I: ShieldCheck },
+    // Beside Access because the two answer adjacent questions — who may use a page,
+    // and whether the college offers it at all — and a Super Admin reaching for one
+    // often wants the other. Last in the list for the same reason Access is near it:
+    // these are the two most destructive screens in the dashboard.
+    { key: "develop-app", label: "Develop App", I: SlidersHorizontal },
   ];
   warnOnPageListDrift(allNav);   // dev-only three-list drift check; see warnOnPageListDrift
   // Only the pages this admin may see. Super Admin sees all + the Access tab.
@@ -3903,8 +3926,22 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
   // somebody the trail WITHOUT the administrative authority the trail describes, and
   // withhold it from the administrators it is a record of — neither of which is a
   // sensible thing to be able to configure.
+  // DOES THIS COLLEGE OFFER THIS PAGE AT ALL -- the third access question, asked
+  // beside the two that already existed. canAccessPage answers "may this person";
+  // this answers "does it exist here", and they combine with AND, which is exactly
+  // how requireAnyPage combines them on the server.
+  //
+  // GUARDED ON ADMIN_PAGES, AND THAT GUARD IS THE WHOLE SUBTLETY. The payload lists
+  // the enabled REGISTRY keys, and four nav keys are deliberately not registry keys:
+  // "audit", "my-timetable", "assessment-tracker-setup" and every "referrals-<dept>"
+  // queue. Asking the payload about those would find them absent and read that as
+  // "switched off", so a college that had configured nothing would lose its audit
+  // trail, every lecturer would lose My Timetable, and every referral queue would
+  // vanish. They are not switchable, so they are not asked about; the branches below
+  // instead ask about the page each one actually derives from.
+  const offers = (key) => (ADMIN_PAGES.includes(key) ? appIsOn(me?.app, key) : true);
   const nav = allNav.filter(n => n.key === "audit"
-    ? AUDIT_READER_PAGES.some(p => canAccessPage(me, p))
+    ? AUDIT_READER_PAGES.some(p => canAccessPage(me, p) && offers(p))
     // The tracker's setup screen is a second SCREEN behind one permission, not a
     // second permission. Deriving its visibility here — rather than adding it to
     // ADMIN_PAGES — keeps the grantable list at four hand-maintained copies instead of
@@ -3923,7 +3960,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // which would imply one person can be given somebody else's timetable — the
     // endpoint cannot do that.
     : n.key === "my-timetable" ? true
-    : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker")
+    : n.key === "assessment-tracker-setup" ? canAccessPage(me, "assessment-tracker") && offers("assessment-tracker")
     // MANY SCREENS, ONE PERMISSION — the same shape as the tracker's setup screen
     // above, and for the same reason. A permission per department is not merely
     // avoided here, it is impossible: the list is edited at runtime by the college,
@@ -3932,8 +3969,17 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
     // queues, and referralQueueNav has already applied that — the server sent only
     // the departments this person is on. The check here is therefore the page alone,
     // and asking for a queue anyway is a 403 rather than an empty list.
-    : n.key.startsWith("referrals-") ? holdsReferrals
-    : canAccessPage(me, n.key));
+    : n.key.startsWith("referrals-") ? holdsReferrals && offers("referrals")
+    : canAccessPage(me, n.key) && offers(n.key))
+    // THE COLLEGE'S OWN WORDING, applied after filtering rather than inside it, so a
+    // rename cannot affect whether an entry survives -- only what it says. A key the
+    // college has not renamed keeps the label we shipped.
+    //
+    // Mapped here rather than in NavButton because the label is read in three places
+    // (the sidebar button, the collapsed-group parent and the mobile picker), and a
+    // rename applied in one of them is a page with two names depending on where you
+    // look at it.
+    .map(n => ({ ...n, label: appLabelOf(me?.app, n.key, n.label) }));
   const [tab, setTab] = useState(() => pageFromHash() || nav[0]?.key || "overview");
   // A referral QUEUE is in the nav only once the department list has come back, so a
   // reload straight onto `#/referrals-wellbeing` arrives before the sidebar knows that
@@ -4198,6 +4244,7 @@ export function AdminDashboard({ store, onExitToStaffApp }) {
         {activeKey === "settings" && <AdminSettings store={store} />}
         {activeKey === "audit" && <AuditTrail />}
         {activeKey === "access" && <AdminAccess store={store} />}
+        {activeKey === "develop-app" && <DevelopApp />}
       </main>
     </div>
   );

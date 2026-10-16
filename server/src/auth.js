@@ -343,16 +343,124 @@ function requireCollegeWide(what) {
 // full access, so existing admins aren't locked out) or includes at least one of
 // the given page keys. Non-admins are rejected. Supersedes requireAdmin on the
 // routes it's applied to (it already enforces the ADMIN role).
+//
+// SINCE THE DEVELOP APP SCREEN, THERE IS A SECOND QUESTION HERE, asked first and
+// answered institution-wide: does this page EXIST in this deployment at all? A college
+// can switch a page off for everybody, and that is a different question from who holds
+// it — see appFunctions.js, which states the three guards and how they combine. They
+// combine with AND, so a page switched off refuses a Super Admin too.
+//
+// THE REFUSAL CARRIES ITS OWN CODE. "FUNCTION_DISABLED" is distinguishable from a
+// missing page (no code, "You don't have access to this section") and from
+// COLLEGE_WIDE_REQUIRED above, because the three mean entirely different things to the
+// person reading the screen: ask a Super Admin for the page, ask for college-wide
+// access, or the college does not use this feature — and only the first two are worth
+// asking anybody about.
+//
+// ASYNC, AND IT MUST NOT REJECT. The file comment on bindScope states the hazard: an
+// async middleware that rejects becomes an unhandled rejection rather than a 500, i.e.
+// process death, and wrapAsync only patches layer.route.stack — not the 26 routers that
+// mount their guards with router.use. So the config read is wrapped, and on failure it
+// FAILS OPEN.
+//
+// Failing open is the right direction here and is a deliberate choice. This toggle
+// decides whether a feature is OFFERED, not whether a person is trusted: the two guards
+// that decide trust (hasPage below, and requireAuth before it) are untouched and still
+// run. Failing closed would mean a momentary database problem locked every
+// administrator out of every page at once — turning a read error on an optional
+// settings row into a total outage — whereas failing open restores exactly the
+// behaviour the app had before this feature existed.
 function requireAnyPage(pages) {
   const wanted = Array.isArray(pages) ? pages : [pages];
-  return (req, res, next) => {
+  return async (req, res, next) => {
     if (isStudent(req.user)) return res.status(403).json({ error: "Not available for student accounts" });
-    if (hasPage(req.user, wanted)) return next();
+
+    // Which of the requested pages this college actually offers. Lazily required, the
+    // same way outranks() reaches for serializers: auth.js is required by almost
+    // everything, and a top-level require of a module that reaches Prisma widens its
+    // load order for no benefit.
+    let offered = wanted;
+    try {
+      const { isEnabled } = require("./appFunctions");
+      const settings = await require("./appFunctionConfig").get();
+      offered = wanted.filter((p) => isEnabled(settings.functions, "staff", p));
+    } catch {
+      offered = wanted; // fail open — see above
+    }
+
+    // EVERY requested page switched off, not merely one of them. requireAnyPage is an
+    // OR: a router asking for ["registers", "live-attendance"] is satisfied by either,
+    // so it is only unreachable once the college has switched off both.
+    if (!offered.length) {
+      return res.status(403).json({
+        error: "This college doesn't use this feature. A Super Admin can switch it back on under Develop App.",
+        code: "FUNCTION_DISABLED",
+      });
+    }
+
+    if (hasPage(req.user, offered)) return next();
     if (req.user?.accountRole !== "ADMIN" && !req.user?.isSuperAdmin) return res.status(403).json({ error: "Admin access required" });
     return res.status(403).json({ error: "You don't have access to this section" });
   };
 }
 const requirePage = (page) => requireAnyPage([page]);
+
+// THE STUDENT-SIDE HALF OF THE DEVELOP APP TOGGLE.
+//
+// WHY THE STUDENT SURFACE NEEDS A GUARD OF ITS OWN AT ALL. A staff page already has
+// one: requireAnyPage sits on its router and now asks the institution-wide question
+// first. Student sessions have no equivalent — they are confined by a ROUTER allowlist
+// (STUDENT_ROUTERS above), not by per-route checks, which is a deliberate and much
+// simpler isolation but leaves nothing to hang "this screen is switched off" on.
+//
+// AND HIDING IT IN THE CLIENT IS NOT A CONTROL. A college that switches the Results
+// screen off and finds /api/student/me/assessments still answering has not switched
+// anything off; it has merely stopped linking to it, and the data is one fetch away for
+// anybody who looks. The toggle has to refuse here or it does not mean what the screen
+// says it means.
+//
+// WHICH ROUTES ARE COVERED is declared in appFunctions.js, beside the screen that owns
+// them, rather than listed here — so adding a route to a screen is one edit in one
+// place, and screenForRoute's own tests pin the mapping in both directions.
+//
+// `/me` IS NEVER GATED, and that is the case that must not be got wrong. It is the
+// bootstrap: it reports who is signed in and which screens this college offers, so
+// gating it behind any screen's toggle would sign out every student in the college the
+// moment that screen went off. It owns no screen in the registry, so it falls through
+// here like any other undeclared route — stated because the consequence is invisible.
+//
+// ASYNC AND MUST NOT REJECT, for the reason bindScope's comment gives: an async
+// middleware that rejects is an unhandled rejection, not a 500, and wrapAsync does not
+// patch router.use. It therefore catches everything and FAILS OPEN — a momentary
+// database problem must not take the student app down, and this toggle decides what is
+// offered, never who is trusted. requireAuth and requireStudent have already run.
+function requireEnabledScreen(req, res, next) {
+  // Relative to the router's mount. Express strips baseUrl from req.url inside a
+  // router.use middleware, so req.path is normally already relative — but it is
+  // computed defensively both ways rather than depending on which of the two shapes
+  // Express hands over, because the failure would be silent: an unrecognised path
+  // resolves to "no screen owns this" and the guard would simply never fire.
+  const path = (req.baseUrl && req.path.startsWith(req.baseUrl))
+    ? req.path.slice(req.baseUrl.length)
+    : req.path;
+
+  const { screenForRoute, isEnabled } = require("./appFunctions");
+  const screen = screenForRoute(path);
+  if (!screen) return next();   // no screen owns this route — /me included
+
+  require("./appFunctionConfig").get()
+    .then((settings) => {
+      if (isEnabled(settings.functions, "student", screen)) return next();
+      // Deliberately the SAME code the staff side returns, because it is the same fact
+      // about the same deployment. The student app reads it to fall back to Home rather
+      // than rendering an error on a screen it should not have offered.
+      return res.status(403).json({
+        error: "Your college doesn't currently use this part of the app.",
+        code: "FUNCTION_DISABLED",
+      });
+    })
+    .catch(() => next());   // fail open — see above
+}
 
 // The same rule as requireAnyPage, but as a plain predicate for routes that serve
 // BOTH the signed-in user's own data and (for a privileged admin) everyone's. Those
@@ -436,4 +544,4 @@ function blockedByRank(actor, target) {
   return "You can't change an administrator whose access is broader than your own";
 }
 
-module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requireCollegeWide, requirePage, requireAnyPage, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET, EXPLICIT_ONLY};
+module.exports = { hashPassword, verifyPassword, signToken, signStudentToken, signApplicantToken, requireAuth, requireAdmin, requireStudent, requireApplicant, requireSuperAdmin, requireCollegeWide, requirePage, requireAnyPage, requireEnabledScreen, hasPage, isStudent, isApplicant, outranks, blockedByRank, STUDENT_ROUTERS, APPLICANT_ROUTERS, SECRET, EXPLICIT_ONLY};

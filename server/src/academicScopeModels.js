@@ -181,6 +181,24 @@ const MODEL_SCOPE = {
   AttendanceTapConfig: "UNSCOPED",
   AttendanceEmailConfig: "UNSCOPED",
   AttendanceBandConfig: "UNSCOPED",
+
+  /* ---- Institution-wide: which functions this college offers -------------- */
+  // The Develop App pair. Both are UNSCOPED for the reason every config table above
+  // is: they describe what the COLLEGE offers, not what one department within it
+  // does, and neither carries an academicDepartmentId nor has an owner to reach one
+  // through. A departmental admin switching the Results screen off for "their"
+  // students is not a feature that was asked for and not one this shape could
+  // express -- there is one row for the institution, and a per-department variant
+  // would be a different table with a different key.
+  //
+  // THIS DECLARATION IS WHAT MADE THE FEATURE WORK AT ALL, and the omission was not
+  // quiet: every read threw AcademicScopeError, and appFunctionConfig.get() caught it
+  // in the broad try/catch it uses for "table not migrated yet" and returned the
+  // empty defaults. The screen therefore rendered perfectly, saved without error, and
+  // forgot every change. The catch there is now narrowed to a missing table for
+  // exactly this reason.
+  AppFunctionConfig: "UNSCOPED",
+  AppCustomItem: "UNSCOPED",
   // A singleton config table, same shape as the three directly above: one settings row
   // for the whole institution, no academicDepartmentId column and nothing to reach one
   // through. Every config table in this file is UNSCOPED for that reason -- a college's

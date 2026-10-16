@@ -30,6 +30,12 @@ import InboxScreen from "./screens/Inbox";
 import SupportScreen from "./screens/Support";
 import MitigationsScreen from "./screens/Mitigations";
 import MoreScreen from "./screens/More";
+// Which functions this college offers -- the Develop App toggle, as this shell reads it.
+// PURE and tested under plain node (src/appFunctions.test.js); it decides what to DRAW,
+// never who may do anything. Every screen below is also enforced on the server by
+// requireEnabledScreen, so if the two ever disagree the server wins and the user sees a
+// 403 rather than a screen that quietly works when it should not.
+import { filterByApp, resolveScreen, labelOf } from "../appFunctions";
 
 /* ============================== app shell ============================== */
 
@@ -390,7 +396,26 @@ export default function StudentApp({ user, logout }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, reviews]);
 
-  const title = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", mitigations: "Mitigating Circumstances", more: "More", inbox: "Inbox" }[screen];
+  // WHAT IS ACTUALLY RENDERED, which is not always the screen that was asked for.
+  //
+  // A screen the college has switched off is still reachable by three routes that never
+  // touch the tab bar: a push-notification deep link, a restored session that remembered
+  // where it was, and a shortcut from Home to something switched off this morning.
+  // Rendering it would show a screen whose every request answers 403 -- an app that
+  // looks broken rather than one that is configured -- so it falls back to Home.
+  //
+  // DELIBERATELY NOT `setScreen`. Correcting the STATE here would fight the back-trail
+  // (setScreen pushes history, and a redirect inside a render would push on every
+  // render); and it would rewrite the trail so that going back landed somewhere the
+  // student never was. This is a rendering decision only: the trail still holds what
+  // they actually pressed.
+  const view = resolveScreen(screen, user?.app, "home");
+
+  // The header follows the college's own wording, so a college that renamed "My Results"
+  // to "Grades" gets it in the title bar as well as the tab -- renaming one and not the
+  // other is how a screen comes to have two names.
+  const TITLES = { home: "Student Hub", checkin: "Check In", attendance: "My Attendance", assessments: "My Results", reviews: "My Reviews", query: "Ask the College", timetable: "My Timetable", support: "Support", mitigations: "Mitigating Circumstances", more: "More", inbox: "Inbox" };
+  const title = labelOf(user?.app, view, TITLES[view]);
   const shared = { attendance, results, reviews, queries, timetable, tapContext, busy, err, reload: load, setScreen, bands, streaks, refreshInbox };
 
   return (
@@ -410,7 +435,7 @@ export default function StudentApp({ user, logout }) {
       // on every app open and put it back half a second later.
       footer={<TabBar screen={screen} setScreen={setScreen} newReplies={newReplies}
         codesOnly={Boolean(tapContext?.qrEnabled && !tapContext?.enabled)}
-        hideCheckIn={anyCheckInWay(tapContext) === false} />}
+        hideCheckIn={anyCheckInWay(tapContext) === false} app={user?.app} />}
       onRefresh={load} refreshing={busy}
       // The ONLY caller that passes this — see PhoneShell.jsx's own comment on the
       // prop. StaffHub.jsx's call site is untouched, which is what keeps dark mode
@@ -427,8 +452,8 @@ export default function StudentApp({ user, logout }) {
               one-rise screen entrance the staff shell applies, defined in index.css.
               Inside .student-bg, not around it: the background must not fade with
               the content or every tab change flashes the page colour. */}
-          <div key={screen} className="screen-in">
-          {screen === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
+          <div key={view} className="screen-in">
+          {view === "home" && <Home user={user} {...shared} newReplies={newReplies} newReviews={newReviews} />}
           {/* `timetable` travels down here too, in addition to tapContext — so today's
               classes can carry a "Join online class" button. tapContext.today (built
               from HndSession candidates) never carries teamsJoinUrl itself; the events
@@ -437,24 +462,24 @@ export default function StudentApp({ user, logout }) {
               (tapContext's `id` and an event's own `sessionId`), so CheckIn.jsx can
               look the link up by that id without this screen asking the server for
               anything it does not already have. */}
-          {screen === "checkin" && <CheckInScreen tapContext={tapContext} timetable={timetable} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
-          {screen === "attendance" && <AttendanceScreen {...shared} />}
-          {screen === "assessments" && <ResultsScreen {...shared} />}
-          {screen === "reviews" && <ReviewsScreen {...shared} />}
-          {screen === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
-          {screen === "query" && <QueryScreen queries={queries} reload={load} />}
-          {screen === "inbox" && (
+          {view === "checkin" && <CheckInScreen tapContext={tapContext} timetable={timetable} reload={load} pendingQr={pendingQr} onQrDone={() => setPendingQr(null)} />}
+          {view === "attendance" && <AttendanceScreen {...shared} />}
+          {view === "assessments" && <ResultsScreen {...shared} />}
+          {view === "reviews" && <ReviewsScreen {...shared} />}
+          {view === "timetable" && <TimetableScreen timetable={timetable} busy={busy} reload={load} />}
+          {view === "query" && <QueryScreen queries={queries} reload={load} />}
+          {view === "inbox" && (
             <InboxScreen
               notifications={notifications} unread={unread} refreshInbox={refreshInbox}
               markRead={markNotificationsRead} markAllRead={markAllNotificationsRead} setScreen={setScreen}
             />
           )}
-          {screen === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
+          {view === "support" && <SupportScreen referrals={referrals} busy={busy} departments={supportDepts} reload={load} />}
           {/* Self-contained, unlike the screens above it — its own data is not part of
               this shell's central load() (see Mitigations.jsx's own file comment for
               why), so it carries no props from `shared` at all. */}
-          {screen === "mitigations" && <MitigationsScreen />}
-          {screen === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
+          {view === "mitigations" && <MitigationsScreen />}
+          {view === "more" && <MoreScreen user={user} logout={logout} setScreen={setScreen} tapContext={tapContext} />}
           </div>
         </div>
       </div>
@@ -484,8 +509,21 @@ export default function StudentApp({ user, logout }) {
 // the one place that says it. Deliberately not removed alongside these two — take it out
 // as well and "switched off" becomes indistinguishable from "never built" again, which
 // is the exact defect the permanent tab was introduced to fix.
-function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn = false }) {
-  const tabs = hideCheckIn ? TABS.filter((t) => t.key !== "checkin") : TABS;
+function TabBar({ screen, setScreen, newReplies, codesOnly = false, hideCheckIn = false, app = null }) {
+  // TWO INDEPENDENT REASONS A TAB CAN GO, applied in this order and deliberately not
+  // merged. `hideCheckIn` is about the college having switched every CAPTURE METHOD
+  // off (Settings -> Attendance), and the long comment above this function records why
+  // that tab leaves rather than staying put to explain itself. `app` is the Develop App
+  // toggle: the college switched the SCREEN off. A college can do both, and neither
+  // should have to know about the other.
+  //
+  // filterByApp also applies the college ORDER and its renames, so the bar below is
+  // drawn from the college's own list rather than from TABS -- which is the whole
+  // effect of the reorder and rename controls. The bottom bar is sized for six, and the
+  // server keeps the list in the college's chosen order, so the first six that survive
+  // are what a thumb reaches.
+  const offered = filterByApp(TABS, app);
+  const tabs = hideCheckIn ? offered.filter((t) => t.key !== "checkin") : offered;
   return (
     // No `sticky` and no positioning at all — this renders as PhoneShell's footer
     // row, below the scrollport, so flush-bottom is a property of the layout rather

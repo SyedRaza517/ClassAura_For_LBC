@@ -1520,6 +1520,67 @@ histories stay readable by anyone with the page, but a departmental account gets
 `issues: []` **and `issuesWithheld: true`**, so a screen cannot render the absence as "no
 issues found".
 
+## Develop App (which functions this college offers)
+
+Super Admin only, and **not a grantable page** — there is deliberately no `develop-app`
+key in `ADMIN_PAGES`, so the Access screen cannot offer a checkbox for it and no grant can
+ever satisfy it. That absence is also what stops the screen switching *itself* off: the
+function registry has no entry for it, so it cannot be named in a save.
+
+This is the **third** access question, beside the two that already existed:
+
+| Guard | Question |
+|-------|----------|
+| `requirePage("…")` | may THIS PERSON use this page? |
+| `requireCollegeWide("…")` | may they do it to the whole college? |
+| this | does this function exist in this deployment at all? |
+
+They combine with **AND**. A function switched off here is unreachable for everybody,
+including a Super Admin and including an account whose `adminPages` is null. Switching one
+off **never alters anybody's page grants** — they are combined when the question is asked,
+so switching it back on restores exactly the access that existed before.
+
+| Method | Path | Does |
+|--------|------|------|
+| GET | `/develop-app` | both surfaces as `{ staff: [], student: [], order, customised }` |
+| PUT | `/develop-app` | replaces `{ functions, labels, order }`; echoes `surfaces` |
+| DELETE | `/develop-app` | deletes the row — every function back on, under its own name |
+
+`functions` and `labels` are keyed by function **id** (`"student:assessments"`); `order` is
+keyed by **surface** and lists plain keys. The id carries the surface because three keys
+exist on both — `checkin`, `assessments` and `mitigations` are each a staff page AND a
+student screen, and a flat namespace made one toggle switch off both.
+
+Only an explicit `false` switches a function off; absence means on, which is why PUT
+**replaces** rather than merges — a merge cannot express the removal that switching
+something back on requires. Unknown ids, blank labels and locked functions are **dropped,
+not rejected**, so one stale key from an older build cannot block every later edit.
+
+**Enforcement.** A refused request answers **403 with `code: "FUNCTION_DISABLED"`**,
+distinguishable from a missing page grant (no code) and from `COLLEGE_WIDE_REQUIRED`,
+because the three mean different things to the reader: ask for the page, ask for
+college-wide access, or the college does not use this feature.
+
+* **Staff** — `requireAnyPage` asks this first, so every existing `requirePage` router is
+  covered with no per-router change.
+* **Student** — `requireEnabledScreen` on the student router, mapping each endpoint to the
+  screen that owns it (`server/src/appFunctions.js` declares the map beside each screen).
+  Student sessions are confined by a *router* allowlist rather than per-route guards, so
+  there was no existing hook to hang this on. Hiding a screen in the client while its
+  endpoints keep answering is not a control at all.
+
+`GET /auth/me` carries `app: { functions: [key], labels: { key: label } }` for the
+signed-in surface — already filtered, ordered and renamed. It is **never gated**: it is
+what tells an app which screens it has, so gating it would sign out the college the moment
+any screen went off. Both guards and this payload **fail open** if the config cannot be
+read, restoring exactly the pre-feature behaviour rather than turning an unreadable
+settings row into an outage.
+
+**Locked functions** cannot be switched off at all: `staff:settings` (it owns the detail
+behind nine other config tables that this screen deliberately does not duplicate),
+`student:home` (the navigation root — every Back gesture ends there) and `student:more`
+(holds Sign out).
+
 ## Data shapes (client-facing)
 ```
 Staff    { id, name, role, dept, email, allowance, initials, colour, accountRole,

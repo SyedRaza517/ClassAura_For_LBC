@@ -64,7 +64,7 @@ prediction rules and nothing else pulls them in.
 | `deployment.md` — main→staging, production→production; how to prove a deploy landed | always |
 | `migrations.md` | `server/prisma/**`, `server/tools/**` |
 | `single-tenant-history.md` — why the code still shows the tenancy that was removed | `server/src/**`, `client/src/**`, `scripts/**` |
-| `access-control.md` — `requirePage`, the two hand-synced `ADMIN_PAGES` copies | auth, validate, routes, `StaffHub.jsx` |
+| `access-control.md` — `requirePage`, the derived + hand-synced `ADMIN_PAGES`, `FUNCTION_DISABLED` | auth, validate, routes, `StaffHub.jsx` |
 | `configuration.md` — the `default("singleton")` config-table pattern | schema, `*Config*.js`, settings routes |
 | `prediction-tripwires.md` — `TRIP_*` codes, institution-wide probes, stored dates | `server/src/prediction/**` |
 | `mitigating-circumstances.md` — the engine knows THAT, never WHY | prediction, mitigations, adjustments |

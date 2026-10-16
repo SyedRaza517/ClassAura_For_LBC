@@ -4124,3 +4124,80 @@ model StaffAcademicDepartment {
   @@unique([staffId, academicDepartmentId])
   @@index([academicDepartmentId])
 }
+
+// Which staff pages and student screens this college switched off, renamed or
+// reordered — the eleventh table of the constant-key shape (configuration.md).
+//
+// ONE JSON COLUMN holding { functions, labels, order }, not a row per function, and
+// not a column per surface. The three parts are only meaningful together: an `order`
+// list naming a function that `functions` switched off is contradictory, and a reader
+// that saw one half written and not the other would render a nav with a hole in it.
+// One column means a reader sees the whole old state or the whole new one.
+//
+// Deliberately NOT shallow-merged on save, for the reason attendanceBandConfig states
+// at length: a merge cannot express REMOVAL, and switching a function back ON is done
+// by deleting its key. A merge would make "on" unreachable — the key would survive
+// every later save and the screen would never come back.
+//
+// Defaults, validation and the allowlist live in src/appFunctionConfig.js; the registry
+// of what a function IS lives in src/appFunctions.js. No row means "this college has
+// never changed anything", which must behave exactly as it did before this feature
+// existed — so the defaults are "everything on", in code.
+model AppFunctionConfig {
+  id        String   @id @default("singleton")
+  settings  Json     @default("{}")
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+}
+
+// A function the college ADDED from the Develop App screen, rather than one of ours it
+// switched off: an external link, a page of its own words, a shortcut tile, a banner.
+//
+// A TABLE OF ROWS, NOT A JSON COLUMN, and that is the opposite choice from
+// AppFunctionConfig above on purpose. These are a LIST that grows and shrinks, each
+// entry independently editable, and the invariant AppFunctionConfig has (the three
+// parts are only valid together) does not apply: adding a library link has no bearing
+// on whether another link is valid. Rows also give each item a stable id, which a
+// JSON array cannot — reordering an array silently renumbers every item, and a push
+// notification or a deep link that named item 3 would then open item 4.
+//
+// `sortOrder` is NOT named `order`: that is a reserved word in SQL, and while Prisma
+// quotes it, every hand-written query and migration afterwards has to remember to.
+//
+// `startsOn` / `endsOn` are TEXT in YYYY-MM-DD, not DateTime — dates are strings here
+// and compared as strings (conventions.md), because a banner window is a calendar
+// decision the college makes in its own timezone, not an instant.
+//
+// `content` is JSON rather than TEXT because a page body is a list of BLOCKS, never
+// raw HTML: a college-authored page is rendered in both apps, and storing HTML would
+// make every one of those render sites an XSS sink. See src/appCustomItems.js, which
+// is the only thing allowed to decide what a block may contain.
+model AppCustomItem {
+  id          String   @id @default(cuid())
+  // "staff" | "student" | "both" — validated in src/appCustomItems.js, not by an enum,
+  // matching how every other string vocabulary in this schema is handled (Referral
+  // .department, ConductEvent.tone): an enum means a migration to add a value.
+  surface     String
+  // "link" | "page" | "tile" | "banner"
+  kind        String
+  label       String
+  icon        String?
+  url         String?
+  // "webview" | "browser" — only meaningful for link and tile.
+  openIn      String?
+  content     Json?
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  // Banner window only. Null means "no bound in that direction", which is NOT the same
+  // as today — an open-ended banner is the common case (null≠zero, conventions.md).
+  startsOn    String?
+  endsOn      String?
+  dismissible Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  // The one read path is "every enabled item for this surface, in display order",
+  // which filters on surface+enabled and orders by sortOrder.
+  @@index([surface, enabled, sortOrder])
+}

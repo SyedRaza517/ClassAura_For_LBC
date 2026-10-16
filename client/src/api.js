@@ -1148,6 +1148,15 @@ export const api = {
   saveStaffAcademicAccess: (staffId, academicDepartmentIds, collegeWide) =>
     request(`/academic-departments/staff/${staffId}`, { method: "PUT", body: { academicDepartmentIds, collegeWide } }),
 
+  // --- Develop App: which functions this college offers at all ---
+  // SUPER-ADMIN ONLY on the server (requireSuperAdmin, not a page grant), because
+  // switching a function off removes it for everybody rather than narrowing one
+  // account. Save REPLACES the whole settings object -- switching a function back on is
+  // done by dropping its key, which a per-function PATCH could not express.
+  developApp: () => request("/develop-app"),
+  saveDevelopApp: (settings) => request("/develop-app", { method: "PUT", body: settings }),
+  resetDevelopApp: () => request("/develop-app", { method: "DELETE" }),
+
   // --- Mapping the VLE's own grouping onto a department ---
   vleCategories: () => request("/vle-department-mapping/categories"),
   saveVleCategoryMapping: (externalId, academicDepartmentId) =>

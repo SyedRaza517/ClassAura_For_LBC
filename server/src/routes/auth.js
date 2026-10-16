@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const prisma = require("../db");
 const { withoutAcademicScope } = require("../academicScope");
 const { sStaff, sStudent, sApplicant } = require("../serializers");
-const { verifyPassword, hashPassword, signToken, signStudentToken, signApplicantToken, requireAuth, SECRET } = require("../auth");
+const { verifyPassword, hashPassword, signToken, signStudentToken, signApplicantToken, requireAuth, isStudent, isApplicant, SECRET } = require("../auth");
 // requireAuth serves the caller's row from a short-TTL in-process cache
 // (identityCache.js explains the whole design). Every write in this file that
 // changes a row's auth-relevant state — password, tokenVersion, totp, activation,
@@ -949,6 +949,41 @@ router.post("/reset-password", async (req, res) => {
 });
 
 // GET /api/auth/me
-router.get("/me", requireAuth, (req, res) => res.json(req.user));
+// WHO AM I, AND WHAT DOES THIS COLLEGE OFFER ME.
+//
+// Both apps call this on mount and again on every refocus, and it is the ONLY bootstrap
+// either of them has — api.js#studentMe exists but nothing calls it, so the student
+// shell arrives here too. That is why the Develop App payload is attached here rather
+// than only on /student/me: a screen list delivered on a route nobody calls switches
+// nothing off.
+//
+// BRANCHED ON IDENTITY KIND, so neither surface learns the other's configuration. A
+// student being told which 34 staff pages the college switched off is a small leak, but
+// it is a leak of the college's internal arrangements to an audience with no use for
+// them, and an allowlist on the way out is the house rule (conventions.md).
+//
+// An applicant gets no payload at all. The applicant portal has no configurable
+// surface — there is nothing in the registry for it — and inventing an empty one here
+// would imply a third tab on the Develop App screen that does not exist.
+//
+// NEVER GATED, and it cannot be: this is what tells an app which of its screens the
+// college offers. Gating it behind any one of them would sign out every student in the
+// college the moment that screen was switched off.
+//
+// FAILS OPEN, like both guards. If the config cannot be read, the apps are told nothing
+// and fall back to showing everything — which is exactly how they behaved before this
+// feature existed. The alternative is an app that renders no navigation at all because
+// an optional settings row was briefly unreadable.
+router.get("/me", requireAuth, async (req, res) => {
+  const surface = isStudent(req.user) ? "student" : isApplicant(req.user) ? null : "staff";
+  if (!surface) return res.json(req.user);
+  let app = null;
+  try {
+    app = await require("../appFunctionConfig").viewFor(surface);
+  } catch {
+    app = null; // fail open — the apps read a null payload as "no restrictions"
+  }
+  res.json({ ...req.user, app });
+});
 
 module.exports = router;

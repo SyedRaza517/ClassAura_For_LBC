@@ -4,13 +4,14 @@
 const router = require("express").Router();
 const prisma = require("../db");
 const { sUnit, sStudent, sStudentQuery, sReferralForStudent, sReferralMessage, parseAdminPages } = require("../serializers");
-const { requireAuth, requireStudent, hasPage } = require("../auth");
+const { requireAuth, requireStudent, requireEnabledScreen, hasPage } = require("../auth");
 const { summarise } = require("../attendance");
 const { localDate, localTime, localTimeSeconds } = require("../clock");
 const { notifyAdmins } = require("../notify");
 const audit = require("../audit");
 const tapConfig = require("../attendanceTapConfig");
 const attendanceBandConfig = require("../attendanceBandConfig");
+const appFunctionConfig = require("../appFunctionConfig");
 const { computeStreaks, attendedForDay } = require("../studentStreaks");
 const { weightedAveragePct } = require("../studentAssessmentAverage");
 const { rosterForSession, unitIdsForStudent } = require("../timetabling/registers");
@@ -39,7 +40,10 @@ const { validateWindow: validateMitigationWindow, CATEGORIES: MITIGATION_CATEGOR
 // read fresh on every POST rather than cached here, exactly as the staff route does.
 const mcSettings = require("../prediction/settings");
 
-router.use(requireAuth, requireStudent);
+// requireEnabledScreen runs THIRD, after identity is established: it refuses a route
+// whose screen this college has switched off under Develop App. It is a no-op for every
+// route no screen declares -- /me among them, deliberately. See its comment in auth.js.
+router.use(requireAuth, requireStudent, requireEnabledScreen);
 
 // 70+ Distinction, 60-69 Merit, 50-59 Pass, below 50 Fail. Must match the same
 // boundaries in routes/assessments.js and the client.
@@ -970,7 +974,19 @@ router.post("/me/declare-check-in", async (req, res) => {
 router.get("/me", async (req, res) => {
   const student = await prisma.student.findUnique({ where: { id: req.user.id }, include: { enrolments: { select: { unitId: true } } } });
   if (!student) return res.status(404).json({ error: "Student not found" });
-  res.json(sStudent(student));
+  // THE "app" KEY RIDES ALONG ON THE BOOTSTRAP rather than having an endpoint of its own,
+  // and that is worth a sentence. The student shell already calls this on mount and on
+  // every refocus, so the screens this college offers arrive with the session instead of
+  // costing a second round trip on a phone that may be on mobile data in a corridor.
+  //
+  // It is a SIBLING of the student's own fields, not a field inside sStudent: that
+  // serializer is an allowlist describing a Student ROW (conventions.md), and the list
+  // of screens the college offers is a fact about the college, not about this person.
+  //
+  // THIS ROUTE IS NEVER GATED by requireEnabledScreen -- see its comment in auth.js.
+  // It is the one route that must answer even when every optional screen is off, since
+  // it is what tells the app which ones those are.
+  res.json({ ...sStudent(student), app: await appFunctionConfig.viewFor("student") });
 });
 
 // GET /api/student/me/attendance — current vs previous units by each unit's last

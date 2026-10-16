@@ -359,6 +359,49 @@ try {
     return "1 row";
   });
 
+  await check("the payload the Develop App screen actually sends round-trips", async () => {
+    // MIMICS DevelopApp.jsx#payloadFrom EXACTLY: `functions` and `labels` keyed by the
+    // function ID ("student:assessments"), `order` keyed by SURFACE and listing PLAIN
+    // keys. Those two key spaces are different on purpose and getting them the wrong way
+    // round is the obvious mistake — it would be silently dropped as "unknown function"
+    // and the screen would report success having changed nothing. So the client's shape
+    // is pinned here rather than trusted to match the server's.
+    const fresh = await call("/develop-app", { token });
+    const studentKeys = fresh.body.student.map((f) => f.key);
+    // A real reorder: move the last screen to the front, as the arrow buttons would.
+    const reordered = [studentKeys[studentKeys.length - 1], ...studentKeys.slice(0, -1)];
+
+    const r = await call("/develop-app", {
+      method: "PUT",
+      token,
+      body: {
+        functions: { "student:reviews": false },
+        labels: { "student:assessments": "Grades" },
+        order: { student: reordered, staff: fresh.body.staff.map((f) => f.key) },
+      },
+    });
+    assert.equal(r.status, 200, `save failed: ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+
+    // The server echoes both surfaces as the apps would receive them.
+    assert.ok(r.body.surfaces, "the save did not echo the resulting surfaces");
+    const view = r.body.surfaces.student;
+    assert.equal(view.functions[0], reordered[0], "the reorder was not applied");
+    assert.ok(!view.functions.includes("reviews"), "the switched-off screen survived");
+    assert.equal(view.labels.assessments, "Grades", "the rename was not applied");
+
+    // And the screen reads its own change back in the shape it drew from.
+    const back = await call("/develop-app", { token });
+    const reviews = back.body.student.find((f) => f.key === "reviews");
+    const grades = back.body.student.find((f) => f.key === "assessments");
+    assert.equal(reviews.enabled, false, "the screen would draw a switched-off row as on");
+    assert.equal(grades.label, "Grades", "the screen would draw the old wording");
+    assert.equal(grades.defaultLabel, "My Results", "the screen lost the original wording, so the rename cannot be shown as a change");
+    assert.equal(back.body.order.student[0], reordered[0], "the stored order did not come back");
+
+    await call("/develop-app", { method: "DELETE", token });
+    return "functions + labels by id, order by surface";
+  });
+
   /* =========================================================================== reset === */
 
   await check("reset restores every function and removes the row", async () => {

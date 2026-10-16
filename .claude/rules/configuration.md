@@ -41,11 +41,22 @@ point of it. Reads stay on `findFirst`, because a read that must not create a ro
 not be able to, and the key is what guarantees there is at most one row to find. Any
 further config table of this shape wants the same two halves.
 
-**There are nine of them now, not five.** `AttendanceEmailConfig`,
+**There are thirteen of them now, not nine, and not five.** `AttendanceEmailConfig`,
 `SupportDepartmentConfig`, `AdmissionTrackerSettings` and `Tenant` itself carry the same
-constant key; `grep 'default("singleton")' server/prisma/schema.prisma` is the count that
-is actually true. This paragraph said "any sixth" for four tables longer than that was
-right, which is exactly how somebody comes to believe they are adding the first new one.
+constant key, as do `ConductVocabularyConfig`, `TeamsAutomationConfig` and — since
+16 Oct 2026 — `AppFunctionConfig`, the Develop App settings row.
+`grep 'default("singleton")' server/prisma/schema.prisma` is the count that is actually
+true, and it is the only line in this paragraph worth trusting: this said "any sixth" for
+four tables longer than that was right, then "nine" for four longer still, which is
+exactly how somebody comes to believe they are adding the first new one. **Run the grep.**
+
+`AppFunctionConfig` is worth one note of its own, because it breaks the shallow-merge half
+of the pattern deliberately: it REPLACES its settings object rather than merging it.
+Switching a function back on is done by DELETING its key — absence means enabled — and a
+merge cannot express a deletion, so a merged save would mean a screen switched off could
+never come back. `attendanceBandConfig` reaches the same conclusion from the same
+direction for its band list. A new config table of that shape — a set whose members can be
+REMOVED — wants the same exception, and a comment saying why.
 
 `integrationConfig.js` holds the provider registry (`moodle`, `canvas`, `blackboard`,
 `email`, `sharepoint`). Precedence is: what the college saved through Settings, then

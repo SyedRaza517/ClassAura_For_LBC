@@ -58,28 +58,20 @@ const isHomeSite = (v) => v == null || (isString(v) && HOME_SITES.includes(v));
 // The canonical set of assignable admin pages, matching the dashboard nav keys.
 // "access" is deliberately NOT here — it is Super-Admin-only and never assigned.
 // Must stay in sync with the client's ADMIN_PAGES.
-const ADMIN_PAGES = [
-  "executive", "overview", "kpi", "checkin", "balances", "calendar", "requests", "documents",
-  "approvals", "signups", "summaries", "registers", "live-attendance", "attendance-settings", "students", "attendance-emails", "assessments", "assessment-tracker",
-  // "timetable" was here until 8 Sep 2026 and is deliberately gone, along with the whole
-  // page: routes/timetable.js, its mount, its api.js callers and the AdminTimetable
-  // screen. It built the older weekly TimetableSlot timetable, and it sat in the sidebar
-  // directly above "My Timetable" under a shorter, more obvious name while being
-  // permanently empty -- so a reader looking for classes they had just entered clicked it
-  // first, found nothing, and concluded the save had failed. Reported exactly that way.
-  //
-  // Removing the key alone was the first attempt and adminPages-contract.test.js refused
-  // it: a router still gated on requirePage("timetable") would answer 403 to somebody
-  // holding the very page it names, which is the attendance-tags bug the test was written
-  // for. Either the key stays grantable or the router goes. The router went.
-  //
-  // WHAT THIS COSTS: /api/student/me/timetable still READS TimetableSlot, and this was
-  // its only writer, so a student's weekly timetable can no longer be populated at all.
-  // In practice nothing changed -- both databases hold zero TimetableSlot rows -- but the
-  // gap is now permanent rather than merely unused, and closing it means pointing that
-  // route at TimetableEvent, which is where the classes actually are.
-  "pat", "prediction", "mitigations", "staffreviews", "studentreviews", "studentqueries", "staff", "timesheets", "scheduling", "admissions", "admissions-tracker", "ism", "slc", "referrals", "passwords", "settings",
-];
+//
+// NO LONGER WRITTEN OUT HERE. This was the second of what CLAUDE.md calls "two
+// hand-maintained copies", and it is now DERIVED from the staff half of the function
+// registry in appFunctions.js — which the Develop App screen also reads, so a page
+// could otherwise have been named in a third place and agreed with neither.
+//
+// The client's copy in StaffHub.jsx is still hand-written, and still pinned to this one
+// by adminPages-contract.test.js including its ORDER. That test is the only thing
+// holding the pair together, because the client has no test framework of its own; the
+// registry reduces the copies from two to one on this side without removing the need
+// for it. Order therefore comes from the registry, and reordering there fails that test
+// until the client is reordered to match — which is intended.
+const { STAFF_PAGES } = require("./appFunctions");
+const ADMIN_PAGES = STAFF_PAGES;
 
 module.exports = {
   INT32_MAX, INT32_MIN, isInt32, MAX_ALLOWANCE_DAYS, MAX_ADJUSTMENT_DAYS,
