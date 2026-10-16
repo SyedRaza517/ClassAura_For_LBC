@@ -648,6 +648,10 @@ export function StaffApp({ store, currentStaffId, setCurrentStaffId, logout, onC
       {screen === "timesheet" && <TimesheetScreen store={store} me={me} />}
       {screen === "reflection" && <SelfReflectionScreen store={store} me={me} />}
       {screen === "studentreview" && <StudentReviewScreen store={store} me={me} />}
+      {/* Reached only from "See all" in InsightsSection — there is no tab and no tile
+          for it, because the hub already shows the one card that matters and this is
+          the overflow behind it. */}
+      {screen === "insights" && <InsightsScreen setScreen={setScreen} />}
       {screen === "more" && <MoreScreen store={store} me={me} logout={logout} onChangePassword={onChangePassword} onSwitchToAdmin={onSwitchToAdmin} setScreen={setScreen} teaches={teaches} canDecideLeave={canDecideLeave} approvalsWaiting={approvalsWaiting} />}
       </div>
 
@@ -673,7 +677,7 @@ function StatusBar() {
 }
 
 function AppHeader({ me, staff, setCurrentStaffId, screen, setScreen, store, showNotes, setShowNotes }) {
-  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", classes: "My Classes", announce: "Announce", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", more: "More" }[screen];
+  const title = { home: "Staff Hub", checkin: "Daily Check-In", timetable: "My Timetable", classes: "My Classes", announce: "Announce", balance: "Holiday Balance", calendar: "Holiday Calendar", request: "Request Leave", documents: "Documents", approval: "Manager Approval", summary: "Daily Summary", onsite: "Staff on Site", timesheet: "My Timesheet", reflection: "Self-Reflection", studentreview: "Student Review", insights: "Insights", more: "More" }[screen];
   const unread = store.notes.length;
   const greet = greetingFor();
   const Greet = greet.Icon;
@@ -1004,6 +1008,54 @@ function NeedsAttention({ registersToTake, approvalsWaiting, setScreen }) {
 // Renders NOTHING while loading and nothing when the feed is empty — an insights
 // section with a spinner or an empty state would be a promise of cleverness the
 // screen cannot keep; when there is nothing worth saying, the section says nothing.
+// HOME SHOWS ONE CARD, NOT THE WHOLE FEED. It used to render every card the server
+// sent, which is up to eight (routes/suggestions.js caps it there) — and because
+// unitTrendCards emits one card per falling unit, a lecturer whose six units all
+// dipped got six stacked banners between them and the rest of the hub. The feed is
+// already sorted urgent → warn → info server-side, so cards[0] is the most severe
+// thing waiting and the client needs no ordering of its own; the rest move behind
+// "See all" into InsightsScreen. ONE card rather than two or three is deliberate:
+// the top card is the most urgent by construction, so a second adds length without
+// adding priority, which is the problem this change exists to fix.
+const INSIGHT_TONES = {
+  urgent: { ink: "#d6455d", tint: "#ffe8ec", Icon: AlertCircle },
+  warn: { ink: "#d97706", tint: "#fef3dd", Icon: TrendingDown },
+  info: { ink: "#2557d6", tint: "#e3ebfd", Icon: Info },
+};
+
+// One card, rendered identically wherever it appears. Extracted from InsightsSection
+// when the Insights screen arrived: the hub and the screen show the same cards, and
+// two copies of this markup would have drifted apart the first time either was
+// touched. The button-versus-div decision below is a RULE rather than a style choice,
+// which is the stronger reason for it to exist in exactly one place.
+function InsightCard({ card: c, setScreen }) {
+  const t = INSIGHT_TONES[c.severity] || INSIGHT_TONES.info;
+  const Body = (
+    <>
+      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: t.tint }}>
+        <t.Icon size={17} style={{ color: t.ink }} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-bold text-slate-700">{c.title}</span>
+        <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">{c.detail}</span>
+      </span>
+      {c.screen && <ChevronRight size={15} className="mt-2 shrink-0 text-slate-300" />}
+    </>
+  );
+  // A card with a screen navigates; one without is a finding, not a button —
+  // rendering it as one would be the dead-end control this app just purged.
+  return c.screen ? (
+    <button onClick={() => setScreen(c.screen)}
+      className="press flex w-full items-start gap-3 rounded-[18px] bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
+      {Body}
+    </button>
+  ) : (
+    <div className="flex items-start gap-3 rounded-[18px] bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
+      {Body}
+    </div>
+  );
+}
+
 function InsightsSection({ setScreen }) {
   const [cards, setCards] = useState(null);
   useEffect(() => {
@@ -1012,44 +1064,64 @@ function InsightsSection({ setScreen }) {
     return () => { on = false; };
   }, []);
   if (!cards || !cards.length) return null;
-  const tones = {
-    urgent: { ink: "#d6455d", tint: "#ffe8ec", Icon: AlertCircle },
-    warn: { ink: "#d97706", tint: "#fef3dd", Icon: TrendingDown },
-    info: { ink: "#2557d6", tint: "#e3ebfd", Icon: Info },
-  };
+  const [top] = cards;
   return (
     <div className="mb-4 fade-up">
       <SectionLabel colour="#d6455d">Insights</SectionLabel>
-      <div className="space-y-2">
-        {cards.map((c) => {
-          const t = tones[c.severity] || tones.info;
-          const Body = (
-            <>
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: t.tint }}>
-                <t.Icon size={17} style={{ color: t.ink }} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-bold text-slate-700">{c.title}</span>
-                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">{c.detail}</span>
-              </span>
-              {c.screen && <ChevronRight size={15} className="mt-2 shrink-0 text-slate-300" />}
-            </>
-          );
-          // A card with a screen navigates; one without is a finding, not a button —
-          // rendering it as one would be the dead-end control this app just purged.
-          return c.screen ? (
-            <button key={c.kind + c.title} onClick={() => setScreen(c.screen)}
-              className="press flex w-full items-start gap-3 rounded-[18px] bg-white p-3 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
-              {Body}
-            </button>
-          ) : (
-            <div key={c.kind + c.title} className="flex items-start gap-3 rounded-[18px] bg-white p-3 shadow-sm ring-1 ring-slate-200/70">
-              {Body}
-            </div>
-          );
-        })}
-      </div>
+      <InsightCard card={top} setScreen={setScreen} />
+      {/* Absent for a feed of one, so a lecturer with a single finding sees exactly
+          what they saw before this change — a "See all 1" row would be a control that
+          leads to the card already on screen. */}
+      {cards.length > 1 && (
+        <button type="button" onClick={() => setScreen("insights")}
+          className="press mt-2 flex w-full items-center justify-between rounded-[18px] bg-white px-3 py-2.5 text-left shadow-sm ring-1 ring-slate-200/70 transition hover:shadow-md">
+          <span className="text-[12px] font-bold text-slate-600">See all {cards.length} insights</span>
+          <ChevronRight size={15} className="shrink-0 text-slate-300" />
+        </button>
+      )}
     </div>
+  );
+}
+
+// The whole feed, reached from "See all" on the hub.
+//
+// It fetches its own copy rather than being handed the cards the section already
+// holds. Lifting that state up through StaffHub — seventeen thousand lines — to save
+// one cheap request would widen this change far past what it buys, and a screen that
+// loads its own data stays comprehensible on its own terms.
+//
+// UNLIKE THE SECTION, THIS SCREEN HAS AN EMPTY STATE, and the difference is not an
+// inconsistency. The section stays silent because nobody asked it anything; somebody
+// who taps "See all" has asked, and a blank screen is not an answer. The case is real
+// rather than theoretical: the findings can clear between the hub's fetch and this
+// one, and a lecturer who acted on the last card would otherwise arrive at nothing.
+function InsightsScreen({ setScreen }) {
+  const [cards, setCards] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    let on = true;
+    api.suggestions()
+      .then((r) => { if (on) { setCards(r?.suggestions || []); setErr(""); } })
+      .catch((e) => { if (on) { setCards([]); setErr(e.message || "Could not load your insights."); } });
+    return () => { on = false; };
+  }, []);
+  return (
+    <Screen>
+      {err && <Card className="mb-3 !p-3"><p className="text-xs font-semibold text-rose-600">{err}</p></Card>}
+      {cards === null ? (
+        <div className="flex flex-col items-center gap-2 py-12 text-slate-500"><Loader2 size={22} className="animate-spin" /><p className="text-xs font-semibold">Loading insights…</p></div>
+      ) : cards.length === 0 ? (
+        <Card><EmptyState Icon={Info} title="Nothing needs attention" msg="Insights appear here when attendance or paperwork needs a look." /></Card>
+      ) : (
+        <div className="space-y-2">
+          {cards.map((c, i) => (
+            <div key={c.kind + c.title} className="fade-up" style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}>
+              <InsightCard card={c} setScreen={setScreen} />
+            </div>
+          ))}
+        </div>
+      )}
+    </Screen>
   );
 }
 
